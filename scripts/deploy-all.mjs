@@ -9,6 +9,11 @@
  *      - combo          pi-models-combo → ~/.pi/agent/pi-plugins/（install-plugin.mjs）
  *      - bridge         bridge 全家桶（extensions/aiti-attach-agent/tools/deploy.mjs）：
  *                       TUI pi-web-bridge + pi-web attach 后端 + bridge-core + aiti_* 连接器 bundle；
+ *                       TUI side allows a single registration only — when settings.json
+ *                       `packages` already lists @aiti-ai/pi-web-bridge (npm spec or local
+ *                       dir) the child script refreshes that package's src/dist and moves
+ *                       the legacy ~/.pi/agent/extensions dir away instead of registering
+ *                       the same plugin twice;
  *                       packages/aiti-devtools-core 有变更时附带 systemctl restart aiti-bridge（独立桥跑仓库源码）
  *   C. 直连条目（只提示，不部署）：
  *      - pi-git-trace   settings.json 本地路径直连，改源码即生效
@@ -39,7 +44,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -129,7 +134,7 @@ const pluginEntries = [
   {
     name: "bridge", group: "plugin", title: "bridge 全家桶：TUI pi-web-bridge + attach 后端 + bridge-core + aiti_* bundle",
     cmd: [NODE, join(PI_WEB_EXT, "aiti-attach-agent", "tools", "deploy.mjs")],
-    paths: ["extensions/aiti-attach-agent", "packages/aiti-devtools-pi", "packages/aiti-devtools-agent", "packages/aiti-devtools-core"],
+    paths: ["extensions/aiti-attach-agent", "pi-plugins/pi-web-bridge", "packages/aiti-devtools-pi", "packages/aiti-devtools-agent", "packages/aiti-devtools-core"],
     restartBridgeIf: ["packages/aiti-devtools-core"],
   },
 ];
@@ -186,6 +191,47 @@ function computeChanged(state, head) {
   return map;
 }
 
+// ---------- icon sync ----------
+/**
+ * Copy the SVG icon an extension declares into its deployed directories.
+ *
+ * `icon: "icons/<name>.svg"` points at the shared line-icon library (extensions/_shared/icons),
+ * `icon: "icon.svg"` at a file shipped inside the extension. Extensions used to copy these from
+ * their own tools/deploy.mjs; doing it here guarantees every deployed tree has the file even when
+ * a per-extension script forgot it (a missing asset renders as a blank/fallback icon).
+ */
+function syncDeclaredIcons(extName) {
+  const srcDir = join(PI_WEB_EXT, extName);
+  const indexPath = join(srcDir, "index.ts");
+  if (!existsSync(indexPath)) return;
+  const m = readFileSync(indexPath, "utf8").match(/^\s*icon:\s*["']([^"']+\.svg)["']/m);
+  if (!m) return;
+  const iconPath = m[1];
+  // Optimizable source order: the extension's own copy first, then the shared library.
+  // An extension may ship `icons/<name>.svg` itself (its own artwork under the same relative
+  // path the host serves) and only fall back to _shared/icons/<name>.svg when it does not.
+  const candidates = iconPath.startsWith("icons/")
+    ? [join(srcDir, iconPath), join(PI_WEB_EXT, "_shared", "icons", iconPath.slice("icons/".length))]
+    : [join(srcDir, iconPath)];
+  const libPath = candidates.find((c) => existsSync(c));
+  if (!libPath) {
+    console.log(`[icons] ${extName}: 声明的图标找不到（扩展目录与共享库都没有）${iconPath}（跳过）`);
+    return;
+  }
+  const dests = (process.env.HOME || process.env.USERPROFILE)
+    ? [
+        join(process.env.HOME || process.env.USERPROFILE, ".pi", "web", "extensions", extName, "icons"),
+        join(process.env.HOME || process.env.USERPROFILE, ".pi", "web-dev", "extensions", extName, "icons"),
+      ]
+    : [];
+  for (const dest of dests) {
+    try {
+      mkdirSync(dest, { recursive: true });
+      copyFileSync(libPath, join(dest, iconPath.split("/").pop()));
+    } catch { /* best effort: a missing icon must never fail a deploy */ }
+  }
+}
+
 // ---------- 执行 ----------
 function runEntry(e) {
   console.log(`\n━━━ [${e.name}] ${e.title} ━━━`);
@@ -198,6 +244,7 @@ function runEntry(e) {
     env: { ...process.env, PI_WEB_DEFER_RELOAD: "1" },
   });
   if (r.status !== 0) { console.error(`[${e.name}] deploy 失败（exit ${r.status ?? r.error?.code}）`); return false; }
+  if (e.group === "web-ext") syncDeclaredIcons(e.name);
   return true;
 }
 function restartBridge() {

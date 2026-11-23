@@ -49,6 +49,7 @@ const crashFlag = (cacheDir: string) => path.join(cacheDir, "crash-startup.flag"
 
 export default {
   id: "aiti-crash-fatal",
+  icon: "icon.svg",
   name: "Fatal 崩溃测试（破坏核心文件 → global-error 急救页）",
   client: "dist/crash-fatal-client.mjs",
 

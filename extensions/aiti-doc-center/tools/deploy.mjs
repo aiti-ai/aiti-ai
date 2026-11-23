@@ -4,7 +4,8 @@
  *
  * 步骤（照 aiti-plan-first 四步）：
  *   0) 构建 JSX client bundle（client/src/*.tsx → client/aiti-doc-center-client.mjs，M2 起存在）
- *   1) 拷贝服务端源码 index.ts / doc-core.ts + icon.svg → 两个扩展目录
+ *   1) copy server sources index.ts / doc-core.ts to both extension dirs (icon comes from the
+ *      shared line-icon library via deploy-all's icon sync)
  *   2) 拷贝 client 产物 / skills（存在才拷）
  *   3) 提交部署状态到扩展 git 仓库（失败不影响部署）
  *
@@ -40,7 +41,7 @@ const targets = [
   resolve(homedir(), ".pi", "web", "extensions", "aiti-doc-center"),
   resolve(homedir(), ".pi", "web-dev", "extensions", "aiti-doc-center"),
 ];
-const files = ["index.ts", "doc-core.ts", "lib/ignore-semantics.ts", "icon.svg", "package.json"];
+const files = ["index.ts", "doc-core.ts", "lib/ignore-semantics.ts", "package.json"];
 const optionalDirs = ["dist", "skills"];
 // doc-worker 是手写运行时源（Worker 线程直载，无构建）——随产物进 dist/（index.ts 按 dist/ 引用）
 {

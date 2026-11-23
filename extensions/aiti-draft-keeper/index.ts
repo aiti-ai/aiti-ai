@@ -16,6 +16,7 @@
  */
 export default {
   id: "aiti-draft-keeper",
+  icon: "icons/clipboard-list.svg",
   name: "Draft Keeper",
   client: "dist/aiti-draft-keeper-client.mjs",
 };

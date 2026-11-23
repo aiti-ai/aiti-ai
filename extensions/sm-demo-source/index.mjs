@@ -63,6 +63,8 @@ function json(body, status = 200) {
 export default {
   id: "sm-demo-source",
   name: "SM Demo Agent Source",
+  // Shared line-icon library; deploy-all copies the declared icon into the deployed tree.
+  icon: "icons/inbox.svg",
 
   ui: {
     // §4.8：声明 slot 能力 —— session-manager 据此自动发现本扩展
