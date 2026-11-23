@@ -22,10 +22,11 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { createBridge, autoRegisterAitiShim } from "../../aiti-devtools-core/src/index.ts";
+import { createBridge, autoRegisterAitiShim, auditMcpServers, normalizeMcpUrl } from "../../aiti-devtools-core/src/index.ts";
 import { AgentBridgeClient, wrapToolResult } from "../../aiti-devtools-agent/src/index.ts";
 import { jsonSchemaToTypeBox } from "../../aiti-devtools-agent/src/schema.ts";
 import { normalizeBridgeBase, PI_WEB_EXT_PATH_SIG } from "./bridge-url.ts";
+import { checkDuplicateRegistration } from "../../../extensions/aiti-attach-agent/registration-guard.mjs";
 
 function logFile(msg: string) {
   try {
@@ -128,6 +129,16 @@ function ensureMcpConfig(url: string): boolean {
       : uu.origin + "/aiti/mcp";
     const cur = cfg.mcpServers?.["aiti-devtools"];
     if (cur && cur.type === "http" && cur.url === target) return false;
+    // Self-check: the same endpoint is already registered under another name → do not add a
+    // second entry (a client would open two connections and duplicate the tool namespace).
+    const dupName = Object.entries(cfg.mcpServers).find(
+      ([name, entry]: [string, any]) =>
+        name !== "aiti-devtools" && entry?.enabled !== false && normalizeMcpUrl(entry?.url) === normalizeMcpUrl(target),
+    )?.[0];
+    if (dupName) {
+      logFile(`[aiti-devtools-pi] MCP 自检：${p} 已有等效条目 "${dupName}"（${target}）→ 跳过写 aiti-devtools`);
+      return false;
+    }
     cfg.mcpServers = { ...(cfg.mcpServers || {}), "aiti-devtools": { type: "http", url: target } };
     writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n", "utf8");
     return true;
@@ -147,10 +158,37 @@ function spawnBridge(script: string, host: string, port: number): boolean {
   } catch (e) { return false; }
 }
 
+/**
+ * Read-only MCP config self-check: one server name pointing at different endpoints in
+ * several files, or one endpoint registered under several names. Logs only — never edits
+ * user config. Runs right after ensureMcpConfig so stale shadow entries surface at once.
+ */
+function auditMcpConfigs(): void {
+  try {
+    const files = [
+      join(getAgentDir(), "mcp.json"),
+      join(homedir(), ".config", "mcp", "mcp.json"),
+      join(process.cwd(), ".mcp.json"),
+    ];
+    const report = auditMcpServers(files);
+    for (const g of report.sameName) {
+      logFile("[aiti-devtools-pi] MCP 自检：同名 server 多处指向不同端点 → " + g.name + "：" +
+        g.urls.map((u) => u.file + " = " + u.url).join(" | ") + "（陈旧条目会被合并/遮蔽，建议删掉旧的那份）");
+    }
+    for (const g of report.sameUrl) {
+      logFile("[aiti-devtools-pi] MCP 自检：同一端点被多个条目重复注册 → " + g.url + "：" +
+        g.entries.map((e) => e.name + "@" + e.file).join(", ") + "（会双连接，建议只保留一个）");
+    }
+  } catch (e) {
+    logFile("[aiti-devtools-pi] MCP 自检失败：" + String((e as Error)?.message || e));
+  }
+}
+
 // 引导主流程：确保配置 → 检查端口 → 不可连则按该端口拉起桥并等待就绪
 async function bootstrapBridge(base: string): Promise<boolean> {
   ensureBridgeSetting(base);
   ensureMcpConfig(base);
+  auditMcpConfigs();
   if (await probeBridge(base, 1500)) return true; // 端口正常，桥已在跑
   if (process.env.AITI_PI_EXT_NO_BOOTSTRAP) {
     logFile("[aiti-devtools-pi] 桥不可达且已跳过自动拉起（AITI_PI_EXT_NO_BOOTSTRAP=1）");
@@ -394,6 +432,20 @@ function registerBridgeTools(pi: ExtensionAPI) {
 }
 
 export default async function (pi: ExtensionAPI) {
+  // ---- Duplicate-load guard (load-time safe) ----
+  // This plugin can be loaded twice: once from settings.json `packages[]` and once from
+  // the legacy ~/.pi/agent/extensions/ dir. The guard below resolves which copy is
+  // authoritative from settings + fs, so the other copy registers nothing (no duplicate
+  // aiti_* tools / bridge connections). The pi.getAllTools() probe further down cannot
+  // do this job: it is a throwing stub until the runner binds, and the catch below would
+  // silently swallow it during load. See extensions/aiti-attach-agent/registration-guard.mjs.
+  const duplicate = checkDuplicateRegistration({ selfUrl: import.meta.url });
+  if (duplicate.standDown) {
+    logFile(`[aiti-devtools-pi] duplicate load skipped: ${duplicate.reason} (keeping ${duplicate.winner})`);
+    console.warn(`[aiti-devtools-pi] duplicate load detected — skipping this copy: ${duplicate.reason}`);
+    return;
+  }
+
   // ---- 重复注册守卫：优先查已注册工具表，fallback PI_WEB_* env ----
   // pi-web 场景 aiti_* 工具已由 pi-web 扩展（server.agent → SDK customTools）进程内注入；
   // 本扩展再注册会重复（工具重名 + 多余的独立桥 agent 连接）。

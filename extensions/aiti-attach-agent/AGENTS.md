@@ -14,6 +14,7 @@
 ## 大改回源码仓
 - 源码仓：`extensions/aiti-attach-agent/`（git 管理，deploy 同步回本目录）
 - 改完在源码仓跑 `node tools/deploy.mjs`（或仓库根 `node scripts/deploy-all.mjs --only aiti-attach-agent`）
+- TUI 侧只有一个注册通道：settings.json `packages` 已含 `@aiti-ai/pi-web-bridge`（npm 或本地路径）时，deploy 只刷新包内 src/dist，不再写 `~/.pi/agent/extensions/pi-web-bridge/`（否则 pi 双份加载 → `Tool "aiti_*" conflicts`）；运行期 `registration-guard.mjs` 再做一道自检（两入口加载时调用，非权威副本自动让位；`AITI_PLUGIN_DUP_FORCE=1` 可强制）
 
 ## 数据目录（数据分层：config / cache）
 - `ctx.configDir` 根级 = 配置与关键小状态（aiti-configs 备份范围；小、珍贵、人可读）

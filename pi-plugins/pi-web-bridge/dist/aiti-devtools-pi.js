@@ -1,20 +1,20 @@
 /* aiti-devtools-pi · pi 扩展（内嵌桥 + 工具直连）· 构建产物，勿手改 */
 
-// src/index.ts
-import { join as join4, resolve, dirname as dirname4 } from "node:path";
-import { readFileSync as readFileSync3, existsSync as existsSync4, writeFileSync as writeFileSync3, openSync as openSync2, appendFileSync as appendFileSync3, mkdirSync as mkdirSync4 } from "node:fs";
+// packages/aiti-devtools-pi/src/index.ts
+import { join as join5, resolve as resolve2, dirname as dirname5 } from "node:path";
+import { readFileSync as readFileSync4, existsSync as existsSync5, writeFileSync as writeFileSync3, openSync as openSync2, appendFileSync as appendFileSync3, mkdirSync as mkdirSync4 } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
-import { homedir as homedir2 } from "node:os";
-import { fileURLToPath } from "node:url";
+import { homedir as homedir3 } from "node:os";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-// ../aiti-devtools-core/src/bridge.ts
+// packages/aiti-devtools-core/src/bridge.ts
 import { randomBytes as randomBytes2, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync as mkdirSync2, appendFileSync as appendFileSync2, readdirSync as readdirSync2, readFileSync, existsSync as existsSync2, statSync as statSync2, rmSync as rmSync2, writeFileSync, renameSync, openSync, readSync, closeSync } from "node:fs";
 import { join as join2, dirname as dirname2 } from "node:path";
 
-// ../aiti-devtools-core/src/pair.ts
+// packages/aiti-devtools-core/src/pair.ts
 import { randomBytes } from "node:crypto";
 import { join, dirname } from "node:path";
 import { mkdirSync, appendFileSync, existsSync, statSync, rmSync, unlinkSync, readdirSync, createReadStream } from "node:fs";
@@ -435,7 +435,7 @@ function createPairModule(deps) {
   } };
 }
 
-// ../aiti-devtools-core/src/ua-parse.js
+// packages/aiti-devtools-core/src/ua-parse.js
 var BRAND_NAMES = [
   [/Microsoft Edge/i, "Edge"],
   [/Opera|Opera GX/i, "Opera"],
@@ -567,7 +567,7 @@ function parseUa(ua, nav) {
   return out;
 }
 
-// ../aiti-devtools-core/src/bridge.ts
+// packages/aiti-devtools-core/src/bridge.ts
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
 var AGENT_TTL = parseInt(process.env.AITI_AGENT_TTL || "3600000", 10);
 var BROADCAST_TTL = parseInt(process.env.AITI_BROADCAST_TTL || "600000", 10);
@@ -1764,9 +1764,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
   function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const requestId = "mcp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-      const rec = { resolve: resolve2, agentId: null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
+      const rec = { resolve: resolve3, agentId: null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
       pendingRequests.set(requestId, rec);
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
@@ -1939,13 +1939,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const t0 = Date.now();
     const payload = { ...interaction, timeoutMs: ms };
     const isAsync = !!payload.async;
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const requestId = "ui_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       if (isAsync) {
         console.log(TAG + " interaction（异步）→ kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + (payload.agentId ? " · agent=" + payload.agentId : ""));
-        resolve2({ ok: true, result: { status: "async", message: "已异步发出：用户作答后结果将进发起 agent（" + (payload.agentId || "?") + "）的 aiti_inbox" } });
+        resolve3({ ok: true, result: { status: "async", message: "已异步发出：用户作答后结果将进发起 agent（" + (payload.agentId || "?") + "）的 aiti_inbox" } });
       } else {
-        const rec = { resolve: resolve2, agentId: payload.agentId || null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
+        const rec = { resolve: resolve3, agentId: payload.agentId || null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
         pendingRequests.set(requestId, rec);
         if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
         if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
@@ -1996,7 +1996,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         } else return noExecutor();
       }
       if (!isAsync && ms > 0) {
-        const st = { timer: null, deadline: Date.now() + ms, remaining: ms, paused: false, pausedAt: null, pausedMs: 0, ms, t0, resolve: resolve2 };
+        const st = { timer: null, deadline: Date.now() + ms, remaining: ms, paused: false, pausedAt: null, pausedMs: 0, ms, t0, resolve: resolve3 };
         interactionTimers.set(requestId, st);
         st.timer = setTimeout(() => {
           if (!interactionTimers.delete(requestId)) return;
@@ -2481,8 +2481,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
     return out;
   }
   function openFileInEditor(file, line) {
-    return new Promise((resolve2) => {
-      if (!file) return resolve2({ ok: false, error: "缺少 file" });
+    return new Promise((resolve3) => {
+      if (!file) return resolve3({ ok: false, error: "缺少 file" });
       const platform = process.platform;
       const isWin = platform === "win32";
       const target = file + (line ? ":" + line : "");
@@ -2501,7 +2501,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         child = spawn(exe, args, { detached: true, stdio: "ignore", windowsHide: true, env: { ...process.env, ...desktopEnv() }, ...isWin ? { shell: true } : {} });
       } else {
         if (!hasDesktopSession()) {
-          return resolve2({ ok: false, error: "无桌面会话（systemd/无头服务）——后端打开不可用：请用「前端打开」（pi-web 文件标签页在线查看）或设置 AITI_OPEN_CMD 指定打开命令（如 ssh 回本地编辑器）" });
+          return resolve3({ ok: false, error: "无桌面会话（systemd/无头服务）——后端打开不可用：请用「前端打开」（pi-web 文件标签页在线查看）或设置 AITI_OPEN_CMD 指定打开命令（如 ssh 回本地编辑器）" });
         }
         child = defaultOpen(file);
       }
@@ -2509,7 +2509,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const finish = (r) => {
         if (!done) {
           done = true;
-          resolve2(r);
+          resolve3(r);
         }
       };
       child.on("error", () => {
@@ -3466,7 +3466,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   return { handle, sessions: () => listSessions(), devices: () => listDevices(), routePairSend, pair: () => pair, tools: () => TOOLS, callTool, registerAgent: registerAgent2, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
 }
 
-// ../aiti-devtools-core/src/mcp-config.ts
+// packages/aiti-devtools-core/src/mcp-config.ts
 import { homedir } from "node:os";
 import { join as join3, dirname as dirname3 } from "node:path";
 import { existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync3, rmSync as rmSync3 } from "node:fs";
@@ -3569,6 +3569,42 @@ function resolveContainer(cfg, keyPath) {
     cur = cur[k];
   }
   return cur;
+}
+function normalizeMcpUrl(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const u = new URL(raw.trim());
+    const defaultPort = u.protocol === "http:" && u.port === "80" || u.protocol === "https:" && u.port === "443";
+    const port = u.port && !defaultPort ? ":" + u.port : "";
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${u.protocol}//${u.hostname.toLowerCase()}${port}${path}${u.search}`;
+  } catch {
+    return null;
+  }
+}
+function auditMcpServers(files) {
+  const byName = /* @__PURE__ */ new Map();
+  const byUrl = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    if (!existsSync3(file)) continue;
+    const cfg = readJson(file).cfg;
+    if (!isPlainContainer(cfg)) continue;
+    const det = detectStructureKey(cfg);
+    const container = cfg[det.key];
+    if (!isPlainContainer(container)) continue;
+    for (const [name, entry] of Object.entries(container)) {
+      if (!isPlainContainer(entry)) continue;
+      const url = typeof entry.url === "string" ? entry.url : null;
+      const norm = normalizeMcpUrl(url);
+      if (!url || !norm) continue;
+      byName.set(name, [...byName.get(name) || [], { file, url }]);
+      byUrl.set(norm, [...byUrl.get(norm) || [], { name, file }]);
+    }
+  }
+  return {
+    sameName: [...byName.entries()].filter(([, urls]) => urls.length > 1 && new Set(urls.map((u) => normalizeMcpUrl(u.url))).size > 1).map(([name, urls]) => ({ name, urls })),
+    sameUrl: [...byUrl.entries()].filter(([, entries]) => new Set(entries.map((e) => e.name)).size > 1).map(([url, entries]) => ({ url, entries }))
+  };
 }
 function writeAtomic(path, cfg) {
   const tmp = path + ".tmp";
@@ -3753,7 +3789,7 @@ function autoRegisterAitiShim(opts) {
   }
 }
 
-// ../aiti-devtools-agent/src/bridge-client.ts
+// packages/aiti-devtools-agent/src/bridge-client.ts
 var AgentBridgeClient = class {
   constructor(base) {
     this._bridgeUp = false;
@@ -3947,7 +3983,7 @@ var AgentBridgeClient = class {
   }
 };
 
-// ../aiti-devtools-agent/src/agent-host.ts
+// packages/aiti-devtools-agent/src/agent-host.ts
 function wrapToolResult(r) {
   if (!r.ok) {
     return { content: [{ type: "text", text: r.error || "未知错误" }], details: {}, isError: true };
@@ -3959,7 +3995,7 @@ function wrapToolResult(r) {
   };
 }
 
-// ../aiti-devtools-agent/src/schema.ts
+// packages/aiti-devtools-agent/src/schema.ts
 import { Type } from "typebox";
 function jsonSchemaToTypeBox(schema) {
   if (!schema || typeof schema !== "object") return Type.Object({});
@@ -3991,7 +4027,7 @@ function jsonSchemaToTypeBox(schema) {
   }
 }
 
-// src/bridge-url.ts
+// packages/aiti-devtools-pi/src/bridge-url.ts
 var PI_WEB_EXT_PATH_SIG = "/api/extensions/aiti-devtools";
 function normalizeBridgeBase(url) {
   try {
@@ -4005,12 +4041,126 @@ function normalizeBridgeBase(url) {
   }
 }
 
-// src/index.ts
+// extensions/aiti-attach-agent/registration-guard.mjs
+import { existsSync as existsSync4, readFileSync as readFileSync3, realpathSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname4, join as join4, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+var PI_PLUGIN_NAMES = /* @__PURE__ */ new Set(["@aiti-ai/pi-web-bridge", "pi-web-bridge"]);
+var GUARD_FORCE_ENV = "AITI_PLUGIN_DUP_FORCE";
+var MARKER = /* @__PURE__ */ Symbol.for("aiti-ai/pi-web-bridge#registration");
+function defaultSettingsFiles({ agentDir, cwd = process.cwd() } = {}) {
+  return [join4(agentDir, "settings.json"), join4(cwd, ".pi", "settings.json")];
+}
+function defaultAgentDir(env = process.env) {
+  return env.PI_CODING_AGENT_DIR || join4(homedir2(), ".pi", "agent");
+}
+function npmSpecName(source) {
+  return source.slice("npm:".length).replace(/@[^@/]+$/, "");
+}
+function readJsonSafe(file) {
+  try {
+    return JSON.parse(readFileSync3(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function realpathOrSelf(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+function resolvePluginRoot(fromPath) {
+  let dir = dirname4(fromPath);
+  for (let i = 0; i < 4; i++) {
+    const meta = readJsonSafe(join4(dir, "package.json"));
+    if (meta && PI_PLUGIN_NAMES.has(meta.name)) return { dir, meta };
+    const parent = dirname4(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return { dir: dirname4(fromPath), meta: null };
+}
+function findPluginEntry({ settingsFiles, agentDir = defaultAgentDir() } = {}) {
+  for (const settingsFile of settingsFiles || []) {
+    const packages = readJsonSafe(settingsFile)?.packages;
+    if (!Array.isArray(packages)) continue;
+    for (const item of packages) {
+      const source = typeof item === "string" ? item : item?.source;
+      if (typeof source !== "string" || !source) continue;
+      if (source.startsWith("npm:")) {
+        const name = npmSpecName(source);
+        if (!PI_PLUGIN_NAMES.has(name)) continue;
+        if (!existsSync4(join4(agentDir, "npm", "node_modules", name, "package.json"))) continue;
+        return { source, dir: null, settingsFile };
+      }
+      const candidates = [.../* @__PURE__ */ new Set([
+        resolve(dirname4(settingsFile), source),
+        resolve(dirname4(dirname4(settingsFile)), source),
+        resolve(source)
+      ])];
+      for (const dir of candidates) {
+        if (!existsSync4(join4(dir, "package.json"))) continue;
+        if (!PI_PLUGIN_NAMES.has(readJsonSafe(join4(dir, "package.json"))?.name)) continue;
+        return { source, dir, settingsFile };
+      }
+    }
+  }
+  return null;
+}
+function isNpmInstalledCopy(dir, agentDir) {
+  const root = join4(agentDir, "npm", "node_modules");
+  return (dir + sep).startsWith(realpathOrSelf(root) + sep) || (dir + sep).startsWith(root + sep);
+}
+function checkDuplicateRegistration(opts) {
+  const env = opts.env || process.env;
+  const agentDir = opts.agentDir || defaultAgentDir(env);
+  const self = resolvePluginRoot(fileURLToPath(opts.selfUrl));
+  const selfDir = realpathOrSelf(self.dir);
+  const settingsFiles = opts.settingsFiles || defaultSettingsFiles({ agentDir, cwd: process.cwd() });
+  const force = opts.force === true || env[GUARD_FORCE_ENV] === "1" || env.AITI_PI_EXT_FORCE === "1";
+  const result = { standDown: false, selfDir, winner: null, reason: null };
+  if (force) {
+    globalThis[MARKER] = { dir: selfDir };
+    return result;
+  }
+  const entry = findPluginEntry({ settingsFiles, agentDir });
+  if (entry && self.meta) {
+    if (entry.dir) {
+      const winnerDir = realpathOrSelf(entry.dir);
+      result.winner = winnerDir;
+      if (winnerDir !== selfDir) {
+        result.standDown = true;
+        result.reason = `another copy is registered as the pi package (${winnerDir})`;
+      }
+    } else {
+      result.winner = entry.source;
+      if (!isNpmInstalledCopy(selfDir, agentDir)) {
+        result.standDown = true;
+        result.reason = `the plugin is installed from npm (${entry.source}); this copy is not that install`;
+      }
+    }
+    if (result.standDown) return result;
+  }
+  const occupant = globalThis[MARKER];
+  if (occupant && occupant.dir && occupant.dir !== selfDir && existsSync4(occupant.dir)) {
+    result.standDown = true;
+    result.winner = occupant.dir;
+    result.reason = `the plugin is already loaded from ${occupant.dir}`;
+    return result;
+  }
+  globalThis[MARKER] = { dir: selfDir };
+  return result;
+}
+
+// packages/aiti-devtools-pi/src/index.ts
 function logFile(msg) {
   try {
-    const logDir = join4(getAgentDir(), "logs");
+    const logDir = join5(getAgentDir(), "logs");
     mkdirSync4(logDir, { recursive: true });
-    appendFileSync3(join4(logDir, "aiti-devtools-pi.log"), `[aiti-devtools-pi] ${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${msg}
+    appendFileSync3(join5(logDir, "aiti-devtools-pi.log"), `[aiti-devtools-pi] ${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${msg}
 `);
   } catch {
   }
@@ -4036,9 +4186,9 @@ function resolveBridgeUrl() {
     return normalizeBridgeBase("http://" + host + ":" + port + "/aiti");
   }
   try {
-    const settingsPath = join4(getAgentDir(), "settings.json");
-    if (existsSync4(settingsPath)) {
-      const cfg = JSON.parse(readFileSync3(settingsPath, "utf8"));
+    const settingsPath = join5(getAgentDir(), "settings.json");
+    if (existsSync5(settingsPath)) {
+      const cfg = JSON.parse(readFileSync4(settingsPath, "utf8"));
       const u = cfg?.settings?.aitiDevtools?.bridgeUrl;
       if (typeof u === "string" && u) return normalizeBridgeBase(u.replace(/\/+$/, ""));
     }
@@ -4047,24 +4197,24 @@ function resolveBridgeUrl() {
   return DEFAULT_BRIDGE_URL;
 }
 function bridgeScriptPath() {
-  if (process.env.AITI_BRIDGE_SCRIPT && existsSync4(process.env.AITI_BRIDGE_SCRIPT)) return process.env.AITI_BRIDGE_SCRIPT;
-  const here = dirname4(fileURLToPath(import.meta.url));
+  if (process.env.AITI_BRIDGE_SCRIPT && existsSync5(process.env.AITI_BRIDGE_SCRIPT)) return process.env.AITI_BRIDGE_SCRIPT;
+  const here = dirname5(fileURLToPath2(import.meta.url));
   const candidates = [
-    resolve(here, "../../aiti-bridge/bin/aiti-bridge.mjs"),
+    resolve2(here, "../../aiti-bridge/bin/aiti-bridge.mjs"),
     // 源码/产物目录 → packages/aiti-bridge/bin
-    resolve(homedir2(), "workspace/aiti-ai/packages/aiti-bridge/bin/aiti-bridge.mjs")
+    resolve2(homedir3(), "workspace/aiti-ai/packages/aiti-bridge/bin/aiti-bridge.mjs")
     // 开发环境绝对兜底
   ];
-  for (const p of candidates) if (existsSync4(p)) return p;
+  for (const p of candidates) if (existsSync5(p)) return p;
   return null;
 }
 function ensureBridgeSetting(url) {
   try {
-    const p = join4(getAgentDir(), "settings.json");
+    const p = join5(getAgentDir(), "settings.json");
     let cfg = null;
-    if (existsSync4(p)) {
+    if (existsSync5(p)) {
       try {
-        cfg = JSON.parse(readFileSync3(p, "utf8"));
+        cfg = JSON.parse(readFileSync4(p, "utf8"));
       } catch {
         return false;
       }
@@ -4081,11 +4231,11 @@ function ensureBridgeSetting(url) {
 }
 function ensureMcpConfig(url) {
   try {
-    const p = join4(homedir2(), ".config", "mcp", "mcp.json");
+    const p = join5(homedir3(), ".config", "mcp", "mcp.json");
     let cfg = null;
-    if (existsSync4(p)) {
+    if (existsSync5(p)) {
       try {
-        cfg = JSON.parse(readFileSync3(p, "utf8"));
+        cfg = JSON.parse(readFileSync4(p, "utf8"));
       } catch {
         return false;
       }
@@ -4097,6 +4247,13 @@ function ensureMcpConfig(url) {
     const target = sigIdx >= 0 ? uu.origin + uu.pathname.slice(0, sigIdx + PI_WEB_EXT_PATH_SIG.length) + "/mcp/mcp" : uu.origin + "/aiti/mcp";
     const cur = cfg.mcpServers?.["aiti-devtools"];
     if (cur && cur.type === "http" && cur.url === target) return false;
+    const dupName = Object.entries(cfg.mcpServers).find(
+      ([name, entry]) => name !== "aiti-devtools" && entry?.enabled !== false && normalizeMcpUrl(entry?.url) === normalizeMcpUrl(target)
+    )?.[0];
+    if (dupName) {
+      logFile(`[aiti-devtools-pi] MCP 自检：${p} 已有等效条目 "${dupName}"（${target}）→ 跳过写 aiti-devtools`);
+      return false;
+    }
     cfg.mcpServers = { ...cfg.mcpServers || {}, "aiti-devtools": { type: "http", url: target } };
     writeFileSync3(p, JSON.stringify(cfg, null, 2) + "\n", "utf8");
     return true;
@@ -4106,7 +4263,7 @@ function ensureMcpConfig(url) {
 }
 function spawnBridge(script, host, port) {
   try {
-    const log = openSync2(join4(getAgentDir(), "aiti-bridge.log"), "a");
+    const log = openSync2(join5(getAgentDir(), "aiti-bridge.log"), "a");
     const child = spawn2(process.execPath, [script, "--host", host, "--port", String(port)], {
       detached: true,
       stdio: ["ignore", log, log],
@@ -4118,9 +4275,28 @@ function spawnBridge(script, host, port) {
     return false;
   }
 }
+function auditMcpConfigs() {
+  try {
+    const files = [
+      join5(getAgentDir(), "mcp.json"),
+      join5(homedir3(), ".config", "mcp", "mcp.json"),
+      join5(process.cwd(), ".mcp.json")
+    ];
+    const report = auditMcpServers(files);
+    for (const g of report.sameName) {
+      logFile("[aiti-devtools-pi] MCP 自检：同名 server 多处指向不同端点 → " + g.name + "：" + g.urls.map((u) => u.file + " = " + u.url).join(" | ") + "（陈旧条目会被合并/遮蔽，建议删掉旧的那份）");
+    }
+    for (const g of report.sameUrl) {
+      logFile("[aiti-devtools-pi] MCP 自检：同一端点被多个条目重复注册 → " + g.url + "：" + g.entries.map((e) => e.name + "@" + e.file).join(", ") + "（会双连接，建议只保留一个）");
+    }
+  } catch (e) {
+    logFile("[aiti-devtools-pi] MCP 自检失败：" + String(e?.message || e));
+  }
+}
 async function bootstrapBridge(base) {
   ensureBridgeSetting(base);
   ensureMcpConfig(base);
+  auditMcpConfigs();
   if (await probeBridge2(base, 1500)) return true;
   if (process.env.AITI_PI_EXT_NO_BOOTSTRAP) {
     logFile("[aiti-devtools-pi] 桥不可达且已跳过自动拉起（AITI_PI_EXT_NO_BOOTSTRAP=1）");
@@ -4147,16 +4323,16 @@ async function bootstrapBridge(base) {
       return true;
     }
   }
-  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join4(getAgentDir(), "aiti-bridge.log"));
+  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join5(getAgentDir(), "aiti-bridge.log"));
   return false;
 }
 var agentId = () => process.env.AITI_AGENT_ID || "pi";
 function agentDisplayName() {
   if (process.env.AITI_AGENT_NAME) return process.env.AITI_AGENT_NAME;
   try {
-    const settingsPath = join4(getAgentDir(), "settings.json");
-    if (existsSync4(settingsPath)) {
-      const cfg = JSON.parse(readFileSync3(settingsPath, "utf8"));
+    const settingsPath = join5(getAgentDir(), "settings.json");
+    if (existsSync5(settingsPath)) {
+      const cfg = JSON.parse(readFileSync4(settingsPath, "utf8"));
       const n = cfg?.settings?.aitiDevtools?.agentName;
       if (typeof n === "string" && n) return n;
     }
@@ -4164,7 +4340,7 @@ function agentDisplayName() {
   }
   return "pi";
 }
-var bridge = createBridge(join4(getAgentDir(), "aiti-bridge"));
+var bridge = createBridge(join5(getAgentDir(), "aiti-bridge"));
 var _bridgeClient = null;
 function getBridgeClient(base) {
   if (!_bridgeClient || _bridgeClient.base !== base) _bridgeClient = new AgentBridgeClient(base);
@@ -4356,6 +4532,12 @@ function registerBridgeTools(pi) {
   }
 }
 async function index_default(pi) {
+  const duplicate = checkDuplicateRegistration({ selfUrl: import.meta.url });
+  if (duplicate.standDown) {
+    logFile(`[aiti-devtools-pi] duplicate load skipped: ${duplicate.reason} (keeping ${duplicate.winner})`);
+    console.warn(`[aiti-devtools-pi] duplicate load detected — skipping this copy: ${duplicate.reason}`);
+    return;
+  }
   const BRIDGE_CFG_ENVS = /* @__PURE__ */ new Set([
     "PI_WEB_BRIDGE_AUTO",
     "PI_WEB_BRIDGE_BASE",
@@ -4388,7 +4570,7 @@ async function index_default(pi) {
     const base = resolveBridgeUrl();
     let piMcpCfg = null;
     try {
-      piMcpCfg = join4(getAgentDir(), "mcp.json");
+      piMcpCfg = join5(getAgentDir(), "mcp.json");
     } catch {
     }
     autoRegisterAitiShim({ targets: ["pi"], configPaths: piMcpCfg ? [piMcpCfg] : void 0, log: logFile });
