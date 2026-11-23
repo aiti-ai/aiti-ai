@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-claude-code-agent",
   "version": "0.1.10",
   "description": "Drives Claude Code CLI sessions — restores history rows from All Sessions (agentKey: claude); claude 2.1.318+ keyring credentials with a three-tier login-state adjudication",
+  "displayNameI18n": {
+    "en": "Claude Code Session Backend"
+  },
+  "descriptionI18n": {
+    "zh-CN": "驱动 Claude Code CLI 会话 —— 从 All Sessions 恢复历史行（agentKey: claude）；claude 2.1.318+ keyring 凭据三级裁决登录态"
+  },
   "soul": "历史会话不是化石——点一下就活过来。",
+  "soulI18n": {
+    "en": "Historical sessions are not fossils — one click brings them back to life."
+  },
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
   },

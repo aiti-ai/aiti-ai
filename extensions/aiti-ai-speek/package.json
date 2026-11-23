@@ -3,6 +3,12 @@
   "version": "0.2.3",
   "type": "module",
   "description": "Voice reading of AI output — browser Web Speech / edge-tts / local TTS (Hojo-TTS-Light, OpenAI-compatible) with cache, voice cloning and pause/skip/stop",
+  "displayNameI18n": {
+    "en": "AI Read Aloud"
+  },
+  "descriptionI18n": {
+    "zh-CN": "AI 输出语音朗读——可切音色/暂停/跳过/停止；默认浏览器 Web Speech，可选 edge-tts"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -13,6 +19,9 @@
     "vite": "^6.4.3"
   },
   "soul": "你打字，它读给你听。",
+  "soulI18n": {
+    "en": "You type, it reads it back to you."
+  },
   "aitiConfigs": {
     "configFiles": [
       "steer-injected.json",

@@ -24,7 +24,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { fetchCursorQuota, readCursorToken } from "./cursor-quota.ts";
 import { existsSync, mkdirSync } from "node:fs";
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
-import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -770,11 +770,15 @@ function quotaRoute(req: Request, ctx: { path: string[]; method: string; searchP
 
 export default {
   id: "aiti-cursor-agent",
+  icon: "icons/pen-line.svg",
   name: "Cursor Agent",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
   // client/ui —— 服务端 /login/* 与 .agent 描述符保留（manager 代理消费）。
+
+  // English overrides for the shared spawn.* feature declarations (labels + descriptions).
+  ui: { i18n: { en: { ...spawnFeatureI18nEn() } } },
 
   features: [spawnEnvFeature("Cursor"), spawnDisplayEnvFeature("Cursor"), spawnCommandFeature("Cursor"), spawnArgsPrefixFeature("Cursor")],
 

@@ -3,7 +3,13 @@
   "version": "0.0.3",
   "private": true,
   "type": "module",
-  "description": "pi-web 扩展：Fatal 崩溃测试（破坏核心文件 → global-error 急救页；dev 隔离专用）",
+  "description": "Fatal crash-testing extension (dev only): deliberately breaks one core file to verify the full recovery loop (global-error rescue page / partial startup failure / CLI watchdog)",
+  "displayNameI18n": {
+    "en": "Crash Drill"
+  },
+  "descriptionI18n": {
+    "zh-CN": "flag 写入 → startup throw → ⚠ 指示器 + restore-ext 幂等清除——崩溃自愈链路的演习工具"
+  },
   "aitiExtProtocol": "1.0",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/crash-fatal-client.mjs','dist/crash-fatal-client.mjs')\""

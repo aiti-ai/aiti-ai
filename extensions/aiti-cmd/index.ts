@@ -1852,7 +1852,6 @@ export default {
         "feat.tool.aiti_cmd_run.desc": "When off, new agent sessions no longer get this tool (already-injected sessions refuse immediately)",
         "it.aiti-cmd-detail.label": "aiti-cmd command detail",
         "ext.displayName": "Command Palette",
-        "ext.description": "Runs a shell command in the aiti-cmd backend PTY runner, creating a persistent interactive session (output streams into the ⚡ commands panel, fully audited).",
         "feat.tool.aiti_cmd_run": "Agent tool: aiti_cmd_run (run commands in-session via the backend runner; dangerous ones confirmed twice)",
         "feat.aiti-cmd-detail": "aiti-cmd command detail",
         "feat.workspace-terminal": "Workspace terminal",

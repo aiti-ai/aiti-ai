@@ -50,6 +50,7 @@ for (const extDir of targets) {
   copyFileSync(resolve(root, "icon.svg"), resolve(extDir, "icon.svg"));
   // markdown 描述（extman 详情页渲染；缺文件则详情页无描述块）
   try { copyFileSync(resolve(root, "DESC.md"), resolve(extDir, "DESC.md")); } catch {}
+  try { copyFileSync(resolve(root, "DESC.en.md"), resolve(extDir, "DESC.en.md")); } catch {}
   console.log("[deploy] 源码 → " + resolve(extDir, "index.ts"));
 
   // 内部版 client（产物统一 dist/，宿主按 index.ts 声明 /assets/dist/… 服务）

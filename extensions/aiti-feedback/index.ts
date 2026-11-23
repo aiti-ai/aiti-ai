@@ -49,6 +49,7 @@ export default {
         "fb.err.tooLong": "内容超长已截断，完整内容已复制到剪贴板",
       },
       en: {
+        "ext.displayName": "Report a Problem",
         "fb.open.label": "Report an issue",
         "fb.open.title": "Report an issue / send feedback",
         "fb.close": "Close",

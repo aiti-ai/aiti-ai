@@ -2,7 +2,13 @@
   "name": "@aiti-ai/aiti-provider-usage",
   "version": "0.1.11",
   "type": "module",
-  "description": ".AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven ze",
+  "description": "Provider balance/quota lookup — 16 adapter ids (DeepSeek/OpenRouter/Z.AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven zero polling",
+  "displayNameI18n": {
+    "en": "Provider Usage"
+  },
+  "descriptionI18n": {
+    "zh-CN": "Provider 余额/配额查询 —— 16 个适配器 id（DeepSeek/OpenRouter/Z.AI/OpenCode Go/Kimi/Codex/Copilot 等），会话信息面板「剩余额度」区块当前会话置顶展开，5min TTL 总览 + 手动刷新，事件驱动零轮询"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -13,6 +19,9 @@
     "vite": "^6.4.3"
   },
   "soul": "各家还剩多少额度，一面看尽。",
+  "soulI18n": {
+    "en": "How much quota each provider has left, all on one panel."
+  },
   "aitiConfigs": {
     "configFiles": []
   },

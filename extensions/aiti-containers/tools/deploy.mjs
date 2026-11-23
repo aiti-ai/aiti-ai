@@ -29,7 +29,7 @@ try {
 
 for (const extDir of targets) {
   mkdirSync(extDir, { recursive: true });
-  for (const f of ["index.ts", "package.json", "icon.svg", "DESC.md", "README.md", "AGENTS.md"]) {
+  for (const f of ["index.ts", "package.json", "icon.svg", "DESC.md", "DESC.en.md", "README.md", "AGENTS.md"]) {
     try {
       copyFileSync(resolve(root, f), resolve(extDir, f));
     } catch {

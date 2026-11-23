@@ -59,6 +59,18 @@ function isFirstRun(marker) {
   return !marker.completedAt && !marker.dismissedAt;
 }
 
+// ---------------- User-facing messages (i18n envelopes) ----------------
+
+/**
+ * Server message envelope: `i18n:<key>` or `i18n:<key>|<json params>`.
+ * Adapters / API handlers emit keys instead of prose; the client resolves them through tsrv()
+ * in the current UI language. A missing table entry degrades to the bare key instead of
+ * crashing, and plain strings pass through untouched.
+ */
+function msg(key, params) {
+  return "i18n:" + key + (params ? "|" + JSON.stringify(params) : "");
+}
+
 // ---------------- 指纹（稳定字符串化 + 剔除 key 明文） ----------------
 
 function stableStringify(v) {
@@ -235,6 +247,7 @@ module.exports = {
   readMarker,
   writeMarker,
   isFirstRun,
+  msg,
   stableStringify,
   sourceFingerprint,
   draftFingerprintInput,

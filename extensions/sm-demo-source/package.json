@@ -2,7 +2,16 @@
   "name": "@aiti-ai/sm-demo-source",
   "version": "0.1.0",
   "type": "module",
-  "description": "session-manager 第三方 agent source 贡献方示例（§4.8 slot 契约的最小可运行模板）",
+  "description": "Minimal runnable template for contributing a third-party agent source to session-manager (the §4.8 slot contract)",
+  "displayNameI18n": {
+    "en": "Session Source Demo"
+  },
+  "descriptionI18n": {
+    "zh-CN": "session-manager 第三方 agent source 贡献方示例（§4.8 slot 契约的最小可运行模板）"
+  },
   "soul": "想给 All Sessions 贡献会话源？抄这个就对了。",
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "soulI18n": {
+    "en": "Want to contribute a session source to All Sessions? Copy this one."
+  }
 }

@@ -24,37 +24,38 @@ module.exports = {
   },
   scan(io) {
     const p = path.join(io.home, ".codex", "config.toml");
-    if (!io.exists(p)) return { available: false, reason: "未安装（无 ~/.codex/config.toml）", drafts: [], notes: [] };
+    if (!io.exists(p)) return { available: false, reason: core.msg("mi.srv.codex.notInstalled"), drafts: [], notes: [] };
     const text = io.readText(p);
-    if (text == null) return { available: false, reason: "config.toml 读取失败", drafts: [], notes: [] };
+    if (text == null) return { available: false, reason: core.msg("mi.srv.codex.readFailed"), drafts: [], notes: [] };
 
     let cfg;
     try {
       let toml;
-      try { toml = require("smol-toml"); } catch { return { available: false, reason: "TOML 解析依赖未就绪（smol-toml），等扩展依赖 reconcile 完成后重试", drafts: [], notes: [] }; }
+      try { toml = require("smol-toml"); } catch { return { available: false, reason: core.msg("mi.srv.codex.tomlDepMissing"), drafts: [], notes: [] }; }
       cfg = toml.parse(text);
     } catch (e) {
-      return { available: false, reason: "config.toml 解析失败：" + String((e && e.message) || e), drafts: [], notes: [] };
+      return { available: false, reason: core.msg("mi.srv.codex.parseFailed", { detail: String((e && e.message) || e) }), drafts: [], notes: [] };
     }
-    if (!cfg || typeof cfg !== "object") return { available: false, reason: "config.toml 为空", drafts: [], notes: [] };
+    if (!cfg || typeof cfg !== "object") return { available: false, reason: core.msg("mi.srv.codex.empty"), drafts: [], notes: [] };
 
     const providers = cfg.model_providers && typeof cfg.model_providers === "object" ? cfg.model_providers : {};
     const activeProvider = String(cfg.model_provider || "openai");
     const defaultModel = String(cfg.model || "").trim();
     const drafts = [];
-    const notes = ["~/.codex/auth.json 为官方 OAuth 登录态，不在导入范围（与 pi models.json 型互斥）"];
+    const notes = [core.msg("mi.srv.codex.authNote")];
     for (const [rawId, raw] of Object.entries(providers)) {
       const prov = raw && typeof raw === "object" ? raw : {};
       const baseUrl = core.normBaseUrl(prov.base_url);
-      if (!baseUrl) { notes.push("model_providers." + rawId + " 无 base_url（官方内置），跳过"); continue; }
+      if (!baseUrl) { notes.push(core.msg("mi.srv.codex.noBaseUrl", { key: rawId })); continue; }
       const envKey = prov.env_key ? String(prov.env_key) : null;
       const warnings = [];
-      if (envKey) warnings.push("key 走环境变量 " + envKey + "（需 pi-web 进程可见；导入后可在向导改为直填）");
-      else warnings.push("未声明 env_key，导入后需在 🧙 向导补 key");
+      if (envKey) warnings.push(core.msg("mi.srv.codex.envKey", { env: envKey }));
+      else warnings.push(core.msg("mi.srv.codex.noKey"));
       if (activeProvider === rawId && defaultModel) {
-        // 当前默认模型挂草稿；其余模型 codex 不落盘，导入后可在向导 /discover 拉取
+        // The active default model rides along on the draft; codex persists no other model list,
+        // so the rest can be fetched through the wizard's /discover after importing.
       } else if (!defaultModel || activeProvider !== rawId) {
-        warnings.push("codex 配置不携带模型清单，导入后可在向导里拉取 /models");
+        warnings.push(core.msg("mi.srv.codex.noModels"));
       }
       drafts.push(core.normalizeDraft({
         key: "codex-" + core.sanitizeId(rawId),
@@ -68,7 +69,7 @@ module.exports = {
         warnings,
       }));
     }
-    if (!drafts.length) notes.push("config.toml 未配置自定义 model_providers（仅官方登录），无可导入 provider");
+    if (!drafts.length) notes.push(core.msg("mi.srv.codex.noProviders"));
     return { available: true, drafts, notes };
   },
 };

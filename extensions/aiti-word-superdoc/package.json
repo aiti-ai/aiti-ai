@@ -2,6 +2,12 @@
   "name": "@aiti-ai/aiti-word-superdoc",
   "version": "0.1.10",
   "description": "Online .docx editing (SuperDoc: ProseMirror bidirectional docx). The AGPL is isolated within this extension — don't install it and it's simply not there",
+  "displayNameI18n": {
+    "en": "Word Editor"
+  },
+  "descriptionI18n": {
+    "zh-CN": ".docx 在线编辑（SuperDoc：ProseMirror docx 双向）。AGPL 隔离于本扩展，不装即无"
+  },
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",

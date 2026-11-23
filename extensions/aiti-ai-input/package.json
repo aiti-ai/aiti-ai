@@ -27,7 +27,13 @@
       }
     ]
   },
-  "description": "Input enhancement for the AI chat composer: two-tier autocomplete (instant local → AI fallback), speech-input detection with spelling repair, streaming ASR with 2-pass refinement, switchable recognition engines (self-hosted / xfyun / Baidu / Silic",
+  "description": "Input enhancement for the AI chat composer: two-tier autocomplete (instant local → AI fallback), speech-input detection with spelling repair, streaming ASR with 2-pass refinement, switchable recognition engines (self-hosted / xfyun / Baidu / SiliconFlow / any OpenAI-compatible endpoint), hotwords, and usage reports.",
+  "displayNameI18n": {
+    "en": "AI Input Enhancer"
+  },
+  "descriptionI18n": {
+    "zh-CN": "聊天输入框增强 —— L0/L1 两层自动补全 + 收藏联想 + 🎤 实时 ASR 语音输入（多引擎可插拔/热词/2-pass 精修）+ 听写检测修复"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -37,6 +43,9 @@
     "vite": "^6.4.3"
   },
   "soul": "你还没打完的字，它已经替你想到一半了。",
+  "soulI18n": {
+    "en": "Before you finish typing, it has already guessed half of it."
+  },
   "aitiConfigs": {
     "configFiles": [
       "user-hotwords.json",

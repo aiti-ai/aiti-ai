@@ -125,7 +125,6 @@ export default {
         "feat.inject.enabled.desc": "Injects the CPU meter of the \"Service URL\" target instance into the current page (cross-instance viewing requires the target to have this enabled too)",
         "feat.service.url.desc": "Target pi-web base URL (with sub-path, e.g. https://host:port/dev)",
         "ext.displayName": "CPU Meter",
-        "ext.description": "Shows a CPU smoothness meter on this instance's page (rAF timer + 0-100 smoothness score + color tiers + minimize). The timer freezes and the score plummets when the main thread jams.",
         "feat.enabled": "Enable the meter",
         "feat.pos": "Position",
         "feat.score": "Smoothness score",

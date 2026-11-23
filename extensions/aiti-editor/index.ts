@@ -1294,7 +1294,6 @@ export default {
         "it.fileviewer.label": "Editor",
         "it.fileviewer.title": "aiti-editor: online text editing (Monaco); binaries rendered by extensions",
         "ext.displayName": "File Editor",
-        "ext.description": "File editor: Monaco in-browser editing (takes over text files; non-text falls back to the core viewer). Design: docs/pi-web-file-editor-design.md",
         "feat.aiti-editor": "Editor",
         "feat.file": "Files",
         "feat.image-preview": "Image preview",

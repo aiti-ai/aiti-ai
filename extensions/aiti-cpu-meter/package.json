@@ -1,8 +1,17 @@
 {
   "name": "@aiti-ai/aiti-cpu-meter",
   "version": "0.2.10",
-  "description": ". Ships as two artifacts: a pi-web extension (internal) and a standalone single-file injector you can register into any websit",
+  "description": "Main-thread smoothness detector — a seconds counter + 0–100 smoothness score + color tiers + minimize + AI jank debugging. Ships as two artifacts: a pi-web extension (internal) and a standalone single-file injector you can register into any website you develop.",
+  "displayNameI18n": {
+    "en": "CPU Meter"
+  },
+  "descriptionI18n": {
+    "zh-CN": "主线程流畅度检测——读秒 + 0-100 分 + 颜色分层 + 最小化 + AI 卡顿调试（aiti-helper 帮助点）；可注入任意站点（内部版/外部版双产物）"
+  },
   "soul": "主线程一卡，读秒就停；流畅度一分，忙闲立见——挂在工作页角落，收工点开看平均。",
+  "soulI18n": {
+    "en": "A stalled main thread stops the clock; one score tells busy from idle."
+  },
   "scripts": {
     "build": "node tools/build.mjs",
     "deploy": "node tools/deploy.mjs",

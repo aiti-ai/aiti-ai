@@ -14,8 +14,8 @@ import { join } from "node:path";
 import { OmpSpawnHandle, OMP_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./omp-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
-import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
-import { hostToolsAllowFeature } from "@aiti-ai/ext-shared/host-tools-allow";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { hostToolsAllowFeature, hostToolsAllowFeatureI18nEn } from "@aiti-ai/ext-shared/host-tools-allow";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
 import { wireBridgeHostTools } from "./host-tools-bridge.ts";
@@ -33,7 +33,7 @@ let ompProviderRef: Record<string, unknown> | null = null;
 export default {
   id: "aiti-omp-agent",
   name: "Oh My Pi (omp 子进程后端)",
-  icon: "🦉",
+  icon: "icons/git-branch.svg",
 
   features: [spawnEnvFeature("Omp"), spawnDisplayEnvFeature("Omp"), spawnCommandFeature("Omp"), spawnArgsPrefixFeature("Omp"), hostToolsAllowFeature("Omp")],
 
@@ -42,6 +42,8 @@ export default {
     // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
     i18n: {
       en: {
+        ...spawnFeatureI18nEn(),
+        ...hostToolsAllowFeatureI18nEn(),
         "ext.displayName": "Oh My Pi (omp subprocess backend)",
       },
     },

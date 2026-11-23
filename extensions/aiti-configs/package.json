@@ -2,7 +2,13 @@
   "name": "@aiti-ai/aiti-configs",
   "version": "0.1.10",
   "type": "module",
-  "description": "; if the system crashes, a command-line watchdog recovers without relying on the broken system",
+  "description": "A safety net for configuration — when AI/humans or extension changes break the config, there is a commit to revert, a diff to inspect, one-click restore; if the system crashes, a command-line watchdog recovers without relying on the broken system itself",
+  "displayNameI18n": {
+    "en": "Config Versioning & Self-check"
+  },
+  "descriptionI18n": {
+    "zh-CN": "配置的安全网 —— AI/人改配置、改扩展改坏了，有锅可回、有 diff 可看、一键恢复；系统崩了，命令行哨兵不依赖出问题系统本身兜底恢复"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -12,6 +18,9 @@
     "vite": "^6.4.3"
   },
   "soul": "AI 敢乱改，因为身后有一整个 git 当后悔药。",
+  "soulI18n": {
+    "en": "The AI dares to change recklessly, because an entire git repo stands behind it as the undo button."
+  },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
   "contentHash": "37bdb39da0d5fb32",

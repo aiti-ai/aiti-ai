@@ -452,7 +452,6 @@ export default {
         "开启自动哨兵": "Enable auto sentry",
         "删除 tag": "Delete tag",
         "ext.displayName": "Config Versioning & Self-check",
-        "ext.description": "Injects aiti_configs_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "feat.agentTools.enabled": "AI tool (config management)",
         "feat.agentTools.enabled.desc": "Injects aiti_configs_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "恢复": "Restore",

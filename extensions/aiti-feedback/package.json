@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "description": "User feedback — compose a sanitized report and open a prefilled GitHub issue",
+  "displayNameI18n": {
+    "en": "Report a Problem"
+  },
+  "descriptionI18n": {
+    "zh-CN": "用户反馈 —— 撰写脱敏报告并打开预填好的 GitHub issue"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

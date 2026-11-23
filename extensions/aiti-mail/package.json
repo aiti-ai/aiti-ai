@@ -3,6 +3,12 @@
   "version": "0.1.10",
   "type": "module",
   "description": "The general \"mail sending outlet\" inside pi-web — zero-dependency SMTP client + send log (node:sqlite) + management dialog (config/test/log)",
+  "displayNameI18n": {
+    "en": "Mail Sender"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 内通用「邮件发送出口」——零依赖 SMTP 客户端 + 发送记录（node:sqlite）+ 管理弹窗（配置/测试/记录）"
+  },
   "scripts": {
     "test": "node --test tools/smtp.test.mjs",
     "deploy": "node tools/deploy.mjs",

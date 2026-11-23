@@ -4,6 +4,12 @@
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "Cross-project session panel — tag tree + colors / favorites / search / archive / kanban / new-session branch·Worktree picker / history parsing for 23 agent families / DockStack orchestration",
+  "displayNameI18n": {
+    "en": "Session Manager"
+  },
+  "descriptionI18n": {
+    "zh-CN": "跨项目会话面板 —— tag 树+颜色 / 收藏 / 搜索 / 归档 / 看板 / 新建会话分支·Worktree 选择器 / 23 家 agent 历史解析 / DockStack 编排"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -14,6 +20,9 @@
     "vite": "^6.4.3"
   },
   "soul": "会话不是用完即走的流水，是每天都在累积的资产。",
+  "soulI18n": {
+    "en": "Sessions are not disposable transient flows — they are assets that accumulate every day."
+  },
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.12",
     "@node-rs/jieba": "^2.0.2",

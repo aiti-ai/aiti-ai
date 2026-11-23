@@ -277,6 +277,12 @@ export default {
         "打开配置指南": "打开配置指南",
       },
       en: {
+        "feat.interval": "Polling interval (seconds)",
+        "feat.interval.desc": "Snapshot polling interval in seconds while the panel is expanded (default 3; invalid values fall back to the default). Nothing is sampled while the panel is collapsed or the page is hidden — zero idle server cost.",
+        "feat.showSensors": "Show CPU temperature",
+        "feat.showSensors.desc": "Shows CPU temperature (Linux needs lm-sensors; when unreadable it shows N/A with a link to the setup guide).",
+        "feat.topbarChips": "Show CPU/memory in the top-bar session info",
+        "feat.topbarChips.desc": "Keeps the server CPU load and memory percentage at the end of the top-bar session info (on by default; off means zero rendering and zero sampling, switchable from the extension manager). Wide layouts only — hidden automatically on narrow screens; samples at the same interval as \"Polling interval\".",
         "sy.panel.label": "System Status",
         "sy.toolbar.label": "System Status",
         "sy.toolbar.title": "Open the system status panel",

@@ -738,7 +738,6 @@ export default {
     i18n: {
       en: {
         "ext.displayName": "Git Review",
-        "ext.description": "Lists review-task changesets (files + status) for AI familiarization. Param: taskId (defaults to the session-bound task).",
         "gr.app.label": "Review",
         "gr.app.title": "aiti-git-review: review changes (uncommitted / baseline / two-ref diff)",
         "gr.workspace.label": "Review",

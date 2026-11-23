@@ -3,9 +3,18 @@
   "version": "0.2.2",
   "private": true,
   "type": "module",
-  "description": "pi-web 扩展：aiti 页面内 AI 调试助手（launcher 注入 + 桥 + agent 进程内 MCP 工具）",
+  "description": "pi-web extension — in-page AI debugging workbench: launcher + client injection, CDP-like commands, and a bridge that hands page capabilities to any AI agent as MCP tools",
+  "displayNameI18n": {
+    "en": "Page DevTools"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 扩展 —— 注入器 / 桥 / MCP server 端 + agent 进程内工具注入（页面能力以 MCP 工具交给任意 AI）"
+  },
   "homepage": "https://aiti.pw/extensions/aiti-devtools.html",
   "soul": "AI 不该对着屏幕瞎猜，它该真正看见页面。",
+  "soulI18n": {
+    "en": "AI shouldn't squint blindly at a screen; it should truly see the page."
+  },
   "aitiExtProtocol": "1.0",
   "dependencies": {
     "@aiti-ai/aiti-bridge": "^0.2.4"

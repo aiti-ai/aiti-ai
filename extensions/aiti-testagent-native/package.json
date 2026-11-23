@@ -3,6 +3,12 @@
   "version": "0.1.12",
   "type": "module",
   "description": "Visual panel for testagent-native (live Windows-native process control) — broker processes/sessions/hooks/event stream; formerly aiti-wintrace (renamed 2026-11-07)",
+  "displayNameI18n": {
+    "en": "testagent-native (Windows API/COM trace panel)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "testagent-native（Windows 原生进程活体操控）可视面 —— broker 进程/会话/挂钩/事件流；原 aiti-wintrace（2026-11-07 改名）"
+  },
   "scripts": {
     "build:client": "node tools/build-client.mjs",
     "watch": "node tools/build-client.mjs --watch"

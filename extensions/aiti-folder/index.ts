@@ -300,7 +300,7 @@ export default {
         "i18n.networkError": "网络错误",
       },
       "en": {
-        "ext.displayName": "Folder Browser",        "ext.description": "Folder browser (fileViewer folder takeover) + directory picker capability (pathPicker FolderSwitcher). Reuses core endpoints; UI lives entirely in the extension.",
+        "ext.displayName": "Folder Browser",
         "feat.aiti-folder": "Folders",
         "it.folder.label": "Folders",
         "it.folder.title": "aiti-folder: folder browser (tree + git status + switching)",

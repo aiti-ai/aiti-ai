@@ -143,8 +143,20 @@ test("registry: 注册表包含 3 个可导入源 + cursor/qoder 灰显声明", 
   assert.deepEqual(importable.sort(), ["codex", "opencode", "zcode"]);
   for (const id of ["cursor", "qoder"]) {
     const s = all.find((x) => x.id === id);
-    assert.ok(s && s.kind === "not-importable" && s.reason, id + " 须带原因说明");
+    assert.ok(s && s.kind === "not-importable" && s.reason, id + " must carry a reason");
+    assert.ok(s.reason.startsWith("i18n:mi.srv."), id + " reason rides an i18n envelope (text resolved client-side)");
   }
+});
+
+// ---------------- message envelope ----------------
+
+test("msg: i18n envelope shape (bare / with params) + params JSON round-trips", () => {
+  assert.equal(core.msg("mi.demo"), "i18n:mi.demo");
+  const env = core.msg("mi.demo", { channel: "zai-plan", n: 2 });
+  assert.equal(env, 'i18n:mi.demo|{"channel":"zai-plan","n":2}');
+  const bar = env.indexOf("|");
+  assert.equal(env.slice(5, bar), "mi.demo");
+  assert.deepEqual(JSON.parse(env.slice(bar + 1)), { channel: "zai-plan", n: 2 });
 });
 
 // ---------------- codex ----------------
@@ -187,21 +199,22 @@ test("codex scan: model_providers → 草稿(active 默认模型/wire_api 映射
   assert.equal(or.api, "openai-completions"); // wire_api=chat
   assert.deepEqual(or.models.map((m) => m.id), ["gpt-5.1-codex"]); // active provider 挂默认模型
   assert.equal(or.baseUrl, "https://openrouter.ai/api/v1"); // 尾 / 剥除
-  assert.ok(or.warnings.some((w) => w.includes("env_key") || w.includes("补 key")));
-  assert.ok(r.notes.some((n) => n.includes("auth.json")));
+  assert.ok(openai.warnings.some((w) => w.startsWith("i18n:mi.srv.codex.envKey|") && w.includes("OPENAI_API_KEY")));
+  assert.ok(or.warnings.some((w) => w.includes("mi.srv.codex.noKey")));
+  assert.ok(r.notes.includes(core.msg("mi.srv.codex.authNote")));
 });
 
 test("codex scan: 未安装/坏 TOML/仅官方(无 model_providers) 三种降级", () => {
   const empty = codex.scan(makeIo(join(tmpRoot, "codex-none"), {}));
   assert.equal(empty.available, false);
-  assert.match(empty.reason, /未安装/);
+  assert.equal(empty.reason, core.msg("mi.srv.codex.notInstalled"));
 
   const home2 = join(tmpRoot, "codex-bad");
   const bad = join(home2, ".codex", "config.toml");
   const io2 = makeIo(home2, { [bad]: "model = [broken" });
   const r2 = codex.scan(io2);
   assert.equal(r2.available, false);
-  assert.match(r2.reason, /解析失败/);
+  assert.ok(r2.reason.startsWith("i18n:mi.srv.codex.parseFailed|"));
 
   const home3 = join(tmpRoot, "codex-official");
   const ok3 = join(home3, ".codex", "config.toml");
@@ -209,7 +222,7 @@ test("codex scan: 未安装/坏 TOML/仅官方(无 model_providers) 三种降级
   const r3 = codex.scan(makeIo(home3, { [ok3]: toml3 }));
   assert.equal(r3.available, true);
   assert.equal(r3.drafts.length, 0);
-  assert.ok(r3.notes.some((n) => n.includes("无可导入")));
+  assert.ok(r3.notes.includes(core.msg("mi.srv.codex.noProviders")));
 });
 
 // ---------------- zcode ----------------
@@ -242,10 +255,10 @@ test("zcode scan: provider 通道 → 草稿(anthropic-messages/baseURL 双位�
   assert.equal(bm.modelMeta["GLM-5.2"], undefined);
   assert.ok(bm.models.every((m) => m.contextWindow === undefined && m.maxTokens === undefined), "预览元数据未混进导入载荷");
   assert.equal(bm.apiKey, null);
-  assert.ok(bm.warnings.some((w) => w.includes("加密")));
+  assert.deepEqual(bm.warnings, [core.msg("mi.srv.zcode.encryptedKey")]);
   const weird = r.drafts.find((d) => d.key === "zcode-weird");
   assert.equal(weird.baseUrl, "https://x.example/api");
-  assert.ok(r.notes.some((n) => n.includes("nohost")));
+  assert.ok(r.notes.some((n) => n.startsWith("i18n:mi.srv.zcode.noBaseUrl|") && n.includes("nohost")));
 
   const none = zcode.scan(makeIo(join(tmpRoot, "zcode-none"), {}));
   assert.equal(none.available, false);
@@ -271,8 +284,8 @@ test("zcode scan: start-plan 彻底排除 + 套餐缓存 family 授权过滤（�
   // zai family 无授权 → 跳过；start-plan 彻底排除（桌面验证码通道）
   assert.ok(!keys.includes("zcode-zai-coding-plan"));
   assert.ok(!keys.includes("zcode-zai-start-plan"));
-  assert.ok(r.notes.some((n) => n.includes("start-plan")));
-  assert.ok(r.notes.some((n) => n.includes("无有效套餐授权")));
+  assert.ok(r.notes.some((n) => n.startsWith("i18n:mi.srv.zcode.planChannel|") && n.includes("zai-start-plan")));
+  assert.ok(r.notes.some((n) => n.startsWith("i18n:mi.srv.zcode.noPlan|") && n.includes("zai-coding-plan")));
   // 无套餐缓存 → 不过滤授权（回退全保留，仅排除 start-plan）
   const r2 = zcode.scan(makeIo(home, { [p]: json }));
   const keys2 = r2.drafts.map((d) => d.key);
@@ -308,12 +321,12 @@ test("opencode scan: npm 协议映射/options.apiKey 与 auth.json 兜底/空 mo
   const relay = r.drafts.find((d) => d.key === "opencode-relay");
   assert.equal(relay.api, "openai-completions"); // 未知 npm 兜底
   assert.equal(relay.apiKey, "sk-relay-xyz9"); // auth.json 兜底
-  assert.ok(relay.warnings.some((w) => w.includes("未识别")));
-  assert.ok(relay.warnings.some((w) => w.includes("模型清单")));
+  assert.ok(relay.warnings.some((w) => w.startsWith("i18n:mi.srv.opencode.unknownSdk|") && w.includes("some-unknown")));
+  assert.ok(relay.warnings.some((w) => w.includes("mi.srv.opencode.noModels")));
 
   const none = opencode.scan(makeIo(join(tmpRoot, "oc-none"), {}));
   assert.equal(none.available, false);
-  assert.match(none.reason, /未安装/);
+  assert.equal(none.reason, core.msg("mi.srv.opencode.notInstalled"));
 });
 
 // ---------------- 源级指纹端到端（适配器 → 状态机） ----------------

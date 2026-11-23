@@ -903,7 +903,6 @@ export default {
         "feat.agentTools.enabled.desc": "Injects aiti_model_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "it.panel.title": "Model availability",
         "ext.displayName": "Model Availability",
-        "ext.description": "Reminds when long-term rate-limited models (limited ≥ threshold) reach their recorded expected recovery time (pure time check, no probing) — browser notification + \"pending verification\" highlight in the panel",
         "feat.behavior.showToolbar": "Show the \"Models\" toolbar button",
         "feat.tool.aiti_model_status": "model_status · availability overview",
         "feat.tool.aiti_model_keys": "model_keys · multi-key check",

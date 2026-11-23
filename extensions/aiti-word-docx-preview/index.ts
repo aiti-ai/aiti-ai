@@ -21,7 +21,7 @@ export default {
         "ext.displayName": "Word 预览",
       },
       en: {
-        "ext.displayName": "Word Preview",        "ext.description": "Word document preview (docx-preview, high-fidelity read-only): .docx paginated rendering with headers/footers/tables/images restored",
+        "ext.displayName": "Word Preview",
       },
     },
   },

@@ -34,7 +34,7 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import {
   readExtModelState, readAgentLastUsedModel, withLastUsedFirst,
@@ -468,7 +468,7 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
 export default {
   id: "aiti-codebuddy-agent",
   name: "CodeBuddy Code (腾讯)",
-  icon: "🔵",
+  icon: "icons/terminal.svg",
 
   features: [
     spawnEnvFeature("CodeBuddy Code"),
@@ -562,6 +562,7 @@ export default {
     // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
     i18n: {
       en: {
+        ...spawnFeatureI18nEn(),
         "feat.codebuddy.cliPath.desc": "Path to the cbc executable (absolute path after npm i -g @tencent-ai/codebuddy-code or brew install codebuddy-code). Empty = auto-detect cbc/codebuddy on PATH → npx fallback (first use downloads)",
         "feat.codebuddy.packageSpec.desc": "Package pulled by the npx fallback (default @tencent-ai/codebuddy-code latest cache; pin a version supported by the local Node)",
         "feat.codebuddy.model.desc": "Default model id for new sessions (--model): default-model/fast-model/balanced-model family aliases or a full model id",
@@ -572,7 +573,7 @@ export default {
         "feat.codebuddy.baseUrl.desc": "CODEBUDDY_BASE_URL: point to an OpenAI-compatible endpoint (bypassing the Tencent gateway, e.g. a self-hosted proxy)",
         "feat.codebuddy.bridgeUrl.desc": "AITI_BRIDGE_URL: enables aiti_* tools inside cbc sessions connecting to the AITI bridge (MCP tool injection)",
         "ext.displayName": "CodeBuddy Code (Tencent)",
-        "ext.description": "Path to the cbc executable (absolute path after npm i -g @tencent-ai/codebuddy-code or brew install codebuddy-code). Empty = auto-detect cbc/codebuddy on PATH → npx fallback (first use downloads).",
+        "feat.codebuddy.cliPath.desc": "Path to the cbc executable (absolute path after npm i -g @tencent-ai/codebuddy-code or brew install codebuddy-code). Empty = auto-detect cbc/codebuddy on PATH → npx fallback (first use downloads).",
         "feat.codebuddy.cliPath": "CLI path",
         "feat.codebuddy.packageSpec": "npx package spec",
         "feat.codebuddy.model": "Default model",
