@@ -26,7 +26,13 @@ import type { AgentMessage, SessionEntry } from "../types.ts";
 import type { SessionHandle } from "./types.ts";
 import { UnsupportedCapabilityError } from "./types.ts";
 import { normalizeToolCalls } from "../normalize.ts";
-import { entryToUiMessage } from "../session-reader.ts";
+import { parseExternalEntryId } from "../external-session-paging.ts";
+import { entryToUiMessage, cacheSessionPath, invalidateSessionListCache, openSessionManager, resolveSessionPath } from "../session-reader.ts";
+import { forkSessionBranch, readForkSourceTitle } from "../session-fork.ts";
+import { notifySessionCreated } from "../session-created-notify.ts";
+import { listAllHandles, removeHandle } from "./handle-store.ts";
+import { releaseReboundWrapper } from "../agent-starter/index.ts";
+import { inheritForkHosting } from "./fork-hosting.ts";
 
 type WrapperCommand = Record<string, unknown>;
 
@@ -314,7 +320,12 @@ export class HandleSessionAdapter implements WrappedSessionLike {
   }
 
   async waitUntilReady(): Promise<void> {
-    /* handles are addressable immediately */
+    // Backend handles may bootstrap asynchronously (ACP initialize + session/load, external
+    // CLI resume): a read that lands mid-bootstrap projects a half-built history — an empty
+    // transcript that the page never re-reads (observed 2026-11-23, qoder). Delegate to the
+    // handle's own seam when it has one; handles without it are addressable immediately.
+    const ready = (this.handle as { waitUntilReady?: () => Promise<void> }).waitUntilReady;
+    if (typeof ready === "function") await ready.call(this.handle);
   }
 
   async shutdown(): Promise<void> {
@@ -326,9 +337,114 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     throw new UnsupportedCapabilityError(capability ?? command, this.handle.source);
   }
 
+  /**
+   * Entry ids of the UI message list this handle's context projection serves.
+   *
+   * A bridged/spawn session answers GET /api/sessions/[id] through the handle, whose raw
+   * entries carry no client-visible ids for the attach family — the route synthesizes
+   * `ext-<i>` position ids (lib/external-session-paging.ts). Commands that echo such an id
+   * back (fork from a message, quote-fork, tree moves) must land on a real pi entry, so
+   * rebuild the exact list the client saw: the handle's get_messages, filtered like
+   * normalizeHandleMessages (= entryToUiMessage drops non-message entries), then the file
+   * as a fallback for backends whose get_messages is unavailable.
+   */
+  private async projectedEntryIds(h: SessionHandle): Promise<string[]> {
+    const collect = (items: unknown[]): string[] => {
+      const ids: string[] = [];
+      for (const item of items) {
+        const rec = item as Record<string, unknown> | null;
+        // Direct message shapes (cursor/claude/echo) have no entry id at all: such a
+        // backend cannot be addressed by a file entry, so the list is unusable.
+        if (!rec || typeof rec.type !== "string" || "role" in rec || typeof rec.id !== "string") return [];
+        if (entryToUiMessage(rec as unknown as SessionEntry, {})) ids.push(rec.id);
+      }
+      return ids;
+    };
+    try {
+      const ids = collect((await h.getMessages?.()) ?? []);
+      if (ids.length) return ids;
+    } catch { /* fall through to the file */ }
+    const sourcePath = await resolveSessionPath(h.id);
+    if (!sourcePath) return [];
+    try {
+      return collect(openSessionManager(sourcePath).getEntries() as unknown[]);
+    } catch {
+      return [];
+    }
+  }
+
+  /** `ext-<i>` (handle projection position) → the real entry id there; any other id passes through. */
+  private async resolveProjectedEntryId(h: SessionHandle, id: string): Promise<string> {
+    const index = parseExternalEntryId(id);
+    if (index === null) return id;
+    const ids = await this.projectedEntryIds(h);
+    return ids[index] ?? id;
+  }
+
+  /**
+   * File-level branch copy for a handle whose session lives in a pi file (pi spawn).
+   *
+   * `target` is a user message entry id to fork BEFORE it (pi's RPC semantics);
+   * undefined copies up to the file's own leaf (fork_branch, the composer's
+   * "new session"). Runs pi-web's own fork machinery — the same path the sidebar's
+   * Fork uses — so the live backend process keeps the source session untouched.
+   * `target` may also be a projection position id (`ext-<i>`, what the bridged/spawn
+   * context route hands the client) — it is mapped onto the real entry first.
+   */
+  private async forkFileBranch(
+    h: SessionHandle,
+    target: string | undefined,
+  ): Promise<{ cancelled: boolean; newSessionId?: string }> {
+    const sourcePath = await resolveSessionPath(h.id);
+    if (!sourcePath) return { cancelled: true };
+    const manager = openSessionManager(sourcePath);
+    let cutLeafId: string | null | undefined;
+    if (target) {
+      let entry = manager.getEntry(target);
+      if (!entry) {
+        const mapped = await this.resolveProjectedEntryId(h, target);
+        if (mapped !== target) entry = manager.getEntry(mapped);
+      }
+      if (!entry) throw new Error(`Invalid entry ID for forking: ${target}`);
+      // A user message is the fork point itself (the copy ends at its parent; null =
+      // before the first entry). Any other entry is copied up to itself, as navigating
+      // there would show it.
+      cutLeafId = entry.type === "message" && entry.message.role === "user" ? (entry.parentId ?? null) : entry.id;
+    }
+    const sourceTitle = await readForkSourceTitle(sourcePath);
+    const fork = forkSessionBranch(sourcePath, cutLeafId, sourceTitle);
+    cacheSessionPath(fork.sessionId, fork.path);
+    invalidateSessionListCache();
+    // The copy inherits the source's detached hosting (a wrapper-hosted source must not
+    // hand its fork to an in-process runtime). See lib/session/fork-hosting.ts.
+    await inheritForkHosting(h.id, fork.sessionId, manager.getCwd());
+    // Same creator-side notification the local fork paths send: the row shows up in
+    // the sidebar immediately (the shell switches to it right after).
+    notifySessionCreated(fork.sessionId, manager.getCwd(), target ? "fork" : "fork_branch");
+    return { cancelled: false, newSessionId: fork.sessionId };
+  }
+
   // ---- command mapping ----------------------------------------------------------
 
   async send(command: WrapperCommand): Promise<unknown> {
+    try {
+      return await this.dispatchCommand(command);
+    } catch (error) {
+      // A backend that died under this adapter (wrapper reaped/restarted, or the single-client
+      // slot was superseded) leaves a dead handle in the store: every later read and send fails
+      // with "not running", the page just looks blank, and a prompt silently never runs
+      // (2026-11-23). Evict it so the next request re-attaches a live handle.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!this.handle.alive() && /not running|not alive|dead|closed/i.test(message)) {
+        for (const [key, stored] of listAllHandles()) {
+          if (stored === this.handle) removeHandle(key);
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async dispatchCommand(command: WrapperCommand): Promise<unknown> {
     const h = this.handle;
     const type = String(command.type ?? "");
     const cap = <K extends keyof typeof h.capabilities>(k: K) => {
@@ -431,7 +547,31 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         h.setSessionName!(String(command.name ?? ""));
         return null;
 
-      case "fork": {
+      case "navigate_tree": {
+        // In-place tree move. Local pi wrappers run it on the SDK; a handle that owns its
+        // session file implements it natively (pi spawn: branch-point anchor +
+        // switch_session, see PiSpawnHandle.navigateTree). Capability-gated, so a backend
+        // without it keeps the old fail-loud answer.
+        cap("navigateTree");
+        // Same projection ids apply here (edit-from-here / leaf switch on a spawn session).
+        const result = await h.navigateTree!(await this.resolveProjectedEntryId(h, String(command.targetId ?? "")), {
+          summarize: command.summarize === true,
+        });
+        return { cancelled: result.cancelled };
+      }
+
+      case "fork":
+      case "fork_branch": {
+        // Head-less file forks (pi spawn): the host copies the branch on disk and the
+        // backend process is never asked. See SessionCapabilities.forkFileBranch for
+        // why the RPC fork is unusable here.
+        if (h.capabilities.forkFileBranch) {
+          const target = type === "fork"
+            ? String((command.reset === true && command.editEntryId ? command.editEntryId : command.entryId) ?? "")
+            : String(command.entryId ?? "");
+          return await this.forkFileBranch(h, target || undefined);
+        }
+        if (type === "fork_branch") this.fail(type, "forkFileBranch");
         cap("fork");
         // opts.reset: the external backend's "edit from here" semantics (after
         // fork the handle rebinds to the child session and continues in place;
@@ -444,6 +584,14 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           reset: command.reset === true,
           editEntryId: typeof command.editEntryId === "string" && command.editEntryId ? command.editEntryId : undefined,
         });
+        // Rebind-shaped fork (pi spawn, legacy/stale clients): the hosted process moved to
+        // the child, but its registry key/socket/unit still carry the SOURCE id — the source
+        // could never start an agent again and the copy could get a second one. Release the
+        // moved wrapper so both sessions cold-start from their own files (pi-web's own fork
+        // path is the file copy above; this keeps the fallback coherent too).
+        if (h.capabilities.forkRebindHandoff && r.newSessionFile) {
+          await releaseReboundWrapper(r.newSessionFile);
+        }
         return { text: undefined, cancelled: r.cancelled, newSessionId: r.newSessionFile };
       }
 
@@ -451,7 +599,6 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         cap("executeBash");
         return h.executeBash!(String(command.command ?? ""));
       }
-
       case "abort_bash":
         return null; // bash runs synchronously through handles
 

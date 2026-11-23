@@ -89,7 +89,10 @@ export async function GET(req: Request) {
     if (detachedPrefIds.size > 0) {
       const runningIds = new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()]);
       for (const s of sessions) {
-        if (!runningIds.has(s.id) && detachedPrefIds.has(s.id)) s.detachPref = true;
+        // "Start in process" is a pi-only action; external agents use their own
+        // provider door and must not surface the pi row-menu conversion.
+        const piSession = !s.agent || s.agent === "pi";
+        if (piSession && !runningIds.has(s.id) && detachedPrefIds.has(s.id)) s.detachPref = true;
       }
     }
     // Session annotation slot: extensions append their own fields (e.g. the TUI bridge's

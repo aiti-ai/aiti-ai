@@ -7,7 +7,7 @@
  *   registry.ts     on-disk session registry (recovery routing data)
  *   runner.ts       systemd-run / plain-detached probe + launch (Factory input)
  *   socket-child.ts ChildProcess facade over the framed socket (Adapter)
- *   wrapper-source.ts  the wrapper program, materialized at first use
+ *   (the wrapper program ships as `bin/agent-wrapper.mjs`, run via `pi-web wrapper`)
  *   wire.ts         framing + control frames
  *
  * The factory decides ONCE per process which strategies exist; callers (the
@@ -22,7 +22,7 @@
  *
  * Idle lifecycle: PI_WEB_IDLE_TIMEOUT_MS is shared with pi-web's in-process
  * session GC. A wrapper-hosted agent with no attached client and no output for
- * that long is reaped by the wrapper itself (see wrapper-source.ts); while a
+ * that long is reaped by the wrapper itself (see bin/agent-wrapper.mjs); while a
  * client is attached, pi-web owns the lifecycle (handle-store idle governor).
  */
 
@@ -30,12 +30,12 @@ import { existsSync } from "node:fs";
 import { DirectStarter } from "./direct.ts";
 import { LinuxMacWrapperStarter } from "./wrapper.ts";
 import { probeRunner } from "./runner.ts";
-import { pruneDeadEntries, starterRoot } from "./registry.ts";
+import { pruneDeadEntries, setDetachedPreference, starterRoot } from "./registry.ts";
 import type { AgentStarter, WrapperStarter } from "./types.ts";
 
 export type { AgentStarter, AgentStarterSpawnOptions, WrapperStarter } from "./types.ts";
 export { DirectStarter } from "./direct.ts";
-export { LinuxMacWrapperStarter, materializeWrapper } from "./wrapper.ts";
+export { LinuxMacWrapperStarter } from "./wrapper.ts";
 export { SocketChild, isDetachableChild, REPLAY_END_EVENT } from "./socket-child.ts";
 export {
   starterRoot,
@@ -149,6 +149,46 @@ export async function describeDetachSupport(): Promise<DetachSupportInfo> {
 export async function getWrapperStarter(): Promise<WrapperStarter | undefined> {
   const starters = await getAgentStarters();
   return starters.wrapper;
+}
+
+/**
+ * The hosted agent moved to another session on its own (a rebind-shaped fork: pi's RPC
+ * `fork` moves the one subprocess to a NEW session file and announces the new id).
+ *
+ * Stop it and forget its registry entry, then mark the new session as
+ * detached-preferred. Why: the registry key, socket path and systemd unit still carry
+ * the SOURCE id after a rebind, so once the process moved away
+ *   - the source session can never start an agent again (the unit name / socket path
+ *     stay taken — spawn is refused as "already hosted"), and
+ *   - the copy has no entry of its own (a second agent could open the same file).
+ * Both session files stay intact; each one cold-starts from its own file afterwards
+ * (the copy keeps detached hosting through the preference).
+ *
+ * Returns true when a hosted process was actually released.
+ */
+export async function releaseReboundWrapper(newSessionId: string): Promise<boolean> {
+  if (!newSessionId) return false;
+  const wrapper = await getWrapperStarter();
+  if (!wrapper) return false;
+  const entry = wrapper.describe(newSessionId);
+  if (!entry) return false; // not wrapper-hosted (direct/in-process) — nothing to release
+  let released = false;
+  try {
+    released = await wrapper.kill(newSessionId);
+  } catch {
+    released = false;
+  }
+  try {
+    setDetachedPreference(newSessionId, {
+      mode: "subprocess-detached",
+      ...(entry.providerType ? { providerType: entry.providerType } : {}),
+      ...(entry.agentKey ? { agentKey: entry.agentKey } : {}),
+      ...(entry.cwd ? { cwd: entry.cwd } : {}),
+    });
+  } catch {
+    /* the next open falls back to in-process hosting */
+  }
+  return released;
 }
 
 /**

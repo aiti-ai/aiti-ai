@@ -181,6 +181,24 @@ export interface SessionProvider {
   ownsFile?(sessionFile: string): Promise<boolean> | boolean;
 
   /**
+   * Can the hosting switch safely restart this backend? External providers that
+   * cannot resume their native session after a process restart should set false;
+   * the hosting panel then stays read-only for them (default true).
+   */
+  hostingSwitch?: boolean;
+
+  /**
+   * Release a durable single-writer claim on a session file.
+   *
+   * Used by the explicit hosting switch to in-process: the user has chosen the
+   * local runtime, so the provider must stop claiming the file (otherwise the
+   * core's ownsFile gate would keep routing it back to a subprocess and a
+   * second writer could be started). Return true when the provider no longer
+   * claims the file; absent = this provider has no durable claim to release.
+   */
+  releaseOwnership?(sessionId: string): Promise<boolean> | boolean;
+
+  /**
    * Can this provider host its agent as a detached wrapper process?
    *
    * false = no: the backend uses node IPC (`child.send`), non-pipe stdio, or a

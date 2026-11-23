@@ -20,7 +20,8 @@
 import type { ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, watch, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentStarterSpawnOptions, WrapperStarter } from "./types.ts";
 import {
   CH_CTRL,
@@ -54,8 +55,7 @@ import {
   type RunnerKind,
   type SessionEntry,
 } from "./registry.ts";
-import { launchWrapper, stopLauncher, unitBusy, unitNameFor } from "./runner.ts";
-import { WRAPPER_SOURCE } from "./wrapper-source.ts";
+import { launchWrapper, stopLauncher, stopUnitAndWait, unitBusy, unitNameFor } from "./runner.ts";
 
 /** How long a freshly launched wrapper may take to start listening. */
 const READY_TIMEOUT_MS = 15_000;
@@ -83,24 +83,43 @@ type Handshake = {
   prelude: { frames: Frame[]; bytes: Buffer };
 };
 
-/** Materialize wrapper.mjs into the starter root (content versioned, 0700). */
-export function materializeWrapper(): string {
-  ensureStarterDirs();
-  const target = join(starterRoot(), "wrapper.mjs");
-  let current: string | undefined;
+/**
+ * Locate this installation's pi-web CLI (`bin/pi-web.js`), whose `wrapper`
+ * subcommand hosts the detachable agent.
+ *
+ * The wrapper used to be materialized into `~/.pi/agent/agent-starter/` because
+ * the npm package only ships .next/bin/extensions/public. Dev and prod share
+ * that HOME directory, so each build overwrote the other's embedded copy — a
+ * newer host silently ran an older wrapper (2026-11-23: probes superseded live
+ * clients again). Running `pi-web wrapper` from the installation's own bin/
+ * makes every build execute exactly its own version, and the CLI file is part
+ * of the package (bin/ is published), so no copy is needed at all.
+ */
+function resolveCliEntry(): string {
+  const candidates: string[] = [];
+  const pkgDir = process.env.PI_WEB_PKG_DIR?.trim();
+  if (pkgDir) candidates.push(join(pkgDir, "bin", "pi-web.js"));
+  // Launched through bin/pi-web.js (prod/npm): argv[1] is the CLI itself.
+  if (process.argv[1]) candidates.push(join(dirname(process.argv[1]), "pi-web.js"));
+  // The service sets WorkingDirectory to the repo; dev's argv[1] is Next's CLI.
+  candidates.push(join(process.cwd(), "bin", "pi-web.js"));
+  // Bundled server module: walk up from .next/server/... to the package root.
   try {
-    current = readFileSync(target, "utf8");
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let depth = 0; depth < 8; depth += 1) {
+      candidates.push(join(dir, "bin", "pi-web.js"));
+      dir = dirname(dir);
+    }
   } catch {
-    current = undefined;
+    /* older runners without import.meta: the candidates above still cover it */
   }
-  if (current !== WRAPPER_SOURCE) {
-    // Atomic swap: a concurrently spawning instance sees either version whole.
-    const tmp = `${target}.${process.pid}.tmp`;
-    writeFileSync(tmp, WRAPPER_SOURCE, { mode: 0o700 });
-    chmodSync(tmp, 0o700);
-    renameSync(tmp, target);
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
   }
-  return target;
+  throw new Error(
+    "agent-starter: cannot locate bin/pi-web.js (the `pi-web wrapper` subcommand). "
+    + "Set PI_WEB_PKG_DIR to the pi-web package root.",
+  );
 }
 
 /** Wait for a file to appear, driven by directory events (no polling loop). */
@@ -201,6 +220,13 @@ async function connectWithHandshake(path: string, timeoutMs = HELLO_TIMEOUT_MS):
 function onceConnect(path: string, timeoutMs: number): Promise<Handshake> {
   return new Promise((resolve, reject) => {
     const socket = connect({ path });
+    // Identify as a real client: the wrapper only supersedes the previous one
+    // for an identified socket, so a liveness probe can never steal the slot
+    // (2026-11-23: probes disconnected the live page; its queue_update feed
+    // died and the queue panel stayed empty until a reload).
+    socket.once("connect", () => {
+      try { socket.write(encodeControl({ t: "hello_ack" })); } catch { /* handshake fails loud below */ }
+    });
     const parser = new FrameParser();
     const frames: Frame[] = [];
     let settled = false;
@@ -294,7 +320,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
   private readonly runnerEnv: Record<string, string>;
   private readonly nodePath: string;
   private readonly idleTimeoutMs: number;
-  private wrapperPath: string | undefined;
+  private wrapperArgs: string[] | undefined;
 
   constructor(options: WrapperStarterOptions) {
     this.runner = options.runner;
@@ -303,9 +329,11 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     this.idleTimeoutMs = options.idleTimeoutMs ?? 0;
   }
 
-  private wrapper(): string {
-    if (!this.wrapperPath) this.wrapperPath = materializeWrapper();
-    return this.wrapperPath;
+  private wrapper(): string[] {
+    // `node <cli> wrapper --config <launch.json>`; resolved once per instance
+    // (the path is stable for the life of this installation).
+    this.wrapperArgs ??= [resolveCliEntry(), "wrapper"];
+    return this.wrapperArgs;
   }
 
   // --------------------------------------------------------------------------
@@ -434,7 +462,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       launched = await launchWrapper({
         runner: this.runner,
         nodePath: this.nodePath,
-        wrapperPath: this.wrapper(),
+        wrapperArgs: this.wrapper(),
         configPath,
         key,
         env: this.runnerEnv,
@@ -561,12 +589,14 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       const gone = await waitForFileGone(entry.socket, runDir(), 8000);
       if (gone) {
         deleteEntry(entry.key, "kill: wrapper removed its socket");
+        if (entry.runner === "systemd-run" && entry.unit) await stopUnitAndWait(entry.unit, this.runnerEnv);
         return true;
       }
       // Hard signal (SIGKILL): the wrapper died without cleanup, leaving a
       // stale socket file. Nothing listens behind it — clear the leftovers.
       if ((await probeEndpoint(entry.socket)) === "dead") {
         deleteEntry(entry.key, "kill: socket definitively dead after signal");
+        if (entry.runner === "systemd-run" && entry.unit) await stopUnitAndWait(entry.unit, this.runnerEnv);
         return true;
       }
       // The wrapper is still shutting the agent down (orderly shutdown of a
@@ -583,6 +613,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       if (!gone) {
         if ((await probeEndpoint(entry.socket)) === "dead") {
           deleteEntry(entry.key, "kill(frame): socket definitively dead");
+          if (entry.runner === "systemd-run" && entry.unit) await stopUnitAndWait(entry.unit, this.runnerEnv);
           return true;
         }
         return false;
@@ -590,6 +621,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     }
     // Socket dead: the wrapper exited (or was never there) — clear the leftovers.
     deleteEntry(entry.key, "kill: wrapper endpoint gone");
+    if (entry.runner === "systemd-run" && entry.unit) await stopUnitAndWait(entry.unit, this.runnerEnv);
     return true;
   }
 

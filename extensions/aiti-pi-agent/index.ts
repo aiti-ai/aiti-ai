@@ -12,11 +12,11 @@
  */
 
 import { join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { PiSpawnHandle, PI_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./pi-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
-import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
 
@@ -39,19 +39,49 @@ interface SpawnIndex {
 }
 let spawnStateDir: string | null = null;
 let spawnIndex: SpawnIndex | null = null;
+let spawnIndexMtimeMs: number | null = null;
 
+function spawnIndexFile(): string | null {
+  return spawnStateDir ? join(spawnStateDir, "spawn-sessions.json") : null;
+}
+
+/**
+ * Shared index, cached by file mtime. Dev and prod pi-web instances share the
+ * file; a stale in-memory copy would keep claiming a session that another
+ * instance released for an explicit in-process switch (twin risk).
+ */
 function loadSpawnIndex(): SpawnIndex {
-  if (spawnIndex) return spawnIndex;
+  const file = spawnIndexFile();
+  if (!file) {
+    if (!spawnIndex) spawnIndex = { version: 1, sessions: {} };
+    return spawnIndex;
+  }
+  let mtimeMs: number | null = null;
+  try {
+    mtimeMs = statSync(file).mtimeMs;
+  } catch {
+    mtimeMs = null;
+  }
+  if (spawnIndex && (mtimeMs === null || mtimeMs === spawnIndexMtimeMs)) return spawnIndex;
   let parsed: SpawnIndex | null = null;
-  if (spawnStateDir) {
+  if (mtimeMs !== null) {
     try {
-      parsed = JSON.parse(readFileSync(join(spawnStateDir, "spawn-sessions.json"), "utf8")) as SpawnIndex;
+      parsed = JSON.parse(readFileSync(file, "utf8")) as SpawnIndex;
     } catch { /* missing or corrupt → fresh index */ }
   }
   spawnIndex = parsed && parsed.version === 1 && parsed.sessions && typeof parsed.sessions === "object"
     ? parsed
     : { version: 1, sessions: {} };
+  spawnIndexMtimeMs = mtimeMs;
   return spawnIndex;
+}
+
+function noteSpawnIndexWrite(file: string): void {
+  try {
+    spawnIndexMtimeMs = statSync(file).mtimeMs;
+  } catch {
+    spawnIndexMtimeMs = null;
+  }
 }
 
 /** Session id from a pi session file path ("<ISO timestamp>_<uuid>.jsonl"); null when the
@@ -73,7 +103,9 @@ function recordSpawnSession(id: string, cwd?: string): void {
   idx.sessions[id] = { ...(cwd ? { cwd } : {}), startedAt: new Date().toISOString() };
   if (spawnStateDir) {
     try {
-      writeFileSync(join(spawnStateDir, "spawn-sessions.json"), JSON.stringify(idx));
+      const file = join(spawnStateDir, "spawn-sessions.json");
+      writeFileSync(file, JSON.stringify(idx));
+      noteSpawnIndexWrite(file);
     } catch { /* best-effort; in-memory marking still covers this process */ }
   }
 }
@@ -85,10 +117,34 @@ async function trackSpawnSession(pending: Promise<PiSpawnHandle>): Promise<PiSpa
   return handle;
 }
 
+/**
+ * Forget a session this backend spawned. Used by the explicit hosting switch
+ * to in-process: the local runtime must be allowed to own the file, and a
+ * stale claim would route the next request back to a subprocess (twin risk).
+ */
+function releaseSpawnSession(id: string): boolean {
+  if (!id) return true;
+  const idx = loadSpawnIndex();
+  const previous = idx.sessions[id];
+  if (!previous) return true;
+  delete idx.sessions[id];
+  if (spawnStateDir) {
+    try {
+      const file = join(spawnStateDir, "spawn-sessions.json");
+      writeFileSync(file, JSON.stringify(idx));
+      noteSpawnIndexWrite(file);
+    } catch {
+      idx.sessions[id] = previous;
+      return false;
+    }
+  }
+  return true;
+}
+
 export default {
   id: "aiti-pi-agent",
   name: "Pi Spawn (子进程后端)",
-  icon: "🚀",
+  icon: "icons/rocket.svg",
 
   features: [spawnEnvFeature("Pi"), spawnDisplayEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],
 
@@ -100,6 +156,7 @@ export default {
         "ext.displayName": "pi 会话后端",
       },
       en: {
+        ...spawnFeatureI18nEn(),
         "ext.displayName": "pi Session Backend",
       },
     },
@@ -129,6 +186,8 @@ export default {
           detachable?: boolean;
           /** Single-writer claim on session files this backend spawned (blocks the core's local-runtime twin). */
           ownsFile?: (sessionFile: string) => boolean | Promise<boolean>;
+          /** Explicit in-process switch: drop this backend's durable file claim. */
+          releaseOwnership?: (sessionId: string) => boolean | Promise<boolean>;
           maxCapabilities: SessionCapabilitiesLike;
           createSession(options: {
             sessionId?: string;
@@ -185,6 +244,8 @@ export default {
             const sid = sessionIdFromSessionFile(sessionFile);
             return Boolean(sid && loadSpawnIndex().sessions[sid]);
           },
+          /** Explicit in-process switch: drop the durable claim so the core may open locally. */
+          releaseOwnership: (sessionId: string) => releaseSpawnSession(sessionId),
           createSession: (options) => {
             // Resume-without-cwd recovery (composite-id restore after a host restart):
             // the caller only knows the session id — the workspace lives in the spawn

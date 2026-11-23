@@ -5,6 +5,7 @@ import { getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { sideChatNameFromText } from "@/lib/session-family";
 import { createSideSession, forkSessionBranch, forkSessionIntoCwd, readForkSourceTitle, SessionForkError } from "@/lib/session-fork";
+import { inheritForkHosting } from "@/lib/session/fork-hosting";
 import {
   cacheSessionPath,
   invalidateSessionListCache,
@@ -80,6 +81,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const fork = side ? createSideSession(sourcePath, liveLeafId, sideName) : forkSessionBranch(sourcePath, liveLeafId, sourceTitle);
     cacheSessionPath(fork.sessionId, fork.path);
     invalidateSessionListCache();
+    // A wrapper-hosted source bequeaths its detached hosting to the copy (a side chat
+    // keeps its own in-process host: it is a scratchpad of the same session).
+    if (!side) await inheritForkHosting(id, fork.sessionId);
 
     // Read after the name was written: the row carries it.
     const info = await readSessionInfo(fork.path);

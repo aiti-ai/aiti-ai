@@ -19,8 +19,12 @@ import { createSideBoundaryEntry, createSideMetadataEntry, readSideRelation } fr
 export type SessionForkRefusal = "not_found" | "unsaved" | "empty" | "subagent" | "side" | "cwd-invalid" | "cwd-exists";
 
 export class SessionForkError extends Error {
-  constructor(readonly code: SessionForkRefusal, message: string) {
+  readonly code: SessionForkRefusal;
+  // Explicit assignment (not a constructor parameter property): node --test imports this
+  // module through strip-only TypeScript, which rejects parameter properties.
+  constructor(code: SessionForkRefusal, message: string) {
     super(message);
+    this.code = code;
     this.name = "SessionForkError";
   }
 }

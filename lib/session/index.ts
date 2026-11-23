@@ -408,6 +408,10 @@ export async function openExternalSession(
   }
   const candidates = findProvidersForAgent(agent);
   if (candidates.length === 0) return undefined;
+  // A hosting switch may have persisted "direct subprocess" for this external
+  // agent; otherwise the provider default (wrapper when detachable) applies.
+  const hostingPref = getDetachedPreference(sid);
+  const prefDetach = hostingPref ? hostingPref.mode !== "subprocess" : undefined;
   let lastError: unknown;
   for (const provider of candidates) {
     try {
@@ -415,6 +419,7 @@ export async function openExternalSession(
         await withAgentStarter(provider, {
           ...options,
           sessionId: options.sessionId ?? sid,
+          ...(options.detach === undefined && prefDetach !== undefined ? { detach: prefDetach } : {}),
         }),
       );
       putHandle(handle);
@@ -482,7 +487,8 @@ export async function openDetachedPreferred(
 
 /** Does this cold session prefer survive-restart hosting (preference marker present)? */
 export function prefersDetached(sessionId: string): boolean {
-  return getDetachedPreference(sessionId) !== undefined;
+  const pref = getDetachedPreference(sessionId);
+  return !!pref && pref.mode !== "subprocess";
 }
 
 /** Registry key of the attach provider (registered by the attach extension at startup; undefined when the extension is not installed). */
@@ -535,9 +541,14 @@ export async function attachIfBridged(
 ): Promise<WrappedSessionLike | undefined> {
   // Reuse an already-attached handle — otherwise creating a new connection per
   // request would dispose the old handle currently watched by SSE (putHandle's
-  // overwrite semantics)
+  // overwrite semantics). A wrapper serves ONE client: re-attaching on every
+  // read superseded the existing handle and made detached sessions flicker
+  // (messages appear, then state/reset empties the view).
   const existingHandle = lookupHandle(sessionFile);
   if (existingHandle?.alive()) return new HandleSessionAdapter(existingHandle);
+  const uuidFromFile = sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/)?.[1];
+  const existingByUuid = uuidFromFile ? findAliveHandleById(uuidFromFile) : undefined;
+  if (existingByUuid) return new HandleSessionAdapter(existingByUuid);
 
   // Concurrent-view dedupe: opening a session fires several parallel requests
   // (GET /api/sessions/[id], /state, /context, meta fallback …) and each one
@@ -668,10 +679,25 @@ async function attachIfBridgedUncached(
  * /api/agent/[id] and /events use this so the existing chat flow drives any
  * backend without frontend changes.
  */
+/** Find an alive handle by plain, native or composite id (detached provider handles may be keyed any of these). */
+export function findAliveHandleById(id: string): SessionHandle | undefined {
+  if (!id) return undefined;
+  const direct = lookupHandle(id);
+  if (direct?.alive()) return direct;
+  const native = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
+  if (!native) return undefined;
+  for (const [key, handle] of listAllHandles()) {
+    if (!handle?.alive()) continue;
+    if (key === native || key === id || handle.id === native || handle.id === id) return handle;
+    if (key.endsWith(`:${native}`) || handle.id.endsWith(`:${native}`)) return handle;
+  }
+  return undefined;
+}
+
 export function resolveAnySession(id: string): WrappedSessionLike | undefined {
   // Local registry is consulted by callers first (they import getRpcSession);
   // this helper is the handle-side fallback.
-  const handle = lookupHandle(id);
+  const handle = findAliveHandleById(id);
   if (!handle) return undefined;
   return new HandleSessionAdapter(handle);
 }

@@ -12,7 +12,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { open, stat } from "node:fs/promises";
+import { appendFile, open, stat, truncate } from "node:fs/promises";
 import { RpcChildHost, toInteractionRequest, toExtensionUIResponse, UI_METHODS_NEEDING_ANSWER, shutdownChild, RPC_CTRL_TIMEOUT_MS, type ExtensionUIRequest } from "./fork-rpc/wire.ts";
 // 远端 pi 协议队列 queueManage 适配（共享层 _shared/pi-fork-rpc/remote-queue.ts，副本随扩展部署——改动须双向同步）
 import { createRemotePiQueueSupport } from "./fork-rpc/remote-queue.ts";
@@ -93,6 +93,40 @@ export async function readSessionTailLines(filePath: string, maxBytes = 1_000_00
 }
 
 const PI_SESSION_TAIL_BYTES = 1_000_000;
+
+/**
+ * Custom-entry type of the in-place branch anchor navigateTree() appends. `custom`
+ * entries never reach the LLM context (pi's sessionEntryToContextMessages skips them)
+ * and pi-web's transcript reader drops them too — the anchor is invisible.
+ */
+export const BRANCH_POINT_ENTRY_TYPE = "pi-web:branch-point";
+
+/**
+ * Append one JSONL entry to a session file on disk.
+ *
+ * pi writes with append semantics and restores the leaf as the file's last entry, so an
+ * external append is a valid new tail. A file left without a trailing newline (crash,
+ * hand edit) gets one first, otherwise the new entry would merge into the previous line.
+ */
+export async function appendSessionEntry(filePath: string, entry: Record<string, unknown>): Promise<void> {
+  let needsNewline = false;
+  try {
+    const size = (await stat(filePath)).size;
+    if (size > 0) {
+      const fh = await open(filePath, "r");
+      try {
+        const buf = Buffer.alloc(1);
+        await fh.read(buf, 0, 1, size - 1);
+        needsNewline = buf[0] !== 0x0a;
+      } finally {
+        await fh.close();
+      }
+    }
+  } catch {
+    // Missing file: appendFile creates it (pi always writes the header first).
+  }
+  await appendFile(filePath, `${needsNewline ? "\n" : ""}${JSON.stringify(entry)}\n`);
+}
 
 const PI_COMMANDS: PiForkCommands = {
   fork: "fork",
@@ -195,6 +229,8 @@ export class PiSpawnHandle extends RpcChildHost {
   private syntheticUI = new Map<string, (answer: { action: "accept" | "decline"; answers?: Record<string, string | string[]>; message?: string }) => void>();
   private syntheticSeq = 0;
   private deathReason: string | undefined;
+  /** Settles when an in-flight navigateTree() finished (prompt() waits on it, see below). */
+  private navBarrier: Promise<void> | null = null;
   readonly whenReady: Promise<void>;
   /** 远端队列镜像 + queueManage（remote-queue 共享层；镜像由 onFrame 喂 queue_update 帧）。 */
   private readonly rq = createRemotePiQueueSupport({
@@ -212,10 +248,22 @@ export class PiSpawnHandle extends RpcChildHost {
     this.spec = spec;
     this.source = "aiti-pi-agent/spawn";
     this.capabilities = capabilitiesFor(spec);
-    // 上下文用量：RPC 线协议无该命令字段（hasContextUsage 仅 omp），但扩展侧经
-    // get_state（sessionFile/model.contextWindow）+ 会话文件换算自实现了
-    // getContextUsage()——presence-based 宿主适配层按方法存在性投影，capability 如实翻 true。
+    // Context usage: the RPC wire protocol has no such command field (only omp reports
+    // hasContextUsage), but this handle implements getContextUsage() from get_state
+    // (sessionFile/model.contextWindow) + the session file. The presence-based host
+    // adapter projects by method existence, so the capability is truthfully true.
     this.capabilities = { ...this.capabilities, contextUsage: true, forkRebindHandoff: true };
+    // navigateTree: the RPC wire protocol has no such command (capabilitiesFor keeps the
+    // probe result false), but this handle implements pi's in-place tree move with a
+    // branch-point custom entry + switch_session reopening the same file. Without this
+    // declaration "edit from here" degrades to an RPC fork (new file + extra sidebar row).
+    this.capabilities = { ...this.capabilities, navigateTree: true };
+    // forkFileBranch: the branch button's fork is a host-side file copy (same machinery as
+    // the sidebar's Fork); it never sends RPC fork to this process. RPC fork moves the
+    // subprocess to a new session file while the agent-starter record (key/socket/systemd
+    // unit) still carries the SOURCE id: reopening the source is refused and the copy can
+    // be opened by a second agent (double write).
+    this.capabilities = { ...this.capabilities, forkFileBranch: true };
     this.id = id;
     this.cwd = cwd;
     this.subscribe((e) => {
@@ -408,6 +456,11 @@ export class PiSpawnHandle extends RpcChildHost {
     text: string,
     options?: { images?: unknown[]; streamingBehavior?: string },
   ): Promise<void | { queued: true }> {
+    // A send racing an in-place branch move must land on the branch it moved to: the
+    // move's own RPC round trips leave the child's stdin free, so a prompt written
+    // meanwhile would be processed BEFORE `switch_session` and grow the old branch
+    // (branch navigation fires the move without awaiting it).
+    if (this.navBarrier) await this.navBarrier;
     const frame: Record<string, unknown> = {
       type: "prompt",
       message: text,
@@ -461,7 +514,12 @@ export class PiSpawnHandle extends RpcChildHost {
   }
 
   alive(): boolean {
-    return this.aliveFlag && this.child.exitCode === null;
+    // A wrapper facade whose socket closed can stay exitCode === null for a while (no "exit"
+    // event yet) while its stdin is no longer writable: `request()` rejects it as "not running",
+    // but an alive() that ignores stdin kept such a dead handle in the store — reads then
+    // returned empty transcripts and prompts silently never ran (2026-11-23). Cannot drive it
+    // = not alive.
+    return this.aliveFlag && this.child.exitCode === null && this.child.stdin?.writable !== false;
   }
 
   isRunning(): boolean {
@@ -571,7 +629,15 @@ export class PiSpawnHandle extends RpcChildHost {
    * id). On success we read get_state.sessionId, announce session_backend_ready (the host
    * re-keys the detached registry record and double-keys the handle store) and return
    * newSessionFile so the frontend can follow to the child (branch button: opens the
-   * child with the draft; edit-from-here with forkRebindHandoff: switches + auto-sends).
+   * child with the draft; a rebind-shaped `fork(reset)` from a backend without navigateTree
+   * switches + auto-sends).
+   *
+   * "Edit from here" does NOT come through here any more: navigateTree() rewinds this same
+   * session instead of forking a duplicate (see below). pi-web's branch button does not
+   * either: this handle declares forkFileBranch, so the host copies the branch on disk
+   * (RPC fork leaves the SOURCE id owned by this wrapper's socket/unit — reopening the
+   * source was refused and the copy could get a second agent). Kept for callers that
+   * explicitly want pi's own fork semantics.
    */
   async fork(entryId: string, opts?: { reset?: boolean; editEntryId?: string }): Promise<{ cancelled: boolean; newSessionFile?: string }> {
     const requested = opts?.reset && opts.editEntryId ? opts.editEntryId : entryId;
@@ -586,6 +652,108 @@ export class PiSpawnHandle extends RpcChildHost {
       this.emit({ type: "session_backend_ready", oldId, id: newId });
       return { cancelled: false, newSessionFile: newId };
     }
+    return { cancelled: false };
+  }
+
+  /**
+   * @capability navigateTree — in-place branch inside the hosted session's own file.
+   *
+   * pi 1.6's RPC has no `navigate_tree`: tree moves only exist in-process, and the one
+   * tree write the wire exposes (`fork`) creates a NEW session file. Falling back to it
+   * made "edit from here" fork a duplicate session next to the original in the sidebar.
+   * pi rebuilds the leaf from the file on load (the last entry is the leaf), so the same
+   * in-place branch local sessions get is reachable from here: append a context-invisible
+   * `custom` entry as a child of the target, then re-open the file with `switch_session`.
+   * The next prompt grows the new branch inside THIS file (same id, same file), and the
+   * abandoned tail stays where it was, off the active path — exactly what pi's in-process
+   * navigateTree() leaves behind.
+   *
+   * Target semantics mirror pi's: a user (or custom) message means "rewind to its parent"
+   * (its text belongs in the composer), every other entry becomes the leaf itself.
+   */
+  async navigateTree(targetId: string, options?: { summarize?: boolean }): Promise<{ cancelled: boolean }> {
+    const move = this.moveTree(targetId, options);
+    this.navBarrier = move.then(() => {}, () => {});
+    try {
+      return await move;
+    } finally {
+      this.navBarrier = null;
+    }
+  }
+
+  private async moveTree(targetId: string, options?: { summarize?: boolean }): Promise<{ cancelled: boolean }> {
+    // A branch summary is a model turn; the wire cannot run one from here. pi also refuses
+    // tree moves mid-run (the leaf the running turn appends to would move under it).
+    if (options?.summarize) throw new Error("[aiti-pi-agent] navigateTree: branch summaries are not supported over RPC");
+    if (this.isRunning()) throw new Error("Wait for the current response to finish before navigating the session tree.");
+    const entriesFrame = await this.request<{ entries?: Array<Record<string, unknown>>; leafId?: unknown }>(
+      { type: "get_entries" },
+      { timeoutMs: RPC_CTRL_TIMEOUT_MS },
+    );
+    const entries = Array.isArray(entriesFrame?.entries) ? entriesFrame.entries : [];
+    const target = entries.find((e) => e && e.id === targetId);
+    if (!target) throw new Error(`[aiti-pi-agent] navigateTree: entry "${targetId}" not found`);
+    const role = (target.message as { role?: unknown } | undefined)?.role;
+    const newLeafId = (target.type === "message" && role === "user") || target.type === "custom_message"
+      ? (typeof target.parentId === "string" && target.parentId ? target.parentId : null)
+      : targetId;
+    // Already there: pi treats it as a no-op too (no marker, no re-open).
+    const currentLeaf = typeof entriesFrame?.leafId === "string" && entriesFrame.leafId ? entriesFrame.leafId : null;
+    if (newLeafId === currentLeaf) return { cancelled: false };
+
+    const state = await this.request<{ sessionFile?: unknown }>(
+      { type: "get_state" },
+      { timeoutMs: RPC_CTRL_TIMEOUT_MS },
+    );
+    const file = typeof state?.sessionFile === "string" && state.sessionFile ? state.sessionFile : this.ctxSessionFile;
+    if (!file) throw new Error("[aiti-pi-agent] navigateTree: this session has no file on disk yet");
+
+    // pi's own id shape (8 hex chars, SessionManager.generateId) and must not collide with
+    // an entry already in the file: the marker is a first-class entry of this session.
+    const taken = new Set(entries.map((e) => String(e.id ?? "")));
+    let markerId = "";
+    for (let i = 0; i < 100 && !markerId; i++) {
+      const id = randomUUID().slice(0, 8);
+      if (!taken.has(id)) markerId = id;
+    }
+    if (!markerId) markerId = randomUUID();
+    const marker = {
+      type: "custom",
+      customType: BRANCH_POINT_ENTRY_TYPE,
+      data: { targetId, leafId: newLeafId },
+      id: markerId,
+      parentId: newLeafId,
+      timestamp: new Date().toISOString(),
+    };
+    const sizeBefore = await stat(file).then((s) => s.size, () => 0);
+    await appendSessionEntry(file, marker);
+    try {
+      const switched = await this.request<{ cancelled?: boolean }>(
+        { type: "switch_session", sessionPath: file },
+        { timeoutMs: RPC_CTRL_TIMEOUT_MS },
+      );
+      if (switched?.cancelled) {
+        // An extension's session_before_switch said no. Roll the marker back: left in the
+        // file it would become the leaf of the next load and silently move the session.
+        await truncate(file, sizeBefore).catch(() => {});
+        return { cancelled: true };
+      }
+    } catch (error) {
+      await truncate(file, sizeBefore).catch(() => {});
+      throw error;
+    }
+    // The runtime was rebuilt from the file: model/usage now come from the new branch.
+    this.ctxSessionFile = file;
+    void this.refreshContextUsage();
+    void this.request<{ model?: { id?: unknown; provider?: unknown } }>(
+      { type: "get_state" },
+      { timeoutMs: RPC_CTRL_TIMEOUT_MS },
+    ).then((st) => {
+      const m = st?.model;
+      if (m && typeof m.id === "string" && m.id && typeof m.provider === "string" && m.provider) {
+        this.model = { id: m.id, provider: m.provider };
+      }
+    }).catch(() => { /* the next state read reports it */ });
     return { cancelled: false };
   }
 
@@ -698,9 +866,6 @@ export class PiSpawnHandle extends RpcChildHost {
   }
   setActiveTools(): never {
     throw new Error(`Capability "setActiveTools" is not supported by session backend "${this.source}"`);
-  }
-  navigateTree(): never {
-    throw new Error(`Capability "navigateTree" is not supported by session backend "${this.source}"`);
   }
   deleteSession(): never {
     throw new Error(`Capability "deleteSession" is not supported by session backend "${this.source}"`);
