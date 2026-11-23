@@ -27,6 +27,13 @@
 - 禁手改 dist/ 与运行时平铺文件；跨扩展通信走 ctx.services（禁 globalThis.__ext 直穿）
 - 服务端：SQLite 一律 WAL + 分批小事务（批间 setImmediate 让步）；禁 execFileSync 调 >1s 外部程序；>8MB 文件禁同步读
 
+## 虚拟屏进程托管（survivor wrapper，2026-11-23 定）
+
+- 虚拟屏全栈（Xvfb / dbus-daemon / at-spi / WM / tint2 / compositor / x11vnc / vnc-bridge / rdp-bridge）统一经 `lib/env.ts` 的 survivor 启动器拉起：探测到 user manager bus（`/run/user/<uid>/bus` + `systemd-run`）→ transient user unit（`systemd-run --user --unit=ui-env-<name>-<rand> --collect --setenv=… --`），每个组件独立 cgroup，**pi-web restart（KillMode=control-group）不再误杀**；无 systemd 环境回退 detached `sh -c`。
+- shLine 一律**前台 exec 语义**（`exec <bin>`），活性归 detached sh（bare）或 systemd（unit），绝不归 pi-web；unit 模式下 pid 记账用 `systemctl --user show -P MainPID` 回填（一次性短重试，非状态轮询）。
+- 排障：`cache/logs/ensure-headless.log` 记录 survivor 模式与 WM 适配；unit 列表 `systemctl --user list-units 'ui-env-*'`；transient unit 随进程退出自动除名（--collect），stopHeadless 语义不变（按 display/端口探测杀）。
+- 残留 socket 自愈：`/tmp/.X11-unix/X<N>` 存在但无 Xvfb/Xvnc 进程服务时，ensureHeadless 会先删掉再拉起（旧行为会永久跳过 spawn 报「socket 存在但无进程」）。
+
 ## VNC 密码契约（Windows 自管 winvnc / UltraVNC，2026-09-18 定稿）
 
 **原题**：扩展自己生成随机密码、由桥在 RFB 握手时代答 VNC auth —— 密码对不上，查看页永远弹
