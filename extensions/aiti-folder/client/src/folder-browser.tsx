@@ -807,7 +807,9 @@ function TreeNode(o: any) {
   const [downSeq, setDownSeq] = useState(0);
   const parentSeq: number = o.refreshSeq ?? 0;
   const open = expanded.has(node.fullPath);
-  const loadChildren = useCallback(async (force?: boolean)=>{ if(loaded&&!force) return; setLoading(true); try{ const e=await fetchEntries(apiUrl, node.fullPath, { force, showIgnored: showIgnoredRef.current }); setChildren(e); setLoaded(true);}catch{/* noop */}finally{setLoading(false);} }, [loaded, node.fullPath]);
+  // Only the newest concurrent fetch may land (a late response must not overwrite the list or clear loading).
+  const loadGenRef = useRef(0);
+  const loadChildren = useCallback(async (force?: boolean)=>{ if(loaded&&!force) return; const gen=++loadGenRef.current; setLoading(true); try{ const e=await fetchEntries(apiUrl, node.fullPath, { force, showIgnored: showIgnoredRef.current }); if(gen!==loadGenRef.current) return; setChildren(e); setLoaded(true);}catch{/* noop */}finally{ if(gen===loadGenRef.current) setLoading(false); } }, [loaded, node.fullPath]);
   useEffect(()=>{ if(open&&!loaded) loadChildren(); }, [open, loaded, loadChildren]);
   // 根工具栏「刷新」：refreshKey 变化时已加载过的子树强制重拉（含折叠态，再展开即新内容）
   const rkRef = useRef(refreshKey);
@@ -827,18 +829,21 @@ function TreeNode(o: any) {
     else loadChildren(true);
   }, [loaded, loadChildren]);
   // Directory live watch (borrow plan §2.4): watch expanded dirs only (DSH perf discipline); frame →
-  // invalidate cache + force-reload this subtree; 400ms throttle merges bursts (own writes already go through refreshKey).
+  // invalidate cache + force-reload this subtree; trailing throttle merges bursts. Ignored dirs are
+  // not watched at all: their churn never changes a listing or a git badge. `onLiveChange` lets the
+  // root refresh git badges (throttled) without re-fetching the whole tree.
   const watchThrottleRef = useRef(0);
   useEffect(()=>{
-    if(!open || !loaded) return;
+    if(!open || !loaded || node.ignored) return;
     return watchDir(node.fullPath, ()=>{
       const now = Date.now();
-      if(now - watchThrottleRef.current < 400) return;
+      if(now - watchThrottleRef.current < 600) return;
       watchThrottleRef.current = now;
       invalidateEntries(node.fullPath);
       loadChildren(true);
+      o.onLiveChange?.();
     });
-  }, [open, loaded, node.fullPath, loadChildren]);
+  }, [open, loaded, node.fullPath, node.ignored, loadChildren, o.onLiveChange]);
   // 点击处理：点前半段（文件名附近）开文件/展开；点后部触发操作区（小屏无悬停等效）。
   // 搜索结果里的命中目录同样展开（懒加载真实内容）；要新 tab 打开用 hover 的「打开」按钮。
   const handleClick = useCallback(()=>{ if(node.isDir){ const n=!open; onToggle(node.fullPath, n); if(n&&!loaded) loadChildren(); } else { onOpenFile(node.fullPath); } }, [node, open, loaded, loadChildren, onOpenFile, onToggle]);
@@ -896,7 +901,7 @@ function TreeNode(o: any) {
       </div>
       {(node.isDir && open) ? (
         <div key="tree">
-          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selSelected} onSelectRow={onSelectRow} />)}
+          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} onLiveChange={o.onLiveChange} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selSelected} onSelectRow={onSelectRow} />)}
           {(children.length===0 && loaded) ? <div key="empty" style={{paddingLeft:8+(depth+1)*14,fontSize:11,color:"var(--text-dim)",height:22,display:"flex",alignItems:"center"}}>{tt("files.noFiles")}</div> : null}
         </div>
       ) : null}
@@ -905,8 +910,21 @@ function TreeNode(o: any) {
 }
 
 
+const REFRESH_CSS_ID = "aiti-folder-refresh-css";
+/** The calm 2px refresh strip's keyframes (once per document). */
+function ensureRefreshCss(): void {
+  try {
+    if (typeof document === "undefined" || document.getElementById(REFRESH_CSS_ID)) return;
+    const el = document.createElement("style");
+    el.id = REFRESH_CSS_ID;
+    el.textContent = "@keyframes aiti-folder-refresh-pulse { 0%,100% { opacity: .25 } 50% { opacity: .85 } }";
+    document.head.appendChild(el);
+  } catch { /* no DOM (test stub) */ }
+}
+
 export function FolderBrowser(props: any) {
   const dense = props.dense === true; // sidebar 窄容器形态（FolderDockBlock）：工具栏横向可滚
+  useEffect(()=>{ ensureRefreshCss(); }, []);
   // 本 folder 的「显示忽略项」开关（单 folder 粒度；开启后请求带 showIgnored=1，忽略条目置灰显示）
   const showIgnored = props.showIgnored === true;
   // v3 dock 头单行化（方案 pi-web-dock-header-toolbar-plan §2.8）：传 dockItemKey = 本实例
@@ -923,12 +941,14 @@ export function FolderBrowser(props: any) {
   const [roots, setRoots] = useState<any[]>(cachedRootsRef ?? []);
   // 可上溯的父目录（后端按允许 file roots 判定；null = 已在可浏览边界，隐藏「上一个目录」按钮）
   const [parent, setParent] = useState<string | null>(cachedListRef?.parentPath ?? null);
-  const [loading, setLoading] = useState(!restoredRef); // 有缓存时不闪 loading
+  const [loading, setLoading] = useState(!cachedListRef); // Placeholder only without a cached listing (an expanded snapshot alone still counts as a first load).
+  const [refreshing, setRefreshing] = useState(false); // Thin top strip: the old tree stays visible while new data loads.
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(()=>restoredRef ?? new Set());
   const [gitFiles, setGitFiles] = useState<any[]>([]);
   const [gitStats, setGitStats] = useState({additions:0,deletions:0});
   const [refreshKey, setRefreshKey] = useState(0);
+  const [gitBump, setGitBump] = useState(0); // Directory live change → refresh git badges only, never re-fetch the tree.
   const [refreshDone, setRefreshDone] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -1358,36 +1378,113 @@ export function FolderBrowser(props: any) {
       const a = document.createElement("a"); a.href = apiUrl("/api/extensions/aiti-folder/archive?ticket="+encodeURIComponent(d.ticket)); a.download = lastSeg(root)+".tar.gz"; a.click();
     }catch{/* noop */}
   }, [root]);
-  useEffect(()=>{ let c=false;
-    const cached = refreshKey === 0 ? peekList(root, showIgnored) : null;
-    if (cached) { setRoots(cached.entries); setParent(cached.parentPath ?? null); setError(null); setLoading(false); return; }
-    setLoading(true); setError(null);
-    fetchList(apiUrl, root, { force: true, showIgnored }).then(l=>{ if(!c){ setRoots(l.entries); setParent(l.parentPath ?? null); } }).catch(e=>{ if(!c) setError(e&&e.message?e.message:String(e)); }).finally(()=>{ if(!c) setLoading(false); });
-    return ()=>{ c=true; };
-  }, [root, refreshKey, showIgnored]);
-  // Root live watch (borrow plan §2.4): frame → doRefresh (root list reload + refreshKey propagation into subtrees)
-  const rootWatchThrottleRef = useRef(0);
-  useEffect(()=>{
-    return watchDir(root, ()=>{
-      const now = Date.now();
-      if(now - rootWatchThrottleRef.current < 400) return;
-      rootWatchThrottleRef.current = now;
-      invalidateEntries(root);
-      setRefreshKey(k=>k+1);
+  // ── Silent refresh: the old tree stays visible; swap the fetched listing atomically (identical → no setState) ──
+  const sameEntries = (a: any[], b: any[]) =>
+    a.length === b.length && a.every((e, i) => e.name === b[i].name && e.isDir === b[i].isDir && e.size === b[i].size);
+  const rootsFetchRef = useRef<Promise<void> | null>(null);
+  const rootsQueuedRef = useRef(false);
+  const rootNowRef = useRef(root); rootNowRef.current = root;
+  const showIgnoredNowRef = useRef(showIgnored); showIgnoredNowRef.current = showIgnored;
+  const loadRootsFor = useCallback((): Promise<void> => {
+    if (rootsFetchRef.current) { rootsQueuedRef.current = true; return rootsFetchRef.current; }
+    // Do not flash the strip for a fast local listing: show it only after 150ms.
+    const showTimer = setTimeout(()=>setRefreshing(true), 150);
+    const reqRoot = root, reqShowIgnored = showIgnored;
+    const p = (async () => {
+      const list = await fetchList(apiUrl, reqRoot, { force: true, showIgnored: reqShowIgnored });
+      // A stale response must not overwrite a different root (tab or switch changed).
+      if (rootNowRef.current !== reqRoot || showIgnoredNowRef.current !== reqShowIgnored) return;
+      setRoots(prev => sameEntries(prev, list.entries) ? prev : list.entries);
+      setParent(list.parentPath ?? null);
+      setError(null);
+    })().catch((e) => {
+      // A failure keeps the tree: the old content stays usable, the error becomes a hint line.
+      if (rootNowRef.current !== reqRoot || showIgnoredNowRef.current !== reqShowIgnored) return;
+      setError(e && e.message ? e.message : String(e));
+    }).finally(() => {
+      clearTimeout(showTimer);
+      rootsFetchRef.current = null;
+      setRefreshing(false);
+      setLoading(false);
+      // Changes during a fetch schedule one trailing fetch (coalesced, never stacked).
+      if (rootsQueuedRef.current) { rootsQueuedRef.current = false; queueMicrotask(() => { void loadRootsRef.current?.(); }); }
     });
+    rootsFetchRef.current = p;
+    return p;
+  }, [root, showIgnored]);
+  const loadRootsRef = useRef(loadRootsFor);
+  loadRootsRef.current = loadRootsFor;
+  // Root / show-ignored switch: show the snapshot first (instant), then fetch fresh data.
+  useEffect(()=>{
+    const cached = peekList(root, showIgnored);
+    setRoots(cached?.entries ?? []);
+    setParent(cached?.parentPath ?? null);
+    setLoading(!cached);
+    setError(null);
+    void loadRootsRef.current?.();
+  }, [root, showIgnored]);
+  // Explicit refresh (button / after a write): loaded subtrees reload too; root list and git state refresh together.
+  const refreshSeenRef = useRef(refreshKey);
+  useEffect(()=>{
+    if(refreshSeenRef.current===refreshKey) return;
+    refreshSeenRef.current=refreshKey;
+    void loadRootsRef.current?.();
+  }, [refreshKey]);
+  // Live directory changes: root-list and git-badge refreshes each coalesce (one run per 600ms burst).
+  const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleGit = useCallback(()=>{
+    if(gitTimerRef.current) return;
+    gitTimerRef.current = setTimeout(()=>{ gitTimerRef.current=null; setGitBump(k=>k+1); }, 600);
+  }, []);
+  const scheduleLiveRoot = useCallback(()=>{
+    if(liveTimerRef.current) return;
+    liveTimerRef.current = setTimeout(()=>{
+      liveTimerRef.current = null;
+      invalidateEntries(root);
+      void loadRootsRef.current?.();
+      setGitBump(k=>k+1);
+    }, 600);
   }, [root]);
-  // 「显示忽略项」切换 → 强刷根（默认列表不含 ignored 条目，开启后需重拉带标记列表）；
-  // ref 防首挂误刷（初始值相等跳过）
+  useEffect(()=>()=>{
+    if(liveTimerRef.current) clearTimeout(liveTimerRef.current);
+    if(gitTimerRef.current) clearTimeout(gitTimerRef.current);
+  }, []);
+  // Root live watch: a frame refreshes the root list and git badges only (each child watches itself).
+  useEffect(()=>{ return watchDir(root, ()=>scheduleLiveRoot()); }, [root, scheduleLiveRoot]);
+  // Show-ignored switch → full tree reload (root effect handles the root; loaded subtrees follow refreshKey).
   const showIgnoredPrevRef = useRef(showIgnored);
   useEffect(()=>{ if(showIgnoredPrevRef.current===showIgnored) return; showIgnoredPrevRef.current=showIgnored; setRefreshKey(k=>k+1); }, [showIgnored]);
   // git 工具面（git-ops M3）：引擎在位探测 + refs + `aiti-git-ops:changed:*` topic 订阅；
   // statusBump 追加进 /api/git/status 拉取依赖——引擎写操作/checkout 后树徽标即时刷新（零轮询）。
   const folderGit = useFolderGit(root);
-  useEffect(()=>{ let c=false; fetch(apiUrl("/api/git/status"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cwd:root})}).then(r=>r.json()).then(st=>{ if(!c){ setGitFiles(st.isGitRepository?st.files:[]); setGitStats(st.isGitRepository?{additions:st.additions||0,deletions:st.deletions||0}:{additions:0,deletions:0}); } }).catch(()=>{ if(!c){ setGitFiles([]); setGitStats({additions:0,deletions:0}); } }); return ()=>{c=true;}; }, [root, refreshKey, props.gitRefreshKey, folderGit.statusBump]);
+  // Git badges: 250ms debounce + single-flight coalescing (no status/diff pile-up while an agent writes).
+  const gitFetchingRef = useRef(false);
+  const gitFetchAgainRef = useRef(false);
+  const runGitStatusFetch = useCallback(async () => {
+    if (gitFetchingRef.current) { gitFetchAgainRef.current = true; return; }
+    gitFetchingRef.current = true;
+    const reqRoot = root;
+    try {
+      const r = await fetch(apiUrl("/api/git/status"), { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({ cwd: reqRoot }) });
+      const st = await r.json();
+      if (rootNowRef.current !== reqRoot) return;
+      setGitFiles(st.isGitRepository?st.files:[]);
+      setGitStats(st.isGitRepository?{additions:st.additions||0,deletions:st.deletions||0}:{additions:0,deletions:0});
+    } catch { /* keep the previous badges */ }
+    finally {
+      gitFetchingRef.current = false;
+      if (gitFetchAgainRef.current) { gitFetchAgainRef.current = false; void runGitStatusFetch(); }
+    }
+  }, [root]);
+  useEffect(()=>{
+    const t = setTimeout(()=>{ void runGitStatusFetch(); }, 250);
+    return ()=>clearTimeout(t);
+  }, [root, refreshKey, props.gitRefreshKey, folderGit.statusBump, gitBump, runGitStatusFetch]);
   const gitByPath = useMemo(()=>buildGitByPath(gitFiles), [gitFiles]);
   const changedDirs = useMemo(()=>buildChangedDirs(gitFiles, root), [gitFiles, root]);
   const toggle = useCallback((fp: string,o: boolean)=>{ setExpanded(p=>{ const n=new Set(p); if(o) n.add(fp); else n.delete(fp); return n; }); }, []);
-  const doRefresh = useCallback(()=>{ setRefreshKey(k=>k+1); setRefreshDone(true); setTimeout(()=>setRefreshDone(false), 1800); }, []);
+  const doRefresh = useCallback(()=>{ setRefreshKey(k=>k+1); setGitBump(k=>k+1); setRefreshDone(true); setTimeout(()=>setRefreshDone(false), 1500); }, []);
   // 变更文件行「加入 .gitignore」（untracked 新文件）：引擎 ignore-add → 通知位反馈 → 刷新变更
   // （必须定义在 doRefresh 之后：useCallback deps 数组立即求值，const 前置引用会 TDZ 崩溃）
   const handleGitIgnore = useCallback(async (rel: string) => {
@@ -1739,7 +1836,7 @@ export function FolderBrowser(props: any) {
                     {searchRoots.map((node:any)=> (
                       <TreeNode key={searchQuery+":"+node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={searchExpanded}
                         onToggle={(fp:string,o:boolean)=>setSearchExpanded(prev=>{ const n=new Set(prev); if(o) n.add(fp); else n.delete(fp); return n; })}
-                        onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh}
+                        onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} onLiveChange={scheduleGit}
                         gitByPath={gitByPath} changedDirs={changedDirs} t={t} root={root} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />
                     ))}
                   </div>
@@ -1848,11 +1945,14 @@ export function FolderBrowser(props: any) {
             })()}
           </div>
         ) : null}
+        {/* Thin 2px refresh strip: always reserved (no shift), pulses while loading; the tree never disappears. */}
+        <div aria-hidden data-folder-refreshing={refreshing ? "1" : undefined}
+          style={{ flexShrink:0, height:2, background:"var(--accent, #4f8ef7)", opacity: refreshing ? 1 : 0, transition:"opacity .15s", animation: refreshing ? "aiti-folder-refresh-pulse 1.1s ease-in-out infinite" : "none" }} />
+        {error ? <div role="status" title={error} style={{ padding:"3px 10px", fontSize:10, color:"var(--danger, #f87171)", borderBottom:"1px solid var(--border)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flexShrink:0 }}>{error}</div> : null}
         {/* 树（有搜索查询时隐藏，腾位给结果树；对齐 pi-web (!fileSearchOpen || !hasSearchQuery)） */}
-        {!hasSearchQuery ? (loading ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.loading")}</div>
-        : error ? <div style={{padding:"12px",fontSize:12,color:"var(--danger, #f87171)"}}>{error}</div>
+        {!hasSearchQuery ? (loading && roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.loading")}</div>
         : roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.noFiles")}</div>
-        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />)) : null}
+        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} onLiveChange={scheduleGit} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />)) : null}
       </div>
       {/* 「放弃更改」页内确认弹窗（替代 window.confirm——2026-11-24 用户拍板） */}
       {pendingDiscard ? (

@@ -28,6 +28,11 @@ function ensureBus(): void {
     if (typeof svc !== "function") { busFailed = true; return; }
     const sub = svc((f: FolderWatchFrame) => {
       if (!f || f.type !== "folder-watch" || typeof f.dir !== "string") return;
+      // Frames are broadcast to every bus subscriber. Only this client's watch id
+      // for the dir may refresh it: a leftover watch from before a page/extension
+      // reload keeps publishing under its old id, and honouring it would re-create
+      // the refresh → git status → .git/index → frame loop.
+      if (typeof f.id === "string" && watchIds.get(f.dir) !== f.id) return;
       const set = handlers.get(f.dir);
       if (!set) return;
       for (const h of [...set]) { try { h(f); } catch { /* one bad listener must not break others */ } }

@@ -195,7 +195,9 @@ export function parseStatusZ(out: string): StatusEntry[] {
 }
 
 async function statusEntries(repo: string): Promise<StatusEntry[]> {
-  return parseStatusZ(await run(repo, ["status", "--porcelain", "-z"], 15_000));
+  // Read-only: `--no-optional-locks` keeps the index stat refresh (index.lock)
+  // out of .git, so probes do not wake directory watchers (aiti-folder loops).
+  return parseStatusZ(await run(repo, ["--no-optional-locks", "status", "--porcelain", "-z"], 15_000));
 }
 
 // ── checkout 预检管道（§1.3） ────────────────────────────────────────────────
