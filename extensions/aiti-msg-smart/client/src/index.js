@@ -19,8 +19,8 @@
  *     new-session/share/file/folder-open/reveal/command/url/bookmark/code) | short text/emoji;
  *     type is the semantic fallback ("command" for aiti-cmd, "share" for msg-share).
  *     "icons/x.svg" asset paths are not resolvable inside cards — they degrade to type.
- *     Built-in buttons use fixed names: copy / quote / new-session / file (open) /
- *     folder-open (directory) / reveal (locate) / url.
+ *     Built-in buttons use fixed names: copy / quote / quote-line (per-segment quote) /
+ *     new-session / file (open) / folder-open (directory) / reveal (locate) / url.
  *   - 复制全文：长段落附加动作
  * 异步（file 校验 / provider 识别）到达后重渲染同一卡片。
  * 「同一时刻只开一个」模块级 state（切段先关旧段、同段再点=关闭 toggle）。
@@ -660,8 +660,9 @@ export default function register(ctx) {
           },
           onMouseEnter: onEnter,
           onMouseLeave: onLeave,
-          // Icon on the quote-line fallback only; answer options (yes/no/A/B) stay text-only.
-        }, ...(segment.options == null ? [iconEl("quote")] : []), opt.label),
+          // Dedicated "quote-line" glyph (text lines + blockquote bar) — distinct from
+          // the bubble "quote" used for full-text; option rows (yes/no/A/B) stay text-only.
+        }, ...(segment.options == null ? [iconEl("quote-line")] : []), opt.label),
       ),
     );
   }

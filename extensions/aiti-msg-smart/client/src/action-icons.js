@@ -39,6 +39,14 @@ export const ACTION_ICON_NODES = {
     P("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"),
     P("M8 14a2 2 0 0 0 2-2V8H8"),
   ],
+  /** Quote one line out of the paragraph: text lines + blockquote bar (lucide
+   *  text-quote; deliberately distinct from the bubble "quote" used for full-text). */
+  "quote-line": [
+    P("M17 5H3"),
+    P("M21 12H8"),
+    P("M21 19H8"),
+    P("M3 12v7"),
+  ],
   /** Quote into a new session: speech bubble with plus (lucide message-square-plus). */
   "new-session": [
     P("M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"),
@@ -101,6 +109,9 @@ const hasName = (name) =>
  * @param {string} [fallbackType] semantic name used when item.type is absent
  *   (e.g. "command" for inline-code providers)
  * @returns {{kind:"name"|"svg"|"text", value:string}|null} null = no icon, render none
+ *
+ * Provider-visible semantic names: copy / quote / quote-line / new-session / share /
+ * file / folder-open / reveal / command / url / bookmark / code.
  */
 export function resolveActionIcon(item, fallbackType) {
   const it = item || {};
