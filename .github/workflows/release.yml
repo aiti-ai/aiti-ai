@@ -361,7 +361,11 @@ jobs:
         env:
           AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
         run: |
-          git fetch --no-tags --depth=1 origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          # The leading "+" is required: on a tag dispatch actions/checkout already
+          # wrote refs/tags/<tag> as a lightweight ref pointing at the commit, and a
+          # plain refspec fetch of the annotated tag (different object) is rejected
+          # with "would clobber existing tag" before the comparison below can run.
+          git fetch --no-tags --depth=1 origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
           LOCAL=$(git rev-parse "refs/tags/${{ github.ref_name }}")
           REMOTE=$(git ls-remote "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
             "refs/tags/${{ github.ref_name }}" | cut -f1)
