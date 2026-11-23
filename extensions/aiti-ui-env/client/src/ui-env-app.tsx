@@ -941,19 +941,26 @@ function envCard(title: any, info: any, available: boolean, rows: [string, unkno
   const statusColor = available ? C.ok : C.bad;
   return (
     <div style={{ ...card({ marginBottom: 0 }), display: "flex", flexDirection: "column" } as Record<string, unknown>}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }} title={info.error || ""}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }} title={info.error || ""}>
         <span style={dot(statusColor)} />
         <span style={{ fontSize: 12, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
         <span style={{ ...chip(statusColor, undefined), marginLeft: "auto" }}>{available ? t("可用") : t("不可用")}</span>
       </div>
-      {info.error ? <div style={{ fontSize: 10, color: C.warn, marginBottom: 5, lineHeight: 1.5 }}><Ic size={11} paths={ICONS.alert} /> {" "}{info.error}</div> : null}
-      {rows.map(([k, v, vColor]) => (
-        <div key={k} style={rowStyle}>
-          <span style={{ fontSize: 10.5, color: C.dim, flexShrink: 0, width: 74, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</span>
-          <span style={{ fontSize: 11, color: vColor || C.text, wordBreak: "break-all", lineHeight: 1.4 }}>{String(v ?? "—")}</span>
-        </div>
-      ))}
-      {extra ? <div style={{ marginTop: "auto", paddingTop: 6 }}>{extra}</div> : null}
+      {info.error ? <div style={{ fontSize: 10, color: C.warn, marginBottom: 4, lineHeight: 1.4 }}><Ic size={11} paths={ICONS.alert} /> {" "}{info.error}</div> : null}
+      {/* Compact two-column key/value grid; long values (notes) take the full row. Nothing is truncated — values wrap. */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 12, rowGap: 0, alignItems: "baseline" }}>
+        {rows.map(([k, v, vColor]) => {
+          const text = String(v ?? "—");
+          const fullRow = text.length > 24;
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "baseline", gap: 5, padding: "1px 0", minWidth: 0, ...(fullRow ? { gridColumn: "1 / -1" } : {}) }}>
+              <span style={{ fontSize: 10, color: C.dim, flexShrink: 0, width: 58, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</span>
+              <span style={{ fontSize: 10.5, color: vColor || C.text, wordBreak: "break-all", lineHeight: 1.35 }}>{text}</span>
+            </div>
+          );
+        })}
+      </div>
+      {extra ? <div style={{ marginTop: "auto", paddingTop: 5 }}>{extra}</div> : null}
     </div>
   );
 }
