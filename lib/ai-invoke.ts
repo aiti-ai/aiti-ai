@@ -17,6 +17,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 /** Text, or a multimodal part list (images are base64 + mimeType, forwarded verbatim). */
@@ -135,11 +136,22 @@ export async function invokeAI(input: InvokeAIInput): Promise<InvokeAIResult> {
   if (input.maxTokens) opts.maxTokens = input.maxTokens;
   if (input.temperature != null) opts.temperature = input.temperature;
   if (input.reasoning) opts.reasoning = input.reasoning;
+  // One-shot calls get a fresh per-request session id: OpenCode-class providers
+  // require a per-conversation routing header derived from it (pi-ai's
+  // withOpenCodeSessionHeader) and reject requests without one (400
+  // MissingSessionID). Same fresh-id semantics as session-title's one-shot path.
+  opts.sessionId = randomUUID();
   const assistant = await registry.complete(model as never, {
     systemPrompt: input.system,
     // String content stays byte-identical; part lists are passed through for vision models.
     messages: input.messages.map((m) => ({ role: m.role, content: m.content as never, timestamp: 0 })) as never,
   }, opts as never);
+  if (assistant.stopReason === "error") {
+    // Fail-loud diagnostics without changing the API contract: provider errors
+    // (auth, missing headers, quota) would otherwise surface as silent empty
+    // text. Callers still receive the empty result as before.
+    console.error(`[invokeAI] ${model.provider}/${model.id} request failed:`, assistant.errorMessage || assistant.stopReason);
+  }
   const text = (assistant.content ?? [])
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text).join("");

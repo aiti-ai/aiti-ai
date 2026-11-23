@@ -10,6 +10,7 @@ import { rememberProviderModels } from "./deferred-provider-models.ts";
 import { serializeByKey } from "./key-serializer.ts";
 import { llamaCppExtension } from "./pi-sdk-internals.ts";
 import { replayImageProviders } from "./image-generation.ts";
+import { openRouterImageApiProvider, OPENROUTER_PROVIDER } from "./image-openrouter-api.ts";
 
 /**
  * ModelRuntime that also includes providers registered by extensions (an
@@ -36,6 +37,14 @@ const imageProvidersExtension: InlineExtension = {
   async factory(pi) {
     const replayed = replayImageProviders(pi as unknown as { registerProvider: (name: string, config: never) => void });
     if (replayed > 0) console.log(`[pi-web] replayed ${replayed} extension-registered image provider(s)`);
+    // pi's built-in `openrouter-images` posts to chat/completions, which OpenRouter's
+    // dedicated image models reject (404 "use /api/v1/images"). Register a sibling
+    // provider that speaks the image endpoint so those models are usable.
+    try {
+      pi.registerProvider(OPENROUTER_PROVIDER, openRouterImageApiProvider() as never);
+    } catch (e) {
+      console.warn("[pi-web] openrouter image-api provider registration failed:", e);
+    }
   },
 };
 

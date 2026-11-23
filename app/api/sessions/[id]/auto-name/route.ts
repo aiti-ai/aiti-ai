@@ -4,6 +4,7 @@ import { generateSessionTitle } from "@/lib/session-title";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 import { attachIfBridged } from "@/lib/session";
 import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
+import { autoNameProviderOwned, findSessionFileOwner } from "@/lib/session-auto-name";
 
 export async function POST(
   _req: Request,
@@ -17,9 +18,27 @@ export async function POST(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // Detect bridge occupation first (same as agent/[id] POST): a session claimed by a TUI bridge must not
-    // start a local runtime for the naming turn (it would double-write the file); attachIfBridged also
-    // cleans up the race window (kills the twin).
+    // Provider-owned file (e.g. an aiti-pi-agent spawn session): the single-writer
+    // gate forbids a local runtime, so the name is generated without one — file /
+    // handle read + one-shot model call + handle RPC or file append. See
+    // lib/session-auto-name.ts. This runs BEFORE the bridge check: attachIfBridged
+    // now also revives provider sessions (detached wrapper / spawn resume), and a
+    // naming request must not pull a subprocess up just to be named.
+    const owner = await findSessionFileOwner(filePath);
+    if (owner) {
+      // The TUI-bridge attach backend keeps its 409: the frontend detects bridged
+      // sessions up front and downgrades to manual rename (sm.autoNameBridged).
+      if (owner.type === "aiti-attach-agent/attach") {
+        return NextResponse.json({ error: "session bridged; auto-name skipped" }, { status: 409 });
+      }
+      const result = await autoNameProviderOwned(id, filePath);
+      return NextResponse.json({ title: result.title, usage: result.usage ?? null });
+    }
+
+    // Detect bridge occupation for non-owned files (same as agent/[id] POST): a
+    // session claimed by a TUI bridge must not start a local runtime for the naming
+    // turn (it would double-write the file); attachIfBridged also cleans up the
+    // race window (kills the twin).
     try {
       const bridged = await attachIfBridged(filePath);
       if (bridged?.isAlive()) {
