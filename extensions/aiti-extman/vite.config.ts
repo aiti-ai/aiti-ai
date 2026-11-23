@@ -1,8 +1,9 @@
 /**
  * aiti-extman client 构建配置（Vite lib mode）——JSX 模板实例。
  *
- * client/src/entry.tsx（JSX + TS）→ 单个 ESM bundle：client/aiti-extman-client.mjs
- * （与 index.ts 的 client 字段一致；产物覆盖原手写版，源码在 git 历史可回溯）。
+ * client/src/entry.tsx (JSX + TS) → a single ESM bundle: dist/aiti-extman-client.mjs
+ * (index.ts points its client field at dist/; deploy.mjs also copies it into the deployed
+ *  client/ compatibility slot, so the repo no longer keeps a hand-written bundle)。
  *
  * 模板与原理：pi-web-ext/templates/ext-jsx-client/ + docs/aiti-ext-jsx-vite-plan.md
  */

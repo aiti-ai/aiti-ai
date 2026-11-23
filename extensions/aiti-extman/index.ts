@@ -1,35 +1,45 @@
 /**
- * aiti-extman · pi-web 扩展管理器
+ * aiti-extman · pi-web extension manager
  *
- * 把扩展管理从 pi-web 内置 UI 迁出为扩展（业务在扩展，core 只留挂载点/契约）：
- *   - 状态：GET /api/extensions/aiti-extman/status（registry 全量状态，含禁用/失败条目）
- *   - 在线注册表：GET /api/extensions/aiti-extman/registry（代理 aiti.pw/extensions.json，短缓存）
- *   - 操作：POST /api/extensions/aiti-extman/ops
+ * Extension management moved out of pi-web's built-in UI into an extension (the business logic
+ * lives here; core only keeps the mount points and the contract):
+ *   - Status: GET /api/extensions/aiti-extman/status (full registry state, including disabled and
+ *     failed entries)
+ *   - Online registry: GET /api/extensions/aiti-extman/registry (proxies aiti.pw/extensions.json,
+ *     short TTL)
+ *   - Operations: POST /api/extensions/aiti-extman/ops
  *       { action: "install", source: "git:…|npm:…|/path", id?, docsUrl?, publisherHint?, trust? }
- *         · trust 门控（VSCode 式）：安装前解析发行者（npm registry / github owner / package.json），
- *           未信任 → 回 needsTrust 不安装，前端弹信任确认后带 trust:true 重发；已信任直接装。
+ *         · VSCode-style trust gate: the publisher is resolved before installing (npm registry /
+ *           GitHub owner / package.json); when untrusted the call returns needsTrust without
+ *           installing, the UI asks for confirmation and retries with trust:true; trusted
+ *           publishers install immediately.
  *       { action: "remove", id } · { action: "enable"|"disable", id } · { action: "reload" }
- *       { action: "set-feature", id, featureId, enabled }   ← 功能管理（逐项启停扩展声明的 feature）
- *       { action: "trust"|"untrust", name, url?, source? }  ← 信任管理（增/撤发行者）
- *       { action: "reconcile-deps", source? }               ← 共享依赖手动 reconcile
- *     安装/卸载走本扩展的 installer（文件级，不执行代码）；启停/重载直调进程内 registry。
- *     共享依赖：安装/卸载后自动把全部扩展声明的运行时依赖 reconcile 进
- *     <webRoot>/node_modules（jiti 向上解析自动命中；详见 shared-deps.ts），
- *     deploy.mjs 亦可在拷完文件后 POST 本 op 通知对齐（_shared/reconcile-deps.mjs）。
- *     功能管理：扩展在 entry 声明 features（能力清单，如 aiti-devtools 的 aiti_* 工具），
- *     用户在此逐项启用/禁用——core 在注入 agent 会话工具时自动过滤（无需 reload，即时生效）。
- *   - 已信任发行者：GET /api/extensions/aiti-extman/publishers（管理 UI）
+ *       { action: "set-feature", id, featureId, enabled }   ← feature management (per-toggle
+ *                                                             enable/disable of declared features)
+ *       { action: "trust"|"untrust", name, url?, source? }  ← publisher trust management
+ *       { action: "reconcile-deps", source? }               ← manual shared-dependency reconcile
+ *     Install/uninstall runs through this extension's installer (file-level, no code execution);
+ *     enable/disable/reload calls the in-process registry directly.
+ *     Shared dependencies: after install/uninstall the runtime dependencies declared by every
+ *     extension are reconciled into <webRoot>/node_modules (jiti resolves upward and finds them;
+ *     see shared-deps.ts). deploy.mjs can also POST this op after copying files to align them
+ *     (_shared/reconcile-deps.mjs).
+ *     Feature management: extensions declare features in their entry (capability toggles, e.g.
+ *     aiti-devtools' aiti_* tools) and users enable/disable them one by one here — core filters
+ *     the injected agent-session tools accordingly (no reload needed, effective immediately).
+ *   - Trusted publishers: GET /api/extensions/aiti-extman/publishers (management UI)
  *
- * UI（client bundle）：
- *   - toolbar 🧩 按钮 → dialogs 管理面板（左列表/右详情 + 添加面板 + 在线注册表）
- *   - 变更后 ctx.reloadExtensions() 刷新宿主 manifest/client bundles（optional 兼容旧宿主）
+ * UI (client bundle):
+ *   - toolbar 🧩 button → dialogs management panel (list / detail / add panel / online registry)
+ *   - after a change, ctx.reloadExtensions() refreshes the host manifest and client bundles
+ *     (optional, for older hosts)
  *
- * 参照 pi 基础插件安装语义保留来源安装：git:<url>[#branch] / git@… / github 链接 /
- * npm:@scope/pkg[@version] / 本地目录路径。
+ * Source installation keeps the semantics of pi's base plugin installer:
+ * git:<url>[#branch] / git@… / GitHub links / npm:@scope/pkg[@version] / local directory paths.
  *
- * 用法：部署到 ~/.pi/web/extensions/aiti-extman/（tools/deploy.mjs）后 reload。
+ * Usage: deploy to ~/.pi/web/extensions/aiti-extman/ (tools/deploy.mjs), then reload.
  */
-import { installExtension, removeExtension, installFromZipBuffer, extractZipToTemp, writePublisher, parseInstallSource, runNpm } from "./installer.js";
+import { installExtension, removeExtension, installFromZipBuffer, extractZipToTemp, writePublisher, parseInstallSource, runNpm, readInstallMeta, gitUpdateInfo, type InstallMeta } from "./installer.js";
 import { reconcile, depsState, extDepStates, collectDeps, extensionsRootPath } from "./shared-deps.js";
 import {
   resolvePublisherForSource,
@@ -41,23 +51,29 @@ import {
   listTrusted,
   type Publisher,
 } from "./publisher.js";
-import { rmSync, readFileSync, existsSync } from "fs";
-import { join, resolve } from "path";
+import { rmSync, readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "fs";
+import { join, resolve, dirname } from "path";
 import { EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, extProtocolInfo } from "./ext-protocol.mjs";
 import { screenAndMigrateOnInstall } from "./protocol-screen.mjs";
 import { extPinyin } from "./pinyin-index.mjs"; // 独立文件名即版本：.mjs 经宿主走原生 ESM（缓存不可清），改内容不换名不会重新加载
+import { semverGt, isSemver, mergeUpdateSources, type UpdateEntry, type UpdateState } from "./updates-merge.js";
+
+// Pure merge/state-machine helpers live in updates-merge.ts so they can be unit-tested
+// without loading this entry (npm/git side effects stay here).
+export { semverGt, isSemver, mergeUpdateSources };
+export type { UpdateEntry, UpdateState };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json", "cache-control": "no-store" },
 });
 
-/** 进程内扩展 registry（instrumentation 建立的 globalThis.__piWebExt 单例）。 */
+/** In-process extension registry (the globalThis.__piWebExt singleton set up by instrumentation). */
 function registry(): any {
   return (globalThis as any).__piWebExt;
 }
 
-/** 全量状态：新宿主直接 statusPayload；旧宿主（无该方法）用基础接口拼装降级。 */
+/** Full status: new hosts expose statusPayload directly; older hosts are assembled from the base API. */
 function statusPayload(): any {
   const reg = registry();
   if (reg && typeof reg.statusPayload === "function") return reg.statusPayload();
@@ -74,7 +90,7 @@ function statusPayload(): any {
   };
 }
 
-/** 给每个本地扩展条目补充发行者信息（读扩展目录 package.json，不执行代码）。 */
+/** Attach publisher info to each local entry (reads the extension's package.json, no code execution). */
 function withPublishers(payload: any): any {
   const extensions = payload?.extensions;
   if (!extensions) return payload;
@@ -86,12 +102,44 @@ function withPublishers(payload: any): any {
       } catch {
         e.publisher = undefined;
       }
+      // Per-locale metadata fallback: the host's readPackageInfo already parses these maps, but a
+      // running host process keeps the code it booted with — reading the file here lets localized
+      // descriptions/taglines go live on an extension reload instead of a full process restart.
+      attachPackageI18n(e, e.dir);
     }
   }
   return payload;
 }
 
-/** 读一个扩展目录的协议声明并计算兼容状态（安装结果 / status 富化共用）。 */
+/** Attach package.json displayNameI18n / descriptionI18n / soulI18n locale maps to entry.packageInfo (host value wins). */
+function attachPackageI18n(entry: any, dir: string): void {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(readFileSync(resolve(dir, "package.json"), "utf8"));
+  } catch {
+    return;
+  }
+  const pick = (v: unknown): Record<string, string> | undefined => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+    const out: Record<string, string> = {};
+    for (const [locale, text] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof text === "string" && text.trim()) out[locale] = text.trim();
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  const displayNameI18n = pick(parsed.displayNameI18n);
+  const descriptionI18n = pick(parsed.descriptionI18n);
+  const soulI18n = pick(parsed.soulI18n);
+  if (!displayNameI18n && !descriptionI18n && !soulI18n) return;
+  entry.packageInfo = {
+    ...(entry.packageInfo || {}),
+    ...(displayNameI18n && !entry.packageInfo?.displayNameI18n ? { displayNameI18n } : {}),
+    ...(descriptionI18n && !entry.packageInfo?.descriptionI18n ? { descriptionI18n } : {}),
+    ...(soulI18n && !entry.packageInfo?.soulI18n ? { soulI18n } : {}),
+  };
+}
+
+/** Read an extension directory's protocol declaration and compute its compatibility state (shared by install results and status enrichment). */
 function protocolOfDir(dir: string | undefined, opts?: { current?: string; minMajor?: number }): any {
   let declared: unknown;
   try {
@@ -103,9 +151,9 @@ function protocolOfDir(dir: string | undefined, opts?: { current?: string; minMa
 }
 
 /**
- * 给每个扩展条目补充协议声明与兼容状态（docs/pi-web-ext-protocol.md）。
- * 当前版本优先取宿主 P4 下发的 `payload.protocol`（current/minMajor），旧宿主回退本地常量；
- * 声明读部署目录 package.json（不执行代码）；`needsUpgrade` → 前端出 🤖 AI 升级入口。
+ * Attach the protocol declaration and compatibility state to every entry (docs/pi-web-ext-protocol.md).
+ * The current version prefers the host-provided `payload.protocol` (current/minMajor); older hosts fall back to local constants.
+ * Declarations come from the deployed package.json (no code execution); `needsUpgrade` surfaces the 🤖 AI upgrade entry in the UI.
  */
 function withProtocol(payload: any): any {
   const extensions = payload?.extensions;
@@ -123,7 +171,7 @@ function withProtocol(payload: any): any {
   return payload;
 }
 
-/** 插槽上下文分类：global=不依赖会话上下文可直接触发；context=需在特定上下文操作。 */
+/** Slot context class: global = can fire without a session context; context = requires a specific context. */
 const SLOT_CONTEXT: Record<string, { context: "global" | "context"; where: string }> = {
   toolbar: { context: "global", where: "顶部工具条" },
   sidebar: { context: "global", where: "左侧栏" },
@@ -139,12 +187,13 @@ const SLOT_CONTEXT: Record<string, { context: "global" | "context"; where: strin
   pathPicker: { context: "global", where: "目录选择器能力（顶栏打开文件夹等消费）" },
 };
 
-/** 给扩展条目补充插槽条目详情（label/title/context/位置）——从 entry ui 定义读取。 */
+/** Attach slot-item details (label/title/context/position) to entries — read from the declared ui. */
 function withSlotDetails(payload: any): any {
   const reg = registry();
   const extensions = payload?.extensions;
   if (!reg || !extensions) return payload;
-  // DI 方案 P1：core.registry 服务优先（ui 只读视图），旧 registry.byId 直调兜底（生产旧 core 过渡期）
+  // Dependency-injection P1: the core.registry service wins (read-only ui view); the legacy registry.byId
+  // call stays as the dualtrack fallback while older production cores are still around
   const coreReg = reg?.services?.get?.("core.registry") ?? null;
   for (const id of Object.keys(extensions)) {
     const e = extensions[id];
@@ -175,10 +224,13 @@ function withSlotDetails(payload: any): any {
 }
 
 /**
- * 给禁用扩展条目补依赖声明边：pi-web core 对禁用扩展不加载（status 条目无 ui/声明信息），
- * 但「被依赖」反向视图需要禁用依赖者声明的边（如 demo-lazy→demo）。从 index.ts 源码
- * 尽力提取五个声明（clientDependsOn + 依赖与能力模型四字段；单行数组；行首锚定避开注释）；
- * 失败静默（informational 字段，不阻塞）。
+ * Add dependency edges for disabled entries: pi-web core does not load disabled extensions (their status
+ * entry carries no ui/declaration info),
+ * yet the reverse "depended on by" view needs the edges those disabled dependents declare (demo-lazy→demo).
+ * Best-effort extraction from the index.ts source
+ * of the five declarations (clientDependsOn plus the four dependency/capability fields; single-line arrays;
+ * anchored to line starts so comments do not match);
+ * failures stay silent (informational field, never blocks).
  */
 function withDisabledDeps(payload: any): any {
   const extensions = payload?.extensions;
@@ -201,14 +253,33 @@ function withDisabledDeps(payload: any): any {
   return payload;
 }
 /**
- * 扩展 markdown 描述（DESC.md 约定）：给每个本地条目附 descriptionMd——
- * 优先读扩展目录 DESC.md，回落 package.json 的 descriptionMd 字段。
- * 仅静态读文件不执行代码；超 48KB 截断（防超大文件拖垮 status 响应）。
- * 客户端渲染时支持约定变量（{{aiti-url}}/{{ext-id}}/…，见 client/src/md-desc.tsx）。
+ * Extension markdown description (DESC.md contract): attach descriptionMd to each local entry.
+ * Locale fallback chain: DESC.<locale>.md → DESC.<lang>.md → DESC.md → package.json descriptionMd.
+ * Static file read only (no code execution); truncate beyond 48KB to keep status responses bounded.
+ * The client renderer supports the agreed variables ({{aiti-url}}/{{ext-id}}/…, see client/src/md-desc.tsx).
  */
 const DESC_MD_MAX = 48 * 1024;
-function readDescMd(dir?: string): string | undefined {
+/** Locale candidates in priority order (exact → same language family); "" means the neutral file. */
+function descLocaleCandidates(locale?: string | null): string[] {
+  const out: string[] = [];
+  const exact = (locale || "").trim();
+  if (exact) {
+    out.push(exact);
+    const short = exact.split("-")[0];
+    if (short && short !== exact) out.push(short);
+  }
+  return out;
+}
+function readDescMd(dir?: string, locale?: string | null): string | undefined {
   if (!dir) return undefined;
+  for (const loc of descLocaleCandidates(locale)) {
+    try {
+      const p = resolve(dir, `DESC.${loc}.md`);
+      if (!existsSync(p)) continue;
+      const s = readFileSync(p, "utf8");
+      if (s.trim()) return s.length > DESC_MD_MAX ? s.slice(0, DESC_MD_MAX) + "\n\n<!-- (DESC.md 超 48KB 已截断) -->" : s;
+    } catch { /* try next candidate */ }
+  }
   try {
     const p = resolve(dir, "DESC.md");
     if (existsSync(p)) {
@@ -225,17 +296,17 @@ function readDescMd(dir?: string): string | undefined {
   } catch {}
   return undefined;
 }
-function withDescription(payload: any): any {
+function withDescription(payload: any, locale?: string | null): any {
   const extensions = payload?.extensions;
   if (!extensions || typeof extensions !== "object") return payload;
   for (const id of Object.keys(extensions)) {
     const e = extensions[id];
-    if (e && typeof e.dir === "string" && e.dir) e.descriptionMd = readDescMd(e.dir);
+    if (e && typeof e.dir === "string" && e.dir) e.descriptionMd = readDescMd(e.dir, locale);
   }
   return payload;
 }
 
-/** 共享依赖视图：payload.sharedDeps（根/并集/上次 reconcile 结果）+ 用户根扩展逐依赖标注 local/shared/missing。 */
+/** Shared-dependency view: payload.sharedDeps (roots / union / last reconcile result) plus a per-dependency local/shared/missing mark for user-root extensions. */
 function withSharedDeps(payload: any): any {
   try {
     payload.sharedDeps = depsState();
@@ -254,7 +325,7 @@ function withSharedDeps(payload: any): any {
   return payload;
 }
 
-/** 拼音索引富化：name 含中文的扩展附 pinyin 字段（"全拼连写 首字母"，见 pinyin-helper.mjs）。 */
+/** Pinyin enrichment: extensions whose name contains Chinese get a pinyin field ("full spelling + initials", see pinyin-helper.mjs). */
 function withPinyin(payload: any): any {
   const extensions = payload?.extensions;
   if (!extensions || typeof extensions !== "object") return payload;
@@ -270,12 +341,12 @@ function withPinyin(payload: any): any {
   return payload;
 }
 
-/** 全量状态（含发行者 + 协议 + 插槽条目详情 + markdown 描述 + 共享依赖视图 + 拼音索引）。 */
-function enrichedStatus(): any {
-  return withProtocol(withSharedDeps(withDescription(withDisabledDeps(withPublishers(withSlotDetails(withPinyin(statusPayload())))))));
+/** Full status (publishers + protocol + slot-item details + markdown description + shared-dependency view + pinyin index). */
+function enrichedStatus(locale?: string | null): any {
+  return withProtocol(withSharedDeps(withDescription(withDisabledDeps(withPublishers(withSlotDetails(withPinyin(statusPayload())))), locale)));
 }
 
-/** 检查发行者是否需 trust（VSCode 式）：未信任 → 返回 needsTrust 响应，不安装。 */
+/** Check whether the publisher needs trust (VSCode style): untrusted → returns a needsTrust response without installing. */
 function needsTrustResponse(publisher: Publisher, extra: Record<string, unknown> = {}) {
   return json({
     ok: false,
@@ -286,7 +357,7 @@ function needsTrustResponse(publisher: Publisher, extra: Record<string, unknown>
   });
 }
 
-/** 规范化前端回传的发行者（校验字段；无效返回 null 让服务端重新解析）。 */
+/** Normalize the publisher sent back by the UI (validates fields; invalid input returns null so the server resolves it again). */
 function normalizePublisher(p: unknown): Publisher | null {
   if (!p || typeof p !== "object") return null;
   const o = p as { name?: unknown; url?: unknown; source?: unknown; fingerprint?: unknown };
@@ -299,111 +370,343 @@ function normalizePublisher(p: unknown): Publisher | null {
   };
 }
 
-// ── npm 包更新检查（同 pi package-manager 策略：安装目录 package.json version ×
-//    `npm view <name> version --json`（走机器 npm 配置与 registry，与「更新」安装按钮同一解析源，
-//    查到的版本就是能装到的版本）→ semver gt。时机=客户端打开面板/手动刷新各查一次（非轮询）；
-//    并发 4；查询失败静默视为无更新；服务端短缓存 5min，force=1 绕过。
-//    git 来源：installer 未持久化安装来源元数据，暂无法可靠检测，跳过。 ──
+// ── Update checks: aiti.pw registry × npm × git (dual source) ──
+// npm: installed package.json version × `npm view <name> version --json` (machine npm
+//   config + registry, the same source the update button installs from) → semver gt.
+// registry: `version` of each entry in https://aiti.pw/extensions.json (docs catalog).
+// git: installed through git → local HEAD × `git ls-remote origin <tracked ref>`.
+// Both sources are compared independently; the newest wins and its origin is reported.
+// Timing: panel open / manual refresh only (no polling); short server cache, force=1 bypass.
 const NPM_PKG_NAME_RE = /^(@[A-Za-z0-9-._]+\/)?[A-Za-z0-9-._]+$/;
 const UPDATES_TTL_MS = 5 * 60_000;
-const UPDATES_CONCURRENCY = 4; // 同 pi UPDATE_CHECK_CONCURRENCY
+const UPDATES_CONCURRENCY = 8;
 const UPDATES_TIMEOUT_MS = 12_000;
 let updatesCache: { at: number; data: any } | null = null;
+let registryUpdatesCache: { at: number; data: any } | null = null;
 
-/** 轻量 semver gt（numeric x.y.z[-pre]；prerelease 逐段比较，@aiti-ai 包均为简单三段，够用）。 */
-export function semverGt(a: string, b: string): boolean {
-  const parse = (v: string) => {
-    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
-    return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null } : null;
-  };
-  const pa = parse(a);
-  const pb = parse(b);
-  if (!pa || !pb) return false;
-  for (let i = 0; i < 3; i++) if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] > pb.nums[i];
-  if (pa.pre && pb.pre) {
-    const xa = pa.pre.split(".");
-    const xb = pb.pre.split(".");
-    for (let i = 0; i < Math.max(xa.length, xb.length); i++) {
-      const x = xa[i];
-      const y = xb[i];
-      if (x === undefined) return false;
-      if (y === undefined) return true;
-      if (/^\d+$/.test(x) && /^\d+$/.test(y)) { const d = Number(x) - Number(y); if (d) return d > 0; }
-      else if (x !== y) return x > y;
-    }
-    return false;
-  }
-  if (pa.pre) return false; // 1.0.0-alpha < 1.0.0
-  if (pb.pre) return true;  // 1.0.0 > 1.0.0-alpha
-  return false;
+// ── Persistent update cache (cacheDir, safe to delete) ──
+// Without it every process restart starts from "no data": the panel would have to wait
+// for the full check before it can show a single ↑ badge. With it the last verdict is
+// returned immediately (marked stale when old or when installed versions moved) and the
+// client refreshes in the background — the install button always uses a fresh check.
+const UPDATES_DISK_FILE = "updates-cache";
+let updatesCacheDir: string | null = null;
+
+function diskCachePath(): string | null {
+  // Dev and prod share PI_WEB_DATA_DIR on this machine, so the instance's port is part of
+  // the file name: otherwise each instance would invalidate the other's verdict on every
+  // visit (different deployed trees → installed-version mismatch).
+  const instanceTag = process.env.PORT ? `-${process.env.PORT}` : "";
+  return updatesCacheDir ? join(updatesCacheDir, `updates-cache${instanceTag}.json`) : null;
 }
 
-/** npm dist-tags.latest（runNpm 走机器 npm 配置；失败/超时返回 null = 无更新，同 pi catch→false）。 */
-async function npmLatestVersion(pkg: string): Promise<string | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+function readDiskCache(): { at: number; data: any } | null {
+  const file = diskCachePath();
+  if (!file || !existsSync(file)) return null;
   try {
-    const res = await Promise.race([
-      runNpm(["view", pkg, "version", "--json"]),
-      new Promise<null>((resolveP) => { timer = setTimeout(() => resolveP(null), UPDATES_TIMEOUT_MS); }),
-    ]);
-    if (!res) return null;
-    const parsed = JSON.parse(res.stdout.trim());
-    return typeof parsed === "string" && parsed ? parsed : null;
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { schemaVersion?: unknown; checkedAt?: unknown; data?: any };
+    if (parsed?.schemaVersion !== 1 || !parsed.data || typeof parsed.data.updates !== "object") return null;
+    const at = Date.parse(String(parsed.checkedAt));
+    return { at: Number.isFinite(at) ? at : 0, data: parsed.data };
   } catch {
     return null;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 
-/** 全量已安装扩展的 npm 更新检查（并发 4；读部署目录 package.json name+version）。 */
-async function computeUpdates(): Promise<any> {
+function writeDiskCache(data: any): void {
+  const file = diskCachePath();
+  if (!file) return;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ schemaVersion: 1, checkedAt: data.checkedAt, data }));
+    renameSync(tmp, file);
+  } catch {
+    // Best effort: a missing cache only means the next check starts cold.
+  }
+}
+
+/** True when any recorded installed version no longer matches the deployed one. */
+function cacheInstalledMismatch(data: any): boolean {
+  try {
+    const exts = statusPayload()?.extensions ?? {};
+    const known = data && typeof data.updates === "object" && data.updates ? data.updates : {};
+    for (const id of Object.keys(exts)) {
+      const cur = exts[id];
+      if (!cur || typeof cur.dir !== "string" || !cur.dir) continue;
+      const cached = known[id];
+      const live = typeof cur.version === "string" ? cur.version : null;
+      if (!cached || (cached.installed ?? null) !== live) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Drop both memory caches and the persisted verdict (install / remove / update-all). */
+function invalidateUpdatesCache(): void {
+  updatesCache = null;
+  registryUpdatesCache = null;
+  const file = diskCachePath();
+  if (!file) return;
+  try {
+    unlinkSync(file);
+  } catch {
+    // already gone
+  }
+}
+
+function isOfflineMode(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.PI_OFFLINE ?? "");
+}
+
+/**
+ * Environment for network check children: drop this server's own variables so a
+ * project `.npmrc` cannot expand them into the registry request (same rule as
+ * pi-web lib/plugin-updates.ts).
+ */
+function updateCheckEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key === "PORT" || key === "NODE_ENV" || key === "PI_WEB_PASSWORD" || key.startsWith("NEXT_")) delete env[key];
+  }
+  env.GIT_TERMINAL_PROMPT = "0";
+  return env;
+}
+
+
+// npm registry metadata base (falls back to npmjs when `npm config get registry` fails).
+// Cached like the update result: one extra spawn per check window, not per package.
+const NPM_REGISTRY_TTL_MS = 5 * 60_000;
+let npmRegistryCache: { at: number; base: string } | null = null;
+
+async function npmRegistryBase(): Promise<string> {
+  if (npmRegistryCache && Date.now() - npmRegistryCache.at < NPM_REGISTRY_TTL_MS) return npmRegistryCache.base;
+  let base = "https://registry.npmjs.org";
+  try {
+    const res = await runNpm(["config", "get", "registry"], undefined, { env: updateCheckEnv(), timeoutMs: 8000 });
+    const value = res.stdout.trim();
+    if (/^https?:\/\//.test(value)) base = value;
+  } catch {
+    // Keep the public default; the npm view fallback resolves the real registry anyway.
+  }
+  npmRegistryCache = { at: Date.now(), base };
+  return base;
+}
+
+/** Scoped names must be escaped (`@scope/name` → one path segment). */
+function npmMetadataPath(pkg: string): string {
+  return pkg.startsWith("@") ? pkg.replace("/", "%2f") : encodeURIComponent(pkg);
+}
+
+/**
+ * Fast path: one registry metadata GET (abbreviated document) per package instead of
+ * spawning `npm view`. Returns null when the registry cannot be read without npm's own
+ * auth/proxy handling — the caller then falls back to `npm view`.
+ */
+async function httpLatestVersion(pkg: string): Promise<{ latest?: string; notFound?: boolean } | null> {
+  try {
+    const base = await npmRegistryBase();
+    const res = await fetch(`${base.replace(/\/+$/, "")}/${npmMetadataPath(pkg)}`, {
+      headers: {
+        accept: "application/vnd.npm.install-v1+json",
+        "user-agent": "npm/10 aiti-extman",
+      },
+      signal: AbortSignal.timeout(UPDATES_TIMEOUT_MS),
+    });
+    if (res.status === 404 || res.status === 410) return { notFound: true };
+    if (!res.ok) return null; // 401/403/5xx → npm view fallback (auth, proxy, registry quirks)
+    const doc = await res.json() as { "dist-tags"?: { latest?: unknown } };
+    const latest = doc?.["dist-tags"]?.latest;
+    return typeof latest === "string" && latest.trim() ? { latest: latest.trim() } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** npm dist-tags.latest (HTTP metadata first, `npm view` fallback; failure/timeout = error, not "no update"). */
+async function npmLatestVersion(pkg: string): Promise<{ latest?: string; error?: string; notFound?: boolean }> {
+  const fast = await httpLatestVersion(pkg);
+  if (fast) return fast;
+  try {
+    const res = await runNpm(["view", pkg, "version", "--json"], undefined, {
+      env: updateCheckEnv(),
+      timeoutMs: UPDATES_TIMEOUT_MS,
+    });
+    const parsed = JSON.parse(res.stdout.trim()) as unknown;
+    if (typeof parsed === "string" && parsed.trim()) return { latest: parsed.trim() };
+    return { error: "unexpected npm view output" };
+  } catch (e) {
+    const text = e instanceof Error ? `${e.message}` : String(e);
+    // "not published on npm" is a normal state for local/private extensions, not a failure.
+    if (/E404|404 Not Found|no such package/i.test(text)) return { notFound: true };
+    return { error: text };
+  }
+}
+
+/**
+ * Dual-source update computation. `phase: "registry"` skips npm/git so the panel can
+ * render a fast partial verdict first; `phase: "all"` is the authoritative result.
+ */
+async function computeUpdates(phase: "registry" | "all" = "all"): Promise<any> {
+  const offline = isOfflineMode();
   const st = statusPayload();
   const extensions = st?.extensions ?? {};
-  const entries: Array<{ id: string; pkg: string; installed: string | null }> = [];
+
+  let regDoc: any = null;
+  let registryError: string | null = null;
+  try {
+    regDoc = await getRegistryData();
+  } catch (e) {
+    registryError = e instanceof Error ? e.message : String(e);
+  }
+  const byId = new Map<string, any>();
+  const byNpm = new Map<string, any>();
+  for (const item of Array.isArray(regDoc?.extensions) ? regDoc.extensions : []) {
+    if (!item || typeof item !== "object") continue;
+    if (typeof item.id === "string" && item.id) byId.set(item.id, item);
+    if (typeof item.npm === "string" && item.npm.trim()) byNpm.set(item.npm.trim(), item);
+  }
+
+  type Local = {
+    id: string;
+    dir: string;
+    pkg: string | null;
+    installed: string | null;
+    meta: InstallMeta | null;
+    registryEntry: any | null;
+  };
+  const locals: Local[] = [];
   for (const id of Object.keys(extensions)) {
     const e = extensions[id];
     if (!e || typeof e.dir !== "string" || !e.dir) continue;
+    let pkg: string | null = null;
+    let installed: string | null = null;
     try {
       const pj = JSON.parse(readFileSync(join(e.dir, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
-      const name = typeof pj.name === "string" ? pj.name : "";
-      if (!name || !NPM_PKG_NAME_RE.test(name)) continue;
-      entries.push({ id, pkg: name, installed: typeof pj.version === "string" ? pj.version : null });
+      if (typeof pj.name === "string" && NPM_PKG_NAME_RE.test(pj.name)) pkg = pj.name;
+      if (isSemver(typeof pj.version === "string" ? pj.version : null)) installed = pj.version as string;
     } catch {}
+    locals.push({
+      id,
+      dir: e.dir,
+      pkg,
+      installed,
+      meta: readInstallMeta(e.dir),
+      registryEntry: byId.get(id) ?? (pkg ? byNpm.get(pkg) ?? null : null),
+    });
   }
-  const updates: Record<string, { pkg: string; installed: string; latest: string; hasUpdate: boolean }> = {};
-  let idx = 0;
-  const worker = async () => {
-    while (idx < entries.length) {
-      const cur = entries[idx++];
-      const latest = await npmLatestVersion(cur.pkg);
-      // 查询失败或本地未记录版本 → 不出条目（静默，UI 显示回到注册表对比回退）
-      if (!latest || !cur.installed) continue;
-      updates[cur.id] = { pkg: cur.pkg, installed: cur.installed, latest, hasUpdate: semverGt(latest, cur.installed) };
+
+  // npm lookups: one query per distinct package name, bounded concurrency.
+  const npmResults = new Map<string, { latest?: string; error?: string; notFound?: boolean }>();
+  if (phase === "all" && !offline) {
+    const targets = new Set<string>();
+    for (const l of locals) {
+      const p = l.pkg ?? (typeof l.registryEntry?.npm === "string" ? l.registryEntry.npm.trim() : "");
+      if (p && NPM_PKG_NAME_RE.test(p)) targets.add(p);
     }
+    const names = [...targets];
+    let idx = 0;
+    const worker = async () => {
+      while (idx < names.length) {
+        const name = names[idx++];
+        npmResults.set(name, await npmLatestVersion(name));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(UPDATES_CONCURRENCY, names.length) || 1 }, worker));
+  }
+
+  // git lookups: git-installed extensions only (few by nature).
+  const gitResults = new Map<string, { head: string; remote: string | null } | null>();
+  if (phase === "all" && !offline) {
+    const env = updateCheckEnv();
+    await Promise.all(locals.map(async (l) => {
+      if (l.meta?.kind !== "git" || !l.meta.ref) return;
+      gitResults.set(l.id, await gitUpdateInfo(l.dir, { env, timeoutMs: UPDATES_TIMEOUT_MS }));
+    }));
+  }
+
+  const updates: Record<string, UpdateEntry> = {};
+  let npmChecked = 0;
+  let npmFailed = 0;
+  let npmMissing = 0;
+  let gitChecked = 0;
+  for (const l of locals) {
+    const registryVersion = typeof l.registryEntry?.version === "string" ? l.registryEntry.version : null;
+    const registryNpm = typeof l.registryEntry?.npm === "string" && l.registryEntry.npm.trim() ? l.registryEntry.npm.trim() : null;
+    const pkgForNpm = l.pkg ?? registryNpm;
+    const npmRes = pkgForNpm ? npmResults.get(pkgForNpm) : undefined;
+    if (npmRes) {
+      npmChecked++;
+      if (npmRes.error) npmFailed++;
+      if (npmRes.notFound) npmMissing++;
+    }
+    const git = gitResults.get(l.id) ?? null;
+    if (git) gitChecked++;
+    const gitSource = l.meta?.kind === "git" && typeof l.meta.ref === "string" && l.meta.ref ? l.meta.ref : null;
+    const entry = mergeUpdateSources({
+      id: l.id,
+      pkg: l.pkg,
+      installed: l.installed,
+      npmLatest: npmRes?.latest ?? null,
+      npmError: npmRes?.notFound ? null : (npmRes?.error ?? null),
+      registryVersion,
+      registryDocsUrl: typeof l.registryEntry?.docs === "string" ? `https://aiti.pw${l.registryEntry.docs}` : null,
+      registryNpm,
+      git,
+      gitSource,
+      offline,
+      partial: phase === "registry",
+    }) as UpdateEntry;
+    if (phase === "registry" && entry.state === "update-available") {
+      // Partial verdict: never offer an install source before the npm/git half is known.
+      entry.installable = null;
+    }
+    updates[l.id] = entry;
+  }
+
+  return {
+    ok: true,
+    phase,
+    partial: phase === "registry",
+    checkedAt: new Date().toISOString(),
+    sources: {
+      registry: regDoc
+        ? { ok: true, count: byId.size }
+        : { ok: false, error: registryError },
+      npm: phase === "all"
+        ? { ok: !offline, checked: npmChecked, failed: npmFailed, missing: npmMissing }
+        : { ok: false, pending: true },
+      git: phase === "all" ? { ok: !offline, checked: gitChecked } : { ok: false, pending: true },
+    },
+    updates,
   };
-  await Promise.all(Array.from({ length: Math.min(UPDATES_CONCURRENCY, entries.length) || 1 }, worker));
-  return { ok: true, checkedAt: new Date().toISOString(), updates };
 }
 
-// ── 在线注册表代理（aiti-docs 编译产物；浏览器直连跨域，这里代取 + 短缓存） ──
+// ── Online registry data (aiti-docs build output; browser CORS → proxy + short cache) ──
 const DEFAULT_REGISTRY_URL = "https://aiti.pw/extensions.json";
 const REGISTRY_TTL_MS = 5 * 60_000;
-let registryCache: { at: number; body: string } | null = null;
+let registryDocCache: { at: number; doc: any } | null = null;
 
-async function fetchRegistry(): Promise<Response> {
-  if (registryCache && Date.now() - registryCache.at < REGISTRY_TTL_MS) {
-    return new Response(registryCache.body, { headers: { "content-type": "application/json; charset=utf-8" } });
-  }
+async function getRegistryData(): Promise<any> {
+  if (registryDocCache && Date.now() - registryDocCache.at < REGISTRY_TTL_MS) return registryDocCache.doc;
   const res = await fetch(process.env.PI_WEB_EXT_REGISTRY_URL || DEFAULT_REGISTRY_URL, {
     cache: "no-store",
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
-  const body = await res.text();
-  JSON.parse(body); // validate before caching / returning
-  registryCache = { at: Date.now(), body };
-  return new Response(body, { headers: { "content-type": "application/json; charset=utf-8" } });
+  const doc = await res.json() as any;
+  if (!doc || typeof doc !== "object" || !Array.isArray(doc.extensions)) {
+    throw new Error("registry payload has no extensions array");
+  }
+  registryDocCache = { at: Date.now(), doc };
+  return doc;
+}
+
+async function fetchRegistry(): Promise<Response> {
+  const doc = await getRegistryData();
+  return new Response(JSON.stringify(doc), { headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
 export default {
@@ -412,7 +715,8 @@ export default {
   icon: "icon.svg",
   client: "dist/aiti-extman-client.mjs",
 
-  // AI 自管理清单：AI 能帮我推荐/体检/安装/启停扩展，乃至直接新建、修改、发布扩展
+  // AI self-management: the AI can recommend / health-check / install / enable-disable extensions,
+  // and even create, modify and publish them
   ai: {
     manage: true,
     intro: "AI 能帮我推荐/体检/安装/启停扩展，乃至直接新建、修改、发布扩展",
@@ -420,12 +724,13 @@ export default {
   },
 
   ui: {
-    // [懒加载 v2] 纯面板扩展：开页不拉 client bundle（126KB）。sidebarFooter 静态入口由
-    // 宿主声明式渲染（pi-web components/AppShell.tsx sidebarFooterStaticItems），点击经
-    // meta.onClick → openExtmanPanel 物化并打开。
-    // ⚠ 依赖宿主改动同步到 prod（未同步时 prod 会缺「扩展」入口）。
+    // [lazy-load v2] Panel-only extension: opening a page does not fetch the client bundle (126KB).
+    // The sidebarFooter static entry is
+    // rendered declaratively by the host (pi-web components/AppShell.tsx sidebarFooterStaticItems); a click
+    // goes through meta.onClick → openExtmanPanel, which materializes the panel and opens it.
+    // ⚠ Requires the matching host change to be deployed to prod (otherwise prod lacks the Extensions entry).
     clientImmediately: false,
-    // 侧栏底部快捷操作行（与 模型/技能/插件 同一排）——扩展管理的原始入口位置。
+    // Sidebar footer quick-action row (same row as Models / Skills / Plugins) — the extension manager's original entry point.
     sidebarFooter: [{ id: "aiti-extman-open", label: "i18n:ext.shortLabel", title: "i18n:ext.sidebarTitle", icon: "icons/wrench.svg" }],
     dialogs: [{ id: "aiti-extman-panel", label: "aiti-extman extensions panel" }],
     i18n: {
@@ -531,8 +836,20 @@ export default {
         "ext.registryFailed": "Failed to load registry",
         "ext.installed": "installed",
         "ext.updatesChecking": "Checking for updates…",
+        "ext.updatesPartial": "npm / git check running…",
+        "ext.updatesStale": "last check shown, refreshing…",
         "ext.npmUpToDate": "up to date (npm v{version})",
         "ext.updateTo": "update to v{version}",
+        "ext.versionCheck": "Version & updates",
+        "ext.updateSiteOnly": "site v{version}: npm not released",
+        "ext.localAhead": "local ahead",
+        "ext.updateCheckFailed": "check failed",
+        "ext.updateAll": "Update ({count})",
+        "ext.updateAllHint": "Install every available update (npm / git sources)",
+        "ext.updateAllConfirm": "Install all {count} available updates? Each extension is replaced in place; the list reloads once at the end.",
+        "ext.updatingAll": "Updating all extensions…",
+        "ext.msgUpdatedAll": "{count} extension(s) updated.",
+        "ext.msgUpdatedSome": "{ok} updated, {failed} failed — see details per extension.",
         "ext.noSource": "no online source",
         "ext.detail": "Details",
         "ext.docs": "Docs",
@@ -713,8 +1030,20 @@ export default {
         "ext.registryFailed": "注册表获取失败",
         "ext.installed": "已安装",
         "ext.updatesChecking": "检查更新中…",
+        "ext.updatesPartial": "npm / git 检查中…",
+        "ext.updatesStale": "显示上次结果，正在刷新…",
         "ext.npmUpToDate": "已是最新（npm v{version}）",
         "ext.updateTo": "可更新到 v{version}",
+        "ext.versionCheck": "版本与更新",
+        "ext.updateSiteOnly": "站点 v{version}：npm 未发布",
+        "ext.localAhead": "本地领先",
+        "ext.updateCheckFailed": "检查失败",
+        "ext.updateAll": "更新（{count}）",
+        "ext.updateAllHint": "安装全部可用更新（npm / git 来源）",
+        "ext.updateAllConfirm": "安装全部 {count} 项可用更新？每个扩展将被原地替换，结束后统一重载一次。",
+        "ext.updatingAll": "正在更新全部扩展…",
+        "ext.msgUpdatedAll": "已更新 {count} 个扩展。",
+        "ext.msgUpdatedSome": "更新成功 {ok} 个，失败 {failed} 个——详见各扩展详情。",
         "ext.noSource": "暂无在线安装源",
         "ext.detail": "详情",
         "ext.docs": "文档",
@@ -799,18 +1128,23 @@ export default {
 
   server: {
     startup(ctx) {
-      // 帮助点已声明在 ai.helpers，由 ai-helper 主动聚合，无需在此注册
+      // Help points are declared in ai.helpers and aggregated by ai-helper — nothing to register here
     },
     async api(req, ctx) {
       const [route] = ctx.path;
+      if (ctx.cacheDir && updatesCacheDir !== ctx.cacheDir) updatesCacheDir = ctx.cacheDir;
 
-      // GET status — 全量状态（含禁用/失败条目、插入点/钩子/依赖细节 + 发行者信息）。
-      if (route === "status" && ctx.method === "GET") return json(enrichedStatus());
+      // GET status — full state (disabled/failed entries, slot/hook/dependency details + publisher info).
+      //   ?locale=<tag> picks DESC.<locale>.md / DESC.<lang>.md before the neutral DESC.md.
+      if (route === "status" && ctx.method === "GET") {
+        const locale = ctx.searchParams?.get("locale") || null;
+        return json(enrichedStatus(locale));
+      }
 
-      // GET publishers — 已信任发行者列表（管理 UI）。
+      // GET publishers — trusted publisher list (management UI).
       if (route === "publishers" && ctx.method === "GET") return json({ trusted: listTrusted() });
 
-      // GET registry — aiti.pw/extensions.json 代理（短缓存）。
+      // GET registry — proxy for aiti.pw/extensions.json (short TTL).
       if (route === "registry" && ctx.method === "GET") {
         try {
           return await fetchRegistry();
@@ -819,22 +1153,73 @@ export default {
         }
       }
 
-      // GET updates — npm 包更新检查（pi package-manager 同策略；?force=1 绕过 5min 缓存）。
+      // GET updates — dual-source update check (npm × aiti.pw registry × git).
+      //   ?phase=registry → fast partial verdict (npm/git not queried), ?force=1 bypasses cache.
+      //   Without force: memory cache → persisted verdict (marked stale when old or when the
+      //   deployed versions moved) → full check. A stale reply is shown immediately and the
+      //   client refreshes it; the install path always re-checks (update-all never reads here).
       if (route === "updates" && ctx.method === "GET") {
-        const force = new URL(req.url ?? "/", "http://localhost").searchParams.get("force") === "1";
-        if (!force && updatesCache && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
-          return json({ ...updatesCache.data, cached: true });
+        const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+        const force = params.get("force") === "1";
+        const phase = params.get("phase") === "registry" ? "registry" as const : "all" as const;
+        if (!force) {
+          const mem = phase === "registry" ? registryUpdatesCache : updatesCache;
+          if (mem && Date.now() - mem.at < UPDATES_TTL_MS) {
+            return json({ ...mem.data, cached: true, stale: false });
+          }
+          const disk = readDiskCache();
+          if (disk) {
+            const stale = Date.now() - disk.at >= UPDATES_TTL_MS || cacheInstalledMismatch(disk.data);
+            return json({ ...disk.data, cached: true, stale });
+          }
         }
         try {
-          const data = await computeUpdates();
-          updatesCache = { at: Date.now(), data };
-          return json(data);
+          const data = await computeUpdates(phase);
+          if (phase === "registry") registryUpdatesCache = { at: Date.now(), data };
+          else {
+            updatesCache = { at: Date.now(), data };
+            writeDiskCache(data);
+          }
+          return json({ ...data, cached: false, stale: false });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : String(e) }, 500);
         }
       }
 
-      // POST install-zip — multipart 文件上传安装（file=<zip>，可选 id / docsUrl / trust / publisherHint）。
+      // POST update-all — install every installable update in one pass, then reload once.
+      if (route === "update-all" && ctx.method === "POST") {
+        const reg = registry();
+        if (!reg) return json({ error: "extension registry unavailable" }, 500);
+        try {
+          const data = await computeUpdates("all");
+          const targets = Object.values(data.updates as Record<string, UpdateEntry>)
+            .filter((u) => u.hasUpdate && typeof u.installable === "string" && u.installable);
+          if (!targets.length) return json({ ok: true, updated: [], message: "nothing to update" });
+          const updated: Array<{ id: string; ok: boolean; from: string | null; to?: string | null; source: string; error?: string }> = [];
+          for (const target of targets) {
+            try {
+              const result = await installExtension(target.installable as string, target.id);
+              let to: string | null = null;
+              try {
+                const pj = JSON.parse(readFileSync(join(result.dir, "package.json"), "utf8")) as { version?: unknown };
+                to = typeof pj.version === "string" ? pj.version : null;
+              } catch {}
+              updated.push({ id: target.id, ok: true, from: target.installed, to, source: target.installable as string });
+            } catch (e) {
+              updated.push({ id: target.id, ok: false, from: target.installed, source: target.installable as string, error: e instanceof Error ? e.message : String(e) });
+            }
+          }
+          const changed = updated.filter((u) => u.ok).length;
+          const deps = changed ? await reconcile("update-all") : null;
+          if (changed) await reg.reload();
+          invalidateUpdatesCache();
+          return json({ ok: true, updated, deps, ...enrichedStatus() });
+        } catch (e) {
+          return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+        }
+      }
+
+      // POST install-zip — multipart upload install (file=<zip>, optional id / docsUrl / trust / publisherHint).
       if (route === "install-zip" && ctx.method === "POST") {
         const form = await req.formData().catch(() => null);
         const file = form?.get("file");
@@ -847,7 +1232,7 @@ export default {
         const reg = registry();
         if (!reg) return json({ error: "extension registry unavailable" }, 500);
 
-        // 发行者预检（解包读 package.json）：未信任 → needsTrust，不安装。
+        // Publisher pre-check (unpack and read package.json): untrusted → needsTrust, nothing installed.
         let publisher: Publisher | null = null;
         let tmp: string | null = null;
         try {
@@ -872,13 +1257,13 @@ export default {
           try {
             writePublisher(result.dir, publisher);
           } catch {}
-          // 共享依赖 reconcile（非致命）：zip 来源声明的运行时依赖同样进共享根
+          // Shared-dependency reconcile (non-fatal): runtime dependencies declared by a zip source land in the shared root too
           const deps = await reconcile(`install-zip:${result.id}`);
           await reg.reload();
-          // 协议检查 + 安装时筛查占位（方案 §7；当前 skipped，不影响行为）
+          // Protocol check + install-time screening placeholder (spec §7; currently skipped, no behavior change)
           const protocolCheck = protocolOfDir(result.dir);
           const screening = await screenAndMigrateOnInstall({ id: result.id, dir: result.dir, kind: "zip", fromProtocol: protocolCheck.declared, toProtocol: protocolCheck.current });
-          updatesCache = null; // 新装/覆盖后版本可能已变，下次更新检查强制重查
+          invalidateUpdatesCache(); // Version may have changed after install/overwrite; force a refresh on the next update check
           return json({ ok: true, id: result.id, deps, protocolCheck, screening, ...enrichedStatus() });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : String(e) }, 500);
@@ -897,9 +1282,9 @@ export default {
           value?: boolean | string;
           /** set-pin：capability | source */
           scope?: string;
-          /** set-pin：能力名或扩展 id */
+          /** set-pin: capability name or extension id */
           key?: string;
-          /** set-dev-priority：开关值 */
+          /** set-dev-priority: toggle value */
           trust?: boolean;
           publisherHint?: string;
           fingerprint?: string;
@@ -917,7 +1302,8 @@ export default {
         } catch {
           return json({ error: "invalid json" }, 400);
         }
-        // 自我保护：管理器不允许禁用/卸载自己（否则失去管理入口，只能手改文件恢复）。
+        // Self-protection: the manager refuses to disable or uninstall itself (that would remove the only
+        // management entry and require editing files by hand to recover).
         if ((body.action === "disable" || body.action === "remove") && body.id === ctx.id) {
           return json({ error: "扩展管理器不允许禁用/卸载自己（否则将失去扩展管理入口）" }, 400);
         }
@@ -925,7 +1311,7 @@ export default {
         if (!reg) return json({ error: "extension registry unavailable" }, 500);
 
         try {
-          // 信任管理：trust=把发行者加入可信名单；untrust=撤销。
+          // Trust management: trust adds the publisher to the trusted list; untrust removes it.
           if (body.action === "trust" || body.action === "untrust") {
             const name = body.name?.trim();
             const fingerprint = body.fingerprint?.trim();
@@ -943,8 +1329,9 @@ export default {
             if (!body.source?.trim()) return json({ error: "source required" }, 400);
             const plan = parseInstallSource(body.source);
             if (!plan) return json({ error: `无法识别的扩展来源：${body.source}` }, 400);
-            // VSCode 式 trust：先解析发行者（npm registry / github owner / package.json）。
-            // 前端信任确认后会把解析出的 publisher 回传（保证信任键与展示一致），否则服务端解析。
+            // VSCode-style trust: resolve the publisher first (npm registry / GitHub owner / package.json).
+            // After the UI confirms, it sends the resolved publisher back (so the trust key matches what was
+            // displayed); otherwise the server resolves it.
             const publisher =
               (body.publisher && normalizePublisher(body.publisher)) ||
               (await resolvePublisherForSource(plan.kind, plan.ref, body.publisherHint));
@@ -960,22 +1347,25 @@ export default {
             try {
               writePublisher(result.dir, publisher);
             } catch {}
-            // 共享依赖 reconcile（非致命：失败只随响应告警，安装不回滚）；先对齐依赖再 reload 装载
+            // Shared-dependency reconcile (non-fatal: failures only surface as warnings, the install is not rolled
+            // back); align dependencies first, then reload to load the extension
             const deps = await reconcile(`install:${result.id}`);
             await reg.reload();
-            // 协议检查 + 安装时筛查占位（方案 §7；当前 skipped，不影响行为）
+            // Protocol check + install-time screening placeholder (spec §7; currently skipped, no behavior change)
             const protocolCheck = protocolOfDir(result.dir);
             const screening = await screenAndMigrateOnInstall({ id: result.id, dir: result.dir, kind: plan.kind, fromProtocol: protocolCheck.declared, toProtocol: protocolCheck.current });
-            updatesCache = null; // 安装/更新后版本已变，下次更新检查强制重查
+            invalidateUpdatesCache(); // Version may have changed after install/update; force a refresh on the next update check
             return json({ ok: true, id: result.id, deps, protocolCheck, screening, ...enrichedStatus() });
           }
           if (body.action === "remove") {
             if (!body.id?.trim()) return json({ error: "id required" }, 400);
             removeExtension(body.id);
-            updatesCache = null;
-            // pin 清理（P2）：卸载后 source/capability pin 失效——core 提供方法时顺手清（旧 core 无此方法则跳过，解析时软校验兜底）
+            invalidateUpdatesCache();
+            // Pin cleanup (P2): source/capability pins go stale after uninstall — cleared when core exposes the
+            // method (older cores skip it; resolution-time soft checks are the safety net)
             try { reg.clearExtPins?.(body.id); } catch {}
-            // 依赖并集已变小 → reconcile 让 npm 裁剪共享根里不再被任何扩展引用的包（非致命）
+            // The dependency union shrank → reconcile lets npm prune packages in the shared root that no extension
+            // references anymore (non-fatal)
             const deps = await reconcile(`remove:${body.id}`);
             await reg.reload();
             return json({ ok: true, id: body.id, deps, ...enrichedStatus() });
@@ -990,8 +1380,9 @@ export default {
             await reg.reload();
             return json({ ok: true, ...enrichedStatus() });
           }
-          // 依赖与能力模型 P2：pin（能力生效提供者 / 同 id 多来源）与 dev 调试优先开关。
-          // 变更后 reload 让裁决生效（与 enable/disable 同模式）。
+          // Dependency & capability model P2: pins (effective capability provider / multi-source ids) and the
+          // dev-priority debug switch.
+          // Reload after the change so arbitration takes effect (same pattern as enable/disable).
           if (body.action === "set-pin") {
             const scope = body.scope;
             const key = body.key?.trim();
@@ -1008,7 +1399,8 @@ export default {
             await reg.reload();
             return json({ ok: true, devPriority: body.value === true, ...enrichedStatus() });
           }
-          // 功能管理：逐项启停/设置扩展声明的 feature（core 持久化 + 注入过滤，无需 reload）。
+          // Feature management: enable/disable or set each declared feature (core persists and filters
+          // injection; no reload needed).
           if (body.action === "set-feature") {
             if (!body.id?.trim() || !body.featureId?.trim()) return json({ error: "id and featureId required" }, 400);
             const status = enrichedStatus();
@@ -1017,7 +1409,8 @@ export default {
             if (!entry || entry.loaded !== true || !feature) {
               return json({ error: `扩展 ${body.id} 未加载或未声明功能 ${body.featureId}` }, 400);
             }
-            // string/textlist feature → 写值（value 缺省为空串）；boolean feature → 启停（enabled 缺省 true）
+            // string/textlist feature → write the value (value defaults to an empty string); boolean feature
+            // → toggle (enabled defaults to true)
             let value: boolean | string;
             if (feature.type === "string" || feature.type === "textlist") {
               value = (body.value !== undefined && typeof body.value !== "boolean") ? String(body.value) : String(body.value ?? "");
@@ -1030,7 +1423,8 @@ export default {
             const fe = fresh.extensions[body.id]?.features?.find((f: any) => f.id === body.featureId);
             return json({ ok: true, id: body.id, featureId: body.featureId, enabled: fe ? fe.enabled !== false : true, value: fe && typeof fe.value === "string" ? fe.value : undefined, ...fresh });
           }
-          // 共享依赖手动 reconcile（deploy.mjs 通知 / AI / UI 触发；install/remove 已自动触发）
+          // Manual shared-dependency reconcile (triggered by deploy.mjs / the AI / the UI; install/remove already
+          // trigger it automatically)
           if (body.action === "reconcile-deps") {
             const deps = await reconcile(body.source?.trim() || "manual");
             return json({ ok: deps.ok, deps, ...enrichedStatus() });
