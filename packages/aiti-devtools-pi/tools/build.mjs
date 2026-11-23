@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * 构建 aiti-devtools-pi.js（pi 扩展单文件 bundle）：
- *   入口 src/index.ts；内联 aiti-devtools-core/aiti-devtools-agent（本仓库 packages/）
- *   外部：@earendil-works/pi-coding-agent（pi SDK）+ typebox（宿主提供）
+ * Build the aiti-devtools-pi.js single-file bundle (pi extension):
+ *   entry src/index.ts; inlines aiti-devtools-core/aiti-devtools-agent (packages/ in this repo)
+ *   external: @earendil-works/pi-coding-agent (pi SDK) + typebox (provided by the host)
  *
- * 用法：node tools/build.mjs [outfile]
- * 产物：dist/aiti-devtools-pi.js（独立 pi：settings.json extensions/packages 指向它，或发布为 pi package）
- * 说明：pi 扩展不内联 launcher/cockpit 资产（由独立桥 serve），故不依赖 launcher 构建产物。
+ * Usage: node tools/build.mjs [outfile]
+ * Output: dist/aiti-devtools-pi.js (standalone pi: point settings.json extensions/packages at it,
+ *         or publish as a pi package)
+ * Note: the pi extension does not inline launcher/cockpit assets (served by the standalone
+ *       bridge), so it has no dependency on launcher build artifacts.
  */
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +19,7 @@ const _req = createRequire(import.meta.url);
 // esbuild 由仓库根 node_modules 提供（npm i -D esbuild）；包 npm 化后各包自带 esbuild。
 function loadEsbuild() {
   try { return _req("esbuild"); } catch {}
-  console.error("[build-pi] 找不到 esbuild——请先在仓库根 npm i -D esbuild");
+  console.error("[build-pi] esbuild not found — run `npm i -D esbuild` at the repo root first");
   process.exit(1);
 }
 const esbuild = loadEsbuild();
@@ -32,8 +34,8 @@ await esbuild.build({
   platform: "node",
   target: "node20",
   logLevel: "info",
-  banner: { js: "/* aiti-devtools-pi · pi 扩展（内嵌桥 + 工具直连）· 构建产物，勿手改 */" },
+  banner: { js: "/* aiti-devtools-pi · pi extension (embedded bridge + direct tool access) · generated bundle, do not edit */" },
   external: ["@earendil-works/pi-coding-agent", "typebox"],
 });
 console.log("[build-pi] → " + outfile);
-console.log("[build-pi] 独立 pi 安装：settings.json → \"extensions\": [\"" + outfile + "\"] 或发布为 pi package");
+console.log('[build-pi] standalone pi install: settings.json → "extensions": ["' + outfile + '"] or publish as a pi package');
