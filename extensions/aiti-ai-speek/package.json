@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-speek",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "description": "Voice reading of AI output — browser Web Speech / edge-tts / local TTS (Hojo-TTS-Light, OpenAI-compatible) with cache, voice cloning and pause/skip/stop",
   "displayNameI18n": {
@@ -31,7 +31,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "57a35a7654d1c4b9",
+  "contentHash": "08290bca2e5c6eec",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

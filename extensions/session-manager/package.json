@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/session-manager",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "Cross-project session panel — tag tree + colors / favorites / search / archive / kanban / new-session branch·Worktree picker / history parsing for 23 agent families / DockStack orchestration",
@@ -36,7 +36,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "c4679561f814bbf5",
+  "contentHash": "a1ba7ae1640711b0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
