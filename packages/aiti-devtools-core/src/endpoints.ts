@@ -48,7 +48,7 @@ export function normalizeBridgeUrl(raw: string, prefix: string): { origin: strin
   try {
     u = new URL(raw);
   } catch {
-    return { origin: raw, notes: ["地址无法解析，按原样使用：" + raw] };
+    return { origin: raw, notes: ["address could not be parsed; using as-is: " + raw] };
   }
   let path = u.pathname.replace(/\/+$/, "") || "/";
   let changed = true;
@@ -56,19 +56,19 @@ export function normalizeBridgeUrl(raw: string, prefix: string): { origin: strin
     changed = false;
     for (const suf of MCP_PATH_SUFFIXES) {
       if (path.endsWith(suf)) {
-        notes.push(`剥离路径后缀 "${suf}"`);
+        notes.push(`stripped path suffix "${suf}"`);
         path = path.slice(0, -suf.length) || "/";
         changed = true;
         break;
       }
     }
     if (!changed && prefix && prefix !== "/" && path.endsWith(prefix)) {
-      notes.push(`剥离前缀 "${prefix}"`);
+      notes.push(`stripped prefix "${prefix}"`);
       path = path.slice(0, -prefix.length) || "/";
       changed = true;
     }
   }
-  if (path && path !== "/") notes.push(`忽略多余路径 "${path}"（按 origin ${u.origin} 处理）`);
+  if (path && path !== "/") notes.push(`dropped extra path "${path}" (treated as origin ${u.origin})`);
   return { origin: u.origin, notes };
 }
 
@@ -117,7 +117,7 @@ export function resolveEndpoints(input: ResolveEndpointsInput): ResolvedEndpoint
     if (sameOrigin(origin, serverUrl)) kind = "same-origin";
     else {
       kind = "external-bridge";
-      if (!hasBridgePathSignature(input.bridgeUrl)) notes.push("输入地址未带桥路径特征（/aiti /bridge /mcp），按桥地址处理——若这是 aiti-agent（AI 窗）地址请改用 aiUrl 参数");
+      if (!hasBridgePathSignature(input.bridgeUrl)) notes.push("input address has no bridge path signature (/aiti /bridge /mcp); treating it as a bridge address — if it is an aiti-agent (AI window) address, switch to the aiUrl field instead");
     }
   }
 

@@ -79,7 +79,7 @@ export function createPairModule(deps: {
     const ip = (req.headers.get("x-real-ip") || "").trim();
     if (!ip || PRIVATE_IP.test(ip)) return null; // 直连（无头）或私网
     if (pairToken && regToken && regToken === pairToken) return null;
-    return json({ ok: false, error: "pair 上线限内网（外网开放：过 Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken）" }, 403);
+    return json({ ok: false, error: "pair pairing is restricted to the private network (exposing it publicly: behind Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken)" }, 403);
   }
 
   function broadcastToPeers(env: any) {
@@ -101,16 +101,16 @@ export function createPairModule(deps: {
   }
   function register(msg: any, meta?: { ip?: string | null }) {
     const now = Date.now();
-    const name = safeName(String((msg && msg.name) || "")).slice(0, 40) || "设备";
+    const name = safeName(String((msg && msg.name) || "")).slice(0, 40) || "Device";
     const pid = (msg && msg.peerId && String(msg.peerId)) || genId("p_");
     const dev = (msg && msg.device && typeof msg.device === "object") ? msg.device : null;
     const devLabel = dev ? [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" · ") : null;
     let p = peers.get(pid);
     if (!p) {
-      if (devLabel) console.log(TAG + "   设备：" + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
+      if (devLabel) console.log(TAG + "   device: " + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
       p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String((msg && msg.ua) || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: (meta && meta.ip) || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
+      console.log(TAG + " pair device registered: " + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length; // 设备视图已变（join 广播已带全量触发客户端刷新）
     } else {
@@ -191,7 +191,7 @@ export function createPairModule(deps: {
     const clean = String(name || "").trim().slice(0, 40);
     if (!clean) return { ok: false, error: "bad name" };
     names.set(iid, { name: clean, at: Date.now() });
-    console.log(TAG + " pair 页面改名：" + iid + " → " + clean);
+    console.log(TAG + " pair page renamed: " + iid + " → " + clean);
     return { ok: true, name: clean };
   }
 
@@ -221,9 +221,9 @@ export function createPairModule(deps: {
 
   // ---------------- 文件中转 ----------------
   function fileInit(from: { id: string; name: string }, to: string, name: string, size: number, mime: string) {
-    if (!filesDir) return { error: "桥未配置 dataDir（文件中转不可用）" };
+    if (!filesDir) return { error: "bridge has no dataDir configured (file relay unavailable)" };
     if (!size || size <= 0) return { error: "bad size" };
-    if (size > PAIR_FILE_MAX) return { error: "文件超过上限 " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB" };
+    if (size > PAIR_FILE_MAX) return { error: "file exceeds the " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB cap" };
     const fileId = genId("f_");
     const path = join(filesDir, fileId);
     const rec = { fileId, name: safeName(name), size, mime: String(mime || "application/octet-stream").slice(0, 100), from, to: String(to || ""), path, bytes: 0, status: "uploading", at: Date.now() };
@@ -252,7 +252,7 @@ export function createPairModule(deps: {
     const f = files.get(String(fileId || ""));
     if (!f) return { error: "unknown fileId" };
     if (f.status !== "uploading") return { ok: true, file: publicFile(f) };
-    if (f.bytes !== f.size) return { error: "size mismatch（已收 " + f.bytes + "/" + f.size + "B，补传缺失块后再 complete）" };
+    if (f.bytes !== f.size) return { error: "size mismatch (received " + f.bytes + "/" + f.size + "B; re-upload the missing chunks before complete)" };
     f.status = "ready";
     return { ok: true, file: publicFile(f) };
   }
@@ -338,7 +338,7 @@ export function createPairModule(deps: {
       if (now - p.lastSeen <= 120000) continue; // 2min 宽限（无流短连接轮询场景）
       if (!p.offlineAt) p.offlineAt = p.lastSeen;
       if (now - p.offlineAt > PAIR_PEER_TTL) {
-        console.log(TAG + " pair 设备清理（掉线超时）：" + p.name + " (" + pid + ")");
+        console.log(TAG + " pair device swept (offline timeout): " + p.name + " (" + pid + ")");
         peers.delete(pid);
         broadcastToPeers({ type: "peer-leave", peer: { id: pid, name: p.name } });
       }
@@ -415,7 +415,7 @@ export function createPairModule(deps: {
     if (seg[0] === "name" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = pageIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上）" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge)" }, 401);
       const r = setName(from.id, String((msg && msg.name) || ""));
       return json(r, r.ok ? 200 : 400);
     }
@@ -424,9 +424,9 @@ export function createPairModule(deps: {
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = requestIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
       const text = String((msg && msg.text) || "").slice(0, 64000);
-      if (!text.trim()) return json({ ok: false, error: "bad request（需要 text）" }, 400);
+      if (!text.trim()) return json({ ok: false, error: "bad request (text required)" }, 400);
       const r = deps.routeSend(from, String((msg && msg.to) || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) }); // notify=true → 🔔 popup card (interaction); default → pair_msg bubble
       return json(r, r.ok ? 200 : (r.candidates ? 300 : 400));
     }
@@ -436,7 +436,7 @@ export function createPairModule(deps: {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
         const from = requestIdentity({ ...msg, name: undefined }); // init msg.name is the file name — keep it out of identity resolution
-        if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+        if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
         const denied = gateAdmission(req, null);
         if (denied) return denied;
         const r = fileInit(from, String((msg && msg.to) || ""), String((msg && msg.name) || ""), Number((msg && msg.size) || 0), String((msg && msg.mime) || ""));

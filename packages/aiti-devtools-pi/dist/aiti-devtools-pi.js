@@ -49,7 +49,7 @@ function createPairModule(deps) {
     const ip = (req.headers.get("x-real-ip") || "").trim();
     if (!ip || PRIVATE_IP.test(ip)) return null;
     if (pairToken && regToken && regToken === pairToken) return null;
-    return json({ ok: false, error: "pair 上线限内网（外网开放：过 Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken）" }, 403);
+    return json({ ok: false, error: "pair pairing is restricted to the private network (exposing it publicly: behind Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken)" }, 403);
   }
   function broadcastToPeers(env) {
     for (const [, p] of peers) {
@@ -70,16 +70,16 @@ function createPairModule(deps) {
   }
   function register(msg, meta) {
     const now = Date.now();
-    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "设备";
+    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "Device";
     const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
     const dev = msg && msg.device && typeof msg.device === "object" ? msg.device : null;
     const devLabel = dev ? [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" · ") : null;
     let p = peers.get(pid);
     if (!p) {
-      if (devLabel) console.log(TAG + "   设备：" + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
+      if (devLabel) console.log(TAG + "   device: " + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
       p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: meta && meta.ip || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
+      console.log(TAG + " pair device registered: " + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length;
     } else {
@@ -154,7 +154,7 @@ function createPairModule(deps) {
     const clean = String(name || "").trim().slice(0, 40);
     if (!clean) return { ok: false, error: "bad name" };
     names.set(iid, { name: clean, at: Date.now() });
-    console.log(TAG + " pair 页面改名：" + iid + " → " + clean);
+    console.log(TAG + " pair page renamed: " + iid + " → " + clean);
     return { ok: true, name: clean };
   }
   function deliverToPeer(peerId, env) {
@@ -181,9 +181,9 @@ function createPairModule(deps) {
     return { none: true };
   }
   function fileInit(from, to, name, size, mime) {
-    if (!filesDir) return { error: "桥未配置 dataDir（文件中转不可用）" };
+    if (!filesDir) return { error: "bridge has no dataDir configured (file relay unavailable)" };
     if (!size || size <= 0) return { error: "bad size" };
-    if (size > PAIR_FILE_MAX) return { error: "文件超过上限 " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB" };
+    if (size > PAIR_FILE_MAX) return { error: "file exceeds the " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB cap" };
     const fileId = genId("f_");
     const path = join(filesDir, fileId);
     const rec = { fileId, name: safeName(name), size, mime: String(mime || "application/octet-stream").slice(0, 100), from, to: String(to || ""), path, bytes: 0, status: "uploading", at: Date.now() };
@@ -213,7 +213,7 @@ function createPairModule(deps) {
     const f = files.get(String(fileId || ""));
     if (!f) return { error: "unknown fileId" };
     if (f.status !== "uploading") return { ok: true, file: publicFile(f) };
-    if (f.bytes !== f.size) return { error: "size mismatch（已收 " + f.bytes + "/" + f.size + "B，补传缺失块后再 complete）" };
+    if (f.bytes !== f.size) return { error: "size mismatch (received " + f.bytes + "/" + f.size + "B; re-upload the missing chunks before complete)" };
     f.status = "ready";
     return { ok: true, file: publicFile(f) };
   }
@@ -299,7 +299,7 @@ function createPairModule(deps) {
       if (now - p.lastSeen <= 12e4) continue;
       if (!p.offlineAt) p.offlineAt = p.lastSeen;
       if (now - p.offlineAt > PAIR_PEER_TTL) {
-        console.log(TAG + " pair 设备清理（掉线超时）：" + p.name + " (" + pid + ")");
+        console.log(TAG + " pair device swept (offline timeout): " + p.name + " (" + pid + ")");
         peers.delete(pid);
         broadcastToPeers({ type: "peer-leave", peer: { id: pid, name: p.name } });
       }
@@ -371,16 +371,16 @@ function createPairModule(deps) {
     if (seg[0] === "name" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = pageIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上）" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge)" }, 401);
       const r = setName(from.id, String(msg && msg.name || ""));
       return json(r, r.ok ? 200 : 400);
     }
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = requestIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
       const text = String(msg && msg.text || "").slice(0, 64e3);
-      if (!text.trim()) return json({ ok: false, error: "bad request（需要 text）" }, 400);
+      if (!text.trim()) return json({ ok: false, error: "bad request (text required)" }, 400);
       const r = deps.routeSend(from, String(msg && msg.to || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) });
       return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
     }
@@ -388,7 +388,7 @@ function createPairModule(deps) {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
         const from = requestIdentity({ ...msg, name: void 0 });
-        if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+        if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
         const denied = gateAdmission(req, null);
         if (denied) return denied;
         const r = fileInit(from, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
@@ -578,42 +578,42 @@ var LEGACY_TOKEN = "dev";
 var BRIDGE_TOOLS = [
   {
     name: "page_exec",
-    description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
+    description: "Run a CDP-like command on a connected page (DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser domains). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. Dangerous commands / browser-restricted operations pop a user confirmation first; Page.captureScreenshot first pops a prep card stating the screenshot intent (args.reason — always describe in one sentence what you want to capture), the user adjusts the page before capture starts, and a preview confirmation pops afterwards (large images are written to disk and returned as a file path); the confirmation countdown is tunable via args.timeout (ms, default 280000, the server-side safety net adds +30s). Messages from a debugged page (inject) carry a [发自: <pageId> · <url>] source annotation — pass that pageId value to the pageId parameter to operate that page.\n\niframe support: Page.getFrameTree inspects the frame tree (iframe src/name/title, same-origin includes url/readyState); pass contextId to Runtime.evaluate (iframe index starting at 1, same-origin eval) to run in an iframe context.",
     inputSchema: { type: "object", properties: {
       cmd: { type: "string" },
       args: { type: "object" },
-      pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" }
+      pageId: { type: "string", description: "Full ID of the target page — from an AI message's [发自: xxx] annotation (e.g. 3001/host); also queryable via /bridge/sessions" }
     }, required: ["cmd"] }
   },
-  { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
-  { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
-  { name: "form_fill", description: "在目标页面（缺省 AI 主窗口 xxx/ai）的弹窗/表单里回填字段值——AI 结果直接操作扩展弹窗表单（React 兼容：原生 value setter + dispatch input/change）。配合 self_ui 使用：先 self_ui 拿字段 label/selector，再 form_fill 填值。参数：dialog（弹窗标识：标题子串或序号 0 起，缺省取面积最大的可见弹窗）、fields[{selector|label, value}]、button（可选，回填后点击的按钮文本如『保存』）。返回 {foundDialog, title, filled, missed, clicked}。", inputSchema: { type: "object", properties: {
-    pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" },
-    dialog: { type: "string", description: "弹窗标识：标题子串或序号（0 起）；缺省取面积最大的可见弹窗" },
-    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
-    button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" }
+  { name: "page_snapshot", description: "Pull the basic live state of a connected page (URL / selection / emulation overrides). pageId defaults to the latest AI main window (self:true); an explicit pageId wins.", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
+  { name: "self_ui", description: "Scan the target page (default: AI main window xxx/ai) for currently open dialogs / forms / fields / buttons — used by ai-helper to locate fields for backfill. Returns {dialogs:[{title, fields:[{label,selector,type}], buttons}]}; dialogs is empty when none are open.", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "Defaults to the AI main window (xxx/ai); other pages allowed" } } } },
+  { name: "form_fill", description: "Backfill field values into a dialog/form on the target page (default: AI main window xxx/ai) — the AI directly operates extension dialog forms (React-compatible: native value setter + dispatched input/change). Pair with self_ui: first self_ui to get field label/selector, then form_fill to fill. Params: dialog (dialog id: title substring or 0-based index; defaults to the largest visible dialog), fields[{selector|label, value}], button (optional, button text to click after backfill, e.g. 'Save'). Returns {foundDialog, title, filled, missed, clicked}.", inputSchema: { type: "object", properties: {
+    pageId: { type: "string", description: "Defaults to the AI main window (xxx/ai); other pages allowed" },
+    dialog: { type: "string", description: "Dialog id: title substring or 0-based index; defaults to the largest visible dialog" },
+    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS selector (preferred)" }, label: { type: "string", description: "In-dialog text match (label[for]/wrapping/contains)" }, value: { type: "string", description: "Value to fill" } }, required: ["value"] }, description: "Fields to fill" },
+    button: { type: "string", description: "Button text to click after backfill (e.g. 'Save', 'OK')" }
   } } },
-  { name: "bridge_status", description: "查询桥上全部设备（devices 统一视图：kind=page 注入页面（含 pageId/url/title + device 浏览器·OS·屏幕）/kind=agent agent 会话（含 cwd）/kind=pair web 设备如手机）+ 已连接页面明细（sessions）与挂起请求。用户提到页面标题或 URL 时按 title/url 匹配 pageId；提到手机/设备时在 devices 里选（id 或名字传给 aiti_pair_send/aiti_pair_file 即可互发消息互传文件）。", inputSchema: { type: "object", properties: {} } },
+  { name: "bridge_status", description: "Query every device on the bridge (devices unified view: kind=page injected pages (pageId/url/title + device browser·OS·screen) / kind=agent agent sessions (with cwd) / kind=pair web devices like phones) + connected page details (sessions) and pending requests. When the user mentions a page title or URL, match pageId by title/url; when they mention a phone/device, pick from devices (pass its id or name to aiti_pair_send/aiti_pair_file to exchange messages/files).", inputSchema: { type: "object", properties: {} } },
   {
     name: "page_logs",
-    description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
+    description: "Pull locally buffered console logs from the target page (log/debug/info/warn/error, full ring; CDP Runtime.evaluate reads window.__dbg.__consoleRing). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. First choice for page-error triage: start at warn/error, then widen. Returns {logs:[{ts,level,text,count}], bufferSize}.",
     inputSchema: { type: "object", properties: {
-      pageId: { type: "string", description: "目标页面完整 ID（[发自: xxx] 或 /bridge/sessions）" },
-      level: { type: "string", description: "过滤级别：debug/log/info/warn/error（默认全部）" },
-      since: { type: "string", description: "ISO 时间：只返回此时间之后的日志" },
-      limit: { type: "number", description: "条数上限（≤200，默认 50，取最新）" },
+      pageId: { type: "string", description: "Full ID of the target page ([发自: xxx] annotation or /bridge/sessions)" },
+      level: { type: "string", description: "Filter level: debug/log/info/warn/error (default all)" },
+      since: { type: "string", description: "ISO time: only return logs after this moment" },
+      limit: { type: "number", description: "Max entries (≤200, default 50, newest kept)" },
       token: { type: "string" }
     } }
   },
   {
     name: "page_network",
-    description: "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
+    description: "Pull locally buffered ajax/fetch request completions from the target page (CDP Runtime.evaluate reads window.__dbg.__netRing). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. For failure triage pass status 400 or errorOnly:true. Note: static asset loads are not included (that is CDP Network's territory). Returns {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}.",
     inputSchema: { type: "object", properties: {
       pageId: { type: "string" },
-      url: { type: "string", description: "URL 子串过滤" },
-      status: { type: "number", description: "status >= 此值才返回（如 400 只看失败）" },
-      errorOnly: { type: "boolean", description: "只看失败（error 非空 或 status>=400）" },
-      limit: { type: "number", description: "条数上限（≤100，默认 30，取最新）" },
+      url: { type: "string", description: "URL substring filter" },
+      status: { type: "number", description: "Only return entries with status >= this value (e.g. 400 for failures only)" },
+      errorOnly: { type: "boolean", description: "Failures only (error non-empty or status>=400)" },
+      limit: { type: "number", description: "Max entries (≤100, default 30, newest kept)" },
       token: { type: "string" }
     } }
   },
@@ -624,124 +624,124 @@ var BRIDGE_TOOLS = [
   // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
   {
     name: "user_pick_element",
-    description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
+    description: "Ask the human user of the current page to pick a page element (auto-enters Inspector pick mode, collapses the AI window, pops the pick panel; the user can confirm or decline). Returns the element payload {tag,rect,xpath,text,attributes,framework,selector}.",
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
-      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-      pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" }
+      prompt: { type: "string", description: "Explanation shown to the user (why this element is needed)" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
+      pageId: { type: "string", description: "Full ID of the target page (instanceId/frameId)" }
     }, required: ["prompt"] }
   },
   {
     name: "user_confirm",
-    description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
+    description: 'Ask the human user a yes/no question in the AI window (e.g. "confirm this action?" "continue?"); the user answers via ✅/❌ and may attach a free-text note (value.comment); a fixed "none of these fit" option leads to a custom answer (approved:null, custom). Returns {status, approved, comment?, custom?, reason?}.',
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "问题内容" },
-      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-      rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
+      prompt: { type: "string", description: "The question text" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: `Whether the user may decline with "can't handle this right now" (default true)` },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window (does not block this call); default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt"] }
   },
   {
     name: "user_choose",
-    description: "在 AI 窗口内给人类用户一组选项让其选择（如修复方案 A/B/C）。单选（默认）→ value:{index,label}；multiple:true 多选 → value:{indexes,labels}。用户可附「补充说明」自由文本（value.comment）；另有固定选项「这些都不适合」→ 自定义答案（index:-1, custom:true）。返回 {status, value, reason?}。",
+    description: 'Offer the human user a set of options in the AI window (e.g. fix plans A/B/C). Single choice (default) → value:{index,label}; multiple:true → value:{indexes,labels}. The user may attach a free-text note (value.comment); a fixed "none of these fit" option leads to a custom answer (index:-1, custom:true). Returns {status, value, reason?}.',
     inputSchema: { type: "object", properties: {
       prompt: { type: "string" },
-      choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
-      multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
-      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      choices: { type: "array", items: { type: "string" }, description: "Option list (2-8 items)" },
+      multiple: { type: "boolean", description: "Allow multiple selection (default false; returns indexes/labels when true)" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt", "choices"] }
   },
   {
     name: "user_input",
-    description: "在 AI 窗口内请人类用户输入一段文本（如期望文案、配置值、场景描述），回车/点击即发送。返回 {status, value:{text}, reason?}。",
+    description: "Ask the human user to type a piece of text in the AI window (e.g. desired copy, a config value, a scenario description); sent on Enter/click. Returns {status, value:{text}, reason?}.",
     inputSchema: { type: "object", properties: {
       prompt: { type: "string" },
-      defaultValue: { type: "string", description: "预填默认值（可选）" },
-      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      defaultValue: { type: "string", description: "Optional pre-filled default" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt"] }
   },
   {
     name: "user_presence",
-    description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
+    description: 'Probe whether the human user is present/online (confirm before starting a long task that needs their cooperation); the user taps "here / later" and may attach a note (value.comment). Returns {status, present, comment?}; timeout means not present.',
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
-      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      prompt: { type: "string", description: 'Question text (default "are you there? I need your help to continue")' },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever until the user answers; when passed, a pausable countdown shows and it returns status:'timeout' on expiry (treated as not present) — pass it explicitly only for quick presence probes / timeboxed waits" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: [] }
   },
   {
     name: "user_notify",
-    description: "非阻塞通知：通过浏览器 Notification 告诉用户一条消息（如“修复完成，请刷新验证”），不等待回答。返回 {notified:true}。",
+    description: 'Non-blocking notification: tell the user something via a browser Notification (e.g. "fix done, please refresh and verify") without waiting for an answer. Returns {notified:true}.',
     inputSchema: { type: "object", properties: {
-      title: { type: "string", description: "通知标题" },
-      body: { type: "string", description: "通知内容" },
-      timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
-      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-      pageId: { type: "string", description: "目标页面：完整 pageId（iid/frameId）/url/title（resolvePageId 同款）或裸 instanceId（pair 设备 id 同源）。缺省=广播全部 AI 窗 + 会话默认页" }
+      title: { type: "string", description: "Notification title" },
+      body: { type: "string", description: "Notification body" },
+      timeout: { type: "number", description: "Optional: auto-dismiss time for the notification card ms (5000-600000). Omit = stays until the user closes it" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
+      pageId: { type: "string", description: "Target page: full pageId (iid/frameId) / url / title (same as resolvePageId) or bare instanceId (same namespace as pair device ids). Default = broadcast to all AI windows + the session's default page" }
     }, required: ["body"] }
   },
   // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
   {
     name: "aiti_hello",
-    description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
+    description: "Agent self-introduction/registration: override agentId (default clientInfo.name) and sessionId (default Mcp-Session-Id or bridge-random), bind the default target pageId, subscribe page events (page_error). Note: page_log/page_network are no longer pushed live — pull them on demand with the page_logs/page_network tools. Call once at session start — once registered, messages can be routed to this session (agentKey=agentId/sessionId).",
     inputSchema: { type: "object", properties: {
-      agentId: { type: "string", description: "自定义 agent 标识（如 pi / cc / qoder；缺省用 clientInfo.name）" },
-      sessionId: { type: "string", description: "本实例会话标识（多实例/多会话时区分；缺省用 Mcp-Session-Id，无则桥生成随机）" },
-      name: { type: "string", description: "显示名（可选，如 'pi · 工作区A'）" },
-      cwd: { type: "string", description: "工作目录（可选，显示 CWD . name (id)，方便识别 agent 身份）" },
-      pageId: { type: "string", description: "绑定默认调试目标页（pageId/url/title 均可，留空不绑）" },
-      subEvents: { type: "array", items: { type: "string" }, description: "订阅实时事件：page_error（默认不投递，显式订阅才推；page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取）" }
+      agentId: { type: "string", description: "Custom agent id (e.g. pi / cc / qoder; defaults to clientInfo.name)" },
+      sessionId: { type: "string", description: "Session id of this instance (distinguishes multi-instance/multi-session; defaults to Mcp-Session-Id, or bridge-random)" },
+      name: { type: "string", description: "Display name (optional, e.g. 'pi · workspace A')" },
+      cwd: { type: "string", description: "Working directory (optional; shown as CWD . name (id) to identify the agent)" },
+      pageId: { type: "string", description: "Bind the default debug target page (pageId/url/title all accepted; leave empty to skip)" },
+      subEvents: { type: "array", items: { type: "string" }, description: "Live events to subscribe: page_error (not delivered by default, only when explicitly subscribed; page_log/page_network are no longer pushed live — use page_logs/page_network to pull on demand)" }
     } }
   },
   {
     name: "file_stat",
-    description: "查询文件存在性/类型/大小/修改时间（绝对路径；组件源码/调用位置定位、AI 窗『后端打开/前端打开』前置校验用）。不存在或非法路径返回 {exists:false}。",
+    description: "Check file existence/type/size/mtime (absolute path; for locating component source / call sites, and as the pre-check for the AI window's backend/frontend open). Non-existent or invalid paths return {exists:false}.",
     inputSchema: { type: "object", properties: {
-      path: { type: "string", description: "绝对路径（如 /home/user/src/App.vue）" }
+      path: { type: "string", description: "Absolute path (e.g. /home/user/src/App.vue)" }
     }, required: ["path"] }
   },
   {
     name: "aiti_inbox",
-    description: "消息主通道：拉取发给本 agent 会话的消息（人主动发话 user_message / 异步 user_* 作答 user_answer / 订阅的页面事件）。开始新一轮或需要最新信息时先调用；处理完把消息 id 放 ack 参数确认（标记 consumed，历史保留）。返回 agentKey（agentId/sessionId），未注册时提示调 aiti_hello 注册。",
+    description: "Main message channel: pull messages addressed to this agent session (human-initiated user_message / async user_* answers user_answer / subscribed page events). Call it when starting a new round or needing fresh info; after processing, pass the message ids in the ack param to confirm (marks consumed; history is kept). Returns agentKey (agentId/sessionId); when unregistered it suggests calling aiti_hello first.",
     inputSchema: { type: "object", properties: {
-      agentId: { type: "string", description: "agent 标识（缺省用 aiti_hello 注册值或 clientInfo.name）" },
-      sessionId: { type: "string", description: "本实例会话标识（缺省用 Mcp-Session-Id 或 aiti_hello 注册值）" },
-      ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
+      agentId: { type: "string", description: "Agent id (defaults to the aiti_hello registration or clientInfo.name)" },
+      sessionId: { type: "string", description: "Session id of this instance (defaults to Mcp-Session-Id or the aiti_hello registration)" },
+      ack: { description: "Ids of processed messages, or { ids: [...], summary: 'execution summary' } — summary (required) is shown in the console message stream as the agent's handling record", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
     } }
   },
-  // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
+  // ---- pair device interconnect (temporary chat / file transfer; device discovery via bridge_status's devices view) ----
   {
     name: "aiti_pair_send",
-    description: "给桥上另一台设备发文本消息（页面 / 其他 agent 会话 / pair web 设备如手机）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单）；to 省略或传 'all' = 全部页面（不跨类）；'agents' = 全部 agent；'pairs' = 全部 pair 设备。文件传输用 aiti_pair_file。",
+    description: "Send a text message to another device on the bridge (a page / another agent session / a pair web device like a phone). Pass the device id or name in to (fuzzy match; a unique hit sends, multiple/no hits return a candidate list); omitting to or passing 'all' = all pages (not cross-kind); 'agents' = all agents; 'pairs' = all pair devices. For file transfer use aiti_pair_file.",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省/'all'=全部页面；'agents'=全部代理；'pairs'=全部 pair 设备）" },
-      text: { type: "string", description: "消息文本" }
+      to: { type: "string", description: "Target device id or name (pick from bridge_status devices; default/'all'=all pages; 'agents'=all agents; 'pairs'=all pair devices)" },
+      text: { type: "string", description: "Message text" }
     }, required: ["text"] }
   },
   {
     name: "aiti_pair_file",
-    description: "把桥所在机器上的本地文件推给另一台设备（pair web 设备在浏览器里直接下载；agent 收到 file-meta 后用 aiti_pair_fetch 取回）。to 传设备 id 或名字。单文件上限 200MB，中转暂存 1 小时。",
+    description: "Push a local file on the bridge's machine to another device (pair web devices download it directly in the browser; agents receive file-meta and fetch it back with aiti_pair_fetch). Pass the device id or name in to. Per-file cap 200MB, relay keeps it for 1 hour.",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "目标设备 id 或名字" },
-      path: { type: "string", description: "本地文件绝对路径" }
+      to: { type: "string", description: "Target device id or name" },
+      path: { type: "string", description: "Absolute path of the local file" }
     }, required: ["to", "path"] }
   },
   {
     name: "aiti_pair_fetch",
-    description: "把收到的 pair 文件取回到桥所在机器磁盘（fileId 来自 aiti_inbox 消息 payload.file.fileId）。缺省落 dataDir/aiti-bridge/pair-inbox/<原文件名>，返回可读路径；传 savePath 自定义落点。",
+    description: "Fetch a received pair file back onto the bridge machine's disk (fileId comes from an aiti_inbox message payload.file.fileId). Defaults to dataDir/aiti-bridge/pair-inbox/<original name> and returns a readable path; pass savePath to choose the destination.",
     inputSchema: { type: "object", properties: {
-      fileId: { type: "string", description: "文件 id（aiti_inbox 消息 payload.file.fileId）" },
-      savePath: { type: "string", description: "落盘绝对路径（缺省 pair-inbox 目录 + 原文件名）" }
+      fileId: { type: "string", description: "File id (aiti_inbox message payload.file.fileId)" },
+      savePath: { type: "string", description: "Absolute destination path (default: pair-inbox dir + original name)" }
     }, required: ["fileId"] }
   }
 ];
@@ -830,7 +830,7 @@ function createBridge(dataDir = "", opts = {}) {
       const agSid = ag.sessionId || String(key).split("/").slice(1).join("/");
       if (agSid === sessionId) {
         ag.activeBoundPageId = pageId;
-        console.log(TAG + " AI 主窗口活跃绑定：" + key + " → " + pageId);
+        console.log(TAG + " AI main window active binding: " + key + " → " + pageId);
         break;
       }
     }
@@ -948,7 +948,7 @@ function createBridge(dataDir = "", opts = {}) {
         agentIdx.set(aid, idxSet);
       }
       idxSet.add(key);
-      console.log(TAG + " agent 会话注册：" + key + (a.registered ? "（显式）" : "（随机 session，引导 aiti_hello 注册）") + " " + a.transportKind + " 恢复 outbox " + a.outbox.length + " 条");
+      console.log(TAG + " agent session registered: " + key + (a.registered ? "(explicit)" : "(random session; prompt aiti_hello to register)") + " " + a.transportKind + " restored outbox " + a.outbox.length + " msg(s)");
     }
     a.lastSeen = Date.now();
     if (session) {
@@ -1029,7 +1029,7 @@ function createBridge(dataDir = "", opts = {}) {
         }
         if (now - mtime > AGENT_HISTORY_TTL) {
           rmSync2(p, { recursive: true, force: true });
-          console.log(TAG + " 清理历史 session（> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " 天无活动）：" + d);
+          console.log(TAG + " sweeping history session (> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " days idle): " + d);
         }
       } catch {
       }
@@ -1048,7 +1048,7 @@ function createBridge(dataDir = "", opts = {}) {
       }
       if (!a.offlineAt) a.offlineAt = a.lastSeen;
       if (now - a.offlineAt > AGENT_TTL) {
-        console.log(TAG + " agent 清理（掉线 > " + Math.round(AGENT_TTL / 6e4) + "min）：" + key + " " + (a.name || "") + "（offlineAt " + new Date(a.offlineAt).toISOString() + "）");
+        console.log(TAG + " agent swept (offline > " + Math.round(AGENT_TTL / 6e4) + "min): " + key + " " + (a.name || "") + " (offlineAt " + new Date(a.offlineAt).toISOString() + ")");
         agents.delete(key);
         const idx = agentIdx.get(a.agentId);
         if (idx) {
@@ -1065,7 +1065,7 @@ function createBridge(dataDir = "", opts = {}) {
     for (const [iid, p] of [...pages]) {
       if (p.writer?.viaBus && now - (p.writer.lastSeen || 0) > BUS_CONN_TTL) {
         pages.delete(iid);
-        console.log(TAG + " 总线型页面连接超时摘除：" + iid);
+        console.log(TAG + " bus-type page connection timed out and removed: " + iid);
       }
     }
     for (const w of [...aiConns]) {
@@ -1098,7 +1098,7 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const pushToAgents = (to, text, kind = "user_message", payload = {}, ref = null) => {
     const targets = resolvePushTargets(to);
-    if (!targets.length) return { ok: false, error: "无已注册 agent 会话（agent 连桥并注册后才有收件箱）" };
+    if (!targets.length) return { ok: false, error: "no registered agent sessions (an agent must connect to the bridge and register to have an inbox)" };
     const delivered = [];
     for (const t of targets) {
       const { a } = ensureAgent(t.split("/")[0], t.split("/").slice(1).join("/"), null);
@@ -1137,7 +1137,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (srcUrl) parts.push(clipMid(srcUrl, 64));
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
         if (srcDevice) parts.push(clipMid(srcDevice, 40));
-        tText = tText + "\n[发自: " + parts.join(" · ") + "（" + srcLabel + "：pageId 参数用它）]";
+        tText = tText + "\n[发自: " + parts.join(" · ") + " (" + srcLabel + "; use it as the pageId param)]";
       }
       payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
       const canSample = !!(a && a.stream && a.capabilities && a.capabilities.sampling && (kind === "user_message" || kind === "chat"));
@@ -1145,8 +1145,8 @@ function createBridge(dataDir = "", opts = {}) {
         const rid = "smp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
         const done = (ok, result) => {
           if (!pendingSampling.delete(rid)) return;
-          const answer2 = ok ? samplingTextOf(result) : result && result.error || "sampling 失败";
-          console.log(TAG + " sampling 作答 → agent=" + t + " · " + String(answer2).slice(0, 80));
+          const answer2 = ok ? samplingTextOf(result) : result && result.error || "sampling failed";
+          console.log(TAG + " sampling answer → agent=" + t + " · " + String(answer2).slice(0, 80));
           for (const w of aiConns) w.write({ type: "agent_answer", agentKey: t, agentId: a.agentId, ok, text: answer2, requestId: rid, at: Date.now() });
         };
         pendingSampling.set(rid, { agentKey: t, done, at: Date.now() });
@@ -1156,12 +1156,12 @@ function createBridge(dataDir = "", opts = {}) {
           method: "sampling/createMessage",
           params: {
             messages: [{ role: "user", content: { type: "text", text: tText } }],
-            systemPrompt: "（调试现场的人通过 " + DISPLAY_NAME + " 发来的消息。目标页 pageId=" + (payload.pageId || "?") + "。直接回答即可，简短。",
+            systemPrompt: "(Message from a human at the debug scene via " + DISPLAY_NAME + ". Target page pageId=" + (payload.pageId || "?") + ". Just answer, keep it brief.",
             maxTokens: 1024,
             temperature: 0.3
           }
         });
-        setTimeout(() => done(false, { error: "sampling 超时（agent 未响应或需审批确认）" }), SAMPLING_TIMEOUT_MS);
+        setTimeout(() => done(false, { error: "sampling timed out (agent did not respond, or needs approval)" }), SAMPLING_TIMEOUT_MS);
         delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "sampling" });
       } else {
         const q = queueMsg(t, { kind, from: "window", text: tText, payload, pageId: payload && payload.pageId || null, source: payload.source, sourceLabel: payload.sourceLabel, ref });
@@ -1169,7 +1169,7 @@ function createBridge(dataDir = "", opts = {}) {
           try {
             a.inProcessSink(tText, kind, payload);
           } catch (e) {
-            console.error(TAG + " inProcessSink 失败", e);
+            console.error(TAG + " inProcessSink failed", e);
           }
           const m0 = q && q.msg;
           if (m0 && m0.status === "pending") {
@@ -1204,7 +1204,7 @@ function createBridge(dataDir = "", opts = {}) {
       try {
         a.inProcessSink(text, "user_answer", result);
       } catch (e) {
-        console.error(TAG + " inProcessSink 失败", e);
+        console.error(TAG + " inProcessSink failed", e);
       }
     }
     queueMsg(agentKey2, { kind: "user_answer", from: "page", text, payload: result });
@@ -1213,18 +1213,18 @@ function createBridge(dataDir = "", opts = {}) {
     const where = pageInfo && pageInfo.url ? pageInfo.pageId ? `[${pageInfo.pageId} · ${pageInfo.url}]` : `[${pageInfo.url}]` : "";
     if (eventType === "page_error") {
       const pl = payload || {};
-      return `⚠ 页面报错${where} ${pl.kind || ""} ${String(pl.message || "").slice(0, 300)}` + (pl.stack ? `
+      return `⚠ Page error${where} ${pl.kind || ""} ${String(pl.message || "").slice(0, 300)}` + (pl.stack ? `
 ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (eventType === "page_log") {
       const items = ((payload || {}).logs || (payload || {}).batch || []).slice(0, 5);
-      return `📋 页面日志${where}: ` + items.map((l) => `[${l.level}] ${String(l.text || "").slice(0, 120)}`).join(" | ");
+      return `📋 Page logs${where}: ` + items.map((l) => `[${l.level}] ${String(l.text || "").slice(0, 120)}`).join(" | ");
     }
     if (eventType === "page_network") {
       const items = ((payload || {}).requests || (payload || {}).batch || []).slice(0, 5);
-      return `🌐 页面网络${where}: ` + items.map((r) => `${r.method || "?"} ${String(r.url || "").slice(0, 80)} → ${r.status ?? "?"}${r.error ? " ERR" : ""}`).join(" | ");
+      return `🌐 Page network${where}: ` + items.map((r) => `${r.method || "?"} ${String(r.url || "").slice(0, 80)} → ${r.status ?? "?"}${r.error ? " ERR" : ""}`).join(" | ");
     }
-    return `📢 页面事件${where}: ${JSON.stringify(payload).slice(0, 200)}`;
+    return `📢 Page event${where}: ${JSON.stringify(payload).slice(0, 200)}`;
   };
   const pushEventToSubscribers = (eventType, payload, pageInfo) => {
     const sigBase = eventType + ":" + JSON.stringify(payload).slice(0, 120);
@@ -1233,14 +1233,14 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (!a.subEvents || !a.subEvents.has(eventType)) continue;
       if (!agentOnline(a) && now - (a.offlineAt || a.lastSeen || 0) > BROADCAST_TTL) continue;
       if (pushDeduped(key, sigBase)) {
-        console.log(TAG + " push 去重（5s 内同事件）" + key + " " + eventType);
+        console.log(TAG + " push deduped (same event within 5s) " + key + " " + eventType);
         continue;
       }
       const text = formatPageEvent(eventType, payload, pageInfo);
       if (a.agentStream) a.agentStream.write({ type: "page_event", event: eventType, text, pageId: pageInfo && pageInfo.pageId || null, url: pageInfo && pageInfo.url || null, at: Date.now() });
       else {
         queueMsg(key, { kind: "page_" + eventType, from: "page", text, payload });
-        console.log(TAG + " push 无流 → outbox " + key + " " + eventType);
+        console.log(TAG + " push without stream → outbox " + key + " " + eventType);
       }
     }
   };
@@ -1487,7 +1487,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const selfPageId = String(rec.instanceId) + "/ai";
       if (seen.has(selfPageId)) continue;
       seen.add(selfPageId);
-      const selfRow = { instanceId: rec.instanceId, frameId: "ai", pageId: selfPageId, url: rec.url || null, title: rec.title ? rec.title + " · AI 主窗口" : "AI 主窗口", frameworks: null, active: true, viaAI: true, self: true, lastSeen: rec.lastSeen };
+      const selfRow = { instanceId: rec.instanceId, frameId: "ai", pageId: selfPageId, url: rec.url || null, title: rec.title ? rec.title + " · AI main window" : "AI main window", frameworks: null, active: true, viaAI: true, self: true, lastSeen: rec.lastSeen };
       withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
@@ -1531,7 +1531,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const result = { status: "cancelled", error: reason, cancelled: true, tookMs: Date.now() - (r.t0 || Date.now()), ...ist ? { timeoutMs: ist.ms, pausedMs: ist.pausedMs } : {} };
     settlePending(requestId, false, result);
     for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
-    console.log(TAG + " ✂ 请求已取消：" + requestId + " · " + reason);
+    console.log(TAG + " ✂ request cancelled: " + requestId + " · " + reason);
     return true;
   };
   const SNAPSHOT_FALLBACK = `(() => {
@@ -1610,7 +1610,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!label && f.placeholder) label = String(f.placeholder).trim();
           if (!label && f.name) label = String(f.name);
           if (!label && f.id) label = '#' + f.id;
-          if (!label && isCE) label = String((f.getAttribute && (f.getAttribute('data-placeholder') || f.getAttribute('aria-label'))) || (f.innerText || '').trim()).slice(0, 40) || ('可编辑区域' + (n + 1));
+          if (!label && isCE) label = String((f.getAttribute && (f.getAttribute('data-placeholder') || f.getAttribute('aria-label'))) || (f.innerText || '').trim()).slice(0, 40) || ('editable area ' + (n + 1));
           var sel = f.id ? ('#' + String(f.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1')) : (f.name ? ('[name="' + String(f.name).replace(/"/g, '\\"') + '"]') : (isCE ? null : ''));
           fields.push({ label: String(label).slice(0, 40), selector: sel, type: isCE ? 'contenteditable' : (f.type || 'text'), value: String(isCE ? ((f.innerText || f.textContent || '')) : (f.value || '')).slice(0, 60) });
         }
@@ -1658,7 +1658,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
         dialog = best;
       }
-      if (!dialog) return { foundDialog: false, filled: 0, missed: 0, clicked: false, error: '未找到可见弹窗（先用 self_ui 确认弹窗已打开）' };
+      if (!dialog) return { foundDialog: false, filled: 0, missed: 0, clicked: false, error: 'no visible dialog found (use self_ui first to confirm the dialog is open)' };
       var setNative = function (el, value) {
         var text = String(value == null ? '' : value);
         // contenteditable（富文本/<p> 可编辑块）：浏览器原生输入路径（真实键入，等价 CDP Input.insertText）——
@@ -1771,10 +1771,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
       const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, agentSessionUrl: src.agentSessionUrl || null, targetDevice: src.targetDevice || null } : {};
-      rec.onAbort = () => cancelPending(requestId, "已取消（agent 停止）");
+      rec.onAbort = () => cancelPending(requestId, "cancelled (agent stopped)");
       if (signal) {
         if (signal.aborted) {
-          cancelPending(requestId, "已取消（agent 停止）");
+          cancelPending(requestId, "cancelled (agent stopped)");
           return;
         }
         rec.signal = signal;
@@ -1786,7 +1786,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
           pages.delete(instanceId);
-          settlePending(requestId, false, { error: "页面连接已断开（重连后重试）" });
+          settlePending(requestId, false, { error: "page connection lost (retry after reconnect)" });
           return;
         }
       } else if (frameId === "ai" && aiSelfReg.size > 0) {
@@ -1801,13 +1801,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt })) {
             aiConns.delete(target);
             aiSelfReg.delete(target);
-            settlePending(requestId, false, { error: "目标 AI 主窗口连接已断开（刷新后自动重连）" });
+            settlePending(requestId, false, { error: "target AI main window connection lost (auto-reconnects after refresh)" });
             return;
           }
         } else if (aiConns.size > 0) {
           for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt });
         } else {
-          setTimeout(() => settlePending(requestId, false, { error: "无执行端（AI 主窗口未连接），先连接桥" }), 100);
+          setTimeout(() => settlePending(requestId, false, { error: "no executor (AI main window not connected); connect the bridge first" }), 100);
           return;
         }
       } else if (aiPageReg.size > 0) {
@@ -1828,19 +1828,19 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId, ...srcExt })) {
             aiConns.delete(target);
             aiPageReg.delete(target);
-            settlePending(requestId, false, { error: "目标 AI 窗连接已断开（页面刷新后自动重连，稍后重试）" });
+            settlePending(requestId, false, { error: "target AI window connection lost (auto-reconnects after page refresh; retry shortly)" });
             return;
           }
         } else if (aiConns.size > 0) {
           for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
         } else {
-          setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100);
+          setTimeout(() => settlePending(requestId, false, { error: "no executor (neither page nor AI channel connected); connect the bridge first" }), 100);
           return;
         }
       } else if (aiConns.size > 0) {
         for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
       } else {
-        setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100);
+        setTimeout(() => settlePending(requestId, false, { error: "no executor (neither page nor AI channel connected); connect the bridge first" }), 100);
         return;
       }
       const SLOW_EXEC_CMDS = /* @__PURE__ */ new Set([
@@ -1862,7 +1862,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
         return 3e5;
       })();
-      setTimeout(() => settlePending(requestId, false, { error: "页面执行超时" + (SLOW_EXEC_CMDS.has(cmd) ? "（用户未完成确认/选择）" : "") }), slowNet);
+      setTimeout(() => settlePending(requestId, false, { error: "page execution timed out" + (SLOW_EXEC_CMDS.has(cmd) ? " (user did not finish confirming/choosing)" : "") }), slowNet);
     });
   }
   const INTERACTION_MAX_TIMEOUT_MS = 6e5;
@@ -1881,7 +1881,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     st.remaining = Math.max(0, st.deadline - Date.now());
     st.paused = true;
     st.pausedAt = Date.now();
-    console.log(TAG + " interaction ⏸ 暂停 requestId=" + requestId + " remaining=" + st.remaining + "ms");
+    console.log(TAG + " interaction ⏸ paused requestId=" + requestId + " remaining=" + st.remaining + "ms");
     return { ok: true, paused: true, remainingMs: st.remaining };
   };
   const resumeInteraction = (requestId) => {
@@ -1895,7 +1895,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     st.deadline = Date.now() + st.remaining;
     const fire = () => {
       if (!interactionTimers.delete(requestId)) return;
-      const result = { status: "timeout", error: "用户无响应（不在线或未处理）", tookMs: Date.now() - st.t0, timeoutMs: st.ms, pausedMs: st.pausedMs };
+      const result = { status: "timeout", error: "user not responding (offline or unhandled)", tookMs: Date.now() - st.t0, timeoutMs: st.ms, pausedMs: st.pausedMs };
       if (settlePending(requestId, false, result)) {
         for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
       }
@@ -1905,7 +1905,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       return { ok: true, paused: false, remainingMs: 0, timedOut: true };
     }
     st.timer = setTimeout(fire, st.remaining);
-    console.log(TAG + " interaction ▶ 继续 requestId=" + requestId + " remaining=" + st.remaining + "ms");
+    console.log(TAG + " interaction ▶ resumed requestId=" + requestId + " remaining=" + st.remaining + "ms");
     return { ok: true, paused: false, remainingMs: st.remaining };
   };
   const clearInteractionTimer = (requestId) => {
@@ -1942,27 +1942,27 @@ ${String(pl.stack).slice(0, 400)}` : "");
     return new Promise((resolve3) => {
       const requestId = "ui_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       if (isAsync) {
-        console.log(TAG + " interaction（异步）→ kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + (payload.agentId ? " · agent=" + payload.agentId : ""));
-        resolve3({ ok: true, result: { status: "async", message: "已异步发出：用户作答后结果将进发起 agent（" + (payload.agentId || "?") + "）的 aiti_inbox" } });
+        console.log(TAG + " interaction (async) → kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + (payload.agentId ? " · agent=" + payload.agentId : ""));
+        resolve3({ ok: true, result: { status: "async", message: "dispatched async: once the user answers, the result lands in the initiating agent’s (" + (payload.agentId || "?") + ") aiti_inbox" } });
       } else {
         const rec = { resolve: resolve3, agentId: payload.agentId || null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
         pendingRequests.set(requestId, rec);
         if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
         if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
-        rec.onAbort = () => cancelPending(requestId, "已取消（agent 停止）");
+        rec.onAbort = () => cancelPending(requestId, "cancelled (agent stopped)");
         if (signal) {
           if (signal.aborted) {
-            cancelPending(requestId, "已取消（agent 停止）");
+            cancelPending(requestId, "cancelled (agent stopped)");
             return;
           }
           rec.signal = signal;
           signal.addEventListener("abort", rec.onAbort, { once: true });
         }
-        console.log(TAG + " interaction → kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + " · timeout=" + (ms > 0 ? ms + "ms" : "∞（永久等待）") + (payload.agentId ? " · agent=" + payload.agentId : ""));
+        console.log(TAG + " interaction → kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + " · timeout=" + (ms > 0 ? ms + "ms" : "∞ (wait forever)") + (payload.agentId ? " · agent=" + payload.agentId : ""));
       }
       const noExecutor = () => {
         clearInteractionTimer(requestId);
-        cancelPending(requestId, "无执行端（页面/AI 通道均未连接），先连接桥");
+        cancelPending(requestId, "no executor (neither page nor AI channel connected); connect the bridge first");
       };
       if (aiTarget) {
         const env = { type: "interaction", requestId, interaction: payload, frameId: aiTargetFrameId };
@@ -2000,7 +2000,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         interactionTimers.set(requestId, st);
         st.timer = setTimeout(() => {
           if (!interactionTimers.delete(requestId)) return;
-          const result = { status: "timeout", error: "用户无响应（不在线或未处理）", tookMs: Date.now() - t0, timeoutMs: ms, pausedMs: st.pausedMs };
+          const result = { status: "timeout", error: "user not responding (offline or unhandled)", tookMs: Date.now() - t0, timeoutMs: ms, pausedMs: st.pausedMs };
           if (settlePending(requestId, false, result)) {
             for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
           }
@@ -2017,16 +2017,16 @@ ${String(pl.stack).slice(0, 400)}` : "");
           capabilities: { tools: {} },
           serverInfo: { name: DISPLAY_NAME, version: "0.2" },
           instructions: [
-            "aiti-devtools：页面内 AI 调试助手（浏览器桥）。",
-            "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks/device——deviceLabel 一行的浏览器·屏幕·在线·语言可快速识别是哪台机器哪个标签）→ 把 pageId 传给目标工具。",
-            "pageId 格式为 instanceId/frameId（如 3001/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
-            "page_exec：在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。args 为命令参数对象。危险命令（导航/下载/对话框等）会自动弹用户确认。截屏（Page.captureScreenshot）务必在 args 带 reason（一句话向用户说明想截什么，页面会先弹准备卡展示该说明、用户调整好页面才开始截屏）。",
-            "page_snapshot：拉取目标页面基础现场（URL/选区/模拟条件）。",
-            "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
-            "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
-            "user_notify：非阻塞浏览器通知，不等待回答。",
-            "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；任何浏览器打开 pi-web 页面即可在设备互连面板上线。",
-            "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。"
+            "aiti-devtools: in-page AI debug assistant (browser bridge).",
+            "Workflow: messages from pages usually carry a pageId. Without one, discover connected pages with bridge_status first (returns sessions with pageId/url/title/frameworks/device — the deviceLabel line's browser·screen·online·language quickly tells which machine and which tab) → pass that pageId to the target tool.",
+            "pageId format is instanceId/frameId (e.g. 3001/host); url or page title also accepted; when several match, disambiguate with a concrete pageId.",
+            "page_exec: run a CDP-like command on a connected page (DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser domains). args is the command params object. Dangerous commands (navigation/download/dialogs etc.) pop a user confirmation automatically. For screenshots (Page.captureScreenshot) always pass reason in args (one sentence telling the user what you want to capture — the page first pops a prep card with that note and capture starts only after the user adjusts the page).",
+            "page_snapshot: pull the target page's basic live state (URL / selection / emulation overrides).",
+            "page_logs / page_network: first choices for page-error / failed-request triage — page_logs reads the console (level/since/limit filters; start at warn/error); page_network reads ajax/fetch completions (status≥400 or errorOnly:true for failures only). Both read the page's local ring buffer (CDP Runtime.evaluate on demand; no longer reported live).",
+            "user_confirm / user_choose / user_input / user_pick_element / user_presence: collaborate with the human user on the page — prompt is shown to the user; by default synchronous and waiting forever (no timeout passed: the panel stays until the user answers, no countdown; only pass timeout ms when you truly need a timeboxed nudge — the panel then shows a pausable countdown and returns status:'timeout' on expiry), response envelope {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}. Pass async:true to return immediately (the result arrives via the AI message window).",
+            "user_notify: non-blocking browser notification, does not wait for an answer.",
+            "Device interconnect: bridge_status returns devices (kind=page/agent/pair unified view) — aiti_pair_send texts any device, aiti_pair_file pushes local files, aiti_pair_fetch retrieves received files (fileId in an aiti_inbox message payload.file); opening the pi-web page in any browser brings it online in the device panel.",
+            "Common recipes: page error → page_logs(level:warn/error) or page_network(errorOnly:true); operate the page → page_exec(cmd:'Runtime.evaluate', args:{expression:'...'}); locate an element → page_snapshot then page_exec, or ask the user with user_pick_element."
           ].join("\n")
         };
       case "notifications/initialized":
@@ -2035,7 +2035,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const rid = params && params.requestId !== void 0 ? String(params.requestId) : "";
         if (rid) {
           const internalId = mcpReqMap.get(rid);
-          if (internalId) cancelPending(internalId, "已取消（MCP notifications/cancelled）");
+          if (internalId) cancelPending(internalId, "cancelled (MCP notifications/cancelled)");
         }
         return null;
       }
@@ -2084,12 +2084,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const sess = listSessions(boundPageId);
           const devices = listDevices();
           const resp = { sessions: sess, activePageId: boundPageId || null, devices };
-          recToolCall("🛠 bridge_status → " + sess.length + " 个已连接页面 · " + devices.length + " 台设备" + (boundPageId ? " · 当前绑定: " + boundPageId : ""), true, resp);
+          recToolCall("🛠 bridge_status → " + sess.length + " connected page(s) · " + devices.length + " device(s)" + (boundPageId ? " · bound: " + boundPageId : ""), true, resp);
           return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: false };
         }
         if (params.name === "aiti_pair_send") {
           const text = String(a.text || "").slice(0, 64e3);
-          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 text）" }) }], isError: true };
+          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (text required)" }) }], isError: true };
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
           if (!a.to || !String(a.to).trim()) {
             const cands = [
@@ -2097,26 +2097,26 @@ ${String(pl.stack).slice(0, 400)}` : "");
               ...listAgentSessions().filter((x) => x.agentKey !== recAgentKey).map((x) => ({ kind: "agent", id: x.agentKey, name: x.name })),
               ...pair.listPeers().map((pd) => ({ kind: "pair", id: pd.id, name: pd.name || pd.id }))
             ];
-            const resp = { ok: false, error: 'to 未指定——不再默认群发（广播须显式传 to:"all"）；请按 bridge_status devices 选目标 id/名字重调', candidates: cands };
-            recToolCall('🛠 aiti_pair_send → 拒绝缺省群发（广播须显式 to:"all"）', false, resp);
+            const resp = { ok: false, error: 'to not specified — default broadcast is no longer allowed (broadcasting requires explicit to:"all"); pick a target id/name from bridge_status devices and retry', candidates: cands };
+            recToolCall('🛠 aiti_pair_send → declined default broadcast (broadcasting requires explicit to:"all")', false, resp);
             return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: true };
           }
           const r = routePairSend(me, String(a.to), { text });
-          recToolCall("🛠 aiti_pair_send(" + a.to + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : r.error || "失败"), !!r.ok, r);
+          recToolCall("🛠 aiti_pair_send(" + a.to + ") → " + (r.ok ? "delivered to " + (r.delivered || []).length + " endpoint(s)" : r.error || "failed"), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_file") {
           const fp = String(a.path || "").trim();
           const to = String(a.to || "").trim();
-          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 to/path）" }) }], isError: true };
+          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (to/path required)" }) }], isError: true };
           let st = null;
           try {
             st = statSync2(fp);
           } catch {
           }
           if (!st || !st.isFile()) {
-            recToolCall("🛠 aiti_pair_file → 文件不存在: " + fp, false);
-            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true };
+            recToolCall("🛠 aiti_pair_file → file not found: " + fp, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "file not found: " + fp }) }], isError: true };
           }
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
           const toId = to;
@@ -2146,12 +2146,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           }
           const meta = done.file;
           const r = routePairSend(me, to, { file: { ...meta, fromName: me.name } });
-          recToolCall("🛠 aiti_pair_file(" + to + ") → " + meta.name + "（" + Math.round(st.size / 1024) + "KB）" + (r.ok ? " 已投递" : " 投递失败: " + (r.error || "")), !!r.ok, r);
+          recToolCall("🛠 aiti_pair_file(" + to + ") → " + meta.name + " (" + Math.round(st.size / 1024) + "KB)" + (r.ok ? " delivered" : " delivery failed: " + (r.error || "")), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, fileId: meta.fileId, name: meta.name, size: meta.size, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_fetch") {
           const fileId = String(a.fileId || "").trim();
-          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 fileId）" }) }], isError: true };
+          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (fileId required)" }) }], isError: true };
           const info = pair.getFileInfo(fileId);
           return pair.fetchToFile(fileId, a.savePath ? String(a.savePath) : null).then((r) => {
             recToolCall("🛠 aiti_pair_fetch(" + fileId + (info ? " · " + info.name : "") + ") → " + (r.ok ? r.path : r.error), !!r.ok, r);
@@ -2172,7 +2172,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             } catch {
             }
           }
-          recToolCall("🛠 file_stat(" + (fp || "") + ") → " + (out.exists ? out.isFile ? "文件 " + out.size + "B" : "目录" : "不存在"), out.exists);
+          recToolCall("🛠 file_stat(" + (fp || "") + ") → " + (out.exists ? out.isFile ? "file " + out.size + "B" : "directory" : "not found"), out.exists === true, out);
           return { content: [{ type: "text", text: JSON.stringify(out) }], isError: false };
         }
         if (params.name === "page_logs" || params.name === "page_network") {
@@ -2181,18 +2181,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (resolved.multiple) {
-            recToolCall("🛠 " + params.name + " → ⚠ 页面匹配多个", false);
-            return { content: [{ type: "text", text: "页面匹配多个（按 url/title）：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定" }], isError: true };
+            recToolCall("🛠 " + params.name + " → ⚠ page matched multiple", false);
+            return { content: [{ type: "text", text: "page matched multiple (by url/title): " + resolved.multiple.join(", ") + " — specify a concrete pageId" }], isError: true };
           }
           if (resolved.notFound) {
-            recToolCall("🛠 " + params.name + " → ⚠ 未找到匹配页面", false);
-            return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
+            recToolCall("🛠 " + params.name + " → ⚠ no matching page found", false);
+            return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) — use bridge_status to list available pageIds" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const execSrc = { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) };
           return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId, execSrc).then((r) => {
-            const raw = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
-            let rows = Array.isArray(raw) ? raw : [];
+            const raw2 = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
+            let rows = Array.isArray(raw2) ? raw2 : [];
             if (isLog) {
               if (a.level) rows = rows.filter((l) => l.level === a.level);
               if (a.since) {
@@ -2206,8 +2206,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
             }
             const limit = Math.min(parseInt(a.limit, 10) || (isLog ? 50 : 30), isLog ? 200 : 100);
             rows = rows.slice(-limit);
-            const out = isLog ? { logs: rows, bufferSize: Array.isArray(raw) ? raw.length : 0 } : { requests: rows, bufferSize: Array.isArray(raw) ? raw.length : 0 };
-            recToolCall("🛠 " + params.name + "(" + resolved.pageId + ") → " + rows.length + " 条", true, out);
+            const out = isLog ? { logs: rows, bufferSize: Array.isArray(raw2) ? raw2.length : 0 } : { requests: rows, bufferSize: Array.isArray(raw2) ? raw2.length : 0 };
+            recToolCall("🛠 " + params.name + "(" + resolved.pageId + ") → " + rows.length + " row(s)", true, out);
             return { content: [{ type: "text", text: JSON.stringify(out) }], isError: false };
           });
         }
@@ -2215,12 +2215,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (resolved.multiple) {
-            recToolCall("🛠 " + params.name + " → ⚠ 页面匹配多个：" + resolved.multiple.join(", "), false);
-            return { content: [{ type: "text", text: "页面匹配多个（按 url/title）：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定（bridge_status 可查）" }], isError: true };
+            recToolCall("🛠 " + params.name + " → ⚠ page matched multiple：" + resolved.multiple.join(", "), false);
+            return { content: [{ type: "text", text: "page matched multiple (by url/title): " + resolved.multiple.join(", ") + " — specify a concrete pageId (see bridge_status)" }], isError: true };
           }
           if (resolved.notFound) {
-            recToolCall("🛠 " + params.name + (pageId ? "(" + pageId + ")" : "") + " → ⚠ 未找到匹配页面", false);
-            return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
+            recToolCall("🛠 " + params.name + (pageId ? "(" + pageId + ")" : "") + " → ⚠ no matching page found", false);
+            return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) — use bridge_status to list available pageIds" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
@@ -2240,7 +2240,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             });
           });
           return runPageTool.then((r) => {
-            recToolCall("🛠 " + params.name + "(" + resolved.pageId + ")" + (params.name === "page_exec" && cmd ? " · " + String(cmd).slice(0, 80) : "") + " → " + (r.ok ? "ok" : "失败"), !!r.ok, { tool: params.name, request: params.name === "page_exec" ? { cmd, args: cmdArgs } : { pageId: resolved.pageId }, response: r.result || r, at: (/* @__PURE__ */ new Date()).toISOString() });
+            recToolCall("🛠 " + params.name + "(" + resolved.pageId + ")" + (params.name === "page_exec" && cmd ? " · " + String(cmd).slice(0, 80) : "") + " → " + (r.ok ? "ok" : "failed"), !!r.ok, { tool: params.name, request: params.name === "page_exec" ? { cmd, args: cmdArgs } : { pageId: resolved.pageId }, response: r.result || r, at: (/* @__PURE__ */ new Date()).toISOString() });
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
         }
@@ -2248,13 +2248,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (!resolved.pageId) {
-            recToolCall("🛠 self_ui → 未找到目标页面（无 AI 主窗口连接或 pageId 未命中）", false);
-            return { content: [{ type: "text", text: "未找到目标页面——需 AI 主窗口已连接（bridge_status 可见 xxx/ai），或指定 pageId" }], isError: true };
+            recToolCall("🛠 self_ui → target page not found (no AI main window connected, or pageId did not match)", false);
+            return { content: [{ type: "text", text: "target page not found: no AI main window connected, or pageId did not match" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
-            recToolCall("🛠 self_ui(" + resolved.pageId + ") → " + (r.ok ? val && val.dialogs ? val.dialogs.length + " 个弹窗" : "无弹窗" : "失败"), !!r.ok, { tool: "self_ui", pageId: resolved.pageId, response: val });
+            recToolCall("🛠 self_ui(" + resolved.pageId + ") → " + (r.ok ? val && val.dialogs ? val.dialogs.length + " dialog(s)" : "no dialogs" : "failed"), !!r.ok, val);
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
           });
         }
@@ -2262,15 +2262,15 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (!resolved.pageId) {
-            recToolCall("🛠 form_fill → 未找到目标页面", false);
-            return { content: [{ type: "text", text: "未找到目标页面——需 AI 主窗口已连接，或指定 pageId" }], isError: true };
+            recToolCall("🛠 form_fill → target page not found", false);
+            return { content: [{ type: "text", text: "target page not found: no AI main window connected, or pageId did not match" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const opts2 = { dialog: a.dialog || null, fields: a.fields || [], button: a.button || null };
           const expression = "(" + FORM_FILL_FN + ")(" + JSON.stringify(opts2) + ")";
           return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
-            recToolCall("🛠 form_fill(" + resolved.pageId + ") → " + (r.ok ? val && val.foundDialog ? "填 " + val.filled + " 字段" + (val.clicked ? "，点按钮" : "") : "未找到弹窗" : "失败"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
+            recToolCall("🛠 form_fill(" + resolved.pageId + ") → " + (r.ok ? val && val.foundDialog ? "filled " + val.filled + " field(s)" + (val.clicked ? ", clicked button" : "") : "no dialog found" : "failed"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
           });
         }
@@ -2278,51 +2278,51 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const targetPageId = pageId || boundPageIdFor(session) || void 0;
           return interactOnPage({ ...interaction, ...agentSrc(), targetDevice: deviceShort(targetPageId) }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
-            recToolCall("🛠 " + interaction.kind + " → " + (r.ok ? "已作答" : r.result && r.result.status || "失败/拒绝"), !!r.ok);
+            recToolCall("🛠 " + interaction.kind + " → " + (r.ok ? "answered" : r.result && r.result.status || "failed/declined"), !!r.ok);
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
         };
         if (params.name === "user_pick_element") {
-          return interact({ kind: "pick_element", prompt: String(a.prompt || "请点击页面上的一个元素（AI 需要你帮忙定位）"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "pick_element", prompt: String(a.prompt || "Please click an element on the page (the AI needs your help locating it)"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_confirm") {
-          return interact({ kind: "confirm", prompt: String(a.prompt || "请确认"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "confirm", prompt: String(a.prompt || "Please confirm"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_choose") {
-          const choices = Array.isArray(a.choices) && a.choices.length ? a.choices.map(String).slice(0, 8) : ["选项 A", "选项 B"];
-          return interact({ kind: "choose", prompt: String(a.prompt || "请选择一项"), choices, multiple: !!a.multiple, rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          const choices = Array.isArray(a.choices) && a.choices.length ? a.choices.map(String).slice(0, 8) : ["Option A", "Option B"];
+          return interact({ kind: "choose", prompt: String(a.prompt || "Please pick one"), choices, multiple: !!a.multiple, rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_input") {
-          return interact({ kind: "input", prompt: String(a.prompt || "请输入"), defaultValue: String(a.defaultValue || ""), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "input", prompt: String(a.prompt || "Please type your answer"), defaultValue: String(a.defaultValue || ""), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_presence") {
-          return interact({ kind: "presence", prompt: String(a.prompt || "你在吗？需要你配合继续开发"), rejectable: false, async: a.async === true }, a.timeout);
+          return interact({ kind: "presence", prompt: String(a.prompt || "Are you there? I need your help to continue"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
           const srcN = agentSrc();
-          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, agentSessionUrl: srcN.agentSessionUrl, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
+          const notif = { kind: "notify", title: String(a.title || "🤖 The AI has a message"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), pageId: raw, async: a.async === true, agentId: a.agentId || null, t0: Date.now() };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
-            const raw = String(a.pageId);
+            const raw2 = String(a.pageId);
             let iid = "";
             let frameId = null;
             let fullPageId = "";
-            if (raw.indexOf("/") >= 0) {
-              const resolved = resolvePageId(raw);
+            if (raw2.indexOf("/") >= 0) {
+              const resolved = resolvePageId(raw2);
               if (resolved.multiple) {
-                recToolCall("🔔 user_notify → ⚠ 页面匹配多个", false);
-                return { content: [{ type: "text", text: "页面匹配多个：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定" }], isError: true };
+                recToolCall("🔔 user_notify → ⚠ page matched multiple", false);
+                return { content: [{ type: "text", text: "page matched multiple: " + resolved.multiple.join(", ") + " — specify a concrete pageId" }], isError: true };
               }
               if (resolved.notFound || !resolved.pageId) {
-                recToolCall("🔔 user_notify(" + raw + ") → ⚠ 未找到匹配页面", false);
-                return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
+                recToolCall("🔔 user_notify(" + raw2 + ") → ⚠ no matching page found", false);
+                return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) — use bridge_status to list available pageIds" }], isError: true };
               }
               const pid = parsePageId(resolved.pageId);
               iid = pid.instanceId;
               frameId = pid.frameId;
               fullPageId = resolved.pageId;
             } else {
-              iid = raw;
+              iid = raw2;
             }
             let delivered = false;
             const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
@@ -2347,8 +2347,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
               if (pg2) delivered = !!pg2.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId, render: "notify-only" });
             }
             if (!delivered) {
-              recToolCall("🔔 user_notify(" + iid + ") → ⚠ 目标未连接", false);
-              return { content: [{ type: "text", text: "目标页面未连接（instanceId 未命中或已掉线）——用 bridge_status 查看可用 pageId" }], isError: true };
+              recToolCall("🔔 user_notify(" + iid + ") → ⚠ target not connected", false);
+              return { content: [{ type: "text", text: "target page not connected (instanceId missed or offline) — use bridge_status to list available pageIds" }], isError: true };
             }
             recToolCall("🔔 user_notify(" + iid + ") → " + String(notif.body).slice(0, 60), true);
             return { content: [{ type: "text", text: JSON.stringify({ status: "sent", notified: true, title: notif.title, pageId: fullPageId || iid }) }], isError: false };
@@ -2363,7 +2363,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const agentId2 = String(a.agentId || session && session.agentId || "pi");
           const sessionId = a.sessionId || session && session.id || null;
           const { a: agent, key } = ensureAgent(agentId2, sessionId, session);
-          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "agent 注册失败" }) }], isError: true };
+          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "agent registration failed" }) }], isError: true };
           agent.registered = true;
           agent.name = a.name || agent.name;
           if (typeof a.cwd === "string" && a.cwd) agent.cwd = a.cwd;
@@ -2382,7 +2382,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const agentId2 = String(a.agentId || session && session.agentId || "pi");
           const sessionId = a.sessionId || session && session.id || (session && session.agentKey ? session.agentKey.split("/").slice(1).join("/") : null) || null;
           const { a: agent, key } = ensureAgent(agentId2, sessionId, session);
-          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "unknown agent：先 aiti_hello 或带 agentId/sessionId" }) }], isError: true };
+          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "unknown agent: call aiti_hello first, or pass agentId/sessionId" }) }], isError: true };
           if (session && !session.agentKey) session.agentKey = key;
           if (Array.isArray(a.ack) || a.ack && typeof a.ack === "object") {
             const ackIds = Array.isArray(a.ack) ? a.ack.map(String) : (a.ack && a.ack.ids || []).map(String);
@@ -2399,7 +2399,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
               }
             }
             if (ackedAny) {
-              const text = summary || `✅ 已处理 ${ackIds.length} 条消息（未附总结——建议 ack 时带 summary）`;
+              const text = summary || `✅ handled ${ackIds.length} message(s) (no summary attached — passing a summary with ack is recommended)`;
               const rid = randomBytes2(4).toString("hex");
               const rec = { id: rid, kind: "agent_summary", from: "agent", agentKey: key, agentId: agentId2, sessionId: agent.sessionId, text, ackedIds: ackIds, at: (/* @__PURE__ */ new Date()).toISOString(), status: "ok" };
               agent.outbox.push(rec);
@@ -2417,7 +2417,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             out.push({ id: m.id, kind: m.kind, from: m.from, agentKey: key, agentId: agentId2, sessionId: agent.sessionId, pageId: m.pageId || m.payload && m.payload.pageId || null, url: m.url || m.payload && m.payload.url || null, text: m.text ?? null, payload: m.payload || null, at: m.at, status: m.status });
           }
           for (const w of aiConns) w.write({ type: "event", from: "agent", event: "inbox_status", payload: { agentKey: key, queueSize: agent.outbox.filter((x) => x.status !== "consumed").length } });
-          const guide = agent.registered ? "" : " ⚠ 未显式注册（随机 session）——建议调 aiti_hello 传 agentId/sessionId 注册，消息将绑定到该会话";
+          const guide = agent.registered ? "" : " ⚠ not explicitly registered (random session) — call aiti_hello with agentId/sessionId to register so messages can be routed to this session reliably";
           return { content: [{ type: "text", text: JSON.stringify({ agentKey: key, registered: agent.registered, messages: out, queueSize: agent.outbox.filter((x) => x.status !== "consumed").length, guide }) }], isError: false };
         }
         return { content: [{ type: "text", text: "unknown tool: " + params.name }], isError: true };
@@ -2482,7 +2482,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   }
   function openFileInEditor(file, line) {
     return new Promise((resolve3) => {
-      if (!file) return resolve3({ ok: false, error: "缺少 file" });
+      if (!file) return resolve3({ ok: false, error: "file param missing" });
       const platform = process.platform;
       const isWin = platform === "win32";
       const target = file + (line ? ":" + line : "");
@@ -2501,7 +2501,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         child = spawn(exe, args, { detached: true, stdio: "ignore", windowsHide: true, env: { ...process.env, ...desktopEnv() }, ...isWin ? { shell: true } : {} });
       } else {
         if (!hasDesktopSession()) {
-          return resolve3({ ok: false, error: "无桌面会话（systemd/无头服务）——后端打开不可用：请用「前端打开」（pi-web 文件标签页在线查看）或设置 AITI_OPEN_CMD 指定打开命令（如 ssh 回本地编辑器）" });
+          return resolve3({ ok: false, error: "no desktop session (systemd/headless) — backend open unavailable: use the frontend-open path in the pi-web window" });
         }
         child = defaultOpen(file);
       }
@@ -2514,7 +2514,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       };
       child.on("error", () => {
         if (!hasDesktopSession()) {
-          return finish({ ok: false, error: "编辑器与系统默认打开器均不可用（无桌面会话）——请配置 AITI_OPEN_CMD 或使用前端打开" });
+          return finish({ ok: false, error: "neither the editor nor the system default opener is available (no desktop session) — configure AITI_OPEN_CMD or use the frontend-open path" });
         }
         const c2 = defaultOpen(file);
         c2.on("error", (e2) => finish({ ok: false, error: String(e2 && e2.message || e2) }));
@@ -2687,7 +2687,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const fromShown = fromName !== fromId ? fromName + "（" + fromId + "）" : fromId;
       const label = fromIsAgent ? "[发自 session: " + fromShown + "]" : "[发自 pair: " + fromName + "]";
       const pl = { source: "pair", sourceLabel: (fromIsAgent ? "Session · " : "Pair · ") + fromName, fromDevice: from };
-      const text = payload.file ? "📎 收到文件：" + payload.file.name + "（" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} 取回\n" + label : String(payload.text || "") + "\n" + label;
+      const text = payload.file ? "📎 File received: " + payload.file.name + " (" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB) — see the pair-inbox notes for how to fetch it" : String(payload.text || "") + "\n" + label;
       if (payload.file) pl.file = { fileId: payload.file.fileId, name: payload.file.name, size: payload.file.size, mime: payload.file.mime };
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
@@ -2738,8 +2738,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       return ok;
     };
-    const pushPageRaw = (raw) => {
-      const row = devRows.find((d) => d.id === raw);
+    const pushPageRaw = (raw2) => {
+      const row = devRows.find((d) => d.id === raw2);
       return row ? pushPageRow(row) : false;
     };
     const selfIid = pageInstanceFor(String(fromDev.id)) || (fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id);
@@ -2799,13 +2799,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
       pushPageRaw(devMatches[0].id);
       return { ok: delivered.length > 0, delivered };
     }
-    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "页面名匹配多个" };
+    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "page name matches multiple devices" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
     if (agentRows.length === 1) {
       pushAgent(agentRows[0].agentKey);
       return { ok: delivered.length > 0, delivered };
     }
-    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent 名匹配多个" };
+    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent name matches multiple sessions" };
     const pr = pair.resolvePeerFuzzy(q);
     if (pr && pr.hit) {
       const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
@@ -2815,8 +2815,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       return { ok: delivered.length > 0, delivered };
     }
-    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair 设备名匹配多个" };
-    return { ok: false, error: "无匹配设备（to 支持设备 id/名字；bridge_status 或 /bridge/pair/devices 查看在线设备）" };
+    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair device name matches multiple devices" };
+    return { ok: false, error: "no matching device (to accepts a device id or name; use bridge_status or /bridge/pair/devices to list online devices)" };
   }
   async function handle(req, path, searchParams) {
     if (path[0] === "aiti") path = path.slice(1);
@@ -2833,13 +2833,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const r = claimInstanceId(msg && msg.instanceId, msg && msg.secret, msg && msg.pageKey, msg && msg.hostUrl);
       const reused = !!(msg && msg.instanceId && r.instanceId === msg.instanceId && msg.secret);
       const portPref = portFromHostUrl(msg && msg.hostUrl);
-      console.log(TAG + " claim → instanceId=" + r.instanceId + (reused ? "（复用）" : "（新" + (portPref ? " 端口偏好=" + portPref : "") + "）"));
+      console.log(TAG + " claim → instanceId=" + r.instanceId + (reused ? "(reused)" : "(new" + (portPref ? " port preference=" + portPref : "") + ")"));
       return json({ ok: true, instanceId: r.instanceId, secret: r.secret });
     }
     if (endpoint === "bridge" && sub === "sessions" && req.method === "GET") return json(listSessions());
     if (endpoint === "bridge" && sub === "ai" && path[2] === "page" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId || !msg.pageId) return json({ ok: false, error: "缺少 instanceId/pageId" }, 400);
+      if (!msg || !msg.instanceId || !msg.pageId) return json({ ok: false, error: "instanceId/pageId missing" }, 400);
       let hit = null;
       for (const [w, rec] of aiPageReg) if (rec.instanceId === String(msg.instanceId)) {
         hit = w;
@@ -2853,12 +2853,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const prev = aiPageReg.get(hit) || {};
       const fr = Array.isArray(msg.frames) ? msg.frames : prev.frames || null;
       aiPageReg.set(hit, { instanceId: String(msg.instanceId), pageId: String(msg.pageId), title: msg.title || prev.title || null, url: msg.url || prev.url || null, frames: fr, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
-      console.log(TAG + " AI 宿主页注册：" + msg.pageId + " · " + (msg.title || "") + (fr && fr.length ? " · frames=" + fr.length : "") + (msg.device ? " · " + (msg.deviceLabel || msg.device.browser) : ""));
+      console.log(TAG + " AI host page registered: " + msg.pageId + " · " + (msg.title || "") + (fr && fr.length ? " · frames=" + fr.length : "") + (msg.device ? " · " + (msg.deviceLabel || msg.device) : ""));
       return json({ ok: true, pageId: msg.pageId });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "page" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId) return json({ ok: false, error: "缺少 instanceId" }, 400);
+      if (!msg || !msg.instanceId) return json({ ok: false, error: "instanceId missing" }, 400);
       let hit = null;
       for (const [w, rec] of aiSelfReg) if (rec.instanceId === String(msg.instanceId)) {
         hit = w;
@@ -2868,18 +2868,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const prev = aiSelfReg.get(hit) || {};
       aiSelfReg.set(hit, { instanceId: String(msg.instanceId), url: msg.url || prev.url || null, title: msg.title || prev.title || null, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
       bindAgentFromAiSelf(aiSelfReg.get(hit));
-      console.log(TAG + " AI 主窗口 self 注册：" + msg.instanceId + "/ai · " + (msg.title || "") + (msg.device ? " · " + (msg.deviceLabel || msg.device.browser) : ""));
+      console.log(TAG + " AI main window self registered: " + msg.instanceId + "/ai · " + (msg.title || "") + (msg.device ? " · " + (msg.deviceLabel || msg.device) : ""));
       return json({ ok: true, pageId: String(msg.instanceId) + "/ai" });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "active" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId || !msg.sessionId) return json({ ok: false, error: "缺少 instanceId/sessionId" }, 400);
+      if (!msg || !msg.instanceId || !msg.sessionId) return json({ ok: false, error: "instanceId/sessionId missing" }, 400);
       bindAgentFromActive(String(msg.instanceId), String(msg.sessionId));
       return json({ ok: true, pageId: String(msg.instanceId) + "/ai" });
     }
     if (endpoint === "bridge" && sub === "ai" && path[2] === "frames" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.pageId || !Array.isArray(msg.frames)) return json({ ok: false, error: "bad request（需要 pageId/frames）" }, 400);
+      if (!msg || !msg.pageId || !Array.isArray(msg.frames)) return json({ ok: false, error: "bad request (pageId/frames required)" }, 400);
       let hit = null;
       for (const [w, rec2] of aiPageReg) if (rec2.pageId === String(msg.pageId)) {
         hit = w;
@@ -2889,7 +2889,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const rec = aiPageReg.get(hit);
       rec.frames = msg.frames;
       rec.lastSeen = Date.now();
-      console.log(TAG + " AI 宿主帧树更新：" + msg.pageId + " frames=" + msg.frames.length);
+      console.log(TAG + " AI host frame tree updated: " + msg.pageId + " frames=" + msg.frames.length);
       return json({ ok: true, frames: msg.frames.length });
     }
     if (endpoint === "bridge" && sub === "register" && req.method === "POST") {
@@ -2917,7 +2917,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "tools" && path[3] === "call" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.tool) return json({ ok: false, error: "bad request（需要 tool）" }, 400);
+      if (!msg || !msg.tool) return json({ ok: false, error: "bad request (tool required)" }, 400);
       const agentId2 = msg.agentId ? String(msg.agentId) : "pi";
       const sessionId = msg.sessionId ? String(msg.sessionId) : null;
       const { a: ag, key } = ensureAgent(agentId2, sessionId, null);
@@ -2936,7 +2936,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "register" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.agentId) return json({ ok: false, error: "bad request（需要 agentId）" }, 400);
+      if (!msg || !msg.agentId) return json({ ok: false, error: "bad request (agentId required)" }, 400);
       const { a: ag, key } = ensureAgent(String(msg.agentId), msg.sessionId ? String(msg.sessionId) : null, null);
       ag.registered = true;
       if (msg.name) ag.name = String(msg.name);
@@ -2961,12 +2961,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       });
       a.agentStream = writer;
       a.conn = (a.conn || 0) + 1;
-      console.log(TAG + " agent SSE 已建立：" + resolvedKey + "（P3 推送通道）");
+      console.log(TAG + " agent SSE established: " + resolvedKey + " (P3 push channel)");
       return response;
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "answer" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.agentKey || !msg.text) return json({ ok: false, error: "bad request（需要 agentKey/text）" }, 400);
+      if (!msg || !msg.agentKey || !msg.text) return json({ ok: false, error: "bad request (agentKey/text required)" }, 400);
       const parts = String(msg.agentKey).split("/");
       const { a, key: resolvedKey } = ensureAgent(parts[0], parts.slice(1).join("/") || null, null);
       for (const om of a.outbox) {
@@ -2980,7 +2980,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const m = { id: randomBytes2(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
       appendMsgEvent(resolvedKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
       for (const w of aiConns) w.write({ type: "agent_answer", agentKey: resolvedKey, agentId: parts[0], text: m.text, at: m.at });
-      console.log(TAG + " agent 回答 → " + resolvedKey + " · " + String(m.text).slice(0, 80) + "（已消费待处理消息 " + a.outbox.filter((x) => x.status === "consumed").length + " 条）");
+      console.log(TAG + " agent answer → " + resolvedKey + " · " + String(m.text).slice(0, 80) + " (consumed pending messages: " + (a.outbox || []).length + ")");
       return json({ ok: true, message: m });
     }
     if (endpoint === "bridge" && sub === "agents" && req.method === "GET") return json({ ok: true, agents: listAgentSessions() });
@@ -3021,7 +3021,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         aiPageReg.set(writer, { instanceId, pageId: null, title: null, url: null, frames: null, lastSeen: Date.now() });
         aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, frames: /* @__PURE__ */ new Set(["host"]), frameInfo: /* @__PURE__ */ new Map(), device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
-        console.log(TAG + " AI 控制台已连接：instanceId=" + instanceId);
+        console.log(TAG + " AI console connected: instanceId=" + instanceId);
       } else {
         const existing = pages.get(instanceId);
         if (existing) {
@@ -3051,7 +3051,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         });
         const rec = idRegistry.get(instanceId);
         if (rec) rec.lastSeen = Date.now();
-        console.log(TAG + " 页面已连接：instanceId=" + instanceId + " frame=" + initialFrame);
+        console.log(TAG + " page connected: instanceId=" + instanceId + " frame=" + initialFrame);
       }
       writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role });
       return response;
@@ -3094,7 +3094,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
         aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
-        console.log(TAG + " AI 控制台已连接（总线）：instanceId=" + instanceId);
+        console.log(TAG + " AI console connected (bus): instanceId=" + instanceId);
       } else {
         const existing = pages.get(instanceId);
         if (existing) {
@@ -3121,7 +3121,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         });
         const rec = idRegistry.get(instanceId);
         if (rec) rec.lastSeen = Date.now();
-        console.log(TAG + " 页面已连接（总线）：instanceId=" + instanceId);
+        console.log(TAG + " page connected (bus): instanceId=" + instanceId);
       }
       writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role, via: "bus" });
       return json({ ok: true, topic, via: "bus" });
@@ -3171,11 +3171,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
           mkdirSync2(dir, { recursive: true });
           const file = join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
           writeFileSync(file, Buffer.from(r0.dataUrl.slice(r0.dataUrl.indexOf(",") + 1), "base64"));
-          msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "截屏已存文件（dataUrl 过大不内联）；前端文件标签页可直接打开查看" };
-          console.log(TAG + " 截屏落盘：" + file + "（" + Math.round((r0.bytes || 0) / 1024) + "KB）");
+          msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "screenshot saved to file (dataUrl too large to inline); read it back via the file tools" };
+          console.log(TAG + " screenshot written: " + file + " (" + Math.round((r0.bytes || 0) / 1024) + "KB)");
         }
       } catch (e) {
-        console.warn(TAG + " 截屏落盘失败（退回内联）:", e.message);
+        console.warn(TAG + " screenshot write failed (falling back to inline):", e.message);
       }
       const r = pendingRequests.get(msg.requestId);
       if (r) {
@@ -3193,10 +3193,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (msg.result && typeof msg.result === "object" && !("pausedMs" in msg.result)) msg.result.pausedMs = ist.pausedMs;
         }
         r.resolve({ ok: msg.ok, result: msg.result });
-        console.log(TAG + " ← 结果回传 ok=" + msg.ok + (r.agentId ? " → agent=" + r.agentId : ""));
+        console.log(TAG + " ← result posted back ok=" + msg.ok + (r.agentId ? " → agent=" + r.agentId : ""));
         if (r.agentId && msg.ok) deliverUserAnswer(r.agentId, msg.result);
       } else {
-        console.log(TAG + " ⚠ 结果回传但无 pending：" + msg.requestId);
+        console.log(TAG + " ⚠ result posted back but no pending request: " + msg.requestId);
         return new Response("ok", { headers: cors });
       }
       for (const w of aiConns) w.write({ type: "result", requestId: msg.requestId, ok: msg.ok, result: msg.result, pageId: msg.pageId });
@@ -3207,17 +3207,17 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (!msg) return json({ ok: false, error: "bad request" }, 400);
       const internalId = msg.requestId ? String(msg.requestId) : msg.cancelId ? cancelIdMap.get(String(msg.cancelId)) : null;
       if (!internalId) return json({ ok: false, error: "unknown request", cancelled: false });
-      return json({ ok: cancelPending(internalId, "已取消（客户端请求）"), cancelled: true });
+      return json({ ok: cancelPending(internalId, "cancelled (client request)"), cancelled: true });
     }
     if (endpoint === "bridge" && sub === "push" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.text) return json({ ok: false, error: "bad request（需要 text）" }, 400);
+      if (!msg || !msg.text) return json({ ok: false, error: "bad request (text required)" }, 400);
       return json(pushToAgents(msg.to, String(msg.text), msg.kind || "user_message", msg.payload || {}, msg.ref || null));
     }
     if (endpoint === "bridge" && sub === "picked" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       const list = msg && Array.isArray(msg.candidates) ? msg.candidates : null;
-      if (!list) return json({ ok: false, error: "bad request（需要 candidates 数组）" }, 400);
+      if (!list) return json({ ok: false, error: "bad request (candidates array required)" }, 400);
       const key = String(msg && msg.to || "__all__");
       pickedReports.set(key, list.filter((c) => c && c.tag));
       persistPicked();
@@ -3230,7 +3230,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "ai" && path[2] === "event" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.event) return json({ ok: false, error: "bad request（需要 event）" }, 400);
+      if (!msg || !msg.event) return json({ ok: false, error: "bad request (event required)" }, 400);
       const ev = String(msg.event);
       if (ev === "aiti_consumed") {
         const tags = Array.isArray(msg.payload?.tags) ? msg.payload.tags.map(String) : null;
@@ -3280,10 +3280,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const pageInfo = { pageId: msg.pageId || null, url: msg.payload && msg.payload.url || null };
       if (msg.type === "page_error") {
         pushEventToSubscribers("page_error", msg.payload || {}, pageInfo);
-        console.log(TAG + " page_error 事件 → 订阅分发（type=" + msg.type + " payload=" + JSON.stringify(msg.payload || {}).slice(0, 120) + "）");
+        console.log(TAG + " page_error event → subscribers: " + Object.keys(subsFor(instanceId)).length);
       }
       if (msg.type === "page_log" || msg.type === "page_network") {
-        return json({ ok: false, error: "page_log/page_network 不再实时上报；请用 page_logs/page_network 工具按需拉取" }, 410);
+        return json({ ok: false, error: "page_log/page_network are no longer reported live; use the page_logs/page_network tools to pull on demand" }, 410);
       }
       if (msg.type === "open_file") {
         const payload = msg.payload || {};
@@ -3324,7 +3324,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             ag.conn = (ag.conn || 0) + 1;
           }
         }
-        console.log(TAG + " streamable GET 流已建立 session=" + sid2.slice(0, 8) + " agent=" + (session2.agentId || "?"));
+        console.log(TAG + " streamable GET stream established session=" + sid2.slice(0, 8) + " agent=" + (session2.agentId || "?"));
         writer.write({ jsonrpc: "2.0", method: "notifications/initialized" });
         return response;
       }
@@ -3333,8 +3333,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (msg.id !== void 0 && !msg.method && pendingSampling.has(String(msg.id))) {
         const p = pendingSampling.get(String(msg.id));
         const ok = !(msg.error || msg.result && msg.result.isError);
-        p.done(ok, msg.error ? { error: String(msg.error.message || msg.error.code || "sampling 拒绝") } : msg.result || {});
-        console.log(TAG + " sampling 响应回传 id=" + String(msg.id).slice(0, 12) + " agent=" + p.agentId + " ok=" + ok);
+        p.done(ok, msg.error ? { error: String(msg.error.message || msg.error.code || "sampling declined") } : msg.result || {});
+        console.log(TAG + " sampling response posted back id=" + String(msg.id).slice(0, 12) + " agent=" + p.agentId + " ok=" + ok);
         return new Response(null, { status: 202 });
       }
       const sid = req.headers.get("mcp-session-id") || req.headers.get("Mcp-Session-Id") || "";
@@ -3386,7 +3386,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const sid = decodeURIComponent(m[1]);
       if (sid === agSid) {
         agent.boundPageId = String(rec.instanceId) + "/ai";
-        console.log(TAG + " agent 注册时反向绑定 AI 主窗口：" + agentKey2 + " → " + agent.boundPageId);
+        console.log(TAG + " agent registered with reverse-bound AI main window: " + agentKey2 + " → " + agent.boundPageId);
         break;
       }
     }
@@ -3519,7 +3519,7 @@ function readJson(path) {
       const clean = stripJsonComments(stripBom(readFileSync2(path, "utf8"))).replace(/,\s*([}\]])/g, "$1");
       return { cfg: JSON.parse(clean) };
     } catch (e) {
-      return { cfg: null, error: "JSON 解析失败：" + String(e?.message || e) };
+      return { cfg: null, error: "JSON parse failed: " + String(e?.message || e) };
     }
   }
 }
@@ -3570,10 +3570,10 @@ function resolveContainer(cfg, keyPath) {
   }
   return cur;
 }
-function normalizeMcpUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return null;
+function normalizeMcpUrl(raw2) {
+  if (typeof raw2 !== "string" || !raw2.trim()) return null;
   try {
-    const u = new URL(raw.trim());
+    const u = new URL(raw2.trim());
     const defaultPort = u.protocol === "http:" && u.port === "80" || u.protocol === "https:" && u.port === "443";
     const port = u.port && !defaultPort ? ":" + u.port : "";
     const path = u.pathname.replace(/\/+$/, "");
@@ -3696,10 +3696,10 @@ function registerAitiShim(opts) {
         cfg = {};
       } else {
         const r = readJson(w.path);
-        if (r.error) return { changed: false, error: "JSON 解析失败：" + r.error };
+        if (r.error) return { changed: false, error: "JSON parse failed: " + r.error };
         cfg = r.cfg;
       }
-      if (!isPlainContainer(cfg)) return { changed: false, error: "配置不是对象" };
+      if (!isPlainContainer(cfg)) return { changed: false, error: "config is not an object" };
       const map = w.keyPath ? resolveContainer(cfg, w.keyPath) : (() => {
         const det = detectStructureKey(cfg);
         if (!isPlainContainer(cfg[det.key])) cfg[det.key] = {};
@@ -3727,7 +3727,7 @@ function registerAitiShim(opts) {
         try {
           writeAtomic(w.path, cfg);
         } catch (e) {
-          return { changed: false, error: "写入失败：" + String(e?.message || e) };
+          return { changed: false, error: "write failed: " + String(e?.message || e) };
         }
       }
       return { changed: true, note: hasLegacyField ? `迁移（顶层版本键 → ${envKey}.${SHIM_VERSION_ENV}）` : existing ? `升级 v${existingVer} → v${opts.version}` : "新建" };
@@ -3855,7 +3855,7 @@ var AgentBridgeClient = class {
     if (signal) {
       if (signal.aborted) {
         onAbort();
-        return { ok: false, error: "已取消（agent 停止）" };
+        return { ok: false, error: "cancelled (agent stopped)" };
       }
       signal.addEventListener("abort", onAbort, { once: true });
     }
@@ -3880,9 +3880,9 @@ var AgentBridgeClient = class {
       }
     }
     clearTimeout(t);
-    if (!res) return { ok: false, error: "桥不可达：" + this.base };
+    if (!res) return { ok: false, error: "bridge unreachable: " + this.base };
     const body = await res.json().catch(() => null);
-    if (!body) return { ok: false, error: "桥响应异常（HTTP " + res.status + "）" };
+    if (!body) return { ok: false, error: "bridge response malformed (HTTP " + res.status + ")" };
     return body;
   }
   /** agent 完成 → 回答回桥（POST /bridge/agent/answer）——消息流落盘供窗口展示 */
@@ -3986,7 +3986,7 @@ var AgentBridgeClient = class {
 // ../aiti-devtools-agent/src/agent-host.ts
 function wrapToolResult(r) {
   if (!r.ok) {
-    return { content: [{ type: "text", text: r.error || "未知错误" }], details: {}, isError: true };
+    return { content: [{ type: "text", text: r.error || "unknown error" }], details: {}, isError: true };
   }
   return {
     content: [{ type: "text", text: r.result ?? "" }],
@@ -4173,7 +4173,7 @@ function resolveBridgeUrl() {
       try {
         const uPort = new URL(url).port || (url.startsWith("https:") ? "443" : "80");
         if (uPort !== process.env.AITI_BRIDGE_PORT) {
-          logFile("[aiti-devtools-pi] AITI_BRIDGE_URL（端口 " + uPort + "）与 AITI_BRIDGE_PORT=" + process.env.AITI_BRIDGE_PORT + " 不一致 → 以 URL 为准（PORT 被忽略）");
+          logFile("[aiti-devtools-pi] AITI_BRIDGE_URL (port " + uPort + ") conflicts with AITI_BRIDGE_PORT=" + process.env.AITI_BRIDGE_PORT + " → the URL wins (PORT ignored)");
         }
       } catch {
       }
@@ -4251,7 +4251,7 @@ function ensureMcpConfig(url) {
       ([name, entry]) => name !== "aiti-devtools" && entry?.enabled !== false && normalizeMcpUrl(entry?.url) === normalizeMcpUrl(target)
     )?.[0];
     if (dupName) {
-      logFile(`[aiti-devtools-pi] MCP 自检：${p} 已有等效条目 "${dupName}"（${target}）→ 跳过写 aiti-devtools`);
+      logFile(`[aiti-devtools-pi] MCP self-check: ${p} already has an equivalent entry "${dupName}" (${target}) → skipping aiti-devtools write`);
       return false;
     }
     cfg.mcpServers = { ...cfg.mcpServers || {}, "aiti-devtools": { type: "http", url: target } };
@@ -4284,13 +4284,13 @@ function auditMcpConfigs() {
     ];
     const report = auditMcpServers(files);
     for (const g of report.sameName) {
-      logFile("[aiti-devtools-pi] MCP 自检：同名 server 多处指向不同端点 → " + g.name + "：" + g.urls.map((u) => u.file + " = " + u.url).join(" | ") + "（陈旧条目会被合并/遮蔽，建议删掉旧的那份）");
+      logFile("[aiti-devtools-pi] MCP self-check: same server name points at different endpoints → " + g.name + "：" + g.urls.map((u) => u.file + " = " + u.url).join(" | ") + " (stale entries get merged/shadowed; consider removing the old one)");
     }
     for (const g of report.sameUrl) {
-      logFile("[aiti-devtools-pi] MCP 自检：同一端点被多个条目重复注册 → " + g.url + "：" + g.entries.map((e) => e.name + "@" + e.file).join(", ") + "（会双连接，建议只保留一个）");
+      logFile("[aiti-devtools-pi] MCP self-check: the same endpoint is registered by multiple entries → " + g.url + "：" + g.entries.map((e) => e.name + "@" + e.file).join(", ") + " (they will double-connect; keep only one)");
     }
   } catch (e) {
-    logFile("[aiti-devtools-pi] MCP 自检失败：" + String(e?.message || e));
+    logFile("[aiti-devtools-pi] MCP self-check failed: " + String(e?.message || e));
   }
 }
 async function bootstrapBridge(base) {
@@ -4299,31 +4299,31 @@ async function bootstrapBridge(base) {
   auditMcpConfigs();
   if (await probeBridge2(base, 1500)) return true;
   if (process.env.AITI_PI_EXT_NO_BOOTSTRAP) {
-    logFile("[aiti-devtools-pi] 桥不可达且已跳过自动拉起（AITI_PI_EXT_NO_BOOTSTRAP=1）");
+    logFile("[aiti-devtools-pi] bridge unreachable and auto-spawn skipped (AITI_PI_EXT_NO_BOOTSTRAP=1)");
     return false;
   }
   const script = bridgeScriptPath();
   if (!script) {
-    logFile("[aiti-devtools-pi] 桥不可达且找不到桥脚本，无法自动拉起（" + base + "）——可设 AITI_BRIDGE_SCRIPT 指定");
+    logFile("[aiti-devtools-pi] bridge unreachable and no bridge script found — cannot auto-spawn (" + base + "); set AITI_BRIDGE_SCRIPT to point at one");
     return false;
   }
   const u = new URL(base);
   if (!u.port) {
-    logFile("[aiti-devtools-pi] 托管桥（URL 无端口）不可达 → 不自动拉起，等待宿主恢复：" + base);
+    logFile("[aiti-devtools-pi] hosted bridge (URL without port) unreachable → not auto-spawning; waiting for the host to recover: " + base);
     return false;
   }
   const port = parseInt(u.port || "8777", 10) || 8777;
   const host = u.hostname || "127.0.0.1";
-  logFile("[aiti-devtools-pi] 桥不可达 → 按端口 " + port + " 拉起独立桥：" + script);
+  logFile("[aiti-devtools-pi] bridge unreachable → spawning a standalone bridge on port " + port + ": " + script);
   spawnBridge(script, host, port);
   for (let i = 0; i < 15; i++) {
     await new Promise((r) => setTimeout(r, 200));
     if (await probeBridge2(base, 500)) {
-      logFile("[aiti-devtools-pi] 桥已拉起并就绪（" + base + "）");
+      logFile("[aiti-devtools-pi] bridge spawned and ready (" + base + ")");
       return true;
     }
   }
-  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join5(getAgentDir(), "aiti-bridge.log"));
+  logFile("[aiti-devtools-pi] bridge spawn timed out (" + base + ") — see " + join5(getAgentDir(), "aiti-bridge.log"));
   return false;
 }
 var agentId = () => process.env.AITI_AGENT_ID || "pi";
@@ -4361,10 +4361,10 @@ async function callBridgeTool(tool, args, signal, cancelId) {
       const r = await relay.call(tool, args || {}, cancelId, signal);
       return r;
     } catch (e) {
-      logFile("[aiti-devtools-pi] socket 转发失败 → 回退直连桥：", e instanceof Error ? e.message : e);
+      logFile("[aiti-devtools-pi] socket relay failed → falling back to direct bridge:", e instanceof Error ? e.message : e);
     }
   } else {
-    logFile("[aiti-devtools-pi] transport=http(relay未激活) →", tool);
+    logFile("[aiti-devtools-pi] transport=http(relay inactive) →", tool);
   }
   return getBridgeClient(resolveBridgeUrl()).callTool(
     tool,
@@ -4410,7 +4410,7 @@ async function connectAgentStream(pi, base, sessionId, name, cwd, onMessage) {
           try {
             respawned = true;
             spawnBridge(script, u.hostname || "127.0.0.1", parseInt(u.port, 10) || 8777);
-            logFile("[aiti-devtools-pi] 桥会话内失联 → 尝试重新拉起：" + script + "（" + base + "）");
+            logFile("[aiti-devtools-pi] bridge lost mid-session → attempting respawn: " + script + " (" + base + ")");
           } catch (e) {
           }
         }
@@ -4485,20 +4485,20 @@ function injectAgentEvent(pi, m) {
   } else if (m.type === "agent_push") {
     const p = m.payload || {};
     const fd = p.fromDevice || null;
-    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
+    if (m.kind === "user_answer") text = "💬 Your interaction request was answered (via aiti-devtools): " + (m.text || "");
     else if (fd && fd.kind === "agent") {
       const id = String(fd.id || fd.name || "?");
       const nm = String(fd.name || id);
-      text = "💬 session " + (nm !== id ? nm + "（" + id + "）" : id) + " 发来消息（来自 aiti-devtools）：" + (m.text || "");
-    } else text = "💬 用户发来消息（来自 aiti-devtools）：" + (m.text || "");
+      text = "💬 session " + (nm !== id ? nm + " (" + id + ")" : id) + " sent a message (via aiti-devtools): " + (m.text || "");
+    } else text = "💬 A user sent a message (via aiti-devtools): " + (m.text || "");
     if (p.pageId || p.sourceLabel) lastUserSrc = { pageId: p.pageId || null, url: p.url || null, sourceLabel: p.sourceLabel || null };
   }
   if (!text) return;
-  logFile("[aiti-devtools-pi] 收到推送 → 注入会话：" + text.slice(0, 120));
+  logFile("[aiti-devtools-pi] push received → injecting into session: " + text.slice(0, 120));
   try {
     pi.sendUserMessage(text, { deliverAs: "steer" });
   } catch (e) {
-    console.error("[aiti-devtools-pi] 注入失败", e);
+    console.error("[aiti-devtools-pi] inject failed", e);
   }
 }
 var lastAssistantText = "";
@@ -4522,7 +4522,7 @@ function registerBridgeTools(pi) {
     const prefixed = "aiti_" + t.name;
     pi.registerTool({
       name: prefixed,
-      description: t.description + "（aiti-devtools-pi 扩展直连独立桥——如与 MCP 同名工具冲突，用本前缀版）",
+      description: t.description + " (direct from the aiti-devtools-pi extension to the standalone bridge — prefer this prefixed variant if an MCP tool of the same name exists)",
       parameters: jsonSchemaToTypeBox(t.inputSchema || { type: "object", properties: {} }),
       async execute(toolCallId, params, signal) {
         const r = await callBridgeTool(t.name, params || {}, signal, toolCallId);
@@ -4555,7 +4555,7 @@ async function index_default(pi) {
     }
     const piWebEnv = Object.keys(process.env).some((k) => k.startsWith("PI_WEB_") && !BRIDGE_CFG_ENVS.has(k));
     if (dup || piWebEnv) {
-      logFile(`[aiti-devtools-pi] 跳过注册（${dup ? "工具表已有 aiti_*" : "pi-web 进程（PI_WEB_* env）——已由 pi-web 扩展注册"}）`);
+      logFile(`[aiti-devtools-pi] skipping registration (${dup ? "tool table already has aiti_*" : "pi-web process (PI_WEB_* env) — registered by the pi-web extension"})`);
       return;
     }
   }
@@ -4564,7 +4564,7 @@ async function index_default(pi) {
   if (bridgeUp) {
     registerBridgeTools(pi);
   } else {
-    logFile(`[aiti-devtools-pi] 桥不可达（${bridgeBase}）→ 暂不注册 aiti_* 工具（会话中持续尝试连接桥，恢复后自动补注册 + 建 SSE；先起独立桥：node packages/aiti-bridge/bin/aiti-bridge.mjs）`);
+    logFile(`[aiti-devtools-pi] bridge unreachable (${bridgeBase}) → aiti_* tools not registered yet (the session keeps trying in the background; once the bridge recovers, tools re-register + SSE reconnects; to start a standalone bridge: node packages/aiti-bridge/bin/aiti-bridge.mjs)`);
   }
   pi.on("session_start", async (_e, ctx) => {
     const base = resolveBridgeUrl();
@@ -4598,9 +4598,9 @@ async function index_default(pi) {
     await probeBridge2(base, 800);
     if (bridgeUp) registerBridgeTools(pi);
     connectAgentStream(pi, base, sid, name, currentCwd, (m) => injectAgentEvent(pi, m));
-    logFile(`[aiti-devtools-pi] session_start · 桥${bridgeUp ? "已连接" : "不可达（后台重试中）"} · session=${sid}`);
+    logFile(`[aiti-devtools-pi] session_start · bridge ${bridgeUp ? "connected" : "unreachable (retrying in background)"} · session=${sid}`);
     ctx.ui.notify(
-      bridgeUp ? `🧰 aiti-devtools 已注册：${currentAgentKey || "…"}（桥 ${base}；页面注入 <script src="${base}/aiti-launcher.js">）` : `🧰 aiti-devtools 桥不可达：${base}（后台持续尝试连接，桥恢复后页面消息自动注入；先起独立桥：node packages/aiti-bridge/bin/aiti-bridge.mjs）`,
+      bridgeUp ? `🧰 aiti-devtools registered: ${currentAgentKey || "…"} (bridge ${base}; inject pages via <script src="${base}/aiti-launcher.js">)` : `🧰 aiti-devtools bridge unreachable: ${base} (retrying in background; page messages auto-inject once it recovers; to start a standalone bridge: node packages/aiti-bridge/bin/aiti-bridge.mjs)`,
       bridgeUp ? "info" : "warning"
     );
   });
@@ -4608,7 +4608,7 @@ async function index_default(pi) {
     if (lastAssistantText) {
       const t = lastAssistantText;
       lastAssistantText = "";
-      logFile("[aiti-devtools-pi] session_shutdown 补发回答 → ", t.slice(0, 60));
+      logFile("[aiti-devtools-pi] session_shutdown: posting pending answer → ", t.slice(0, 60));
       void postAgentAnswer(t);
     }
     currentSessionId = null;
@@ -4633,7 +4633,7 @@ async function index_default(pi) {
     const t = lastAssistantText;
     lastAssistantText = "";
     if (!bridgeUp) {
-      logFile("[aiti-devtools-pi] 桥未联通 → 跳过回答回桥（不发总结）");
+      logFile("[aiti-devtools-pi] bridge down → skipping answer post-back (no summary sent)");
       return;
     }
     await postAgentAnswer(t);

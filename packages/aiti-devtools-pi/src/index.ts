@@ -51,7 +51,7 @@ function resolveBridgeUrl(): string {
       try {
         const uPort = new URL(url).port || (url.startsWith("https:") ? "443" : "80");
         if (uPort !== process.env.AITI_BRIDGE_PORT) {
-          logFile("[aiti-devtools-pi] AITI_BRIDGE_URL（端口 " + uPort + "）与 AITI_BRIDGE_PORT=" + process.env.AITI_BRIDGE_PORT + " 不一致 → 以 URL 为准（PORT 被忽略）");
+          logFile("[aiti-devtools-pi] AITI_BRIDGE_URL (port " + uPort + ") conflicts with AITI_BRIDGE_PORT=" + process.env.AITI_BRIDGE_PORT + " → the URL wins (PORT ignored)");
         }
       } catch {}
     }
@@ -136,7 +136,7 @@ function ensureMcpConfig(url: string): boolean {
         name !== "aiti-devtools" && entry?.enabled !== false && normalizeMcpUrl(entry?.url) === normalizeMcpUrl(target),
     )?.[0];
     if (dupName) {
-      logFile(`[aiti-devtools-pi] MCP 自检：${p} 已有等效条目 "${dupName}"（${target}）→ 跳过写 aiti-devtools`);
+      logFile(`[aiti-devtools-pi] MCP self-check: ${p} already has an equivalent entry "${dupName}" (${target}) → skipping aiti-devtools write`);
       return false;
     }
     cfg.mcpServers = { ...(cfg.mcpServers || {}), "aiti-devtools": { type: "http", url: target } };
@@ -172,15 +172,15 @@ function auditMcpConfigs(): void {
     ];
     const report = auditMcpServers(files);
     for (const g of report.sameName) {
-      logFile("[aiti-devtools-pi] MCP 自检：同名 server 多处指向不同端点 → " + g.name + "：" +
-        g.urls.map((u) => u.file + " = " + u.url).join(" | ") + "（陈旧条目会被合并/遮蔽，建议删掉旧的那份）");
+      logFile("[aiti-devtools-pi] MCP self-check: same server name points at different endpoints → " + g.name + "：" +
+        g.urls.map((u) => u.file + " = " + u.url).join(" | ") + " (stale entries get merged/shadowed; consider removing the old one)");
     }
     for (const g of report.sameUrl) {
-      logFile("[aiti-devtools-pi] MCP 自检：同一端点被多个条目重复注册 → " + g.url + "：" +
-        g.entries.map((e) => e.name + "@" + e.file).join(", ") + "（会双连接，建议只保留一个）");
+      logFile("[aiti-devtools-pi] MCP self-check: the same endpoint is registered by multiple entries → " + g.url + "：" +
+        g.entries.map((e) => e.name + "@" + e.file).join(", ") + " (they will double-connect; keep only one)");
     }
   } catch (e) {
-    logFile("[aiti-devtools-pi] MCP 自检失败：" + String((e as Error)?.message || e));
+    logFile("[aiti-devtools-pi] MCP self-check failed: " + String((e as Error)?.message || e));
   }
 }
 
@@ -191,30 +191,30 @@ async function bootstrapBridge(base: string): Promise<boolean> {
   auditMcpConfigs();
   if (await probeBridge(base, 1500)) return true; // 端口正常，桥已在跑
   if (process.env.AITI_PI_EXT_NO_BOOTSTRAP) {
-    logFile("[aiti-devtools-pi] 桥不可达且已跳过自动拉起（AITI_PI_EXT_NO_BOOTSTRAP=1）");
+    logFile("[aiti-devtools-pi] bridge unreachable and auto-spawn skipped (AITI_PI_EXT_NO_BOOTSTRAP=1)");
     return false;
   }
   const script = bridgeScriptPath();
   if (!script) {
-    logFile("[aiti-devtools-pi] 桥不可达且找不到桥脚本，无法自动拉起（" + base + "）——可设 AITI_BRIDGE_SCRIPT 指定");
+    logFile("[aiti-devtools-pi] bridge unreachable and no bridge script found — cannot auto-spawn (" + base + "); set AITI_BRIDGE_SCRIPT to point at one");
     return false;
   }
   const u = new URL(base);
   if (!u.port) {
     // 托管桥（URL 无端口，如 pi-web 的 /api/extensions/aiti-devtools/mcp）：
     // 不在本地乱拉独立桥——宿主不可达时保持重试，等宿主恢复
-    logFile("[aiti-devtools-pi] 托管桥（URL 无端口）不可达 → 不自动拉起，等待宿主恢复：" + base);
+    logFile("[aiti-devtools-pi] hosted bridge (URL without port) unreachable → not auto-spawning; waiting for the host to recover: " + base);
     return false;
   }
   const port = parseInt(u.port || "8777", 10) || 8777;
   const host = u.hostname || "127.0.0.1";
-  logFile("[aiti-devtools-pi] 桥不可达 → 按端口 " + port + " 拉起独立桥：" + script);
+  logFile("[aiti-devtools-pi] bridge unreachable → spawning a standalone bridge on port " + port + ": " + script);
   spawnBridge(script, host, port);
   for (let i = 0; i < 15; i++) { // 等待就绪（最多 ~3s）
     await new Promise((r) => setTimeout(r, 200));
-    if (await probeBridge(base, 500)) { logFile("[aiti-devtools-pi] 桥已拉起并就绪（" + base + "）"); return true; }
+    if (await probeBridge(base, 500)) { logFile("[aiti-devtools-pi] bridge spawned and ready (" + base + ")"); return true; }
   }
-  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join(getAgentDir(), "aiti-bridge.log"));
+  logFile("[aiti-devtools-pi] bridge spawn timed out (" + base + ") — see " + join(getAgentDir(), "aiti-bridge.log"));
   return false;
 }
 
@@ -266,10 +266,10 @@ async function callBridgeTool(tool: string, args: Record<string, unknown>, signa
       const r = await relay.call(tool, args || {}, cancelId, signal);
       return r;
     } catch (e) {
-      logFile("[aiti-devtools-pi] socket 转发失败 → 回退直连桥：", e instanceof Error ? e.message : e);
+      logFile("[aiti-devtools-pi] socket relay failed → falling back to direct bridge:", e instanceof Error ? e.message : e);
     }
   } else {
-    logFile("[aiti-devtools-pi] transport=http(relay未激活) →", tool);
+    logFile("[aiti-devtools-pi] transport=http(relay inactive) →", tool);
   }
   return getBridgeClient(resolveBridgeUrl()).callTool(
     tool, args || {},
@@ -315,7 +315,7 @@ async function connectAgentStream(pi: ExtensionAPI, base: string, sessionId: str
           try {
             respawned = true;
             spawnBridge(script, u.hostname || "127.0.0.1", parseInt(u.port, 10) || 8777);
-            logFile("[aiti-devtools-pi] 桥会话内失联 → 尝试重新拉起：" + script + "（" + base + "）");
+            logFile("[aiti-devtools-pi] bridge lost mid-session → attempting respawn: " + script + " (" + base + ")");
           } catch (e) {}
         }
       }
@@ -381,18 +381,18 @@ function injectAgentEvent(pi: ExtensionAPI, m: any) {
     // window (human-operated) sources show "user".
     const p = m.payload || {};
     const fd = p.fromDevice || null;
-    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
+    if (m.kind === "user_answer") text = "💬 Your interaction request was answered (via aiti-devtools): " + (m.text || "");
     else if (fd && fd.kind === "agent") {
       const id = String(fd.id || fd.name || "?");
       const nm = String(fd.name || id);
-      text = "💬 session " + (nm !== id ? nm + "（" + id + "）" : id) + " 发来消息（来自 aiti-devtools）：" + (m.text || "");
-    } else text = "💬 用户发来消息（来自 aiti-devtools）：" + (m.text || "");
+      text = "💬 session " + (nm !== id ? nm + " (" + id + ")" : id) + " sent a message (via aiti-devtools): " + (m.text || "");
+    } else text = "💬 A user sent a message (via aiti-devtools): " + (m.text || "");
     // 记录结构化来源（桥已补 pageId/url/sourceLabel）→ 回答时拼展示标注
     if (p.pageId || p.sourceLabel) lastUserSrc = { pageId: p.pageId || null, url: p.url || null, sourceLabel: p.sourceLabel || null };
   }
   if (!text) return;
-  logFile("[aiti-devtools-pi] 收到推送 → 注入会话：" + text.slice(0, 120));
-  try { pi.sendUserMessage(text, { deliverAs: "steer" }); } catch (e) { console.error("[aiti-devtools-pi] 注入失败", e); }
+  logFile("[aiti-devtools-pi] push received → injecting into session: " + text.slice(0, 120));
+  try { pi.sendUserMessage(text, { deliverAs: "steer" }); } catch (e) { console.error("[aiti-devtools-pi] inject failed", e); }
 }
 
 // ---- agent 执行完 → 回答/summary 回桥（消息流 from agent → 窗口实时显示） ----
@@ -421,7 +421,7 @@ function registerBridgeTools(pi: ExtensionAPI) {
     const prefixed = "aiti_" + t.name;
     pi.registerTool({
       name: prefixed,
-      description: t.description + "（aiti-devtools-pi 扩展直连独立桥——如与 MCP 同名工具冲突，用本前缀版）",
+      description: t.description + " (direct from the aiti-devtools-pi extension to the standalone bridge — prefer this prefixed variant if an MCP tool of the same name exists)",
       parameters: jsonSchemaToTypeBox(t.inputSchema || { type: "object", properties: {} }),
       async execute(toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) {
         const r = await callBridgeTool(t.name, params || {}, signal, toolCallId);
@@ -469,7 +469,7 @@ export default async function (pi: ExtensionAPI) {
     } catch {}
     const piWebEnv = Object.keys(process.env).some((k) => k.startsWith("PI_WEB_") && !BRIDGE_CFG_ENVS.has(k));
     if (dup || piWebEnv) {
-      logFile(`[aiti-devtools-pi] 跳过注册（${dup ? "工具表已有 aiti_*" : "pi-web 进程（PI_WEB_* env）——已由 pi-web 扩展注册"}）`);
+      logFile(`[aiti-devtools-pi] skipping registration (${dup ? "tool table already has aiti_*" : "pi-web process (PI_WEB_* env) — registered by the pi-web extension"})`);
       return;
     }
   }
@@ -482,7 +482,7 @@ export default async function (pi: ExtensionAPI) {
   if (bridgeUp) {
     registerBridgeTools(pi);
   } else {
-    logFile(`[aiti-devtools-pi] 桥不可达（${bridgeBase}）→ 暂不注册 aiti_* 工具（会话中持续尝试连接桥，恢复后自动补注册 + 建 SSE；先起独立桥：node packages/aiti-bridge/bin/aiti-bridge.mjs）`);
+    logFile(`[aiti-devtools-pi] bridge unreachable (${bridgeBase}) → aiti_* tools not registered yet (the session keeps trying in the background; once the bridge recovers, tools re-register + SSE reconnects; to start a standalone bridge: node packages/aiti-bridge/bin/aiti-bridge.mjs)`);
   }
 
   // ---- 生命周期：session_start 注册 + 连 agent SSE；session_shutdown 断开 ----
@@ -511,11 +511,11 @@ export default async function (pi: ExtensionAPI) {
     if (bridgeUp) registerBridgeTools(pi);
     // 无条件连 agent SSE（自带 register + 指数退避重试）：桥没连上也持续尝试，恢复后页面消息/人发消息自动注入
     connectAgentStream(pi, base, sid, name, currentCwd, (m) => injectAgentEvent(pi, m));
-    logFile(`[aiti-devtools-pi] session_start · 桥${bridgeUp ? "已连接" : "不可达（后台重试中）"} · session=${sid}`);
+    logFile(`[aiti-devtools-pi] session_start · bridge ${bridgeUp ? "connected" : "unreachable (retrying in background)"} · session=${sid}`);
     ctx.ui.notify(
       bridgeUp
-        ? `🧰 aiti-devtools 已注册：${currentAgentKey || "…"}（桥 ${base}；页面注入 <script src="${base}/aiti-launcher.js">）`
-        : `🧰 aiti-devtools 桥不可达：${base}（后台持续尝试连接，桥恢复后页面消息自动注入；先起独立桥：node packages/aiti-bridge/bin/aiti-bridge.mjs）`,
+        ? `🧰 aiti-devtools registered: ${currentAgentKey || "…"} (bridge ${base}; inject pages via <script src="${base}/aiti-launcher.js">)`
+        : `🧰 aiti-devtools bridge unreachable: ${base} (retrying in background; page messages auto-inject once it recovers; to start a standalone bridge: node packages/aiti-bridge/bin/aiti-bridge.mjs)`,
       bridgeUp ? "info" : "warning",
     );
   });
@@ -524,7 +524,7 @@ export default async function (pi: ExtensionAPI) {
     if (lastAssistantText) {
       const t = lastAssistantText;
       lastAssistantText = "";
-      logFile("[aiti-devtools-pi] session_shutdown 补发回答 → ", t.slice(0, 60));
+      logFile("[aiti-devtools-pi] session_shutdown: posting pending answer → ", t.slice(0, 60));
       void postAgentAnswer(t);
     }
     currentSessionId = null;
@@ -544,7 +544,7 @@ export default async function (pi: ExtensionAPI) {
     if (!lastAssistantText) return;
     const t = lastAssistantText;
     lastAssistantText = "";
-    if (!bridgeUp) { logFile("[aiti-devtools-pi] 桥未联通 → 跳过回答回桥（不发总结）"); return; }
+    if (!bridgeUp) { logFile("[aiti-devtools-pi] bridge down → skipping answer post-back (no summary sent)"); return; }
     await postAgentAnswer(t);
   });
 }

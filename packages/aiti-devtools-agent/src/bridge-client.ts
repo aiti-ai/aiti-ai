@@ -117,7 +117,7 @@ export class AgentBridgeClient {
       }
     };
     if (signal) {
-      if (signal.aborted) { onAbort(); return { ok: false, error: "已取消（agent 停止）" }; }
+      if (signal.aborted) { onAbort(); return { ok: false, error: "cancelled (agent stopped)" }; }
       signal.addEventListener("abort", onAbort, { once: true });
     }
     const res = await fetch(this.base + "/bridge/agent/tools/call", {
@@ -136,9 +136,9 @@ export class AgentBridgeClient {
     }).catch(() => null);
     if (signal) { try { signal.removeEventListener("abort", onAbort); } catch {} }
     clearTimeout(t);
-    if (!res) return { ok: false, error: "桥不可达：" + this.base };
+    if (!res) return { ok: false, error: "bridge unreachable: " + this.base };
     const body = await res.json().catch(() => null);
-    if (!body) return { ok: false, error: "桥响应异常（HTTP " + res.status + "）" };
+    if (!body) return { ok: false, error: "bridge response malformed (HTTP " + res.status + ")" };
     return body;
   }
 
