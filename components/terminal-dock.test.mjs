@@ -42,7 +42,10 @@ test("falls back to the native PTY panel when the extension is absent (three lay
   const panelIdx = bridgeSource.indexOf("<TerminalPanel");
   assert.ok(settledIdx !== -1 && panelIdx !== -1, "native fallback layer is missing");
   assert.ok(settledIdx < panelIdx, "placeholder layer must render before the native panel (no PTY while unsettled)");
-  assert.match(bridgeSource, /import \{ TerminalPanel \} from "\.\/TerminalPanel(?:\.tsx?)?";/);
+  // [first-load chunk governance] the native panel is lazy (xterm stays out of the
+  // boot bundle): loaded through next/dynamic, never a static import.
+  assert.match(bridgeSource, /const TerminalPanel = dynamic\(/);
+  assert.doesNotMatch(bridgeSource, /import \{ TerminalPanel \} from "\.\/TerminalPanel(?:\.tsx?)?";/);
 });
 
 test("terminalDock contract exists in the slot type table", () => {
