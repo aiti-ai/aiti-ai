@@ -30,13 +30,20 @@ export default {
   name: "aiti-sheet-univer",
   description: "Excel 表格编辑器（exceljs 数据面 + Univer 视图面）：.xlsx/.xlsm 预览+编辑，.xls/.ods 只读预览",
   client: "dist/aiti-sheet-univer-client.mjs",
-  clientImmediately: true,
   icon: "icon.svg",
   features: [
     { id: "sheet.edit", label: "Excel 编辑保存", description: "开启后 .xlsx/.xlsm 提供 edit 能力（保存走 save-blob）；关闭仅预览", default: true },
   ],
 
   ui: {
+    // [first-load chunk governance] Lazy + idle materialization: the provider shell (~small ESM)
+    // materializes in the first idle window after boot (ExtSlots scheduleIdleMaterialize) and
+    // registers into aiti-editor's provider registry via the shared inject buffer (load-order
+    // independent). Vendor sub-chunks stay strictly on-demand (first file open).
+    // NOTE: the previous top-level "clientImmediately: true" was dead config — the registry
+    // only reads ui.clientImmediately — so these were effectively eager before this change.
+    clientImmediately: false,
+    prefetchOnIdle: true, // Excel 编辑器（Univer 视图 + exceljs 数据面）在首个空闲窗口物化注册 provider；vendor 子链仍按需
     // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
     i18n: {
       "zh-CN": {

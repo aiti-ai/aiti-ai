@@ -18,13 +18,20 @@ export default {
   name: "aiti-word-superdoc",
   description: "Word 文档编辑器（SuperDoc：ProseMirror docx 双向）：.docx 预览+编辑。AGPL 隔离于本扩展，不装即无",
   client: "dist/aiti-word-superdoc-client.mjs",
-  clientImmediately: true,
   icon: "icon.svg",
   features: [
     { id: "word.edit", label: "Word 编辑保存", description: "开启后 .docx 提供 edit 能力（保存走 save-blob）；关闭仅预览", default: true },
   ],
 
   ui: {
+    // [first-load chunk governance] Lazy + idle materialization: the provider shell (~small ESM)
+    // materializes in the first idle window after boot (ExtSlots scheduleIdleMaterialize) and
+    // registers into aiti-editor's provider registry via the shared inject buffer (load-order
+    // independent). Vendor sub-chunks stay strictly on-demand (first file open).
+    // NOTE: the previous top-level "clientImmediately: true" was dead config — the registry
+    // only reads ui.clientImmediately — so these were effectively eager before this change.
+    clientImmediately: false,
+    prefetchOnIdle: true, // Word 编辑器（SuperDoc）在首个空闲窗口物化注册 provider；vendor 子链仍按需
     // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
     i18n: {
       "zh-CN": {
