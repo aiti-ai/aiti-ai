@@ -4,12 +4,15 @@
 import { apiUrl, ensureEditorTicket, t } from "./host-shim.ts";
 import { CSV_RAINBOW, detectDelimiter, parseCsvLine } from "./lib";
 import { loadJsYaml } from "./registry";
+import { getRuntimeBytes } from "./limits-runtime";
+import { CSV_DECORATION_MAX_BYTES } from "../../shared/limits";
 
 // 注册 Markdown 折叠/大纲（基于标题的无侵入式语言服务，不依赖 Monaco 内建）
 export function registerMarkdownServices(m: any): void {
   // 折叠提供者：## 标题 → 折叠区域
   m.languages.registerFoldingRangeProvider("markdown", {
     provideFoldingRanges: (model: any) => {
+      if (model.getValueLength?.() > getRuntimeBytes().providerBytes) return [];
       const text = model.getValue();
       const lines = text.split("\n");
       const ranges: any[] = [];
@@ -34,6 +37,7 @@ export function registerMarkdownServices(m: any): void {
   // 文档符号提供者（大纲面板）
   m.languages.registerDocumentSymbolProvider("markdown", {
     provideDocumentSymbols: (model: any) => {
+      if (model.getValueLength?.() > getRuntimeBytes().providerBytes) return [];
       const text = model.getValue();
       const lines = text.split("\n");
       const symbols: any[] = [];
@@ -435,6 +439,9 @@ export function loadContribution(lang: string): Promise<void> {
 export function setupCsvDecorations(monaco: any, editor: any): (() => void) | undefined {
   if (!editor || !editor.getModel()) return;
   const model = editor.getModel();
+  // One decoration per cell: a few thousand rows already means tens of thousands of
+  // ranges and a frozen UI. Skip the rainbow entirely on big CSVs.
+  if (model.getValueLength?.() > CSV_DECORATION_MAX_BYTES) return;
   let decorationIds: any[] = [];
   function updateDecorations(): void {
     const text = model.getValue();
@@ -497,6 +504,8 @@ export function setupModelDiagnostics(monaco: any, editor: any): (() => void) | 
   const model = editor.getModel();
   const lang = model.getLanguageId();
   if (lang !== 'yaml' && lang !== 'toml') return;
+  // Full-document YAML/TOML parse on every content change: only for small files.
+  if (model.getValueLength?.() > getRuntimeBytes().providerBytes) return;
   const update = () => {
     const text = model.getValue();
     const markers: any[] = [];

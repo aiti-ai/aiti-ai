@@ -9,6 +9,8 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, closeSync, statSync, watch, writeFileSync } from "node:fs";
+import { readFile as readFileAsync } from "node:fs/promises";
+import { isUtf8 } from "node:buffer";
 import { Readable } from "node:stream";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
@@ -20,6 +22,11 @@ import {
   resolvePreviewTarget, previewRelOrEntry, previewCsp, previewMimeOf, isPreviewDoc, servePreviewDoc,
   previewBaseFromSegments, PREVIEW_MAX_BYTES, PREVIEW_DOC_MAX_BYTES,
 } from "./preview/preview-serve.ts";
+import {
+  CACHE_FILE_MAX_BYTES, TEXT_WINDOW_CHUNK_BYTES, WINDOW_PAGE_LINES,
+  DEFAULT_LIMITS, limitBytes, normalizeLimits, type EditorLimits,
+} from "./shared/limits";
+import { readTextWindow, countFileLines } from "./server/text-window";
 
 // ── 7-Zip 解析链：系统已装 → 直接用；未装 → justget 多源下载 portable 7za（~1-2MB，缓存本地） ──
 //   主源 GitHub develar/7zip-bin；镜像多源（justget 竞速）：
@@ -274,8 +281,19 @@ function detectEncoding(buf: Buffer): { encoding: string; hasBOM: boolean } {
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { encoding: "utf-8", hasBOM: true };
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return { encoding: "utf-16le", hasBOM: true };
   if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return { encoding: "utf-16be", hasBOM: true };
-  try { new TextDecoder("utf-8", { fatal: true }).decode(buf); return { encoding: "utf-8", hasBOM: false }; }
-  catch {
+  // isUtf8 is a C++ validation pass (no intermediate string). The old code decoded the
+  // whole buffer just to check validity and then decoded it again — 2x allocations on the
+  // host main thread. Fall back to the old probe on runtimes without node:buffer.isUtf8.
+  let valid = false;
+  try {
+    valid = typeof isUtf8 === "function" ? isUtf8(buf) : false;
+    if (typeof isUtf8 !== "function") {
+      new TextDecoder("utf-8", { fatal: true }).decode(buf);
+      valid = true;
+    }
+  } catch { valid = false; }
+  if (valid) return { encoding: "utf-8", hasBOM: false };
+  {
     const g = new TextDecoder("gbk").decode(buf);
     const replaces = (g.match(/\\uFFFD/g) || []).length;
     if (replaces > 0 && replaces / Math.max(g.length, 1) > 0.05) return { encoding: "latin1", hasBOM: false };
@@ -322,6 +340,10 @@ function readPrefs(): Record<string, string> {
     return d && typeof d === "object" && !Array.isArray(d) ? d : {};
   } catch { return {}; }
 }
+/** Effective size limits (user-editable in extman → editor-prefs.json `limits`). */
+function readLimits(): EditorLimits {
+  try { return normalizeLimits((readPrefs() as any).limits); } catch { return DEFAULT_LIMITS; }
+}
 function writePrefsAtomic(prefs: Record<string, string>): void {
   const dir = configDir || fallbackDataDir();
   mkdirSync(dir, { recursive: true });
@@ -337,6 +359,8 @@ function writePrefsAtomic(prefs: Record<string, string>): void {
 //（<video> 拖动进度条、EventSource 自动重连都会多次请求）。
 const EDITOR_TICKET_TTL_MS = 3_600_000;
 const editorTickets = new Map<string, { fp: string; root: string; exp: number }>();
+/** Line-count cache for the large-file info card (path+mtime+size → count). */
+const lineCountCache = new Map<string, { lines: number; partial: boolean }>();
 // ---------- 文件 watch（pi-web 页面事件流承载，全页 0 条专用连接）----------
 // 客户端 POST /ticket {filePath, wantWatch:true} → 返回 watchId 并内联启动 fs.watch（300ms 防抖）；变化经
 // globalThis.__piPageEvents.publish("ed-watch", { id, size, mtimeMs }) 推送，
@@ -972,6 +996,28 @@ export default {
         "复制失败": "复制失败",
         "复制文件全部内容到剪贴板（超过 1MB 拒绝）": "复制文件全部内容到剪贴板（超过 1MB 拒绝）",
         "复制路径": "复制路径",
+        "下载": "下载",
+        "上一页": "上一页",
+        "下一页": "下一页",
+        "加载中…": "加载中…",
+        "统计中…": "统计中…",
+        "引用本页": "引用本页",
+        "返回信息": "返回信息",
+        "大文件只读": "大文件只读",
+        "第 {a}–{b} 行": "第 {a}–{b} 行",
+        "已插入引用": "已插入引用",
+        "文件较大（{size}），已暂停加载全文，避免页面卡顿。": "文件较大（{size}），已暂停加载全文，避免页面卡顿。",
+        "只显示部分（只读）": "只显示部分（只读）",
+        "用编辑器打开（只读）": "用编辑器打开（只读）",
+        "在聊天中引用": "在聊天中引用",
+        "我了解风险，仍用编辑器打开": "我了解风险，仍用编辑器打开",
+        "用编辑器打开大文件？": "用编辑器打开大文件？",
+        "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？": "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？",
+        "我了解风险，继续打开": "我了解风险，继续打开",
+        "已按你的选择强制打开（大文件，可能较卡）": "已按你的选择强制打开（大文件，可能较卡）",
+        "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。": "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。",
+        "读取失败：{msg}": "读取失败：{msg}",
+        "正在加载文件片段…": "正在加载文件片段…",
         "多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）": "多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）",
         "大小": "大小",
         "大纲": "大纲",
@@ -1444,6 +1490,28 @@ export default {
         "复制失败": "Copy failed",
         "复制文件全部内容到剪贴板（超过 1MB 拒绝）": "Copy the whole file content to clipboard (rejected over 1MB)",
         "复制路径": "Copy path",
+        "下载": "Download",
+        "上一页": "Previous",
+        "下一页": "Next",
+        "加载中…": "Loading…",
+        "统计中…": "Counting…",
+        "引用本页": "Quote this page",
+        "返回信息": "Back to info",
+        "大文件只读": "Large file (read-only)",
+        "第 {a}–{b} 行": "Lines {a}–{b}",
+        "已插入引用": "Reference inserted",
+        "文件较大（{size}），已暂停加载全文，避免页面卡顿。": "This file is large ({size}); loading the full text is paused to keep the page responsive.",
+        "只显示部分（只读）": "Show part (read-only)",
+        "用编辑器打开（只读）": "Open in editor (read-only)",
+        "在聊天中引用": "Reference in chat",
+        "我了解风险，仍用编辑器打开": "I know the risk — open in editor anyway",
+        "用编辑器打开大文件？": "Open a large file in the editor?",
+        "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？": "This file ({size}) is above the safe editor limit. Forcing it open can consume a lot of memory and may freeze the page (hard cap {max}MB). Continue?",
+        "我了解风险，继续打开": "I understand the risk, continue",
+        "已按你的选择强制打开（大文件，可能较卡）": "Force-opened as requested (large file; may be slow)",
+        "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。": "Chunked read-only viewing never loads the whole file; @ references, file chips and download keep working.",
+        "读取失败：{msg}": "Read failed: {msg}",
+        "正在加载文件片段…": "Loading file section…",
         "多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）": "Multi-encoding open & save (UTF-8 / UTF-16 / GBK / Latin-1, with BOM)",
         "大小": "Size",
         "大纲": "Outline",
@@ -1807,7 +1875,7 @@ export default {
         try {
           const st = statSync(target);
           if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
-          return json({ ok: true, mtimeMs: st.mtimeMs, size: st.size });
+          return json({ ok: true, mtimeMs: st.mtimeMs, size: st.size, limits: readLimits() });
         } catch {
           return json({ ok: false, error: "文件不存在" }, 404);
         }
@@ -1910,6 +1978,15 @@ export default {
         const contentHash = typeof body?.contentHash === "string" ? body.contentHash : "";
         const history = Array.isArray(body?.history) ? body.history : [];
         if (!filePath) return json({ ok: false, error: "需要 filePath" }, 400);
+        // Edit cache is for files a human can actually edit (read-only starts at the configured
+        // ceiling). Refusing big payloads here also protects the host from a huge body + stringify.
+        const lim = readLimits();
+        const lb = limitBytes(lim);
+        if ((content !== null && content.length > lb.cacheBytes)
+          || (original !== null && original.length > lb.cacheBytes)
+          || (diff !== null && diff.length > lb.cacheDiffBytes * 2)) {
+          return json({ ok: false, code: "CACHE_SKIP", error: "文件过大，不参与编辑缓存" }, 413);
+        }
         try {
           // 缓存键按展开后的绝对路径规范化：~/x 与 /home/pi/x 同一文件只存一份（ts-siblings 读侧用展开路径查）
           const canonical = expandTildePath(filePath);
@@ -1985,7 +2062,18 @@ export default {
         try {
           const cacheFile = join(cacheDir, cacheName(expandTildePath(fp)));
           if (!existsSync(cacheFile)) return json({ ok: false, error: "无缓存" }, 404);
+          // Legacy/oversized caches must never be loaded into the host main thread again.
+          const cst = statSync(cacheFile);
+          if (cst.size > CACHE_FILE_MAX_BYTES) {
+            try { rmSync(cacheFile); } catch { /* retry next time */ }
+            return json({ ok: false, code: "CACHE_SKIP", error: "缓存过大，已清理" }, 413);
+          }
           const data = JSON.parse(readFileSync(cacheFile, "utf8"));
+          const cacheBytes = limitBytes(readLimits()).cacheBytes;
+          if ((data.content || "").length > cacheBytes || (data.original || "").length > cacheBytes) {
+            try { rmSync(cacheFile); } catch { /* noop */ }
+            return json({ ok: false, code: "CACHE_SKIP", error: "缓存过大，已清理" }, 413);
+          }
           return json({ ok: true, original: data.original || "", content: data.content || "",
             strategy: data.strategy || "content", diff: data.diff || null,
             baseMtimeMs: data.baseMtimeMs || 0,
@@ -2299,13 +2387,65 @@ export default {
         const target = await resolveAllowedWrite(fp);
         if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
         try {
-          const buf = readFileSync(target);
+          const st = statSync(target);
+          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          // Size hard gate: the client decides before requesting, this protects old clients
+          // and third-party callers from loading the whole file on the host main thread.
+          // force=1 is the explicit "I know the risk" path (only when enabled in settings).
+          const lim = readLimits();
+          const lb = limitBytes(lim);
+          const force = u.searchParams.get("force") === "1";
+          const ceiling = force && lim.allowForceOpen ? lb.forceMaxBytes : lb.monacoBytes;
+          if (force && !lim.allowForceOpen) {
+            return json({ ok: false, code: "FORCE_DISABLED", error: "设置中已禁用强制打开" }, 403);
+          }
+          if (st.size > ceiling) {
+            return json({ ok: false, code: "TOO_LARGE", size: st.size,
+              error: `文件超过 ${Math.round(ceiling / 1048576)}MB，已切换为大文件模式` }, 413);
+          }
+          const buf = await readFileAsync(target); // async: no event-loop freeze on multi-MB reads
           let enc: { encoding: string; hasBOM: boolean } = detectEncoding(buf);
           if (forced && forced !== "auto") enc = { encoding: forced, hasBOM: false };
           const content = decodeText(buf, enc.encoding, enc.hasBOM);
           return json({ ok: true, content, encoding: enc.encoding, hasBOM: enc.hasBOM, size: buf.length });
         } catch (e) {
           return json({ ok: false, error: "读取失败: " + String(e && e.message || e) }, 500);
+        }
+      }
+      // GET /t/<ticket>/text-window?offset=&maxBytes=&maxLines=&encoding= → chunked read-only window
+      //   Data plane for the large-file viewer: one line-aligned window per request (≤ TEXT_WINDOW_CHUNK_BYTES).
+      if (p[p.length - 1] === "text-window" && req.method === "GET") {
+        const target = await resolveAllowedWrite(tFp);
+        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        try {
+          const st = statSync(target);
+          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          const num = (v: string | null, def: number) => { const n = parseInt(v || "", 10); return Number.isFinite(n) ? n : def; };
+          const offset = Math.max(0, num(u.searchParams.get("offset"), 0));
+          const maxBytes = Math.min(Math.max(1, num(u.searchParams.get("maxBytes"), TEXT_WINDOW_CHUNK_BYTES)), TEXT_WINDOW_CHUNK_BYTES);
+          const maxLines = Math.min(Math.max(0, num(u.searchParams.get("maxLines"), WINDOW_PAGE_LINES)), 20000);
+          const w = await readTextWindow(target, offset, maxBytes, maxLines, u.searchParams.get("encoding") || "utf-8");
+          return json({ ok: true, ...w });
+        } catch (e) {
+          return json({ ok: false, error: "读取失败: " + String(e && e.message || e) }, 500);
+        }
+      }
+      // GET /t/<ticket>/line-count → line count (chunked async scan, yields between chunks)
+      if (p[p.length - 1] === "line-count" && req.method === "GET") {
+        const target = await resolveAllowedWrite(tFp);
+        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        try {
+          const st = statSync(target);
+          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          const key = target + ":" + Math.round(st.mtimeMs) + ":" + st.size;
+          const hit = lineCountCache.get(key);
+          if (hit) return json({ ok: true, lines: hit.lines, partial: hit.partial, totalSize: st.size, cached: true });
+          const r = await countFileLines(target);
+          lineCountCache.set(key, { lines: r.lines, partial: r.partial });
+          if (lineCountCache.size > 8) lineCountCache.delete(lineCountCache.keys().next().value as string);
+          return json({ ok: true, lines: r.lines, partial: r.partial, totalSize: st.size });
+        } catch (e) {
+          return json({ ok: false, error: "统计失败: " + String(e && e.message || e) }, 500);
         }
       }
       // GET /ts-siblings?filePath= → 同目录 TS/JS 家族兄弟文件内容（Monaco TS worker 相对导入解析用：

@@ -1260,6 +1260,149 @@ function ExtManContent(): any {
   );
 }
 
+
+/** Locale-aware label from a schema `{ en, "zh-CN" }` map (plain strings pass through). */
+function pickLabel(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (!v || typeof v !== "object") return "";
+  const m = v as Record<string, unknown>;
+  const zh = m["zh-CN"] ?? m.zh;
+  const en = m.en;
+  return currentLocale() === "zh" ? String(zh ?? en ?? "") : String(en ?? zh ?? "");
+}
+
+/**
+ * Declarative per-extension settings (package.json → aitiConfigs.settings).
+ * The server owns validation + atomic write; this is a generic form so any extension can
+ * expose a few safe knobs without shipping its own config UI.
+ */
+function ExtSettingsSection({ id }: { id: string }) {
+  const [spec, setSpec] = useState<any>(null);
+  const [values, setValues] = useState<Record<string, any>>({});
+  const [initial, setInitial] = useState<Record<string, any>>({});
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    fetch(apiUrl("/api/extensions/aiti-extman/settings?id=" + encodeURIComponent(id)), { cache: "no-store" })
+      .then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }))
+      .then(({ status, body }) => {
+        if (dead) return;
+        if (status === 200 && body && body.ok) {
+          setSpec(body.spec);
+          setValues(body.values || {});
+          setInitial(body.values || {});
+        } else if (status !== 404) {
+          setErr((body && body.error) || ("HTTP " + status));
+        }
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [id]);
+
+  if (!spec) return null;
+  const fields: any[] = Array.isArray(spec.fields) ? spec.fields : [];
+  const change = (path: string, v: any) => { setValues((prev) => ({ ...prev, [path]: v })); setSaved(false); };
+  const save = async () => {
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(apiUrl("/api/extensions/aiti-extman/settings"), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, values }),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d || d.ok !== true) throw new Error((d && d.error) || ("HTTP " + r.status));
+      const next = d.values || values;
+      setValues(next); setInitial(next); setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setErr(String((e && (e as Error).message) || e));
+    } finally { setBusy(false); }
+  };
+  const reset = () => { setValues({ ...initial }); setSaved(false); };
+
+  const inputStyle: any = {
+    width: 110, padding: "3px 6px", fontSize: 12, fontFamily: "var(--font-mono)",
+    border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text)",
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+          border: "none", background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12, textAlign: "left" }}
+      >
+        <span style={{ flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
+        <span style={{ fontWeight: 600 }}>{pickLabel(spec.title) || t("ext.settings")}</span>
+        <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{t("ext.settingsHint")}</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{spec.file || ""}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {pickLabel(spec.description) && (
+            <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.5 }}>{pickLabel(spec.description)}</div>
+          )}
+          {fields.map((f: any) => {
+            const path = String(f.path || "");
+            if (!path) return null;
+            const type = f.type || "string";
+            const v = values[path];
+            const label = pickLabel(f.label) || path;
+            const help = pickLabel(f.help);
+            return (
+              <label key={path} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }} title={help}>
+                <span style={{ flex: "0 0 46%", minWidth: 0, color: "var(--text)", overflowWrap: "anywhere" }}>
+                  {label}{f.unit ? <span style={{ color: "var(--text-dim)" }}> ({f.unit})</span> : null}
+                </span>
+                {type === "boolean" ? (
+                  <input type="checkbox" checked={v === true} onChange={(e) => change(path, e.target.checked)} />
+                ) : type === "select" ? (
+                  <select value={String(v ?? "")} onChange={(e) => change(path, e.target.value)}
+                    style={{ ...inputStyle, width: 180 }}>
+                    {(f.options || []).map((o: any) => (
+                      <option key={String(o.value)} value={String(o.value)}>{pickLabel(o.label) || String(o.value)}</option>
+                    ))}
+                  </select>
+                ) : type === "number" ? (
+                  <input
+                    type="number"
+                    value={v === undefined || v === null ? "" : v}
+                    min={typeof f.min === "number" ? f.min : undefined}
+                    max={typeof f.max === "number" ? f.max : undefined}
+                    step={typeof f.step === "number" ? f.step : undefined}
+                    onChange={(e) => change(path, e.target.value === "" ? "" : Number(e.target.value))}
+                    style={inputStyle}
+                  />
+                ) : (
+                  <input type="text" value={String(v ?? "")} onChange={(e) => change(path, e.target.value)} style={{ ...inputStyle, width: 200 }} />
+                )}
+              </label>
+            );
+          })}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" disabled={busy} onClick={save}
+              style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)", fontWeight: 600 } as React.CSSProperties}>
+              {busy ? t("ext.settingsSaving") : t("ext.settingsSave")}
+            </button>
+            <button type="button" disabled={busy} onClick={reset} style={btnStyle as React.CSSProperties}>{t("ext.settingsReset")}</button>
+            {saved && <span style={{ color: "var(--ok, #10b981)", fontSize: 11 }}>✓ {t("ext.settingsSaved")}</span>}
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("ext.settingsApplyHint")}</span>
+          </div>
+          {err && <div style={{ fontSize: 11.5, color: "var(--danger, #f87171)" }}>{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- 本地详情 ----------
 function InfoRow({ label, children }: { label: string; children?: React.ReactNode }) {
   return [
@@ -1365,6 +1508,8 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
 
       {/* markdown 描述（DESC.md 约定；支持 {{aiti-url}} 等约定变量） */}
       {entry.descriptionMd && <MdDesc text={entry.descriptionMd} vars={extDescVars(id, entry)} />}
+
+      <ExtSettingsSection id={id} />
 
       <div style={gridStyle}>
         <InfoRow label={t("ext.status")}>

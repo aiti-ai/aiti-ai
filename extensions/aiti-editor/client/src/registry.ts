@@ -5,6 +5,8 @@
  */
 import { getBase, editorRefHolder } from "./env";
 import { LANG_EXT, detectFileType, isViewableBinary, isTextFile, matches, formatToml, formatCsv, loadVendorGlobal } from "./lib";
+import { outlineJson } from "./json-outline";
+import { getRuntimeBytes } from "./limits-runtime";
 import { ensureEditorTicket, apiUrl, t } from "./host-shim.ts";
 import { fetchSofficeStatus, buildSofficeMissingPanel } from "../../../_shared/soffice-panel";
 import { extOf, sortChain, resolveFenceChain, defaultCapabilityOf, shouldTakeover, type EditorCapability } from "./arbiter";
@@ -122,6 +124,10 @@ const loadDmp = (): Promise<any> => {
     const _writeServerCache = async (p: string, keepalive?: boolean): Promise<void> => {
       const entry = editorCache[String(p)];
       if (!entry) return;
+      // Large files are read-only (above the configured ceiling) and never edited, so caching
+      // them only costs a full-content upload + a full diff-match-patch pass on the UI thread.
+      const lb = getRuntimeBytes();
+      if ((entry.content || "").length > lb.cacheBytes || (entry.original || "").length > lb.cacheBytes) return;
       const newHash = _hashContent(entry.content);
       // 内容变了 → 记录历史版本（所有哈希，不设上限，版本比对用）
       if (entry.contentHash && entry.contentHash !== newHash && entry.content !== entry.original) {
@@ -136,6 +142,12 @@ const loadDmp = (): Promise<any> => {
         body.content = entry.content;
         body.original = entry.original;
         _serverHasOriginal[String(p)] = true;
+      } else if ((entry.content || "").length > getRuntimeBytes().cacheDiffBytes) {
+        // Above the diff budget, a full-content upload is cheaper than dmp (which is
+        // quadratic on scattered edits and blocks the UI thread). Server keeps the baseline.
+        body.strategy = "content";
+        body.content = entry.content;
+        body.original = entry.original;
       } else {
         // 后续：传 diff 或 content 中小的那个（不传 original，server 保留基线）
         try {
@@ -162,6 +174,8 @@ const loadDmp = (): Promise<any> => {
       _dispatchFileEvent("cache-update", { filePath: p, contentHash: newHash });
     };
     const _cacheSet = (p: string, v: any) => {
+      const lb = getRuntimeBytes();
+      if ((v.content || "").length > lb.cacheBytes || (v.original || "").length > lb.cacheBytes) return;
       v.contentHash = v.contentHash || _hashContent(v.content || '');
       v.history = v.history || [];
       editorCache[String(p)] = v;
@@ -544,28 +558,33 @@ const loadDmp = (): Promise<any> => {
   });
 
   // ── 语言服务桥示例（M4）：JSON 大纲（顶层键树）+ 空值补全 ──
+  // O(n) outline + per-model-version memo: the old loop called text.split("\n") twice
+  // per line (O(n²); 16k lines ≈ 100s) and Monaco's sticky scroll calls it on every
+  // scroll — a 2MB session export froze the page on open. See docs large-file plan R0.
+  let _jsonOutlineCache: { model: any; versionId: number; symbols: any[] } | null = null;
   w2.__aitiEditor.registerLanguageService({
     languageId: "json",
     triggerCharacters: ["."],
     outline: (model: any) => {
-      const text = model.getValue();
-      const symbols: any[] = [];
-      for (let i = 0; i < text.split("\n").length; i++) {
-        const ln = text.split("\n")[i];
-        const trimmed = ln.trim();
-        if (!trimmed || trimmed === "{" || trimmed === "[" || trimmed === "}" || trimmed === "]") continue;
-        const keyMatch = trimmed.match(/^"([^"]+)"\s*:/);
-        if (!keyMatch) continue;
-        symbols.push({
-          name: keyMatch[1],
+      try {
+        if (typeof model?.getTextLength === "function" && model.getTextLength() > getRuntimeBytes().providerBytes) return [];
+        let versionId = -1;
+        try { versionId = typeof model?.getVersionId === "function" ? model.getVersionId() : -1; } catch { versionId = -1; }
+        if (_jsonOutlineCache && _jsonOutlineCache.model === model && _jsonOutlineCache.versionId === versionId) {
+          return _jsonOutlineCache.symbols;
+        }
+        const symbols = outlineJson(String(model?.getValue?.() || "")).map((s: any) => ({
+          name: s.name,
           kind: "Property",
-          range: { startLineNumber: i + 1, startColumn: 1, endLineNumber: i + 1, endColumn: ln.length + 1 },
-          selectionRange: { startLineNumber: i + 1, startColumn: 1, endLineNumber: i + 1, endColumn: ln.length + 1 },
-        });
-      }
-      return symbols;
+          range: { startLineNumber: s.line, startColumn: 1, endLineNumber: s.line, endColumn: 1 },
+          selectionRange: { startLineNumber: s.line, startColumn: 1, endLineNumber: s.line, endColumn: 1 },
+        }));
+        _jsonOutlineCache = { model, versionId, symbols };
+        return symbols;
+      } catch { return []; } // disposed model (editor rebuilt mid-request) → no symbols
     },
     completion: (text: string, line: number, col: number) => {
+      if (text.length > getRuntimeBytes().cacheBytes) return []; // per-keystroke split of a multi-MB doc is pointless here
       const lineText = text.split("\n")[line - 1] || "";
       const prefix = lineText.slice(0, col - 1);
       if (/"[a-zA-Z_]*$/.test(prefix)) {
