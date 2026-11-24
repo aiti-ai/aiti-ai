@@ -990,7 +990,9 @@ async function buildJsonExportPayload(ctx: ExtApiCtx, id: string): Promise<
   const filePath = row.archived ? extractArchived(ctx.configDir, id) : row.path;
   if (!filePath) return { ok: false, status: 500, error: row.archived ? "extract failed" : "session file missing" };
   let raw: string;
-  try { raw = readFileSync(filePath, "utf8"); } catch (e) { return { ok: false, status: 500, error: `read failed: ${e instanceof Error ? e.message : String(e)}` }; }
+  // Async read: exported session files can reach tens of MB; a sync read would block the
+  // host event loop (same rule as the >8MB sync-read ban elsewhere in this extension).
+  try { raw = await fsp.readFile(filePath, "utf8"); } catch (e) { return { ok: false, status: 500, error: `read failed: ${e instanceof Error ? e.message : String(e)}` }; }
   const parsed = parseSessionFile(filePath, raw);
   if (!parsed) return { ok: false, status: 500, error: "parse failed" };
   return { ok: true, kind: row.archived ? "archived" : "live", agent: row.agent ?? "pi", label: null, file: filePath, meta: parsed.meta, messages: parsed.messages };
