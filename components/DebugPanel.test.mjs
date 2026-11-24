@@ -738,7 +738,7 @@ test("AppShell keeps the chat's reader in a ref and the panel open across sessio
   assert.match(register, /debugSnapshotReaderRef\.current = reader;/);
   assert.doesNotMatch(register, /\bset[A-Z]\w*\(/, "registering renders nothing");
   assert.match(shellSource, /onDebugSnapshotReaderChange=\{handleDebugSnapshotReaderChange\}/);
-  assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanel\s/);
+  assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanelLazy\s/);
   assert.match(shellSource, /useEffect\(\(\) => \{\s*startPageVisibilityTracking\(\);\s*\}, \[\]\);/);
   for (const [name, next] of [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"], ["handleSessionDeleted", "handleOpenFile"]]) {
     const body = between(shellSource, `const ${name} = useCallback`, `const ${next} = useCallback`);

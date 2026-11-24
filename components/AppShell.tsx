@@ -12,14 +12,13 @@ import { PiWebTitle } from "./PiWebTitle.tsx";
 import { ChatWindow, type CompactControls } from "./ChatWindow.tsx";
 import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
-import { FileViewer } from "./FileViewer.tsx";
 import { TabBar, type Tab } from "./TabBar.tsx";
 import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon.tsx";
 import { TabBody, type TabBodyCtx } from "./TabBody.tsx";
 import { DetachedTabWindow } from "./DetachedTabWindow.tsx";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
 import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state.ts";
-import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel.tsx";
+import { SettingsSectionIcon } from "./SettingsSectionIcon.tsx";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots.tsx";
 import { ProviderUsagePanel } from "./ProviderUsagePanel.tsx";
@@ -31,6 +30,21 @@ import { decorateTitle, openFullHistory } from "@/lib/demo-seam";
  *  two-phase restore, so server rendering adds nothing. */
 const SessionSidebarLazy = dynamic(
   () => import("./SessionSidebar.tsx").then((m) => ({ default: m.SessionSidebar })),
+  { ssr: false, loading: () => null },
+);
+
+/** Settings panel + debug panel are lazy (first-load chunk governance): both render
+ *  only behind a user-opened gate (`settingsSection` / `activeTopPanel === "debug"`),
+ *  so their module family (~115KB gz: Models/Mcp/Skills/Agents/Plugins configs,
+ *  mcp-import, debug state, frontmatter's js-yaml via FileViewer/Skills) never
+ *  belongs in the boot bundle. The chunks load on first open and stay cached.
+ *  ssr:false: dialogs depend on browser state only. */
+const SettingsPanelLazy = dynamic(
+  () => import("./SettingsPanel.tsx").then((m) => ({ default: m.SettingsPanel })),
+  { ssr: false, loading: () => null },
+);
+const DebugPanelLazy = dynamic(
+  () => import("./DebugPanel.tsx").then((m) => ({ default: m.DebugPanel })),
   { ssr: false, loading: () => null },
 );
 
@@ -118,11 +132,10 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator.tsx";
 import { SystemPromptPanel } from "./SystemPromptPanel.tsx";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel.tsx";
 import { AgentSessionPanel } from "./AgentSessionPanel.tsx";
-import { DebugPanel, DebugPanelBoundary } from "./DebugPanel.tsx";
+import { DebugPanelBoundary } from "./DebugPanelBoundary.tsx";
 import { SubagentViewer } from "./SubagentViewer.tsx";
 import { SessionChatPanel } from "./SessionChatPanel.tsx";
 import { TerminalPanelBridge } from "./TerminalPanelBridge.tsx";
-import { TerminalPanel } from "./TerminalPanel.tsx";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state.ts";
 import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state.ts";
 import { useTheme } from "@/hooks/useTheme";
@@ -5920,7 +5933,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               )}
               {activeTopPanel === "debug" && (
                 <DebugPanelBoundary fallback={translate("debug.failed")}>
-                  <DebugPanel
+                  <DebugPanelLazy
                     readerRef={debugSnapshotReaderRef}
                     selectedSessionId={selectedSession?.id ?? null}
                     sessions={sessionsWithSelection}
@@ -6472,7 +6485,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       </DetachedTabWindow>
     ))}
     {settingsSection && (
-      <SettingsPanel
+      <SettingsPanelLazy
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         initialSection={settingsSection}

@@ -3,9 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
+// [first-load chunk governance] section glyphs live in their own module (shared with AppShell)
+const sectionIconSource = await readFile(new URL("./SettingsSectionIcon.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 const globalCssSource = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const shellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
+// [first-load chunk governance] the panel must stay lazy (render-gated) — never statically imported back
+assert.doesNotMatch(shellSource, /import \{[^}]*SettingsPanel[^}]*\} from "\ .\/SettingsPanel\.tsx"/);
 // The sub-agents panel draws child sessions with the same robot glyph.
 const agentSessionPanelSource = await readFile(new URL("./AgentSessionPanel.tsx", import.meta.url), "utf8");
 const themeSource = await readFile(new URL("../hooks/useTheme.ts", import.meta.url), "utf8");
@@ -16,7 +20,7 @@ const loginSource = await readFile(new URL("../app/login/page.tsx", import.meta.
 const stackedDialogSource = await readFile(new URL("../lib/stacked-dialog.ts", import.meta.url), "utf8");
 
 test("opens one settings panel from direct sidebar shortcuts", () => {
-  assert.match(shellSource, /<SettingsPanel/);
+  assert.match(shellSource, /<SettingsPanelLazy/);
   assert.match(shellSource, /setSettingsSection\(section\)/);
   assert.match(shellSource, /initialSection=\{settingsSection\}/);
   assert.match(shellSource, /translate\("common\.settings"\)/);
@@ -48,7 +52,7 @@ test("Settings › MCP works without a project, and only project sections fall b
   assert.match(shellSource, /const disabled = settingsSectionRequiresProject\(section\) && !projectTrustCwd;/);
   assert.doesNotMatch(shellSource, /section !== "models"/);
   // Its own glyph, not the Plugins fallback.
-  assert.match(panelSource, /if \(section === "mcp"\) return <svg \{\.\.\.common\}>/);
+  assert.match(sectionIconSource, /if \(section === "mcp"\) return <svg \{\.\.\.common\}>/);
   for (const source of [enSource, zhSource]) assert.match(source, /"settings\.mcp": "MCP"/);
 });
 
@@ -88,15 +92,15 @@ test("focus moves into Settings as it opens and back to its opener as it closes"
 
 test("Settings › MCP offers Trust through the page's trust dialog, which opens above Settings", () => {
   // AppShell owns trust: its status and its dialog opener go through SettingsPanel to McpConfig.
-  assert.match(shellSource, /<SettingsPanel[\s\S]*?projectTrust=\{projectTrust\}\n\s*onOpenTrustDialog=\{openProjectTrustDialog\}[\s\S]*?\/>/);
+  assert.match(shellSource, /<SettingsPanelLazy[\s\S]*?projectTrust=\{projectTrust\}\n\s*onOpenTrustDialog=\{openProjectTrustDialog\}[\s\S]*?\/>/);
   assert.match(panelSource, /<McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} trust=\{projectTrust\} onTrustProject=\{onOpenTrustDialog\} onProjectTrustChanged=\{onProjectTrustChanged\} onClose=\{onClose\} \/>/);
   // The banner and Settings open the same dialog, for the same folder Settings shows.
   assert.match(shellSource, /const openProjectTrustDialog = useCallback\(\(\) => \{\n\s*setProjectTrustError\(null\);\n\s*setProjectTrustDialogOpen\(true\);\n\s*\}, \[\]\);/);
   assert.match(shellSource, /onClick=\{openProjectTrustDialog\}/);
-  assert.match(shellSource, /<SettingsPanel\n\s*cwd=\{projectTrustCwd\}/);
+  assert.match(shellSource, /<SettingsPanelLazy\n\s*cwd=\{projectTrustCwd\}/);
   assert.match(shellSource, /<ProjectTrustDialog\n\s*cwd=\{projectTrustCwd\}/);
   // Rendered after Settings and stacked above it.
-  assert.ok(shellSource.indexOf("<ProjectTrustDialog") > shellSource.indexOf("<SettingsPanel"));
+  assert.ok(shellSource.indexOf("<ProjectTrustDialog") > shellSource.indexOf("<SettingsPanelLazy"));
   const zIndex = (selector) => Number(cssSource.match(new RegExp(`\\${selector} \\{[^}]*z-index: (\\d+);`))?.[1]);
   assert.ok(zIndex(".project-trust-backdrop") > zIndex(".settings-dialog-backdrop"));
   // Escape there closes only the dialog: ProjectTrustDialog.test.mjs and lib/stacked-dialog.test.mjs.
@@ -104,6 +108,8 @@ test("Settings › MCP offers Trust through the page's trust dialog, which opens
 
 test("signing out removes the stored drafts once the server signed out", async () => {
   const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
+// [first-load chunk governance] section glyphs live in their own module (shared with AppShell)
+const sectionIconSource = await readFile(new URL("./SettingsSectionIcon.tsx", import.meta.url), "utf8");
   assert.match(
     panelSource,
     /if \(!response\.ok\) throw new Error\([^\n]*\);\n(?:\s*\/\/[^\n]*\n)*\s*clearStoredDrafts\(\);\n\s*window\.location\.replace\((?:withBasePath\()?"\/login"\)?\);/,
@@ -117,7 +123,7 @@ test("the login page returns only to a destination safeLoginDestination() accept
 test("an Add in Settings › MCP hands the folder's new trust to the page, which every section reloads on", () => {
   // Adding a project server writes .pi/mcp.json (the folder now requires trust) and may trust a
   // fresh folder in the same step; the page takes that status only for the folder Settings shows.
-  assert.match(shellSource, /<SettingsPanel[\s\S]*?onProjectTrustChanged=\{handleProjectTrustChanged\}[\s\S]*?\/>/);
+  assert.match(shellSource, /<SettingsPanelLazy[\s\S]*?onProjectTrustChanged=\{handleProjectTrustChanged\}[\s\S]*?\/>/);
   assert.match(shellSource, /const handleProjectTrustChanged = useCallback\(\(cwd: string, status: ProjectTrustStatus\) => \{\n\s*if \(cwd === projectTrustCwd\) setProjectTrust\(status\);\n\s*\}, \[projectTrustCwd\]\);/);
   // Nothing was rebuilt on the server, so the chat keeps its session key.
   const handler = shellSource.slice(shellSource.indexOf("const handleProjectTrustChanged"), shellSource.indexOf("}, [projectTrustCwd]);", shellSource.indexOf("const handleProjectTrustChanged")));
@@ -241,14 +247,14 @@ test("labels agent profiles as sub-agents", () => {
 
 test("uses the child-session robot glyph for the sub-agents tab", () => {
   const robotGlyph = /<rect x="5" y="7" width="14" height="11" rx="2" \/>\s*<path d="M9 11h\.01M15 11h\.01M9 15h6M12 7V4M10 4h4" \/>/;
-  assert.match(panelSource, robotGlyph);
+  assert.match(sectionIconSource, robotGlyph);
   assert.match(agentSessionPanelSource, robotGlyph);
-  assert.match(panelSource, /section === "agents"[\s\S]*?className="settings-section-icon is-agent"/);
+  assert.match(sectionIconSource, /section === "agents"[\s\S]*?className="settings-section-icon is-agent"/);
   assert.match(cssSource, /\.settings-section-icon\.is-agent \{[\s\S]*?transform: scale\(1\.25\)/);
 });
 
 test("uses the compact controls glyph for General", () => {
-  assert.match(panelSource, /section === "general"[\s\S]*?<path d="M20 7h-9M14 17H5" \/>[\s\S]*?<circle cx="7" cy="7" r="3" \/>[\s\S]*?<circle cx="17" cy="17" r="3" \/>/);
+  assert.match(sectionIconSource, /section === "general"[\s\S]*?<path d="M20 7h-9M14 17H5" \/>[\s\S]*?<circle cx="7" cy="7" r="3" \/>[\s\S]*?<circle cx="17" cy="17" r="3" \/>/);
 });
 
 test("keeps password authentication to one login field and one settings action", () => {

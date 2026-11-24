@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiUrl } from "@/lib/base-path";
 import { copyText } from "@/lib/clipboard";
@@ -99,30 +99,10 @@ interface Props {
   onClose(restoreFocus: boolean): void;
 }
 
-/** Keeps a render error in the panel from taking the page down with it. */
-export class DebugPanelBoundary extends Component<{ fallback: string; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error("Debug panel failed:", error);
-  }
-
-  render() {
-    if (!this.state.failed) return this.props.children;
-    return (
-      <div
-        role="status"
-        style={{ padding: "10px 16px", background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 12 }}
-      >
-        {this.props.fallback}
-      </div>
-    );
-  }
-}
+/** Keeps a render error in the panel from taking the page down with it.
+ *  Moved to ./DebugPanelBoundary.tsx (AppShell imports the boundary without this
+ *  module's heavy family; re-exported here for any legacy consumers). */
+export { DebugPanelBoundary } from "./DebugPanelBoundary.tsx";
 
 export function DebugPanel({ readerRef, selectedSessionId, sessions, onClose }: Props) {
   const { t } = useI18n();
