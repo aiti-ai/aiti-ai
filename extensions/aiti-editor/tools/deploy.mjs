@@ -107,6 +107,9 @@ for (const extDir of targets) {
   // preview/：index.ts 的运行时 import（HTML 预览路由 + iframe 上报协议）+ 目录内 package.json
   //（{type:"module"}：扩展根是 commonjs，node --test 直跑 .ts 要靠它）——漏拷 → 扩展加载失败
   cpSync(resolve(root, "preview"), resolve(extDir, "preview"), { recursive: true, force: true });
+  // shared/: size policy (server + client single source) · server/: chunked text reader for large files
+  cpSync(resolve(root, "shared"), resolve(extDir, "shared"), { recursive: true, force: true });
+  cpSync(resolve(root, "server"), resolve(extDir, "server"), { recursive: true, force: true });
   copyFileSync(resolve(root, "..", "_shared", "convert-saveas.ts"), resolve(extDir, "convert-saveas.ts"));
   copyFileSync(resolve(root, "..", "_shared", "soffice-locate.ts"), resolve(extDir, "soffice-locate.ts"));
   // exec-async 已迁 @aiti-ai/ext-shared 包（package.json 声明 + extman 共享根 reconcile），

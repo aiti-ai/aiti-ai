@@ -41,7 +41,169 @@
   "aitiConfigs": {
     "configFiles": [
       "editor-prefs.json"
-    ]
+    ],
+    "settings": {
+      "file": "editor-prefs.json",
+      "title": {
+        "en": "Large files",
+        "zh-CN": "大文件"
+      },
+      "description": {
+        "en": "Size thresholds for opening files. Values apply on the next file open (no reload needed). Ordering is enforced: readonly <= info <= editor <= force-open cap.",
+        "zh-CN": "打开文件的尺寸阈值。保存后下次打开文件即生效（无需重载扩展）。顺序约束自动保证：只读 ≤ 信息卡 ≤ 编辑器 ≤ 强制打开上限。"
+      },
+      "fields": [
+        {
+          "path": "limits.readonlyMB",
+          "type": "number",
+          "default": 1,
+          "min": 0.1,
+          "max": 256,
+          "step": 0.1,
+          "unit": "MB",
+          "label": {
+            "en": "Editable ceiling",
+            "zh-CN": "可编辑上限"
+          },
+          "help": {
+            "en": "Larger files open read-only.",
+            "zh-CN": "超过则只读。"
+          }
+        },
+        {
+          "path": "limits.infoMB",
+          "type": "number",
+          "default": 2,
+          "min": 0.1,
+          "max": 512,
+          "step": 0.1,
+          "unit": "MB",
+          "label": {
+            "en": "Info card threshold",
+            "zh-CN": "信息卡阈值"
+          },
+          "help": {
+            "en": "Above this the file shows an info card instead of loading content.",
+            "zh-CN": "超过则默认只显示文件信息卡（不加载全文）。"
+          }
+        },
+        {
+          "path": "limits.monacoMB",
+          "type": "number",
+          "default": 16,
+          "min": 0.1,
+          "max": 1024,
+          "step": 1,
+          "unit": "MB",
+          "label": {
+            "en": "Editor ceiling",
+            "zh-CN": "编辑器上限"
+          },
+          "help": {
+            "en": "Above this the editor is not offered at all (chunked viewer only).",
+            "zh-CN": "超过则不提供编辑器（只能分块查看/下载）。"
+          }
+        },
+        {
+          "path": "limits.forceMaxMB",
+          "type": "number",
+          "default": 64,
+          "min": 0.1,
+          "max": 4096,
+          "step": 1,
+          "unit": "MB",
+          "label": {
+            "en": "Force-open hard cap",
+            "zh-CN": "强制打开硬上限"
+          },
+          "help": {
+            "en": "Hard limit for the explicit risky \"open anyway\" action.",
+            "zh-CN": "\"我了解风险，继续打开\" 的硬上限。"
+          }
+        },
+        {
+          "path": "limits.allowForceOpen",
+          "type": "boolean",
+          "default": true,
+          "label": {
+            "en": "Allow forced open",
+            "zh-CN": "允许强制打开"
+          },
+          "help": {
+            "en": "Offer the risky force-open button above the editor ceiling.",
+            "zh-CN": "超过编辑器上限时提供\"我了解风险，继续打开\"。"
+          }
+        },
+        {
+          "path": "limits.cacheKB",
+          "type": "number",
+          "default": 1024,
+          "min": 8,
+          "max": 16384,
+          "step": 64,
+          "unit": "KB",
+          "label": {
+            "en": "Edit cache ceiling",
+            "zh-CN": "编辑缓存上限"
+          },
+          "help": {
+            "en": "Editable files above this never enter the edit cache.",
+            "zh-CN": "超过则不写编辑缓存（未保存编辑不跨刷新保留）。"
+          }
+        },
+        {
+          "path": "limits.cacheDiffKB",
+          "type": "number",
+          "default": 512,
+          "min": 8,
+          "max": 16384,
+          "step": 64,
+          "unit": "KB",
+          "label": {
+            "en": "Diff threshold",
+            "zh-CN": "差异缓存阈值"
+          },
+          "help": {
+            "en": "Above this the cache uploads full content instead of a diff (avoids UI-thread diff).",
+            "zh-CN": "超过则缓存上传全文而不是 diff（避免主线程 diff）。"
+          }
+        },
+        {
+          "path": "limits.previewKB",
+          "type": "number",
+          "default": 1024,
+          "min": 8,
+          "max": 16384,
+          "step": 64,
+          "unit": "KB",
+          "label": {
+            "en": "Preview ceiling",
+            "zh-CN": "预览上限"
+          },
+          "help": {
+            "en": "Markdown/HTML preview is disabled above this.",
+            "zh-CN": "超过则不渲染 Markdown/HTML 预览。"
+          }
+        },
+        {
+          "path": "limits.providerMB",
+          "type": "number",
+          "default": 2,
+          "min": 0.1,
+          "max": 256,
+          "step": 0.1,
+          "unit": "MB",
+          "label": {
+            "en": "Language services ceiling",
+            "zh-CN": "语言服务上限"
+          },
+          "help": {
+            "en": "Above this editors skip JSON services / outline / folding / diagnostics.",
+            "zh-CN": "超过则跳过 JSON 语言服务/大纲/折叠/诊断。"
+          }
+        }
+      ]
+    }
   },
   "aitiExtProtocol": "1.0",
   "contentHash": "562d82b849e39102",

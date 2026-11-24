@@ -20,6 +20,13 @@ import { openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
 import { ImageViewer } from "./image-viewer";
 import { HtmlPreviewPane } from "./html-preview";
+import { LargeFileInfo, LargeFileViewer } from "./large-file";
+import { countTextLines } from "./json-outline";
+import {
+  DEFAULT_LIMITS, limitBytes, decideOpenModeWith, canOpenInEditorWith, canForceOpenWith,
+  isDeferredMode, type EditorLimits, type OpenMode,
+} from "../../shared/limits";
+import { setRuntimeLimits } from "./limits-runtime";
 import { FileToolbar, type MenuAction, MiFileText, MiPin, MiChevronL, MiChevronR } from "./file-toolbar";
 import { MoveToDialog } from "./move-dialog";
 import { ThirdPartyProviderHost } from "./provider-host";
@@ -201,6 +208,17 @@ export function EditorApp(props: Record<string, any>) {
   const [monacoRetry, setMonacoRetry] = useState(0); // 点重试 +1 → 重新触发 mount effect
   const [monacoReady, setMonacoReady] = useState(false); // editor instance mounted into the container (spinner covers the blank window)
   const [meta, setMeta] = useState<any>(null);
+  // ── size policy (docs: aiti-editor-large-file-plan.md) ──
+  // openMode is decided from /stat BEFORE any content is requested; large files never enter
+  // Monaco / edit cache / preview. viewerOpen = user explicitly asked for "show part".
+  const [openMode, setOpenMode] = useState<OpenMode>("edit");
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [statInfo, setStatInfo] = useState<{ size: number; mtimeMs: number } | null>(null);
+  const [limits, setLimits] = useState<EditorLimits>(DEFAULT_LIMITS);
+  const limitB = useMemo(() => limitBytes(limits), [limits]);
+  const [lineCount, setLineCount] = useState<number | null>(null);
+  const [infoTick, setInfoTick] = useState(0);
+  useEffect(() => { setViewerOpen(false); setLineCount(null); setOpenMode("edit"); }, [filePath]);
   const [openEncoding, setOpenEncoding] = useState("auto"); // 以指定编码重新打开
   const [showEnc, setShowEnc] = useState(false); // 编码菜单
   const [dirty, setDirty] = useState(false);
@@ -351,6 +369,23 @@ export function EditorApp(props: Record<string, any>) {
   // setValue → onDidChangeModelContent → bumpPreview 自动联动预览刷新；基线签名同步
   // diskSigRef（下一次自己保存前的帧不再误报）。
   const reloadFromDisk = useCallback((sig?: DiskSig | null) => {
+    // Info card / chunked viewer: never pull the whole file back; just refresh metadata
+    // (and let the line-count effect re-run).
+    if (isDeferredMode(openMode)) {
+      setViewerOpen(false);
+      api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json())
+        .then((m) => {
+          if (m && m.ok) {
+            setStatInfo({ size: m.size, mtimeMs: m.mtimeMs });
+            setMeta((prev: any) => (prev ? { ...prev, size: m.size, mtimeMs: m.mtimeMs } : prev));
+            baseMtimeRef.current = m.mtimeMs;
+            diskSigRef.current = { mtimeMs: m.mtimeMs, size: m.size };
+          }
+        })
+        .catch(() => {})
+        .finally(() => setInfoTick((n) => n + 1));
+      return;
+    }
     const encU = meta && meta.encoding ? "&encoding=" + encodeURIComponent(meta.encoding) : "";
     const statP = api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json()).catch(() => null);
     const rawP = api("/raw?filePath=" + encodeURIComponent(filePath) + encU).then((r) => r.json());
@@ -371,7 +406,7 @@ export function EditorApp(props: Record<string, any>) {
       (window as any).__aitiEditor._setDirty(filePath, false);
       setExtChange(null);
     }).catch(() => { /* 下一次帧/渲染期磁盘检查兜底 */ });
-  }, [filePath, meta, bumpPreview]);
+  }, [filePath, meta, bumpPreview, openMode]);
 
   // ⋯菜单「重新加载」：clean 直接重读磁盘；dirty 不丢编辑 → 拉真实磁盘签名后弹
   // 「磁盘已修改」条（三路合并/加载磁盘版/保留当前）；二进制 → bust 强制重载。
@@ -410,7 +445,8 @@ export function EditorApp(props: Record<string, any>) {
   // 预览面能力判定（方案 §3.1）：`isMarkdown` 此后只管 markdown 专属功能（md-smart 弹层、TOC
   // 滚动同步、表格格式化、导出 HTML/PDF），预览壳/分栏/模式切换器一律看 canPreview
   const previewKind = previewKindOf(filePath, language);
-  const canPreview = previewKind !== null;
+  // Preview renders the whole document (marked + iframe DOM): only for small, editable files.
+  const canPreview = previewKind !== null && openMode === "edit" && (!meta || (meta.size || 0) <= limitB.previewBytes);
   // 压缩文件状态（顶层声明，遵守 Hooks 规则）
   const [archiveFiles, setArchiveFiles] = useState<any>(null);
   const [archiveErr, setArchiveErr] = useState<string | null>(null);
@@ -521,7 +557,11 @@ export function EditorApp(props: Record<string, any>) {
       setStatus({ phase: "ready", error: null });
       return;
     }
-    const cache = (window as any).__aitiEditor._cacheGet(filePath) || null;
+    // ── full load (edit mode): existing cache-aware path ──
+    const loadFull = () => {
+      setOpenMode("edit");
+      setViewerOpen(false);
+      const cache = (window as any).__aitiEditor._cacheGet(filePath) || null;
     // 有缓存（内存或服务端）：直接用缓存继续编辑；否则从磁盘读
     if (cache) {
       // 异步从服务端拉取（如果服务端有更新版本，覆盖内存缓存）
@@ -670,6 +710,55 @@ export function EditorApp(props: Record<string, any>) {
           .catch(() => {});
       })
       .catch((e) => setStatus({ phase: "error", error: String(e) }));
+    };
+
+    // ── read-only load (1–2MB): no edit cache, no preview, no disk-merge machinery ──
+    const loadReadonly = (size: number, mtimeMs: number) => {
+      setViewerOpen(false);
+      const u = new URLSearchParams({ encoding: openEncoding });
+      api("/raw?filePath=" + encodeURIComponent(filePath) + "&" + u.toString())
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.error) { setStatus({ phase: "error", error: d.error }); return; }
+          const content = String(d.content || "");
+          initialContentRef.current = content;
+          baseMtimeRef.current = mtimeMs;
+          diskSigRef.current = { mtimeMs, size: Number(d.size) || size };
+          setMeta({ language, size: Number(d.size) || size, mtimeMs, content, encoding: d.encoding || "utf-8", hasBOM: d.hasBOM === true });
+          setStatus({ phase: "ready", error: null });
+          setDirty(false);
+          (window as any).__aitiEditor._setDirty(filePath, false);
+        })
+        .catch((e) => setStatus({ phase: "error", error: String(e) }));
+    };
+
+    // ── size gate: /stat is cheap (few ms); never ask for content we cannot show ──
+    api("/stat?filePath=" + encodeURIComponent(filePath), { method: "GET" })
+      .then((r) => r.json())
+      .then((st) => {
+        const size = st && st.ok && typeof st.size === "number" ? st.size : 0;
+        const mtimeMs = st && typeof st.mtimeMs === "number" ? st.mtimeMs : 0;
+        setStatInfo({ size, mtimeMs });
+        // Server is authoritative: limits are user-editable in extman (editor-prefs.json).
+        const lim = setRuntimeLimits(st && st.limits);
+        setLimits(lim);
+        const mode = decideOpenModeWith(lim, size);
+        setOpenMode(mode);
+        if (isDeferredMode(mode)) {
+          // Info card: do NOT touch /raw, cache, preview, git or language services.
+          setViewerOpen(false);
+          setMeta({ language, size, mtimeMs, content: "" });
+          setStatus({ phase: "ready", error: null });
+          setDirty(false);
+          (window as any).__aitiEditor._setDirty(filePath, false);
+          baseMtimeRef.current = mtimeMs;
+          diskSigRef.current = { mtimeMs, size };
+          return;
+        }
+        if (mode === "readonly") { loadReadonly(size, mtimeMs); return; }
+        loadFull();
+      })
+      .catch(() => { loadFull(); }); // stat unavailable (old host / blip) → fall back to the legacy path
   }, [filePath, sourceSessionId, detectLanguage, language, openEncoding]);
 
   useEffect(() => {
@@ -725,8 +814,22 @@ export function EditorApp(props: Record<string, any>) {
     };
   }, [loadContent, sourceSessionId, filePath]);
 
+  // Info card: line count is fetched on demand (server scans in chunks and yields);
+  // it never blocks opening and is skipped entirely for editor modes.
+  useEffect(() => {
+    if (!isDeferredMode(openMode)) return;
+    let dead = false;
+    api("/line-count?filePath=" + encodeURIComponent(filePath))
+      .then((r) => r.json())
+      .then((d) => { if (!dead && d && d.ok && typeof d.lines === "number") setLineCount(d.lines); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [openMode, filePath, infoTick]);
+
   // Mount Monaco
   useEffect(() => {
+    // Large-file modes never mount Monaco (info card / chunked viewer instead).
+    if (isDeferredMode(openMode) || viewerOpen) return;
     if (status.phase !== "ready" || !meta || !containerRef.current) return;
     let cancelled = false;
     setMonacoReady(false); // retry/remount cycle: back to loading state until an editor is mounted
@@ -739,6 +842,13 @@ export function EditorApp(props: Record<string, any>) {
       const det = detectLanguage(filePath);
       if (det && det !== "plaintext") modelLang = det;
     } catch {}
+    // Big documents skip the language workers entirely (monaco-json validates/folds the
+    // whole model in a worker; on multi-MB exports it never finishes). Plain text keeps
+    // the editor usable without any of that.
+    const bigFile = (meta.size || 0) > limitB.readonlyBytes;
+    const skipLanguageWorkers = (meta.size || 0) > limitB.providerBytes;
+    if (skipLanguageWorkers) modelLang = "plaintext";
+    const contributionP = skipLanguageWorkers ? Promise.resolve() : loadContribution(language);
     loadMonaco().then((monaco: any) => {
       if (cancelled || !containerRef.current) return;
       // 无论 monaco 由谁加载（本链 / git-review 预热快速通道），确保额外语言已注册
@@ -765,7 +875,7 @@ export function EditorApp(props: Record<string, any>) {
       }
       // 防御：清掉容器残留的 Monaco 内部属性
       containerRef.current.removeAttribute?.("data-keybinding-context");
-      return loadContribution(language).then(() => {
+      return contributionP.then(() => {
         // 异步竞态防御①：链发起后依赖又变了（旧链已 cancel）→ 不能再往容器里建编辑器
         if (cancelled || !containerRef.current) return;
         // 同目录兄弟文件注册 extraLib（fire-and-forget 不阻塞渲染）
@@ -807,8 +917,20 @@ export function EditorApp(props: Record<string, any>) {
           wordWrap: modelLang === "markdown" ? "on" : "off", // markdown 自动换行
           automaticLayout: true,
           tabSize: 2,
-          readOnly: meta.size > 1024 * 1024,
+          readOnly: bigFile,
           renderLineHighlight: "line",
+          largeFileOptimizations: true,
+          // Read-only large documents: switch off every "scan the whole model" feature. None of
+          // them help inspection, and folding/suggest/occurrences are what actually janks.
+          ...(bigFile ? {
+            folding: false,
+            occurrencesHighlight: "off",
+            wordBasedSuggestions: "off",
+            codeLens: false,
+            colorDecorators: false,
+            quickSuggestions: false,
+            suggestOnTriggerCharacters: false,
+          } : {}),
         });
         editor.onDidChangeModelContent(() => {
           const isDirty = editor.getValue() !== initialContentRef.current;
@@ -818,9 +940,9 @@ export function EditorApp(props: Record<string, any>) {
           const cache = (window as any).__aitiEditor._cacheGet(filePath);
           if (cache) { cache.content = editor.getValue(); (window as any).__aitiEditor._writeServerCache(filePath); }
           bumpPreview();
-          if (editor.getValue().length <= 300000) bumpChg(); // 变更行标注/大纲防抖重算（大文件跳过实时）
+          if (editor.getValue().length <= 300000) bumpChg(); // debounced change markers/outline (large files skip live recompute)
         });
-        // 分栏滚动同步：编辑器滚动 → 预览按比例连续滚动
+        // Split-view scroll sync: editor scroll → preview proportional scroll
         let _scrollT: any = null;
         editor.onDidScrollChange(() => {
           if (viewModeRef.current !== "split") return;
@@ -862,7 +984,7 @@ export function EditorApp(props: Record<string, any>) {
       if (!cancelled) setMonacoErr(describeMonacoError(e));
     });
     return () => { cancelled = true; };
-  }, [status.phase, meta, language, bumpPreview, bumpChg, monacoRetry]);
+  }, [status.phase, meta, language, bumpPreview, bumpChg, monacoRetry, openMode, viewerOpen]);
 
   // 文件切换/加载时检查磁盘变更（每次渲染都检查，但防抖 3s）
   const _lastDiskCheckRef = useRef(0);
@@ -933,21 +1055,25 @@ export function EditorApp(props: Record<string, any>) {
     const ed = editorRef.current;
     if (ed) {
       const val = ed.getValue();
-      const cache = (window as any).__aitiEditor._cacheGet(filePath);
-      if (cache) {
-        cache.content = val; // 正常编辑（含切走）：写回，切回继续编辑
-      } else if (!(window as any).__aitiEditor._cacheWriteBlockAt(filePath)) {
-        // 无缓存且未被丢弃/保存 block：首次进入建缓存
-        (window as any).__aitiEditor._cacheSet(filePath, { content: val, original: val, baseMtimeMs: baseMtimeRef.current || Date.now(), language, size: val.length });
-      }
-      // 确保服务端缓存已写入（刷新页面后恢复）
-      const cache2 = (window as any).__aitiEditor._cacheGet(filePath);
-      if (cache2 && cache2.content) {
-        fetch(apiUrl("/api/extensions/aiti-editor") + "/cache-write?t=" + Date.now(), {
-          method: "POST", cache: "no-store",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filePath, content: cache2.content, original: cache2.original, baseMtimeMs: cache2.baseMtimeMs }),
-        }).catch(() => {});
+      // Never cache large documents (they are read-only anyway): the upload + full diff on
+      // the UI thread is what used to freeze the page.
+      if (val.length <= limitB.cacheBytes) {
+        const cache = (window as any).__aitiEditor._cacheGet(filePath);
+        if (cache) {
+          cache.content = val; // normal edit (incl. switching away): write back so returning keeps edits
+        } else if (!(window as any).__aitiEditor._cacheWriteBlockAt(filePath)) {
+          // No cache and not discarded/saved-blocked: first visit creates it
+          (window as any).__aitiEditor._cacheSet(filePath, { content: val, original: val, baseMtimeMs: baseMtimeRef.current || Date.now(), language, size: val.length });
+        }
+        // Make sure the server-side cache is flushed (restores edits after a page reload)
+        const cache2 = (window as any).__aitiEditor._cacheGet(filePath);
+        if (cache2 && cache2.content) {
+          fetch(apiUrl("/api/extensions/aiti-editor") + "/cache-write?t=" + Date.now(), {
+            method: "POST", cache: "no-store",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ filePath, content: cache2.content, original: cache2.original, baseMtimeMs: cache2.baseMtimeMs }),
+          }).catch(() => {});
+        }
       }
     }
     const _m = ed && ed.getModel();
@@ -1095,14 +1221,15 @@ export function EditorApp(props: Record<string, any>) {
   }, [filePath]);
   // Change probe: ready / after save (event-driven, no polling)
   useEffect(() => {
-    if (isBinaryView || status.phase !== "ready") return;
+    // Deferred (large) modes never probe git: no baseline transfer and no diff UI needed.
+    if (isBinaryView || status.phase !== "ready" || isDeferredMode(openMode)) return;
     let cancelled = false;
     api("/git-changes?filePath=" + encodeURIComponent(filePath))
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setGitInfo(d && d.ok ? d : null); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [filePath, isBinaryView, status.phase, gitTick]);
+  }, [filePath, isBinaryView, status.phase, gitTick, openMode]);
   // Baseline text: fetched once per file on demand (clean files transfer nothing)
   useEffect(() => {
     if (!gitHasDelta || gitBase) return;
@@ -1654,7 +1781,45 @@ useEffect(() => {
     setAiPop(null);
   };
 
-  const isReadOnly = isBinaryView ? true : (meta ? meta.size > 1024 * 1024 : false);
+  const isReadOnly = isBinaryView
+    ? true
+    : (openMode !== "edit" || (meta ? meta.size > limitB.readonlyBytes : false));
+  const deferredMode = isDeferredMode(openMode);
+  // Line count for the info card / status bar. In editor modes it comes from the memoized
+  // content; in deferred modes from the server (async, chunked).
+  const contentLineCount = useMemo(() => (meta && meta.content ? countTextLines(String(meta.content)) : null), [meta && meta.content]);
+  const displayLineCount = lineCount != null ? lineCount : contentLineCount;
+  const mentionRange = (a: number, b: number) => {
+    const ref = "\u0040" + filePath + (a ? (a === b ? "#L" + a : "#L" + a + "-L" + b) : "");
+    try {
+      if (typeof getCtx()?.appendText === "function") { getCtx()!.appendText(ref + " "); showToast("ok", t("已插入引用")); }
+      else navigator.clipboard.writeText(ref).catch(() => {});
+    } catch (e) { showToast("err", String(e)); }
+  };
+  // Explicit escape hatch from the info card: load the file read-only into Monaco (never cached).
+  const openInEditorNow = useCallback((force?: boolean) => {
+    const st = statInfo;
+    if (!st) return;
+    const u = new URLSearchParams({ encoding: openEncoding });
+    if (force) u.set("force", "1");
+    api("/raw?filePath=" + encodeURIComponent(filePath) + "&" + u.toString())
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) { setNotice({ kind: "warn", text: d.error }); return; }
+        const content = String(d.content || "");
+        setOpenMode("readonly");
+        setViewerOpen(false);
+        initialContentRef.current = content;
+        baseMtimeRef.current = st.mtimeMs;
+        diskSigRef.current = { mtimeMs: st.mtimeMs, size: Number(d.size) || st.size };
+        setMeta({ language, size: Number(d.size) || st.size, mtimeMs: st.mtimeMs, content, encoding: d.encoding || "utf-8", hasBOM: d.hasBOM === true });
+        setDirty(false);
+        (window as any).__aitiEditor._setDirty(filePath, false);
+        if (force) setNotice({ kind: "warn", text: t("已按你的选择强制打开（大文件，可能较卡）") });
+      })
+      .catch((e) => setNotice({ kind: "warn", text: String(e) }));
+  }, [statInfo, filePath, openEncoding, language]);
+  const cardSize = (statInfo && statInfo.size) || (meta && meta.size) || 0;
 
   // Export functions
   const fileName = filePath.split(/[\\/]/).pop() || "export";
@@ -1933,7 +2098,7 @@ useEffect(() => {
           {infoRow(t("大小"), formatSize(fileInfo.size || 0))}
           {infoRow(t("修改时间"), fmtTime(fileInfo.mtimeMs))}
           {!isBinaryView && infoRow(t("编码"), meta ? encDisplay(meta.encoding, meta.hasBOM) : "UTF-8", true)}
-          {!isBinaryView && meta && meta.content && infoRow(t("行数"), String(meta.content.split("\n").length))}
+          {!isBinaryView && displayLineCount != null && infoRow(t("行数"), String(displayLineCount))}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
           <button type="button" onClick={() => setFileInfo(null)} style={T.btn}>{t("关闭")}</button>
@@ -2330,14 +2495,14 @@ useEffect(() => {
         )}
         menuTop={[
           ...extMenuTop,
-          ...(isMarkdown ? [
+          ...(isMarkdown && openMode === "edit" ? [
             { label: t("导出 HTML"), icon: <MiFileText />, onClick: () => doExportHtml() },
             { label: t("导出 PDF"), icon: <MiFileText />, onClick: () => doExportPdf() },
           ] : []),
           ...menuTopExtra,
         ]}
         onNewWindow={openInNewWindow}
-        onDownload={doDownload} onCopyPath={copyPath} onCopyContent={copyContent} onRename={doRename} onOpenDir={openDir}
+        onDownload={doDownload} onCopyPath={copyPath} onCopyContent={deferredMode ? undefined : copyContent} onRename={doRename} onOpenDir={openDir}
         onMove={doMove}
         onTerminal={openTerminal}
         pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
@@ -2358,7 +2523,35 @@ useEffect(() => {
           </div>
         </div>
       )}
-      {status.phase === "ready" && (
+      {status.phase === "ready" && deferredMode && (
+        viewerOpen ? (
+          <LargeFileViewer
+            filePath={filePath}
+            size={meta ? meta.size : 0}
+            onBack={() => setViewerOpen(false)}
+            onDownload={doDownload}
+            onCopyPath={copyPath}
+            onMentionLines={mentionRange}
+          />
+        ) : (
+          <LargeFileInfo
+            filePath={filePath}
+            size={(statInfo && statInfo.size) || (meta && meta.size) || 0}
+            mtimeMs={(statInfo && statInfo.mtimeMs) || 0}
+            lineCount={displayLineCount}
+            canEdit={canOpenInEditorWith(limits, cardSize)}
+            canForce={canForceOpenWith(limits, cardSize)}
+            forceMaxMB={limits.forceMaxMB}
+            onOpenViewer={() => setViewerOpen(true)}
+            onOpenEditor={() => openInEditorNow(false)}
+            onForceOpen={() => openInEditorNow(true)}
+            onDownload={doDownload}
+            onCopyPath={copyPath}
+            onMention={() => mentionRange(0, 0)}
+          />
+        )
+      )}
+      {status.phase === "ready" && !deferredMode && (
         <div ref={contentAreaRef} style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}>
           {/* ── 文本文件：Monaco 编辑器容器 ── */}
           {!isBinaryView && (
@@ -2640,7 +2833,7 @@ useEffect(() => {
           borderTop: "1px solid var(--border,#e0e0e0)", fontSize: 11,
           color: "var(--text-dim,#888)", background: "var(--bg,#fff)", flexShrink: 0 }}>
           <span style={{ flexShrink: 0, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
-            {meta && meta.content ? t("{n} 行", { n: meta.content.split("\n").length }) : ""}
+            {meta && displayLineCount != null ? t("{n} 行", { n: displayLineCount }) : ""}
           </span>
           <span style={{ flexShrink: 0, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}
             title={meta ? t("{n} 字节", { n: meta.size }) : ""}>{formatSize(meta ? meta.size : 0)}</span>

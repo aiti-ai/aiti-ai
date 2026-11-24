@@ -709,6 +709,82 @@ async function fetchRegistry(): Promise<Response> {
   return new Response(JSON.stringify(doc), { headers: { "content-type": "application/json; charset=utf-8" } });
 }
 
+// ── Per-extension settings: declarative form declared in package.json `aitiConfigs.settings` ──
+// Only files listed in `aitiConfigs.configFiles` are writable, and only inside the extension's
+// own configDir. Values are merged into the JSON file (other keys preserved), atomically.
+// Schema: { file, title?, description?, fields: [{ path, type, default?, min?, max?, step?,
+//          unit?, label?, help?, options? }] }  (label/help/title are {en, "zh-CN"} maps)
+interface SettingsField {
+  path: string;
+  type?: "number" | "boolean" | "string" | "select";
+  default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  label?: unknown;
+  help?: unknown;
+  options?: Array<{ value: string; label?: unknown }>;
+}
+function settingsPathParts(path: string): string[] | null {
+  if (typeof path !== "string" || !/^[A-Za-z0-9_.-]+$/.test(path)) return null;
+  const parts = path.split(".");
+  if (parts.some((p) => !p || p === "__proto__" || p === "constructor" || p === "prototype")) return null;
+  return parts;
+}
+function settingsGet(obj: any, path: string): unknown {
+  const parts = settingsPathParts(path);
+  if (!parts) return undefined;
+  let cur = obj;
+  for (const p of parts) {
+    if (!cur || typeof cur !== "object") return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+function settingsSet(obj: any, path: string, value: unknown): boolean {
+  const parts = settingsPathParts(path);
+  if (!parts) return false;
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (!cur[p] || typeof cur[p] !== "object" || Array.isArray(cur[p])) cur[p] = {};
+    cur = cur[p];
+  }
+  cur[parts[parts.length - 1]] = value;
+  return true;
+}
+function readSettingsSpec(id: string):
+  | { ok: true; data: { id: string; file: string; target: string; spec: any; values: Record<string, unknown> } }
+  | { ok: false; status: number; error: string } {
+  const payload = statusPayload();
+  const entry = payload?.extensions?.[id];
+  if (!entry) return { ok: false, status: 404, error: "extension not found" };
+  if (typeof entry.dir !== "string" || !entry.dir || typeof entry.configDir !== "string" || !entry.configDir) {
+    return { ok: false, status: 400, error: "extension has no config dir" };
+  }
+  let pkg: any = null;
+  try { pkg = JSON.parse(readFileSync(join(entry.dir, "package.json"), "utf8")); } catch { /* no package.json */ }
+  const spec = pkg?.aitiConfigs?.settings;
+  const files: string[] = Array.isArray(pkg?.aitiConfigs?.configFiles) ? pkg.aitiConfigs.configFiles : [];
+  const file = typeof spec?.file === "string" ? spec.file : "";
+  if (!spec || !Array.isArray(spec.fields) || !file) return { ok: false, status: 404, error: "no settings" };
+  if (!files.includes(file) || /[\\/]/.test(file) || file === "." || file === "..") {
+    return { ok: false, status: 400, error: "settings file is not declared in aitiConfigs.configFiles" };
+  }
+  const target = join(entry.configDir, file);
+  let data: any = {};
+  try { data = JSON.parse(readFileSync(target, "utf8")); } catch { data = {}; }
+  if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+  const values: Record<string, unknown> = {};
+  for (const f of spec.fields as SettingsField[]) {
+    if (!f || typeof f.path !== "string") continue;
+    const v = settingsGet(data, f.path);
+    values[f.path] = v === undefined ? (f.default ?? null) : v;
+  }
+  return { ok: true, data: { id, file, target, spec, values } };
+}
+
 export default {
   id: "aiti-extman",
   name: "aiti 扩展管理器",
@@ -804,6 +880,13 @@ export default {
         "ext.clientState": "Client state",
         "ext.dir": "Directory",
         "ext.configDir": "Config dir",
+        "ext.settings": "Settings",
+        "ext.settingsHint": "size / behavior options",
+        "ext.settingsSave": "Save",
+        "ext.settingsSaving": "Saving…",
+        "ext.settingsSaved": "Saved",
+        "ext.settingsReset": "Reset",
+        "ext.settingsApplyHint": "Applies on the next open/action",
         "ext.sourceUrl": "Source",
         "ext.deps": "Dependencies",
         "ext.clientDeps": "client inject",
@@ -998,6 +1081,13 @@ export default {
         "ext.clientState": "client 状态",
         "ext.dir": "目录",
         "ext.configDir": "配置目录",
+        "ext.settings": "设置",
+        "ext.settingsHint": "尺寸/行为参数",
+        "ext.settingsSave": "保存",
+        "ext.settingsSaving": "保存中…",
+        "ext.settingsSaved": "已保存",
+        "ext.settingsReset": "恢复",
+        "ext.settingsApplyHint": "下次打开/操作时生效",
         "ext.sourceUrl": "来源地址",
         "ext.deps": "依赖",
         "ext.clientDeps": "client 注入依赖",
@@ -1126,6 +1216,7 @@ export default {
     },
   },
 
+
   server: {
     startup(ctx) {
       // Help points are declared in ai.helpers and aggregated by ai-helper — nothing to register here
@@ -1133,6 +1224,57 @@ export default {
     async api(req, ctx) {
       const [route] = ctx.path;
       if (ctx.cacheDir && updatesCacheDir !== ctx.cacheDir) updatesCacheDir = ctx.cacheDir;
+
+      // GET settings?id=… → declarative settings schema (package.json aitiConfigs.settings) + values
+      if (route === "settings" && ctx.method === "GET") {
+        const id = ctx.searchParams?.get("id") || "";
+        const r = readSettingsSpec(id);
+        if (!r.ok) return json({ error: r.error }, r.status);
+        return json({ ok: true, id, file: r.data.file, spec: r.data.spec, values: r.data.values });
+      }
+
+      // POST settings { id, values } → validate against the schema, merge, atomic write
+      if (route === "settings" && ctx.method === "POST") {
+        const body = await req.json().catch(() => null) as any;
+        const id = typeof body?.id === "string" ? body.id : "";
+        const provided = (body?.values && typeof body.values === "object") ? body.values as Record<string, unknown> : {};
+        const r = readSettingsSpec(id);
+        if (!r.ok) return json({ error: r.error }, r.status);
+        const fields = (r.data.spec.fields || []) as SettingsField[];
+        let data: any = {};
+        try { data = JSON.parse(readFileSync(r.data.target, "utf8")); } catch { data = {}; }
+        if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+        for (const f of fields) {
+          if (!f || typeof f.path !== "string" || !(f.path in provided)) continue;
+          const v = provided[f.path];
+          const type = f.type || "string";
+          if (type === "number") {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return json({ error: `invalid number: ${f.path}` }, 400);
+            const min = typeof f.min === "number" ? f.min : -Infinity;
+            const max = typeof f.max === "number" ? f.max : Infinity;
+            if (!settingsSet(data, f.path, Math.min(max, Math.max(min, n)))) return json({ error: `invalid path: ${f.path}` }, 400);
+          } else if (type === "boolean") {
+            if (!settingsSet(data, f.path, v === true)) return json({ error: `invalid path: ${f.path}` }, 400);
+          } else if (type === "select") {
+            const allowed = (f.options || []).map((o) => o.value);
+            if (!allowed.includes(String(v))) return json({ error: `invalid option: ${f.path}` }, 400);
+            settingsSet(data, f.path, String(v));
+          } else {
+            if (!settingsSet(data, f.path, String(v ?? ""))) return json({ error: `invalid path: ${f.path}` }, 400);
+          }
+        }
+        try {
+          mkdirSync(dirname(r.data.target), { recursive: true });
+          const tmp = r.data.target + ".tmp-" + process.pid + "-" + Date.now();
+          writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+          renameSync(tmp, r.data.target);
+        } catch (e) {
+          return json({ error: "write failed: " + (e instanceof Error ? e.message : String(e)) }, 500);
+        }
+        const after = readSettingsSpec(id);
+        return json({ ok: true, values: after.ok ? after.data.values : {} });
+      }
 
       // GET status — full state (disabled/failed entries, slot/hook/dependency details + publisher info).
       //   ?locale=<tag> picks DESC.<locale>.md / DESC.<lang>.md before the neutral DESC.md.
