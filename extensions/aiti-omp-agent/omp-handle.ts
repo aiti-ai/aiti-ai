@@ -85,6 +85,8 @@ export function normalizeOmpMessages(messages: unknown[]): unknown[] {
 
 /** pendingUI 封顶：超过即自动取消最老一条（防子进程刷 UI 请求撑爆内存）。 */
 const MAX_PENDING_UI = 32;
+/** Bound for the reattach warm-up get_state: a busy child must not stall the first read. */
+const ATTACH_WARMUP_TIMEOUT_MS = 5_000;
 
 /** omp fork 会话 handle。 */
 export class OmpSpawnHandle extends RpcChildHost {
@@ -214,6 +216,7 @@ export class OmpSpawnHandle extends RpcChildHost {
     recordId: string,
     child: ChildProcess,
     cwd: string,
+    options: { awaitWarmup?: boolean; warmupTimeoutMs?: number } = {},
   ): Promise<OmpSpawnHandle> {
     const handle = new OmpSpawnHandle(spec, recordId, child, cwd);
     await handle.whenReady;
@@ -222,13 +225,24 @@ export class OmpSpawnHandle extends RpcChildHost {
       throw new Error(`[aiti-omp-agent] omp 进程在就绪前退出：${handle.deathReason ?? "unknown"}`);
     }
     // omp 新会话 id 由进程生成：ready 后读 get_state.sessionId 回填（信息性）
-    void handle.refreshStateUsage().catch(() => {});
+    // + contextUsage warm-up. The adoption awaits the model/queue part so the first
+    // read of a restored (or freshly created) session already carries them — same
+    // contract as aiti-pi-agent (see PiSpawnHandle.warmUp).
+    const warmup = handle.warmUp(options.warmupTimeoutMs);
+    // Await by default: the first state read (ensure_session / lazy open right after
+    // the attach) must see the startup model and the restored queue. Callers may opt
+    // out for an explicitly non-blocking provisioning path.
+    if (options.awaitWarmup !== false) await warmup;
+    else void warmup;
     return handle;
   }
 
   /** Recovery path: pi-web restarted while the agent kept running in a detached wrapper. */
   static async attach(opts: AttachedChildOptions, spec: PiForkSpec = OMP_SPEC): Promise<OmpSpawnHandle> {
-    return OmpSpawnHandle.adopt(spec, opts.sessionId, opts.child, process.cwd());
+    return OmpSpawnHandle.adopt(spec, opts.sessionId, opts.child, process.cwd(), {
+      awaitWarmup: true,
+      warmupTimeoutMs: ATTACH_WARMUP_TIMEOUT_MS,
+    });
   }
 
   /** 覆写：非 response 帧的 omp 语义分发。 */
@@ -453,8 +467,10 @@ export class OmpSpawnHandle extends RpcChildHost {
   }
 
   /** 异步拉取并缓存 get_state（contextUsage 缓存源 + omp 进程侧 sessionId 回填）。 */
-  private async refreshStateUsage(): Promise<void> {
-    const d = (await this.request({ type: "get_state" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS })) as {
+  private async refreshStateUsage(
+    prefetched?: Record<string, unknown>,
+  ): Promise<void> {
+    const d = (prefetched ?? await this.request({ type: "get_state" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS })) as {
       sessionId?: unknown;
       sessionFile?: unknown;
       contextUsage?: { tokens?: unknown; contextWindow?: unknown; percent?: unknown };
@@ -486,6 +502,34 @@ export class OmpSpawnHandle extends RpcChildHost {
       contextWindow: typeof c.contextWindow === "number" ? c.contextWindow : 0,
       tokens: typeof c.tokens === "number" ? c.tokens : null,
     };
+  }
+
+  /**
+   * One-shot post-adopt warm-up (same contract as aiti-pi-agent): echo the
+   * startup model (spawn args emit no model_select) and hydrate the remote-queue
+   * mirror when the child still reports pending messages. The reattach path
+   * awaits this so the first state read of a restored session is complete.
+   */
+  private async warmUp(timeoutMs: number = ATTACH_WARMUP_TIMEOUT_MS): Promise<void> {
+    let state: Record<string, unknown> | undefined;
+    try {
+      state = (await this.request({ type: "get_state" }, { timeoutMs })) as Record<string, unknown>;
+    } catch {
+      return; // read failure never blocks adoption (model arrives via model_select)
+    }
+    const m = state?.model as { id?: unknown; provider?: unknown } | undefined;
+    if (m && typeof m.id === "string" && m.id && !this.model) {
+      this.model = { id: m.id, provider: typeof m.provider === "string" && m.provider ? m.provider : "omp" };
+    }
+    if (Number(state?.pendingMessageCount ?? 0) > 0 && this.rq.needsHydrate()) {
+      try {
+        await this.rq.hydrate();
+      } catch (e) {
+        console.warn(`[aiti-omp-agent] remote queue hydrate failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    // The same snapshot feeds the contextUsage cache + native session id (no extra RPC).
+    await this.refreshStateUsage(state).catch(() => {});
   }
 
   // ── A09：subagent RPC 面（协议 2026-09-19 实测钉死：level ∈ off|progress|events）──
