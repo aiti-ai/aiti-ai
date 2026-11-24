@@ -170,7 +170,7 @@ lib/             セッション、エージェント、モデル、ファイル
 public/          静的アセットと PWA ファイル
 bin/             npm CLI エントリポイントと起動オプションの解析
 docs/            ユーザーおよびコントリビューター向けの個別ガイド
-demo/            GitHub Pages で公開する静的デモ（demo/README.md を参照）
+demo/            リポジトリ内の旧デモ。公開デモは別リポジトリ → https://github.com/aiti-ai/aiti-demos （https://demo.aiti.pw で配信中）
 ```
 
 アーキテクチャの説明と詳細なファイルマップについては [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) を参照してください。

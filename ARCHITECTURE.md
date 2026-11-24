@@ -55,7 +55,7 @@ extensions/_shared/ → published as @aiti-ai/ext-shared; runtime copy installed
 | `docker/` | Production images (`core`/`full`), entrypoint (phases: piweb/bridge/gui/asr/term), extension deploy & reconcile scripts, smoke/E2E helpers. |
 | `scripts/` | Repo tooling: build helpers, upstream-merge guard (`check-upstream-merge.mjs`). |
 | `e2e/` | Browser E2E scenarios (Playwright-style, `run.mjs` harness). |
-| `demo/` | Interactive demo build (static, no model calls). |
+| `demo/` | Legacy in-repo demo. The live demo is its own repo: <https://github.com/aiti-ai/aiti-demos> → <https://demo.aiti.pw> |
 | `docs/` | Upstream dev notes, zh-CN README, release & docker docs, upstream-merge guardrails. |
 | `public/` | Static assets + `extensions.json` (online registry manifest consumed by the extension manager). |
 
