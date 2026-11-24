@@ -33,7 +33,7 @@ import { removeQueue } from "./queue-store.ts";
 import { trashFileSync } from "./session-trash.ts";
 import type { SessionEntry } from "./types.ts";
 import { readSideRelation } from "./side-session.ts";
-import { getWrapperStarter } from "./agent-starter/index.ts";
+import { clearDetachedPreference, getWrapperStarter } from "./agent-starter/index.ts";
 import { getHandle, removeHandle } from "./session/handle-store.ts";
 
 /** Most ids one POST /api/sessions/delete takes; the sidebar sends a bigger project in parts. */
@@ -321,6 +321,13 @@ export async function deleteSessions(
     await forgetSessionUiState(deletedSessionIds);
   } catch (error) {
     console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // A deleted session keeps no hosting preference: every detached spawn records one,
+  // so the markers would otherwise pile up per killed session forever (and a reused
+  // id would later be flagged as detached). Preserved files keep their preference.
+  for (const deletedId of deletedSessionIds) {
+    if (preserved.includes(deletedId)) continue;
+    try { clearDetachedPreference(deletedId); } catch { /* best effort: the files are already gone */ }
   }
   invalidateSessionListCache();
   const deleted = [...deletedSessionIds];

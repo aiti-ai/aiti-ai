@@ -49,6 +49,7 @@ import {
   registryDir,
   runDir,
   sessionKey,
+  setDetachedPreference,
   socketPath,
   starterRoot,
   writeEntry,
@@ -492,6 +493,21 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     }
 
     writeEntry({ ...entry, ...(launched.unit ? { unit: launched.unit } : {}), wrapperPid: handshake.hello.wrapperPid, pid: handshake.hello.pid });
+    // A wrapper is the host a session survives pi-web with, so the choice has to
+    // outlive the process too: record "last hosted detached" now, or the first idle
+    // reap downgrades the next cold open to the local runtime (and every hosting
+    // panel reports "next start: in-process" for it). The marker is only read at
+    // cold-open time, so a later explicit in-process start clears it as before.
+    try {
+      setDetachedPreference(sessionId, {
+        mode: "subprocess-detached",
+        ...(options.owner ? { providerType: options.owner } : {}),
+        ...(agentKey ? { agentKey } : {}),
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+      });
+    } catch {
+      /* the preference is best-effort: never fail a live spawn over it */
+    }
     const child = childFrom(handshake, { command, args, sessionId, agentKey, cwd: options.cwd });
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(`agent-starter: agent process exited immediately (session ${sessionId})`);
