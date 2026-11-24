@@ -13,8 +13,7 @@ test("npmInstallArgs passes an explicit allow-scripts list after the package spe
   // A bare flag would consume the spec (or the next flag) on npm >=11.16.
   assert.ok(!args.includes("--allow-scripts"));
   assert.ok(args[3].startsWith("--allow-scripts="));
-  for (const name of ["@aiti-ai/pi-web", "esbuild", "node-pty", "@google/genai", "protobufjs", "unrs-resolver"]) {
-    assert.ok(ALLOW_SCRIPTS.split(",").includes(name), `missing ${name} in allowlist`);
-  }
+  assert.equal(ALLOW_SCRIPTS, "@aiti-ai/pi-web");
+  assert.ok(ALLOW_SCRIPTS.split(",").includes("@aiti-ai/pi-web"));
   assert.ok(MANUAL_COMMAND.includes(`--allow-scripts=${ALLOW_SCRIPTS}`));
 });
