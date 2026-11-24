@@ -4,8 +4,17 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled, ensureExtSlotMaterialized } from "./ExtSlots.tsx";
 import { hasExtRender, subscribeExtUi, extUiVersion } from "@/lib/ext-ui-store";
-import { TerminalPanel } from "./TerminalPanel.tsx";
+import dynamic from "next/dynamic";
 import type { TerminalTab } from "./terminal-tab-state.ts";
+
+/** Native PTY panel is lazy (first-load chunk governance): @xterm/xterm is ~82KB gz
+ *  and this bridge renders it only when a terminal tab actually exists (restored
+ *  tabs included — they genuinely need it). Extension takeover mode never renders
+ *  the native panel, so the chunk never loads there. */
+const TerminalPanel = dynamic(
+  () => import("./TerminalPanel.tsx").then((m) => ({ default: m.TerminalPanel })),
+  { ssr: false, loading: () => null },
+);
 
 interface Props {
   tab: TerminalTab;

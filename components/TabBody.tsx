@@ -1,12 +1,21 @@
 "use client";
 
-import { FileViewer } from "./FileViewer.tsx";
+import dynamic from "next/dynamic";
 import { ExtSlot } from "./ExtSlots.tsx";
 import { TerminalPanelBridge } from "./TerminalPanelBridge.tsx";
 import type { TerminalTab } from "./terminal-tab-state.ts";
 import type { Tab } from "./TabBar.tsx";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { getFileName } from "@/lib/file-paths";
+
+/** FileViewer is lazy (first-load chunk governance): its module family (~55KB gz
+ *  incl. js-yaml via lib/frontmatter) only matters once a file tab exists, and
+ *  files are opened by explicit user action — the chunk loads then and stays
+ *  cached. Props/handlers are unchanged; only the load timing moves. */
+const FileViewer = dynamic(
+  () => import("./FileViewer.tsx").then((m) => ({ default: m.FileViewer })),
+  { ssr: false, loading: () => null },
+);
 
 /**
  * Tab content dispatch shared by the right-panel content area and detached windows
