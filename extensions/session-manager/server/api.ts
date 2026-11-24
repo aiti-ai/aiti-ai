@@ -6,6 +6,7 @@
  * archive (.pwarc brotli containers) endpoints.
  */
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import fsp from "node:fs/promises";
 import { createHash } from "node:crypto";
 
 // 扩展 server 模块加载时刻（≈ pi-web/扩展 restart）：冷启动窗口基点（见 mergedSessionsEndpoint）。
@@ -1286,6 +1287,56 @@ export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null
       if (!parsed) return json({ error: "parse failed" }, 500);
       const imported = runtime(ctx.configDir).settings.extImports?.[id] ?? null;
       return json({ id, agent: resolved.adapter.id, label: resolved.adapter.label, meta: parsed.meta, messages: parsed.messages, importedSessionId: imported?.sessionId ?? null });
+    }
+    case "session-ext-export": {
+      // Dump one external session into a portable JSON file (POST { id, dir, filename }) so it
+      // can be opened in the editor or @-referenced from another agent's session.
+      if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+      const id = typeof body?.id === "string" ? body.id : "";
+      const dir = typeof body?.dir === "string" ? body.dir.trim() : "";
+      const rawName = typeof body?.filename === "string" ? body.filename.trim() : "";
+      if (!id) return json({ error: "id required" }, 400);
+      if (!dir || !rawName) return json({ error: "dir and filename required" }, 400);
+      // Normalize to a plain file name: no separators, no traversal, no reserved characters.
+      const cleaned = rawName.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").replace(/^[.\s]+/, "").trim();
+      if (!cleaned) return json({ error: "invalid filename" }, 400);
+      const filename = /\.json$/i.test(cleaned) ? cleaned : `${cleaned}.json`;
+      const dirAbs = resolve(dir);
+      let dirStat: Awaited<ReturnType<typeof fsp.stat>>;
+      try { dirStat = await fsp.stat(dirAbs); } catch { return json({ error: "directory not found" }, 400); }
+      if (!dirStat.isDirectory()) return json({ error: "not a directory" }, 400);
+      await ensureProviders(ctx.configDir);
+      const resolved = resolveExtId(ctx.configDir, id);
+      if (!resolved) return json({ error: "unknown agent" }, 400);
+      let refs: Awaited<ReturnType<typeof resolved.adapter.list>>;
+      try { refs = await resolved.adapter.list(); } catch (e) { return json({ error: `source list failed: ${String(e)}` }, 503); }
+      const ref = refs.find((r) => r.sid === resolved.sid);
+      if (!ref) return json({ error: "not found" }, 404);
+      const parsed = await resolved.adapter.parse(ref);
+      if (!parsed) return json({ error: "parse failed" }, 500);
+      const target = join(dirAbs, filename);
+      const payload = {
+        format: "pi-web/external-session@1",
+        exportedAt: new Date().toISOString(),
+        source: {
+          id,
+          agent: resolved.adapter.id,
+          agentLabel: resolved.adapter.label,
+          file: ref.path ?? null,
+        },
+        meta: parsed.meta,
+        messageCount: parsed.messages.length,
+        messages: parsed.messages,
+        note: "Read-only export of an external agent session (pi-web / session-manager). "
+          + "Reference this file (@path) from any agent session to inspect or continue the work.",
+      };
+      const text = JSON.stringify(payload, null, 2) + "\n";
+      try {
+        await fsp.writeFile(target, text, "utf8");
+      } catch (e) {
+        return json({ error: `write failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
+      }
+      return json({ ok: true, path: target, filename, bytes: Buffer.byteLength(text, "utf8") });
     }
     case "open-live": {
       // attach-from-history: open an external session as a LIVE driving session
