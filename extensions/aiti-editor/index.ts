@@ -131,7 +131,7 @@ async function ensurePortable7z(): Promise<string | null> {
           });
           done = true;
         } catch (e) {
-          console.error("[aiti-editor] justget 下载 7za 失败，降级 fetch: " + String((e as Error).message || e));
+          console.error("[aiti-editor] justget 7za download failed, falling back to fetch: " + String((e as Error).message || e));
         }
       }
       if (!done && _exists(tmp)) { try { _rm(tmp); } catch { /* 忽略 */ } }
@@ -140,21 +140,21 @@ async function ensurePortable7z(): Promise<string | null> {
         for (const u of srcs) {
           try {
             const r = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(60000) });
-            if (r.ok) { buf = Buffer.from(await r.arrayBuffer()); console.log("[aiti-editor] 7za 回退源 OK: " + u); break; }
+            if (r.ok) { buf = Buffer.from(await r.arrayBuffer()); console.log("[aiti-editor] 7za fallback source OK: " + u); break; }
           } catch { /* 试下一个源 */ }
         }
-        if (!buf) throw new Error("全部源下载失败（" + srcs.join(" | ") + "）");
+        if (!buf) throw new Error("all sources failed (" + srcs.join(" | ") + ")");
         _write(tmp, buf);
       }
       const buf = _read(tmp);
       _write(dest, buf);
       if (!conf.isWindow) { try { _chmod(dest, 0o755); } catch { /* Windows 忽略 */ } }
-      if (!(await test7zBin(dest))) throw new Error("下载的 7za 不可用");
+      if (!(await test7zBin(dest))) throw new Error("downloaded 7za is not usable");
       _portable7zPath = dest;
       return dest;
     } catch (e) {
       _portable7zPath = null;
-      console.error("[aiti-editor] portable 7za 下载失败: " + String((e as Error).message || e));
+      console.error("[aiti-editor] portable 7za download failed: " + String((e as Error).message || e));
       return null;
     } finally {
       try { _rm(tmp, { force: true }); } catch { /* 忽略 */ }
@@ -436,10 +436,10 @@ function expandTildePath(p: string): string {
   return p;
 }
 
-/** 宿主 file-access 门禁（pi-web allowed-roots：session cwd/projectRoot 动态集合；ctx.core 注入，
- *  M3 对齐——与 aiti-folder/doc-center/git-trace 同一安全面）。修复 Windows 项目根不在 home 下
- *  （如 155：项目在 D:\workspace 而 home 在 C:\Users）时静态名单误杀「路径不在白名单内」；
- *  缺席（独立测试环境/旧宿主）→ 静态名单兜底。 */
+/** Host file-access gate (pi-web allowed-roots: session cwd/projectRoot dynamic set; injected via ctx.core,
+ *  aligned with aiti-folder/doc-center/git-trace). Fixes Windows project roots that live outside home
+ *  (e.g. project in D:\workspace while home is C:\Users) being rejected by the static allowlist;
+ *  absent (standalone tests / old host) → fall back to the static list. */
 let _hostIsAllowed: ((p: string) => Promise<boolean>) | null = null;
 function bindHostFileAccess(ctx: any): void {
   const fa = ctx?.core?.fileAccess;
@@ -509,7 +509,7 @@ async function gitRunBuf(repo: string, args: string[], maxBuffer = 8 * 1024 * 10
     });
   });
 }
-const GIT_CHANGE_LABEL: Record<string, string> = { M: "已修改", A: "新增", D: "已删除", R: "重命名" };
+const GIT_CHANGE_LABEL: Record<string, string> = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed" };
 
 /** EOL classification of a text blob (diagnostics only; never rewrites content). */
 function textEolKind(text: string): "lf" | "crlf" | "mixed" | "none" {
@@ -642,21 +642,21 @@ async function handleSave(body: any): Promise<Response> {
   const content = typeof body?.content === "string" ? body.content : null;
   const cwd = typeof body?.cwd === "string" ? body.cwd : undefined;
   if (!filePath || content === null) {
-    return json({ ok: false, error: "需要 filePath 与 content" }, 400);
+    return json({ ok: false, error: "filePath and content are required" }, 400);
   }
   const target = await resolveAllowedWrite(filePath, cwd);
   if (!target) {
-    return json({ ok: false, error: "路径不在可写白名单内" }, 400);
+    return json({ ok: false, error: "Path is not in the writable allowlist" }, 400);
   }
   if (Buffer.byteLength(content, "utf8") > MAX_EDIT_BYTES) {
-    return json({ ok: false, error: "文件超过 1MB，拒绝保存（只读）" }, 413);
+    return json({ ok: false, error: "File exceeds 1MB; save refused (read-only)" }, 413);
   }
   let st;
   try {
     st = statSync(target);
-    if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+    if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
   } catch {
-    return json({ ok: false, error: "文件不存在" }, 404);
+    return json({ ok: false, error: "File not found" }, 404);
   }
   const diskMtimeMs = st.mtimeMs;
   if (typeof body?.baseMtimeMs === "number") {
@@ -725,14 +725,14 @@ function docPdfCachePath(target: string): string {
 }
 async function docToPdf(target: string): Promise<{ ok: true; pdfPath: string } | { ok: false; error: string; code?: string }> {
   const soffice = (await locateSofficeAsync()).path;
-  if (!soffice) return { ok: false, code: "soffice-missing", error: "未找到 LibreOffice (soffice)：老格式转 PDF 需要它（安装后在 aiti-editor 功能配置 soffice.path）" };
+  if (!soffice) return { ok: false, code: "soffice-missing", error: "LibreOffice (soffice) not found: it is required for legacy-format PDF conversion (after installing, set soffice.path in the aiti-editor features)" };
   const ext = extname(target).toLowerCase().replace(/^\./, "");
-  if (!DOC_PDF_EXTS.has(ext)) return { ok: false, error: "仅支持 " + [...DOC_PDF_EXTS].join("/") };
-  if (statSync(target).size > 50 * 1024 * 1024) return { ok: false, error: "文件超过 50MB，拒绝转换" };
+  if (!DOC_PDF_EXTS.has(ext)) return { ok: false, error: "Only supports " + [...DOC_PDF_EXTS].join("/") };
+  if (statSync(target).size > 50 * 1024 * 1024) return { ok: false, error: "File exceeds 50MB; conversion refused" };
   const out = docPdfCachePath(target);
   try { const st = statSync(out); if (st.isFile() && st.size > 0) return { ok: true, pdfPath: out }; } catch { /* 无缓存 */ }
   // 同一时刻只允许一个 soffice 实例（并发转换互相锁死）
-  if (_sofficeBusy) return { ok: false, error: "上一个转换还在进行，请稍后重试" };
+  if (_sofficeBusy) return { ok: false, error: "A previous conversion is still running; try again later" };
   _sofficeBusy = 1;
   const dir = dirname(out);
   try {
@@ -752,11 +752,11 @@ async function docToPdf(target: string): Promise<{ ok: true; pdfPath: string } |
     }
     const produced = tmpOut + "/" + basename(target).replace(/\.[^.]+$/, "") + ".pdf";
     const st = statSync(produced);
-    if (!st.isFile() || st.size === 0) throw new Error("转换产物为空");
+    if (!st.isFile() || st.size === 0) throw new Error("Conversion output is empty");
     renameSync(produced, out);
     return { ok: true, pdfPath: out };
   } catch (e) {
-    return { ok: false, error: "soffice 转换失败: " + String((e as Error).message || e).slice(0, 200) };
+    return { ok: false, error: "soffice conversion failed: " + String((e as Error).message || e).slice(0, 200) };
   } finally {
     _sofficeBusy = 0;
   }
@@ -823,12 +823,12 @@ function findProvider(ext: string, filePath: string): FileProvider | null {
 export default {
   id: "aiti-editor",
   name: "aiti-editor",
-  description: "文件编辑器：Monaco 在线编辑（接管文本文件；非文本回退核心查看器）。设计 docs/pi-web-file-editor-design.md",
+  description: "File editor: Monaco online editing (takes over text files; non-text falls back to the core viewer). Design docs/pi-web-file-editor-design.md",
   client: "dist/aiti-editor-client.mjs",
   icon: "icon.svg",
   ai: {
     manage: true,
-    intro: "AI 能帮我在服务器安装/诊断 LibreOffice (soffice)，让 .doc/.xls/.ppt 等老格式在线转换与 PDF 预览可用（aiti-editor）",
+    intro: "AI can install/diagnose LibreOffice (soffice) on the server, enabling online conversion and PDF preview for legacy formats such as .doc/.xls/.ppt (aiti-editor)",
     skills: "skills",
   },
   ui: {
@@ -859,6 +859,12 @@ export default {
       // first-table from wrongly hitting en on zh devices), en table carries hand translations.
       // Static slot entries keep their it.*/ed.*/ext.*/feat.* id keys, one copy per table.
       "zh-CN": {
+        "目标文件已存在：\n{p}\n覆盖？": "目标文件已存在：\n{p}\n覆盖？",
+        "解释这段代码：\n": "解释这段代码：\n",
+        "重构这段代码：\n": "重构这段代码：\n",
+        "解释": "解释",
+        "重构": "重构",
+        "表格优化": "表格优化",
         "it.file.label": "文件",
         "it.image-preview.label": "图片预览",
         "it.image-preview.title": "图片预览",
@@ -873,26 +879,19 @@ export default {
         "-副本": "-副本",
         "7za 缺失时自动下载 portable 版（客户机零安装）": "7za 缺失时自动下载 portable 版（客户机零安装）",
         "AI 帮我安装（推荐）": "AI 帮我安装（推荐）",
-        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历": "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历",
         "EXIF 信息读取": "EXIF 信息读取",
-        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）": "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）",
         "HTML 预览": "HTML 预览",
         "JSON 值": "JSON 值",
         "JSON 键": "JSON 键",
         "LibreOffice 启动失败：{msg}": "LibreOffice 启动失败：{msg}",
-        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）": "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）",
-        "Mermaid 图表": "Mermaid 图表",
-        "Monaco 在线文本/代码编辑器（含 Markdown 双模式）": "Monaco 在线文本/代码编辑器（含 Markdown 双模式）",
         "Monaco 编辑器加载失败": "Monaco 编辑器加载失败",
         "PDF 只读预览": "PDF 只读预览",
         "PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）": "PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）",
         "Range 流式播放（拖进度条不整载）": "Range 流式播放（拖进度条不整载）",
         "VNC 会话获取失败": "VNC 会话获取失败",
         "VNC 启动失败：{msg}": "VNC 启动失败：{msg}",
-        "YAML / TOML / SQL 一键格式化": "YAML / TOML / SQL 一键格式化",
         "aiti-ai-speek 未安装或未启用——已打开扩展管理，请启用后重试": "aiti-ai-speek 未安装或未启用——已打开扩展管理，请启用后重试",
         "aiti-helper 未就绪（未部署或未加载）：刷新页面后重试，或按上方命令手动安装。": "aiti-helper 未就绪（未部署或未加载）：刷新页面后重试，或按上方命令手动安装。",
-        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）": "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）",
         "git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）": "git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）",
         "iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）": "iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）",
         "readFile 失败 ({status})": "readFile 失败 ({status})",
@@ -925,7 +924,6 @@ export default {
         "主窗口未响应（aiti-cmd 未启用？）": "主窗口未响应（aiti-cmd 未启用？）",
         "主面板已关闭，无法写入输入框": "主面板已关闭，无法写入输入框",
         "主面板已关闭，无法发送": "主面板已关闭，无法发送",
-        "二进制文件不接管（交给对应查看器 / 编辑器扩展）": "二进制文件不接管（交给对应查看器 / 编辑器扩展）",
         "二进制文件（只读预览）": "二进制文件（只读预览）",
         "仅浏览器可解码的格式": "仅浏览器可解码的格式",
         "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）": "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）",
@@ -934,7 +932,6 @@ export default {
         "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响": "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响",
         "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）": "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）",
         "保存": "保存",
-        "保存冲突检测（外部修改 → 409 → 合并或覆盖）": "保存冲突检测（外部修改 → 409 → 合并或覆盖）",
         "保存失败 ({status})": "保存失败 ({status})",
         "保存并关闭": "保存并关闭",
         "保存并刷新": "保存并刷新",
@@ -960,7 +957,6 @@ export default {
         "加密 / 带密码压缩包不支持": "加密 / 带密码压缩包不支持",
         "加载磁盘": "加载磁盘",
         "单文件上限 50MB": "单文件上限 50MB",
-        "单文件超过 1MB 只读": "单文件超过 1MB 只读",
         "压缩包": "压缩包",
         "压缩包为空": "压缩包为空",
         "压缩包内文件点击提取并打开": "压缩包内文件点击提取并打开",
@@ -996,6 +992,45 @@ export default {
         "复制失败": "复制失败",
         "复制文件全部内容到剪贴板（超过 1MB 拒绝）": "复制文件全部内容到剪贴板（超过 1MB 拒绝）",
         "复制路径": "复制路径",
+        "aiti-editor 接管失败": "aiti-editor 接管失败",
+        "文件": "文件",
+        "格式": "格式",
+        "尺寸": "尺寸",
+        "缩放": "缩放",
+        "旋转": "旋转",
+        "（适应窗口）": "（适应窗口）",
+        "源码": "源码",
+        "预览图表": "预览图表",
+        "查看源码": "查看源码",
+        "渲染失败": "渲染失败",
+        "正在渲染": "正在渲染",
+        "Mermaid 图表": "Mermaid 图表",
+        "内容目录": "内容目录",
+        "@ 到聊天": "@ 到聊天",
+        "@ 到新会话": "@ 到新会话",
+        "文件有未保存的修改": "文件有未保存的修改",
+        "列数不一致：第 {row} 行有 {got} 列，期望 {want} 列": "列数不一致：第 {row} 行有 {got} 列，期望 {want} 列",
+        "YAML 语法错误": "YAML 语法错误",
+        "vendor 加载失败：{url}": "vendor 加载失败：{url}",
+        "vendor 全局未挂载：{name}": "vendor 全局未挂载：{name}",
+        "Monaco 在线文本/代码编辑器（含 Markdown 双模式）": "Monaco 在线文本/代码编辑器（含 Markdown 双模式）",
+        "单文件超过 1MB 只读": "单文件超过 1MB 只读",
+        "二进制文件不接管（交给对应查看器 / 编辑器扩展）": "二进制文件不接管（交给对应查看器 / 编辑器扩展）",
+        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）": "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）",
+        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）": "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）",
+        "保存冲突检测（外部修改 → 409 → 合并或覆盖）": "保存冲突检测（外部修改 → 409 → 合并或覆盖）",
+        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）": "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）",
+        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历": "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历",
+        "YAML / TOML / SQL 一键格式化": "YAML / TOML / SQL 一键格式化",
+        "feat.editor.text": "文本文件编辑",
+        "feat.editor.text.desc": "接管文本类文件为 Monaco 在线编辑器（未命中时回退核心只读查看器）",
+        "feat.editor.binary": "二进制文件查看",
+        "feat.editor.binary.desc": "使用注册的 provider 渲染图片/视频/音频/PDF 等二进制文件（关闭后回退核心查看器）",
+        "feat.editor.mdPreviewSmart": "Markdown 预览智能点击",
+        "feat.editor.mdPreviewSmart.desc": "预览里点击段落/标题/代码行弹出动作卡（复制/引用/新会话/文件/链接），引用自动带 @文件#行号；需安装并启用 aiti-msg-smart",
+        "feat.soffice.path": "soffice 路径（LibreOffice）",
+        "feat.soffice.path.desc": "老格式转换（.doc→.docx/.pdf、.xls→.xlsx、.ppt→.pptx）所用 soffice 可执行文件路径",
+        "feat.soffice.path.placeholder": "留空=自动从 PATH 查找；或填绝对路径如 /usr/bin/soffice",
         "下载": "下载",
         "上一页": "上一页",
         "下一页": "下一页",
@@ -1015,6 +1050,7 @@ export default {
         "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？": "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？",
         "我了解风险，继续打开": "我了解风险，继续打开",
         "已按你的选择强制打开（大文件，可能较卡）": "已按你的选择强制打开（大文件，可能较卡）",
+        "正在读取文件…（大文件可能需要数秒，页面暂无响应属正常）": "正在读取文件…（大文件可能需要数秒，页面暂无响应属正常）",
         "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。": "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。",
         "读取失败：{msg}": "读取失败：{msg}",
         "正在加载文件片段…": "正在加载文件片段…",
@@ -1248,55 +1284,84 @@ export default {
         "，{n} 个目录": "，{n} 个目录",
         "，含未保存编辑": "，含未保存编辑",
       },
-      // en table: HTML-preview subset first (hand translations); the rest of the zh-CN
-      // catalog lands incrementally — cascade falls back to the first table for missing keys.
-      "en": {
-        "it.file.label": "File",
-        "it.image-preview.label": "Image preview",
-        "it.image-preview.title": "Image preview",
-        "it.fileviewer.label": "Editor",
-        "it.fileviewer.title": "aiti-editor: online text/code editing (Monaco), extensible rendering for binaries",
-        "ext.displayName": "File Editor",
-        "ed.file.label": "File",
-        "ed.image.label": "Image preview",
-        "HTML 预览": "HTML preview",
-        "编辑": "Edit",
-        "预览": "Preview",
-        "左侧编辑·右侧预览": "Editor left · preview right",
-        "分栏": "Split",
-        "快速": "Fast",
-        "真预览": "Served preview",
-        "渲染页面预览": "Rendered page",
-        "渲染预览": "Rendered preview",
-        "编辑源码": "Edit source",
-        "刷新": "Refresh",
-        "保存并刷新": "Save & refresh",
-        "清空": "Clear",
-        "复制": "Copy",
-        "复制失败": "Copy failed",
-        "已复制上报内容": "Report copied",
-        "脚本": "Scripts",
-        "●开": "●on",
-        "○关": "○off",
-        "缓冲 · 未保存可见": "Buffer · unsaved visible",
-        "当前预览文档：{p}": "Current preview doc: {p}",
-        "预览上报 · {n}": "Preview reports · {n}",
-        "预览内 console／报错回传（上限 {n} 条，最新在前）": "In-preview console/error reports (cap {n}, newest first)",
-        "票据未就绪或已过期——重开文件或切回「快速」": "Ticket not ready or expired — reopen the file or switch back to Fast",
-        "票据未就绪，真预览暂不可用": "Ticket not ready — served preview unavailable",
-        "等待预览装载…（久候无响应多为脚本出错或资源路径越出预览目录）": "Waiting for preview… (no response usually means a script error or a resource path outside the preview dir)",
-        "链接指向预览目录之外，未改道": "Link points outside the preview dir; not redirected",
-        "编辑器缓冲直接进 srcdoc：未保存即所见，相对资源走预览路由": "Editor buffer straight into srcdoc: unsaved-as-seen, relative assets via the preview route",
-        "iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）": "iframe points to the server-side disk doc: native relative resolution and in-site navigation (unsaved edits not visible)",
-        "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）": "Author scripts running (still no same-origin: fetch/localStorage/parent DOM unavailable)",
-        "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响": "Author scripts stripped (fast mode strips the srcdoc / served mode strips responses); the preview's own error reporting and link redirect are unaffected",
-        "用当前缓冲重建预览": "Rebuild preview from the current buffer",
-        "重新拉取磁盘文档（换破缓存参数）": "Re-fetch the disk doc (cache-busting)",
-        "真预览读的是磁盘文件，当前有未保存修改": "Served preview reads the disk file; there are unsaved changes",
-        "视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）": "Viewport width presets (width only, no UA/DPR spoofing — device emulation is devtools' job)",
-      },
+      // en table: full catalogue (HTML-preview subset values merged in; superset of zh-TW).
       // zh-TW table: same HTML-preview subset (traditional Chinese).
       "zh-TW": {
+        "目标文件已存在：\n{p}\n覆盖？": "目標檔案已存在：\n{p}\n覆寫？",
+        "原生图片查看器": "原生圖片檢視器",
+        "缩放 / 平移 / 100% 复位": "縮放 / 平移 / 100% 復位",
+        "EXIF 信息读取": "EXIF 資訊讀取",
+        "仅浏览器可解码的格式": "僅瀏覽器可解碼的格式",
+        "原生视频播放器": "原生影片播放器",
+        "Range 流式播放（拖进度条不整载）": "Range 串流播放（拖動進度條不整載）",
+        "文件变化实时跟随（watch）": "檔案變更即時跟隨（watch）",
+        "取决于浏览器解码器（mp4/webm/ogg 系友好；部分 .avi/.mkv 可能无法解码）": "取決於瀏覽器解碼器（mp4/webm/ogg 系友善；部分 .avi/.mkv 可能無法解碼）",
+        "原生音频播放器": "原生音訊播放器",
+        "取决于浏览器解码器（.mid 多数浏览器不可播）": "取決於瀏覽器解碼器（.mid 多數瀏覽器無法播放）",
+        "PDF 只读预览": "PDF 唯讀預覽",
+        "浏览器内置 PDF 引擎渲染": "由瀏覽器內建 PDF 引擎轉譯",
+        "只读（编辑 / 批注请用专业 PDF 工具）": "唯讀（編輯 / 註解請用專業 PDF 工具）",
+        "压缩包浏览（纯 JS 优先 + 7-Zip 兜底）": "壓縮檔瀏覽（純 JS 優先 + 7-Zip 兜底）",
+        "zip/tar/7z/rar/cab/iso 等列出清单": "列出 zip/tar/7z/rar/cab/iso 清單",
+        "压缩包内文件点击提取并打开": "點擊壓縮檔內檔案即可解壓並開啟",
+        "7za 缺失时自动下载 portable 版（客户机零安装）": "缺少 7za 時自動下載 portable 版（客戶機零安裝）",
+        "加密 / 带密码压缩包不支持": "加密 / 帶密碼壓縮檔不支援",
+        "只读（解包请用命令行）": "唯讀（解壓請用命令列）",
+        "老格式（.doc / .ppt / .pptx / .odt / .odp）经 soffice 转 PDF 只读预览": "老格式（.doc / .ppt / .pptx / .odt / .odp）經 soffice 轉 PDF 唯讀預覽",
+        "PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）": "PDF 唯讀預覽（瀏覽器原生轉譯，可縮放 / 列印 / 下載）",
+        "转换结果按 mtime 键控缓存——二次打开秒开": "轉換結果依 mtime 鍵控快取——二次開啟秒開",
+        "单文件上限 50MB": "單檔上限 50MB",
+        "只读：编辑请先另存 / 转换为 .docx（Word）": "唯讀：編輯請先另存 / 轉換為 .docx（Word）",
+        "首次打开需数秒（soffice 无头转换）；排版保真取决于 LibreOffice 对原格式的还原度": "首次開啟需數秒（soffice 無頭轉換）；排版保真取決於 LibreOffice 對原格式的還原度",
+        "并发转换时会提示稍后重试": "並行轉換時會提示稍後重試",
+        "旧格式转 PDF 预览": "老格式轉 PDF 預覽",
+        "解释这段代码：\n": "解釋這段程式碼：\n",
+        "重构这段代码：\n": "重構這段程式碼：\n",
+        "解释": "解釋",
+        "重构": "重構",
+        "表格优化": "表格最佳化",
+        "aiti-editor 接管失败": "aiti-editor 接管失敗",
+        "文件": "檔案",
+        "格式": "格式",
+        "尺寸": "尺寸",
+        "缩放": "縮放",
+        "旋转": "旋轉",
+        "（适应窗口）": "（適應視窗）",
+        "源码": "原始碼",
+        "预览图表": "預覽圖表",
+        "查看源码": "檢視原始碼",
+        "渲染失败": "轉譯失敗",
+        "正在渲染": "正在轉譯",
+        "Mermaid 图表": "Mermaid 圖表",
+        "内容目录": "內容目錄",
+        "@ 到聊天": "@ 到聊天",
+        "@ 到新会话": "@ 到新對話",
+        "文件有未保存的修改": "檔案有未儲存的修改",
+        "列数不一致：第 {row} 行有 {got} 列，期望 {want} 列": "欄數不一致：第 {row} 行有 {got} 欄，期望 {want} 欄",
+        "YAML 语法错误": "YAML 語法錯誤",
+        "vendor 加载失败：{url}": "vendor 載入失敗：{url}",
+        "vendor 全局未挂载：{name}": "vendor 全域未掛載：{name}",
+        "Monaco 在线文本/代码编辑器（含 Markdown 双模式）": "Monaco 線上文字/程式碼編輯器（含 Markdown 雙模式）",
+        "单文件超过 1MB 只读": "單檔超過 1MB 唯讀",
+        "二进制文件不接管（交给对应查看器 / 编辑器扩展）": "二進位檔案不接管（交給對應檢視器 / 編輯器擴充）",
+        "语法高亮与补全（40+ 语言，TS/JS 智能提示、JSON 大纲、CSV 彩虹列）": "語法高亮與補全（40+ 語言，TS/JS 智慧提示、JSON 大綱、CSV 彩虹欄）",
+        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）": "Markdown 編輯 / 分割 / 預覽（GFM、TOC、捲動同步、變更區塊定位、匯出 HTML/PDF）",
+        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）": "HTML 編輯 / 分割 / 預覽（快速態看緩衝、真預覽態走目錄級預覽路由；視窗預設、錯誤回傳、相對連結改道 dock）",
+        "多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）": "多編碼開啟與儲存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）",
+        "保存冲突检测（外部修改 → 409 → 合并或覆盖）": "儲存衝突偵測（外部修改 → 409 → 合併或覆寫）",
+        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）": "git 變更檢視（工作區 vs HEAD：行級標註 / 左右 / 合併 / 大綱）",
+        "未保存内容自动缓存（停手 2s + 页面关闭兜底，刷新后恢复）": "未儲存內容自動快取（停手 2s + 頁面關閉兜底，重新整理後恢復）",
+        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历": "AI 選區（問 AI / 解釋 / 重構 / 新對話）、@ 提及、同目錄 ‹› 巡覽",
+        "YAML / TOML / SQL 一键格式化": "YAML / TOML / SQL 一鍵格式化",
+        "feat.editor.text": "文字檔編輯",
+        "feat.editor.text.desc": "接管文字類檔案為 Monaco 線上編輯器（未命中時回退核心唯讀檢視器）",
+        "feat.editor.binary": "二進位檔案檢視",
+        "feat.editor.binary.desc": "使用註冊的 provider 轉譯圖片/影片/音訊/PDF 等二進位檔案（關閉後回退核心檢視器）",
+        "feat.editor.mdPreviewSmart": "Markdown 預覽智慧點擊",
+        "feat.editor.mdPreviewSmart.desc": "在預覽中點擊段落/標題/程式碼行彈出動作卡（複製/引用/新對話/檔案/連結），引用自動帶 @檔案#行號；需安裝並啟用 aiti-msg-smart",
+        "feat.soffice.path": "soffice 路徑（LibreOffice）",
+        "feat.soffice.path.desc": "老格式轉換（.doc→.docx/.pdf、.xls→.xlsx、.ppt→.pptx）所用 soffice 執行檔路徑",
+        "feat.soffice.path.placeholder": "留空=自動從 PATH 尋找；或填絕對路徑如 /usr/bin/soffice",
         "it.file.label": "檔案",
         "it.image-preview.label": "圖片預覽",
         "it.image-preview.title": "圖片預覽",
@@ -1342,24 +1407,22 @@ export default {
         "视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）": "視窗寬度預設（只改寬度，不偽造 UA／像素比——裝置模擬是 devtools 的活）",
       },
       en: {
-        "it.file.label": "Files",
+        "目标文件已存在：\n{p}\n覆盖？": "Target file already exists:\n{p}\nOverwrite?",
+        "解释这段代码：\n": "Explain this code:\n",
+        "重构这段代码：\n": "Refactor this code:\n",
+        "解释": "Explain",
+        "重构": "Refactor",
+        "表格优化": "Format table",
+        "it.file.label": "File",
         "it.image-preview.label": "Image preview",
         "it.image-preview.title": "Image preview",
         "it.fileviewer.label": "Editor",
-        "it.fileviewer.title": "aiti-editor: online text editing (Monaco); binaries rendered by extensions",
+        "it.fileviewer.title": "aiti-editor: online text/code editing (Monaco), extensible rendering for binaries",
         "ext.displayName": "File Editor",
         "feat.aiti-editor": "Editor",
         "feat.file": "Files",
         "feat.image-preview": "Image preview",
-        "feat.editor.text": "Text file editing",
-        "feat.soffice.path": "soffice path (LibreOffice)",
-        "feat.editor.binary": "Binary file viewer",
-        "feat.editor.mdPreviewSmart": "Markdown preview smart click",
-        "feat.editor.text.desc": "Takes over text files with the Monaco in-browser editor (falls back to the core read-only viewer when not matched)",
-        "feat.soffice.path.desc": "Legacy format conversion (.doc→.docx/.pdf, .xls→.xlsx, .ppt→.pptx); auto-detected when empty",
-        "feat.editor.binary.desc": "Renders images/video/audio/PDF and other binary files with registered providers (falls back to the core viewer when off)",
-        "feat.editor.mdPreviewSmart.desc": "Clicking a paragraph/heading/code line in the preview pops an action card (copy/quote/new session/file/edit…)",
-        "ed.file.label": "Files",
+        "ed.file.label": "File",
         "ed.image.label": "Image preview",
         " 编辑": " Edit",
         " 适": " fit",
@@ -1367,28 +1430,21 @@ export default {
         "-副本": "-copy",
         "7za 缺失时自动下载 portable 版（客户机零安装）": "Auto-downloads portable 7za when missing (zero install on the client machine)",
         "AI 帮我安装（推荐）": "AI install for me (recommended)",
-        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历": "AI selection (ask / explain / refactor / new session), @mentions, same-directory ‹› walk",
         "EXIF 信息读取": "EXIF reading",
-        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）": "HTML edit / split / preview (fast mode reads the buffer, true preview goes through the directory-level preview route; viewport presets, error reporting, relative-link redirect into the dock)",
         "HTML 预览": "HTML preview",
         "JSON 值": "JSON value",
         "JSON 键": "JSON key",
         "LibreOffice 启动失败：{msg}": "LibreOffice failed to start: {msg}",
-        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）": "Markdown edit / split / preview (GFM, TOC, scroll sync, change-block navigation, export to HTML/PDF)",
-        "Mermaid 图表": "Mermaid diagram",
-        "Monaco 在线文本/代码编辑器（含 Markdown 双模式）": "Monaco online text/code editor (with Markdown dual mode)",
         "Monaco 编辑器加载失败": "Failed to load the Monaco editor",
         "PDF 只读预览": "PDF read-only preview",
         "PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）": "Read-only PDF preview (browser-native rendering; zoom / print / download)",
         "Range 流式播放（拖进度条不整载）": "Range streaming (seeking doesn't download the whole file)",
         "VNC 会话获取失败": "Failed to get the VNC session",
         "VNC 启动失败：{msg}": "VNC failed to start: {msg}",
-        "YAML / TOML / SQL 一键格式化": "One-click YAML / TOML / SQL formatting",
         "aiti-ai-speek 未安装或未启用——已打开扩展管理，请启用后重试": "aiti-ai-speek is not installed or disabled — Extension Manager opened, please enable it and retry",
         "aiti-helper 未就绪（未部署或未加载）：刷新页面后重试，或按上方命令手动安装。": "aiti-helper is not ready (not deployed or not loaded): refresh the page and retry, or install manually with the commands above.",
-        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）": "git change view (workspace vs HEAD: inline markers / side-by-side / inline / outline)",
         "git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）": "git change view (workspace vs HEAD; default \"Latest\" shows the final version)",
-        "iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）": "iframe points to the on-disk document: native relative resolution and in-site navigation (unsaved edits not visible)",
+        "iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）": "iframe points to the server-side disk doc: native relative resolution and in-site navigation (unsaved edits not visible)",
         "readFile 失败 ({status})": "readFile failed ({status})",
         "ticket 签发失败": "ticket issuance failed",
         "vendor 加载失败: {p}": "vendor load failed: {p}",
@@ -1419,19 +1475,17 @@ export default {
         "主窗口未响应（aiti-cmd 未启用？）": "Main window not responding (aiti-cmd disabled?)",
         "主面板已关闭，无法写入输入框": "Main panel closed, cannot write to the input box",
         "主面板已关闭，无法发送": "Main panel closed, cannot send",
-        "二进制文件不接管（交给对应查看器 / 编辑器扩展）": "Binary files not taken over (left to the matching viewer / editor extensions)",
         "二进制文件（只读预览）": "Binary file (read-only preview)",
         "仅浏览器可解码的格式": "Only browser-decodable formats",
         "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）": "Reload latest content from disk (with unsaved edits you'll be asked: merge / load disk / keep mine)",
         "以编码保存（另存为新编码）": "Save with encoding (save as a new encoding)",
         "以编码重新打开（不保存当前改动）": "Reopen with encoding (current edits are not saved)",
-        "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响": "Author scripts stripped (fast mode strips srcdoc / true preview strips responses server-side); error reporting and link redirection of the preview itself are unaffected",
-        "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）": "Author scripts running (still no same-origin powers: fetch/localStorage/parent DOM are unavailable)",
+        "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响": "Author scripts stripped (fast mode strips the srcdoc / served mode strips responses); the preview's own error reporting and link redirect are unaffected",
+        "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）": "Author scripts running (still no same-origin: fetch/localStorage/parent DOM unavailable)",
         "保存": "Save",
-        "保存冲突检测（外部修改 → 409 → 合并或覆盖）": "Save conflict detection (external modification → 409 → merge or overwrite)",
         "保存失败 ({status})": "Save failed ({status})",
         "保存并关闭": "Save and close",
-        "保存并刷新": "Save and refresh",
+        "保存并刷新": "Save & refresh",
         "保存当前编辑内容（Ctrl+S）": "Save current edits (Ctrl+S)",
         "保留当前": "Keep mine",
         "修改时间": "Modified",
@@ -1454,7 +1508,6 @@ export default {
         "加密 / 带密码压缩包不支持": "Encrypted / password-protected archives not supported",
         "加载磁盘": "Load from disk",
         "单文件上限 50MB": "50MB per-file limit",
-        "单文件超过 1MB 只读": "Read-only above 1MB per file",
         "压缩包": "Archive",
         "压缩包为空": "Archive is empty",
         "压缩包内文件点击提取并打开": "Click an archived file to extract and open it",
@@ -1490,6 +1543,45 @@ export default {
         "复制失败": "Copy failed",
         "复制文件全部内容到剪贴板（超过 1MB 拒绝）": "Copy the whole file content to clipboard (rejected over 1MB)",
         "复制路径": "Copy path",
+        "aiti-editor 接管失败": "aiti-editor could not take over this file",
+        "文件": "File",
+        "格式": "Format",
+        "尺寸": "Dimensions",
+        "缩放": "Zoom",
+        "旋转": "Rotation",
+        "（适应窗口）": " (fit to window)",
+        "源码": "Source",
+        "预览图表": "Preview diagram",
+        "查看源码": "View source",
+        "渲染失败": "Render failed",
+        "正在渲染": "Rendering",
+        "Mermaid 图表": "Mermaid diagram",
+        "内容目录": "Contents",
+        "@ 到聊天": "@ to chat",
+        "@ 到新会话": "@ to new session",
+        "文件有未保存的修改": "This file has unsaved changes",
+        "列数不一致：第 {row} 行有 {got} 列，期望 {want} 列": "Column count mismatch: line {row} has {got} columns, expected {want}",
+        "YAML 语法错误": "YAML syntax error",
+        "vendor 加载失败：{url}": "Failed to load vendor: {url}",
+        "vendor 全局未挂载：{name}": "Vendor global not mounted: {name}",
+        "Monaco 在线文本/代码编辑器（含 Markdown 双模式）": "Monaco text/code editor (with Markdown dual mode)",
+        "单文件超过 1MB 只读": "Files over 1MB open read-only",
+        "二进制文件不接管（交给对应查看器 / 编辑器扩展）": "Binary files are not taken over (their own viewer/editor extensions handle them)",
+        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）": "Markdown edit / split / preview (GFM, TOC, scroll sync, change-block jump, export HTML/PDF)",
+        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）": "HTML edit / split / preview (fast mode renders the buffer, served mode uses the directory-level preview route; viewport presets, error reporting, relative links reroute to the dock)",
+        "保存冲突检测（外部修改 → 409 → 合并或覆盖）": "Save conflict detection (external change → 409 → merge or overwrite)",
+        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）": "Git change view (worktree vs HEAD: line markers / side-by-side / inline / outline)",
+        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历": "AI selection (ask AI / explain / refactor / new session), @ mentions, ‹› sibling navigation",
+        "YAML / TOML / SQL 一键格式化": "One-click YAML / TOML / SQL formatting",
+        "feat.editor.text": "Text file editing",
+        "feat.editor.text.desc": "Take over text files as a Monaco online editor (falls back to the core read-only viewer when not matched)",
+        "feat.editor.binary": "Binary file viewing",
+        "feat.editor.binary.desc": "Render images/video/audio/PDF via registered providers (turn off to fall back to the core viewer)",
+        "feat.editor.mdPreviewSmart": "Markdown preview smart click",
+        "feat.editor.mdPreviewSmart.desc": "Click a paragraph/heading/code line in the preview to open the action card (copy/quote/new session/file/link); quotes include @file#line. Requires aiti-msg-smart.",
+        "feat.soffice.path": "soffice path (LibreOffice)",
+        "feat.soffice.path.desc": "Executable used for legacy conversions (.doc→.docx/.pdf, .xls→.xlsx, .ppt→.pptx)",
+        "feat.soffice.path.placeholder": "Empty = auto-detect from PATH; or an absolute path like /usr/bin/soffice",
         "下载": "Download",
         "上一页": "Previous",
         "下一页": "Next",
@@ -1509,6 +1601,7 @@ export default {
         "文件 {size} 超过编辑器安全上限。强制打开会占用大量内存，页面可能明显卡顿甚至无响应（上限 {max}MB）。确定继续？": "This file ({size}) is above the safe editor limit. Forcing it open can consume a lot of memory and may freeze the page (hard cap {max}MB). Continue?",
         "我了解风险，继续打开": "I understand the risk, continue",
         "已按你的选择强制打开（大文件，可能较卡）": "Force-opened as requested (large file; may be slow)",
+        "正在读取文件…（大文件可能需要数秒，页面暂无响应属正常）": "Reading the file… (large files can take seconds; a brief unresponsive page is expected)",
         "分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。": "Chunked read-only viewing never loads the whole file; @ references, file chips and download keep working.",
         "读取失败：{msg}": "Read failed: {msg}",
         "正在加载文件片段…": "Loading file section…",
@@ -1543,7 +1636,7 @@ export default {
         "已唤起 AI 助手并自动发起安装任务——切到 AI 助手弹窗查看进度；装完回本页点「重试转换」。": "AI assistant invoked and the install task has started — switch to the AI assistant dialog to follow progress; come back here and click \"Retry conversion\" once done.",
         "已在虚拟环境打开，正在跳转远程查看…": "Opened in the virtual desktop; redirecting to remote view…",
         "已复制": "Copied",
-        "已复制上报内容": "Report content copied",
+        "已复制上报内容": "Report copied",
         "已复制内容": "Content copied",
         "已复制到剪贴板": "Copied to clipboard",
         "已复制路径": "Path copied",
@@ -1644,21 +1737,21 @@ export default {
         "浏览器原生 <video>": "Browser-native <video>",
         "深度遍历共 {n} 个文件（仅文件，不含文件夹）": "Depth walk: {n} files (files only, no folders)",
         "清空": "Clear",
-        "渲染页面预览": "Rendered page preview",
+        "渲染页面预览": "Rendered page",
         "渲染预览": "Rendered preview",
         "点击打开 {name}": "Click to open {name}",
         "点击打开该目录": "Click to open this directory",
         "点击用此编辑器打开（仅本次）": "Click to open with this editor (this time only)",
-        "用当前缓冲重建预览": "Rebuild the preview from the current buffer",
+        "用当前缓冲重建预览": "Rebuild preview from the current buffer",
         "目录": "Directory",
         "目标文件已存在：\\n{p}\\n覆盖？": "Target file already exists:\\n{p}\\nOverwrite?",
         "相机": "Camera",
-        "真预览": "True preview",
-        "真预览读的是磁盘文件，当前有未保存修改": "True preview reads the on-disk file; there are unsaved edits",
+        "真预览": "Served preview",
+        "真预览读的是磁盘文件，当前有未保存修改": "Served preview reads the disk file; there are unsaved changes",
         "磁盘上的文件已不存在（可能被移动或删除）": "The file on disk no longer exists (moved or deleted)",
         "磁盘上的文件已被修改": "The file on disk has been modified",
-        "票据未就绪或已过期——重开文件或切回「快速」": "Ticket not ready or expired — reopen the file or switch back to \"Fast\"",
-        "票据未就绪，真预览暂不可用": "Ticket not ready; true preview unavailable for now",
+        "票据未就绪或已过期——重开文件或切回「快速」": "Ticket not ready or expired — reopen the file or switch back to Fast",
+        "票据未就绪，真预览暂不可用": "Ticket not ready — served preview unavailable",
         "票据签发失败": "Ticket issuance failed",
         "移动到": "Move to",
         "移动到...": "Move to...",
@@ -1666,7 +1759,7 @@ export default {
         "窗口": "Window",
         "窗口太窄，并排不可读，已用合并视图展示（拉宽窗口恢复并排）": "Window too narrow for side-by-side; shown as inline view (widen the window to restore side-by-side)",
         "立即以 steer 发送到当前会话": "Send to the current session as steer immediately",
-        "等待预览装载…（久候无响应多为脚本出错或资源路径越出预览目录）": "Waiting for the preview to load… (no response usually means a script error or a resource path escaping the preview directory)",
+        "等待预览装载…（久候无响应多为脚本出错或资源路径越出预览目录）": "Waiting for preview… (no response usually means a script error or a resource path outside the preview dir)",
         "类型": "Type",
         "缓冲 · 未保存可见": "Buffer · unsaved visible",
         "编码": "Encoding",
@@ -1675,7 +1768,7 @@ export default {
         "编辑器实例未就绪，请稍后再试": "Editor instance not ready, try again shortly",
         "编辑器未返回视图（render 需返回 { el, dispose }）": "Editor returned no view (render must return { el, dispose })",
         "编辑器渲染失败": "Editor render failed",
-        "编辑器缓冲直接进 srcdoc：未保存即所见，相对资源走预览路由": "Editor buffer goes straight into srcdoc: what you see is what's unsaved; relative resources go through the preview route",
+        "编辑器缓冲直接进 srcdoc：未保存即所见，相对资源走预览路由": "Editor buffer straight into srcdoc: unsaved-as-seen, relative assets via the preview route",
         "编辑模式（当前编辑器具备编辑能力）": "Edit mode (current editor has edit capability)",
         "编辑源码": "Edit source",
         "缩小": "Zoom out",
@@ -1694,7 +1787,7 @@ export default {
         "虚拟环境打开（重试）": "Open in virtual desktop (retry)",
         "虚拟环境打开（需 aiti-ui-env 扩展）": "Open in virtual desktop (requires aiti-ui-env)",
         "行数": "Lines",
-        "视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）": "Viewport width presets (width only, no fake UA/pixel ratio — device emulation is devtools' job)",
+        "视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）": "Viewport width presets (width only, no UA/DPR spoofing — device emulation is devtools' job)",
         "视图模式": "View mode",
         "视频": "Video",
         "解析中…": "Parsing…",
@@ -1722,20 +1815,20 @@ export default {
         "重命名...": "Rename...",
         "重命名失败": "Rename failed",
         "重新加载": "Reload",
-        "重新拉取磁盘文档（换破缓存参数）": "Re-fetch the on-disk document (cache-busting param)",
+        "重新拉取磁盘文档（换破缓存参数）": "Re-fetch the disk doc (cache-busting)",
         "重试": "Retry",
         "重试会自动清除加载缓存；若反复失败请刷新页面（或检查网络）": "Retrying clears the load cache automatically; if it keeps failing, refresh the page (or check the network)",
         "重试加载": "Retry load",
         "重试转换": "Retry conversion",
         "钉住": "Pin",
-        "链接指向预览目录之外，未改道": "Link points outside the preview directory; not redirected",
+        "链接指向预览目录之外，未改道": "Link points outside the preview dir; not redirected",
         "镜头": "Lens",
         "限制": "Limits",
         "音频": "Audio",
         "预览": "Preview",
         "预览 + 编辑": "Preview + Edit",
         "预览上报 · {n}": "Preview reports · {n}",
-        "预览内 console／报错回传（上限 {n} 条，最新在前）": "console/errors reported from the preview (cap {n}, newest first)",
+        "预览内 console／报错回传（上限 {n} 条，最新在前）": "In-preview console/error reports (cap {n}, newest first)",
         "预览模式（{name}）": "Preview mode ({name})",
         "首次打开需数秒（soffice 无头转换）；排版保真取决于 LibreOffice 对原格式的还原度": "First open takes a few seconds (headless soffice conversion); layout fidelity depends on LibreOffice's support for the original format",
         "（网络中断 / 404 / 被拦截）": "(network interruption / 404 / blocked)",
@@ -1746,12 +1839,12 @@ export default {
 
   },
   features: [
-    { id: "editor.text", label: "文本文件编辑", description: "接管文本类文件为 Monaco 在线编辑器（未命中时回退核心只读查看器）", default: true },
-    { id: "soffice.path", type: "string", label: "soffice 路径（LibreOffice）", default: "",
-      placeholder: "留空=自动从 PATH 查找；或填绝对路径如 /usr/bin/soffice",
-      description: "老格式转换（.doc→.docx/.pdf、.xls→.xlsx、.ppt→.pptx）所用 soffice 可执行文件路径", group: "转换" },
-    { id: "editor.binary", label: "二进制文件查看", description: "使用注册的 provider 渲染图片/视频/音频/PDF 等二进制文件（关闭后回退核心查看器）", default: true },
-    { id: "editor.mdPreviewSmart", label: "Markdown 预览智能点击", description: "预览里点击段落/标题/代码行弹出动作卡（复制/引用/新会话/文件/链接），引用自动带 @文件#行号；需安装并启用 aiti-msg-smart", default: true },
+    { id: "editor.text", label: "Text file editing", description: "Take over text files as a Monaco online editor (falls back to the core read-only viewer when not matched)", default: true },
+    { id: "soffice.path", type: "string", label: "soffice path (LibreOffice)", default: "",
+      placeholder: "Empty = auto-detect from PATH; or an absolute path like /usr/bin/soffice",
+      description: "Executable used for legacy conversions (.doc→.docx/.pdf, .xls→.xlsx, .ppt→.pptx)", group: "Conversion" },
+    { id: "editor.binary", label: "Binary file viewing", description: "Render images/video/audio/PDF via registered providers (turn off to fall back to the core viewer)", default: true },
+    { id: "editor.mdPreviewSmart", label: "Markdown preview smart click", description: "Click a paragraph/heading/code line in the preview to open the action card (copy/quote/new session/file/link); quotes include @file#line. Requires aiti-msg-smart.", default: true },
   ],
   server: {
     startup(ctx: any) {
@@ -1760,7 +1853,7 @@ export default {
       // 暴露 registerFileProvider 给其他扩展（通过 ctx 传递）
       (ctx as any).registerFileProvider = registerFileProvider;
       bindHostFileAccess(ctx); // 宿主 allowed-roots 门禁（resolveAllowedWrite 用）
-      console.log("[aiti-editor] 就绪 · configDir=" + configDir + " · fileProviders=" + _aitiFileProviders.length + " · hostFileAccess=" + (_hostIsAllowed ? "on" : "off"));
+      console.log("[aiti-editor] ready · configDir=" + configDir + " · fileProviders=" + _aitiFileProviders.length + " · hostFileAccess=" + (_hostIsAllowed ? "on" : "off"));
     },
     async api(req: Request, ctx: any) {
       bindHostFileAccess(ctx); // 惰性兑底绑定（startup 前到达的请求/reload 场景）
@@ -1773,18 +1866,18 @@ export default {
       if (p[p.length - 1] === "prefs" && req.method === "PUT") {
         const body = await req.json().catch(() => null) as Record<string, unknown> | null;
         if (!body || typeof body !== "object" || Array.isArray(body)) {
-          return json({ ok: false, error: "body 需为对象（{ \".ext\": \"providerId\" }）" }, 400);
+          return json({ ok: false, error: "body must be an object ({ \".ext\": \"providerId\" })" }, 400);
         }
         const cur = readPrefs();
         for (const [k, v] of Object.entries(body)) {
-          if (!/^\.[a-z0-9]{1,16}$/i.test(k)) return json({ ok: false, error: "非法偏好键（需为 .ext）: " + k }, 400);
-          if (typeof v !== "string" || v.length === 0 || v.length > 200) return json({ ok: false, error: "非法偏好值: " + String(v) }, 400);
+          if (!/^\.[a-z0-9]{1,16}$/i.test(k)) return json({ ok: false, error: "Invalid preference key (expected .ext): " + k }, 400);
+          if (typeof v !== "string" || v.length === 0 || v.length > 200) return json({ ok: false, error: "Invalid preference value: " + String(v) }, 400);
           cur[k] = v;
         }
         try {
           writePrefsAtomic(cur);
         } catch (e) {
-          return json({ ok: false, error: "偏好写盘失败: " + String((e as Error).message || e) }, 500);
+          return json({ ok: false, error: "Failed to write preferences: " + String((e as Error).message || e) }, 500);
         }
         return json({ ok: true, prefs: cur });
       }
@@ -1798,16 +1891,16 @@ export default {
       if (req.method === "GET" && extIdx >= 0 && p.length >= extIdx + 3) {
         const ticket = p[extIdx + 2];
         const rec = redeemEditorTicket(ticket);
-        if (!rec) return json({ ok: false, error: "ticket 无效或已过期" }, 403);
+        if (!rec) return json({ ok: false, error: "ticket is invalid or expired" }, 403);
         // rel 保持 URL 原样（不解码）：解码统一在 resolvePreviewTarget 内做一次；
         // 目录根（`…/preview/<ticket>/`）= 票据绑定的入口文档，见 previewRelOrEntry
         const r = resolvePreviewTarget(rec.fp, previewRelOrEntry(rec.fp, p.slice(extIdx + 3).join("/")));
         if (!r.ok) return json({ ok: false, error: r.error }, r.status);
-        if (!(await resolveAllowedWrite(r.target))) return json({ ok: false, error: "路径不在白名单内" }, 403);
+        if (!(await resolveAllowedWrite(r.target))) return json({ ok: false, error: "Path is not in the allowlist" }, 403);
         let pst: any;
-        try { pst = statSync(r.target); } catch { return json({ ok: false, error: "资源不存在" }, 404); }
-        if (!pst.isFile()) return json({ ok: false, error: "目标不是文件" }, 404);
-        if (pst.size > PREVIEW_MAX_BYTES) return json({ ok: false, error: "预览资源超过 20MB" }, 413);
+        try { pst = statSync(r.target); } catch { return json({ ok: false, error: "Resource not found" }, 404); }
+        if (!pst.isFile()) return json({ ok: false, error: "Target is not a file" }, 404);
+        if (pst.size > PREVIEW_MAX_BYTES) return json({ ok: false, error: "Preview asset exceeds 20MB" }, 413);
         const scripts = u.searchParams.get("noscript") !== "1";
         const base = previewBaseFromSegments(p, extIdx + 2);
         const safeHeaders: Record<string, string> = {
@@ -1845,7 +1938,7 @@ export default {
       let tFp = "", tRoot = "";
       if (p.length >= 3 && p[p.length - 3] === "t") {
         const rec = redeemEditorTicket(p[p.length - 2]);
-        if (!rec) return json({ ok: false, error: "ticket 无效或已过期" }, 403);
+        if (!rec) return json({ ok: false, error: "ticket is invalid or expired" }, 403);
         tFp = rec.fp; tRoot = rec.root;
         p = [...p.slice(0, -3), p[p.length - 1]];
       }
@@ -1853,10 +1946,10 @@ export default {
       if (p[p.length - 1] === "ticket" && req.method === "POST") {
         const body = await req.json().catch(() => null) as { filePath?: unknown; root?: unknown; wantWatch?: unknown } | null;
         const fp = typeof body?.filePath === "string" ? body.filePath : "";
-        if (!fp || !(await resolveAllowedWrite(fp))) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!fp || !(await resolveAllowedWrite(fp))) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         let root = "";
         if (typeof body?.root === "string" && body.root) {
-          if (!(await resolveAllowedWrite(body.root))) return json({ ok: false, error: "root 不在白名单内" }, 400);
+          if (!(await resolveAllowedWrite(body.root))) return json({ ok: false, error: "root is not in the allowlist" }, 400);
           root = body.root;
         }
         const out: any = { ok: true, ticket: issueEditorTicket(fp, root), expiresIn: 3600 };
@@ -1871,13 +1964,13 @@ export default {
       if (p[p.length - 1] === "stat" && req.method === "GET") {
         const fp = tFp;
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           return json({ ok: true, mtimeMs: st.mtimeMs, size: st.size, limits: readLimits() });
         } catch {
-          return json({ ok: false, error: "文件不存在" }, 404);
+          return json({ ok: false, error: "File not found" }, 404);
         }
       }
       // GET /git-changes?filePath= → 工作区 vs HEAD 变更探测（打开文件时；快速、不传内容）
@@ -1885,30 +1978,30 @@ export default {
       if (p[p.length - 1] === "git-changes" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
-          if (!statSync(target).isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
-        } catch { return json({ ok: false, error: "文件不存在" }, 404); }
+          if (!statSync(target).isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
+        } catch { return json({ ok: false, error: "File not found" }, 404); }
         const info = await gitFileInfo(target);
         return json({ ok: true, isRepo: !!info.repo, changed: info.changed, status: info.status,
           adds: info.adds ?? null, dels: info.dels ?? null, worktreeEol: fileEolKind(target),
-          label: info.status ? (GIT_CHANGE_LABEL[info.status] || "有变更") : undefined });
+          label: info.status ? (GIT_CHANGE_LABEL[info.status] || "Changed") : undefined });
       }
       // GET /git-base?filePath= → HEAD 基线文本（diff 视图按需懒加载；rename 用旧路径取）
       //   HEAD 无此文件（新增/untracked/空仓库）→ original=""（按全新文件对比）
       if (p[p.length - 1] === "git-base" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
-          if (!statSync(target).isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
-        } catch { return json({ ok: false, error: "文件不存在" }, 404); }
+          if (!statSync(target).isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
+        } catch { return json({ ok: false, error: "File not found" }, 404); }
         const info = await gitFileInfo(target);
-        if (!info.repo) return json({ ok: false, error: "不在 git 仓库内" }, 404);
+        if (!info.repo) return json({ ok: false, error: "Not inside a git repository" }, 404);
         const gb = await gitRunBuf(info.repo, ["show", "HEAD:" + (info.oldPath || info.rel)]);
-        if (!gb.ok) return json({ ok: true, original: "", base: "（无 HEAD 基线，按全新文件对比）",
+        if (!gb.ok) return json({ ok: true, original: "", base: "(no HEAD baseline; comparing as a new file)",
           hasBaseline: false, baselineEol: "none", baselineBytes: 0, baselineLines: 0 });
-        if (gb.buf.length > 6 * 1024 * 1024) return json({ ok: false, error: "HEAD 版本超过 6MB，不支持内置对比（可用 aiti-git-review 查看）" }, 413);
+        if (gb.buf.length > 6 * 1024 * 1024) return json({ ok: false, error: "HEAD version exceeds 6MB; built-in diff is unavailable (use aiti-git-review)" }, 413);
         // 按字节探测编码解码（与 /raw 同一管线）：GBK/UTF-16 基线不再乱码，diff 才有意义
         const enc = detectEncoding(gb.buf);
         const original = decodeText(gb.buf, enc.encoding, enc.hasBOM);
@@ -1922,7 +2015,7 @@ export default {
       if (p[p.length - 1] === "siblings" && (req.method === "GET" || req.method === "POST")) {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         let rootParam = tRoot;
         if (req.method === "POST") {
           // root 由 body 传入（同样是路径，不进 URL）；仍走白名单校验
@@ -1930,7 +2023,7 @@ export default {
           if (typeof body?.root === "string") rootParam = body.root;
         }
         try {
-          if (!statSync(target).isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!statSync(target).isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           let rootDir = dirname(target);
           if (rootParam) {
             const r = await resolveAllowedWrite(rootParam);
@@ -1957,7 +2050,7 @@ export default {
           walk(rootDir, 0);
           return json({ ok: true, dir: rootDir, files: out, truncated: out.length >= MAX_SIBLINGS });
         } catch {
-          return json({ ok: false, error: "目录读取失败" }, 404);
+          return json({ ok: false, error: "Failed to read directory" }, 404);
         }
       }
       // POST /rename { filePath, newName } → fs.renameSync
@@ -1977,7 +2070,7 @@ export default {
         const baseMtimeMs = typeof body?.baseMtimeMs === "number" ? body.baseMtimeMs : 0;
         const contentHash = typeof body?.contentHash === "string" ? body.contentHash : "";
         const history = Array.isArray(body?.history) ? body.history : [];
-        if (!filePath) return json({ ok: false, error: "需要 filePath" }, 400);
+        if (!filePath) return json({ ok: false, error: "filePath is required" }, 400);
         // Edit cache is for files a human can actually edit (read-only starts at the configured
         // ceiling). Refusing big payloads here also protects the host from a huge body + stringify.
         const lim = readLimits();
@@ -1985,7 +2078,7 @@ export default {
         if ((content !== null && content.length > lb.cacheBytes)
           || (original !== null && original.length > lb.cacheBytes)
           || (diff !== null && diff.length > lb.cacheDiffBytes * 2)) {
-          return json({ ok: false, code: "CACHE_SKIP", error: "文件过大，不参与编辑缓存" }, 413);
+          return json({ ok: false, code: "CACHE_SKIP", error: "File is too large for the edit cache" }, 413);
         }
         try {
           // 缓存键按展开后的绝对路径规范化：~/x 与 /home/pi/x 同一文件只存一份（ts-siblings 读侧用展开路径查）
@@ -1994,7 +2087,7 @@ export default {
           let data: any = { filePath: canonical, baseMtimeMs, contentHash, history, storedAt: Date.now() };
           if (strategy === "diff") {
             // 只更新 diff，保留已有 original 基线
-            if (!diff) return json({ ok: false, error: "strategy=diff 时需要 diff" }, 400);
+            if (!diff) return json({ ok: false, error: "strategy=diff requires diff" }, 400);
             let prev: any = {};
             try { prev = JSON.parse(readFileSync(cacheFile, "utf8")); } catch {}
             data.strategy = "diff";
@@ -2002,10 +2095,10 @@ export default {
             data.original = prev.original || original || ""; // 保留基线（第一次 diff 前必须有 content 建过基线）
             if (!data.original) {
               // 没有基线（缓存被清/从来没 content 写过）→ 无法存 diff，退回 content 语义
-              return json({ ok: false, error: "无基线，先发完整内容" }, 409);
+              return json({ ok: false, error: "No baseline; send full content first" }, 409);
             }
           } else {
-            if (content === null || original === null) return json({ ok: false, error: "strategy=content 时需要 content 与 original" }, 400);
+            if (content === null || original === null) return json({ ok: false, error: "strategy=content requires content and original" }, 400);
             data.strategy = "content";
             data.content = content;
             data.original = original;
@@ -2013,7 +2106,7 @@ export default {
           writeFileSync(cacheFile, JSON.stringify(data), "utf8");
           return json({ ok: true, strategy, contentHash, historyCount: history.length });
         } catch (e) {
-          return json({ ok: false, error: "缓存写失败: " + String(e) }, 500);
+          return json({ ok: false, error: "Failed to write cache: " + String(e) }, 500);
         }
       }
 
@@ -2022,7 +2115,7 @@ export default {
       //   旧格式（files 为 string[]）在读取时就地升级为对象。
       if (p[p.length - 1] === "session-files" && req.method === "GET") {
         const sid = u.searchParams.get("sessionId") || "";
-        if (!sid) return json({ ok: false, error: "需要 sessionId" }, 400);
+        if (!sid) return json({ ok: false, error: "sessionId is required" }, 400);
         const f = join(ensureCacheDir(), "..", "state", "sessions", sid + ".json");
         try {
           const data = JSON.parse(readFileSync(f, "utf8"));
@@ -2037,7 +2130,7 @@ export default {
         const filePath = body?.filePath || "";
         const kind = body?.kind === "folder" ? "folder" : "file";
         const action = body?.action || "add";
-        if (!sid || !filePath) return json({ ok: false, error: "需要 sessionId 与 filePath" }, 400);
+        if (!sid || !filePath) return json({ ok: false, error: "sessionId and filePath are required" }, 400);
         const f = join(ensureCacheDir(), "..", "state", "sessions", sid + ".json");
         mkdirSync(join(ensureCacheDir(), "..", "state", "sessions"), { recursive: true });
         let data = { files: [] };
@@ -2058,21 +2151,21 @@ export default {
       // GET /cache-read?filePath= → 读取缓存（恢复编辑内容 + 版本信息 + strategy/diff）
       if (p[p.length - 1] === "cache-read" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
-        if (!fp) return json({ ok: false, error: "需要 filePath" }, 400);
+        if (!fp) return json({ ok: false, error: "filePath is required" }, 400);
         try {
           const cacheFile = join(cacheDir, cacheName(expandTildePath(fp)));
-          if (!existsSync(cacheFile)) return json({ ok: false, error: "无缓存" }, 404);
+          if (!existsSync(cacheFile)) return json({ ok: false, error: "No cache" }, 404);
           // Legacy/oversized caches must never be loaded into the host main thread again.
           const cst = statSync(cacheFile);
           if (cst.size > CACHE_FILE_MAX_BYTES) {
             try { rmSync(cacheFile); } catch { /* retry next time */ }
-            return json({ ok: false, code: "CACHE_SKIP", error: "缓存过大，已清理" }, 413);
+            return json({ ok: false, code: "CACHE_SKIP", error: "Cache was too large and has been cleaned up" }, 413);
           }
           const data = JSON.parse(readFileSync(cacheFile, "utf8"));
           const cacheBytes = limitBytes(readLimits()).cacheBytes;
           if ((data.content || "").length > cacheBytes || (data.original || "").length > cacheBytes) {
             try { rmSync(cacheFile); } catch { /* noop */ }
-            return json({ ok: false, code: "CACHE_SKIP", error: "缓存过大，已清理" }, 413);
+            return json({ ok: false, code: "CACHE_SKIP", error: "Cache was too large and has been cleaned up" }, 413);
           }
           return json({ ok: true, original: data.original || "", content: data.content || "",
             strategy: data.strategy || "content", diff: data.diff || null,
@@ -2081,7 +2174,7 @@ export default {
             history: data.history || [],
           });
         } catch (e) {
-          return json({ ok: false, error: "缓存读失败: " + String(e) }, 500);
+          return json({ ok: false, error: "Failed to read cache: " + String(e) }, 500);
         }
       }
 
@@ -2089,13 +2182,13 @@ export default {
       if (p[p.length - 1] === "cache-delete" && req.method === "POST") {
         const body = await req.json().catch(() => null);
         const fp = typeof body?.filePath === "string" ? body.filePath : "";
-        if (!fp) return json({ ok: false, error: "需要 filePath" }, 400);
+        if (!fp) return json({ ok: false, error: "filePath is required" }, 400);
         try {
           const cacheFile = join(cacheDir, cacheName(expandTildePath(fp)));
           if (existsSync(cacheFile)) rmSync(cacheFile);
           return json({ ok: true });
         } catch (e) {
-          return json({ ok: false, error: "缓存删失败: " + String(e) }, 500);
+          return json({ ok: false, error: "Failed to delete cache: " + String(e) }, 500);
         }
       }
       if (p[p.length - 1] === "rename" && req.method === "POST") {
@@ -2103,21 +2196,21 @@ export default {
         const filePath = typeof body?.filePath === "string" ? body.filePath : "";
         const newName = typeof body?.newName === "string" ? body.newName : "";
         if (!filePath || !newName || newName.includes("/") || newName.includes("\\")) {
-          return json({ ok: false, error: "需要 filePath 与合法 newName（不含斜杠）" }, 400);
+          return json({ ok: false, error: "filePath and a valid newName (no slashes) are required" }, 400);
         }
         const target = await resolveAllowedWrite(filePath);
-        if (!target) return json({ ok: false, error: "路径不在可写白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the writable allowlist" }, 400);
         // 目标基于展开后的绝对路径计算（filePath 可能是 ~/ 形式，直接 dirname 会拼出字面 "~/" 目录）
         const dest = join(dirname(target), newName);
         if ((await resolveAllowedWrite(dest)) !== normalize(dest)) {
-          return json({ ok: false, error: "目标路径不在可写白名单内" }, 400);
+          return json({ ok: false, error: "Target path is not in the writable allowlist" }, 400);
         }
-        if (existsSync(dest)) return json({ ok: false, error: "目标文件已存在" }, 409);
+        if (existsSync(dest)) return json({ ok: false, error: "Target file already exists" }, 409);
         try {
           renameSync(target, dest);
           return json({ ok: true, newPath: dest, mtimeMs: statSync(dest).mtimeMs, size: statSync(dest).size });
         } catch (e) {
-          return json({ ok: false, error: "重命名失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Rename failed: " + String(e && e.message || e) }, 500);
         }
       }
       // POST /move { filePath, targetDir } → 移动文件到目标目录（renameSync；白名单校验 + 同名冲突 409）
@@ -2125,26 +2218,26 @@ export default {
         const body = await req.json().catch(() => null);
         const filePath = typeof body?.filePath === "string" ? body.filePath : "";
         const targetDir = typeof body?.targetDir === "string" ? body.targetDir : "";
-        if (!filePath || !targetDir) return json({ ok: false, error: "需要 filePath 和 targetDir" }, 400);
+        if (!filePath || !targetDir) return json({ ok: false, error: "filePath and targetDir are required" }, 400);
         const src = await resolveAllowedWrite(filePath);
-        if (!src) return json({ ok: false, error: "源路径不在可写白名单内" }, 400);
+        if (!src) return json({ ok: false, error: "Source path is not in the writable allowlist" }, 400);
         const dest = await resolveAllowedWrite(targetDir);
-        if (!dest) return json({ ok: false, error: "目标目录不在可写白名单内" }, 400);
+        if (!dest) return json({ ok: false, error: "Target directory is not in the writable allowlist" }, 400);
         try {
-          if (!statSync(src).isFile()) return json({ ok: false, error: "源不是文件" }, 400);
-        } catch { return json({ ok: false, error: "源文件不存在" }, 404); }
+          if (!statSync(src).isFile()) return json({ ok: false, error: "Source is not a file" }, 400);
+        } catch { return json({ ok: false, error: "Source file does not exist" }, 404); }
         try {
-          if (!statSync(dest).isDirectory()) return json({ ok: false, error: "目标不是目录" }, 400);
-        } catch { return json({ ok: false, error: "目标目录不存在" }, 404); }
+          if (!statSync(dest).isDirectory()) return json({ ok: false, error: "Target is not a directory" }, 400);
+        } catch { return json({ ok: false, error: "Target directory does not exist" }, 404); }
         const name = basename(src);
         const target = join(dest, name);
         if (target === src) return json({ ok: true, newPath: src }); // 同目录无操作
-        if (existsSync(target)) return json({ ok: false, error: "目标位置已存在同名文件" }, 409);
+        if (existsSync(target)) return json({ ok: false, error: "A file with the same name already exists at the destination" }, 409);
         try {
           renameSync(src, target);
           return json({ ok: true, newPath: target, mtimeMs: statSync(target).mtimeMs, size: statSync(target).size });
         } catch (e) {
-          return json({ ok: false, error: "移动失败: " + String((e as Error)?.message || e) }, 500);
+          return json({ ok: false, error: "Move failed: " + String((e as Error)?.message || e) }, 500);
         }
       }
       // GET /archive-extract?innerPath= → 从压缩包提取单文件到临时缓存，返回提取路径
@@ -2152,14 +2245,14 @@ export default {
       //   innerPath 是压缩包内的文件路径（如 "dir/file.txt"）；提取到 configDir/archive-extract/<hash>/ 下
       if (p[p.length - 1] === "archive-extract" && req.method === "GET") {
         const archivePath = tFp;
-        if (!archivePath) return json({ ok: false, error: "需要路径票据（/t/<ticket>/archive-extract）" }, 400);
+        if (!archivePath) return json({ ok: false, error: "A path ticket is required (/t/<ticket>/archive-extract)" }, 400);
         const innerPath = u.searchParams.get("innerPath") || "";
         const target = await resolveAllowedWrite(archivePath);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
-        if (!innerPath) return json({ ok: false, error: "需要 innerPath" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
+        if (!innerPath) return json({ ok: false, error: "innerPath is required" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是压缩文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not an archive" }, 400);
           const ext = extname(archivePath).toLowerCase().replace(/^\./, "");
           const name = basename(archivePath).toLowerCase();
           const extractBase = join(ensureCacheDir(), "archive-extract", createHash("md5").update(archivePath + "::" + innerPath).digest("hex"));
@@ -2189,7 +2282,7 @@ export default {
                     zipfile.readEntry();
                   }
                 });
-                zipfile.on("end", () => reject(new Error("未找到文件: " + innerPath)));
+                zipfile.on("end", () => reject(new Error("File not found: " + innerPath)));
                 zipfile.on("error", reject);
                 zipfile.readEntry();
               });
@@ -2216,26 +2309,26 @@ export default {
                   stream.on("end", next);
                 }
               });
-              extract.on("finish", () => reject(new Error("未找到文件: " + innerPath)));
+              extract.on("finish", () => reject(new Error("File not found: " + innerPath)));
               extract.on("error", reject);
             });
           } else {
             // 7z/rar 等：用 7z 提取
             const seven = await resolve7zBin();
-            if (!seven) return json({ ok: false, error: "此格式需要 7-Zip 才能提取文件" }, 422);
+            if (!seven) return json({ ok: false, error: "This format requires 7-Zip to extract files" }, 422);
             // 异步化（2026-09-12）：30s 同步 7z 提取曾冻结主线程
             const r = await runProcAsync(seven, ["x", target, "-o" + extractBase, innerPath, "-y"], { timeoutMs: 30000 });
-            if (r.code !== 0) throw new Error(r.error || "7z 提取失败");
+            if (r.code !== 0) throw new Error(r.error || "7z extraction failed");
             if (!existsSync(outFile)) {
               // 7z 提取可能创建了子目录，递归查找
               const found = findFileRecursive(extractBase, basename(innerPath));
-              if (!found) throw new Error("提取后未找到文件");
+              if (!found) throw new Error("Extracted file not found");
               return json({ ok: true, extractPath: found });
             }
           }
           return json({ ok: true, extractPath: outFile });
         } catch (e: any) {
-          return json({ ok: false, error: "提取失败: " + String(e?.message || e) }, 500);
+          return json({ ok: false, error: "Extraction failed: " + String(e?.message || e) }, 500);
         }
       }
       // GET /archive?filePath= → 压缩文件内容列表（纯 JS 优先，零系统依赖；专有格式可选 7-Zip 增强）
@@ -2244,12 +2337,12 @@ export default {
       if (p[p.length - 1] === "archive" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           const maxSize = 200 * 1024 * 1024; // 200MB 限制
-          if (st.size > maxSize) return json({ ok: false, error: "压缩文件超过 200MB" }, 413);
+          if (st.size > maxSize) return json({ ok: false, error: "Archive exceeds 200MB" }, 413);
           const ext = extname(fp).toLowerCase().replace(/^\./, "");
           const name = basename(fp).toLowerCase();
           const files: Array<{ name: string; size: number; date: string; compressedSize?: number }> = [];
@@ -2291,12 +2384,12 @@ export default {
             });
           } else if (ext === "gz" && !name.endsWith(".tar.gz")) {
             // 单文件 gzip：条目 = 去掉 .gz 的文件名
-            files.push({ name: name.replace(/\.gz$/i, ""), size: 0, date: "（gzip 单文件压缩）" });
+            files.push({ name: name.replace(/\.gz$/i, ""), size: 0, date: "(single-file gzip)" });
           } else {
             // 专有/磁盘格式（7z/rar/xz/bz2/zst/cab/iso/wim/dmg）：系统 7-Zip 优先，未装则按需下载 portable 7za
             const seven = await resolve7zBin();
             if (!seven) {
-              return json({ ok: false, requires7z: true, error: "此格式需要 7-Zip：系统未找到 7z，且自动下载 portable 7za 失败（常见格式 zip/tar/gz 无需任何安装）" }, 422);
+              return json({ ok: false, requires7z: true, error: "This format requires 7-Zip: no system 7z was found and the portable 7za download failed (zip/tar/gz need no installation)" }, 422);
             }
             await new Promise<void>((resolve, reject) => {
               const { spawn } = require("node:child_process");
@@ -2306,7 +2399,7 @@ export default {
               proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
               proc.stderr.on("data", (d: Buffer) => { err += d.toString(); });
               proc.on("close", (code: number | null) => {
-                if (code !== 0) return reject(new Error((err || out).slice(0, 300) || "7z 退出码 " + code));
+                if (code !== 0) return reject(new Error((err || out).slice(0, 300) || "7z exit code " + code));
                 // -slt 输出：Path = ... / Size = ... / Modified = ... / Attributes = ...
                 let cur: Record<string, string> = {};
                 for (const line of out.split("\n")) {
@@ -2328,7 +2421,7 @@ export default {
           }
           return json({ ok: true, files, format: ext, totalSize: st.size });
         } catch (e: any) {
-          return json({ ok: false, error: "读取压缩文件失败: " + String(e?.message || e) }, 500);
+          return json({ ok: false, error: "Failed to read archive: " + String(e?.message || e) }, 500);
         }
       }
       // GET /file?filePath= → 直接读原始字节流返回（正确 Content-Type，浏览器原生渲染）
@@ -2343,9 +2436,9 @@ export default {
       if (p[p.length - 1] === "doc-pdf" && req.method === "GET") {
         const fp = tFp;
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         const ext = extname(fp).toLowerCase().replace(/^\./, "");
-        if (!DOC_PDF_EXTS.has(ext)) return json({ ok: false, error: "仅支持 " + [...DOC_PDF_EXTS].join("/") + "（docx 走 mammoth 预览）" }, 400);
+        if (!DOC_PDF_EXTS.has(ext)) return json({ ok: false, error: "Only supports " + [...DOC_PDF_EXTS].join("/") + " (docx uses mammoth preview)" }, 400);
         const r = await docToPdf(target);
         if (!r.ok) return json({ ok: false, code: (r as any).code, error: r.error }, (r as any).code === "soffice-missing" ? 503 : 500);
         const buf = readFileSync(r.pdfPath);
@@ -2357,10 +2450,10 @@ export default {
       if (p[p.length - 1] === "file" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           const ext = extname(fp).toLowerCase().replace(/^\./, "");
           // 查注册 provider：有自定义 serveFile 则委派
           const provider = findProvider(ext, fp);
@@ -2370,7 +2463,7 @@ export default {
           // 默认：直接返回原始字节 + 正确 Content-Type（带 Range 分片流式）
           return serveFileDefault(target, ext, req);
         } catch (e) {
-          return json({ ok: false, error: "读取失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Read failed: " + String(e && e.message || e) }, 500);
         }
       }
       // POST /watch-stop {watchId} → 停止对应 fs.watch（客户端暂停/关标签时调；30min 无事件亦自动停）
@@ -2385,10 +2478,10 @@ export default {
         const fp = tFp; // 路径来自票据（不进 URL）
         const forced = u.searchParams.get("encoding") || "";
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           // Size hard gate: the client decides before requesting, this protects old clients
           // and third-party callers from loading the whole file on the host main thread.
           // force=1 is the explicit "I know the risk" path (only when enabled in settings).
@@ -2397,11 +2490,11 @@ export default {
           const force = u.searchParams.get("force") === "1";
           const ceiling = force && lim.allowForceOpen ? lb.forceMaxBytes : lb.monacoBytes;
           if (force && !lim.allowForceOpen) {
-            return json({ ok: false, code: "FORCE_DISABLED", error: "设置中已禁用强制打开" }, 403);
+            return json({ ok: false, code: "FORCE_DISABLED", error: "Force-open is disabled in settings" }, 403);
           }
           if (st.size > ceiling) {
             return json({ ok: false, code: "TOO_LARGE", size: st.size,
-              error: `文件超过 ${Math.round(ceiling / 1048576)}MB，已切换为大文件模式` }, 413);
+              error: `File exceeds ${Math.round(ceiling / 1048576)}MB; switched to large-file mode` }, 413);
           }
           const buf = await readFileAsync(target); // async: no event-loop freeze on multi-MB reads
           let enc: { encoding: string; hasBOM: boolean } = detectEncoding(buf);
@@ -2409,17 +2502,17 @@ export default {
           const content = decodeText(buf, enc.encoding, enc.hasBOM);
           return json({ ok: true, content, encoding: enc.encoding, hasBOM: enc.hasBOM, size: buf.length });
         } catch (e) {
-          return json({ ok: false, error: "读取失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Read failed: " + String(e && e.message || e) }, 500);
         }
       }
       // GET /t/<ticket>/text-window?offset=&maxBytes=&maxLines=&encoding= → chunked read-only window
       //   Data plane for the large-file viewer: one line-aligned window per request (≤ TEXT_WINDOW_CHUNK_BYTES).
       if (p[p.length - 1] === "text-window" && req.method === "GET") {
         const target = await resolveAllowedWrite(tFp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           const num = (v: string | null, def: number) => { const n = parseInt(v || "", 10); return Number.isFinite(n) ? n : def; };
           const offset = Math.max(0, num(u.searchParams.get("offset"), 0));
           const maxBytes = Math.min(Math.max(1, num(u.searchParams.get("maxBytes"), TEXT_WINDOW_CHUNK_BYTES)), TEXT_WINDOW_CHUNK_BYTES);
@@ -2427,16 +2520,16 @@ export default {
           const w = await readTextWindow(target, offset, maxBytes, maxLines, u.searchParams.get("encoding") || "utf-8");
           return json({ ok: true, ...w });
         } catch (e) {
-          return json({ ok: false, error: "读取失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Read failed: " + String(e && e.message || e) }, 500);
         }
       }
       // GET /t/<ticket>/line-count → line count (chunked async scan, yields between chunks)
       if (p[p.length - 1] === "line-count" && req.method === "GET") {
         const target = await resolveAllowedWrite(tFp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         try {
           const st = statSync(target);
-          if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
+          if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
           const key = target + ":" + Math.round(st.mtimeMs) + ":" + st.size;
           const hit = lineCountCache.get(key);
           if (hit) return json({ ok: true, lines: hit.lines, partial: hit.partial, totalSize: st.size, cached: true });
@@ -2445,7 +2538,7 @@ export default {
           if (lineCountCache.size > 8) lineCountCache.delete(lineCountCache.keys().next().value as string);
           return json({ ok: true, lines: r.lines, partial: r.partial, totalSize: st.size });
         } catch (e) {
-          return json({ ok: false, error: "统计失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Counting failed: " + String(e && e.message || e) }, 500);
         }
       }
       // GET /ts-siblings?filePath= → 同目录 TS/JS 家族兄弟文件内容（Monaco TS worker 相对导入解析用：
@@ -2454,12 +2547,12 @@ export default {
       if (p[p.length - 1] === "ts-siblings" && req.method === "GET") {
         const fp = tFp; // 路径来自票据（不进 URL）
         const target = await resolveAllowedWrite(fp);
-        if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);
+        if (!target) return json({ ok: false, error: "Path is not in the allowlist" }, 400);
         const dir = dirname(target);
         const baseName = basename(target);
         // ETag 校验：兄弟文件未变 → 304（客户端保留已有 extraLib，磁盘不重读、内容不重发）
         const sig = siblingSignature(dir, baseName);
-        if (sig === null) return json({ ok: false, error: "读取目录失败" }, 500);
+        if (sig === null) return json({ ok: false, error: "Failed to read directory" }, 500);
         const inm = req.headers.get("if-none-match");
         if (inm && inm.trim() === sig) {
           return new Response(null, { status: 304, headers: { "etag": sig } });
@@ -2498,7 +2591,7 @@ export default {
             headers: { "content-type": "application/json", "cache-control": "no-cache", "etag": sig },
           });
         } catch (e) {
-          return json({ ok: false, error: "读取目录失败: " + String(e && e.message || e) }, 500);
+          return json({ ok: false, error: "Failed to read directory: " + String(e && e.message || e) }, 500);
         }
       }
       // POST /save { filePath, cwd, content, baseMtimeMs, encoding?, hasBOM? }

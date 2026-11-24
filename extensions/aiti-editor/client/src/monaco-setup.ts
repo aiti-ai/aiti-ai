@@ -485,7 +485,7 @@ export function setupCsvDecorations(monaco: any, editor: any): (() => void) | un
         if (colCounts[i] !== expected && colCounts[i] > 0) {
           markers.push({
             severity: monaco.MarkerSeverity.Warning,
-            message: '列数不一致：第 ' + (i + 1) + ' 行有 ' + colCounts[i] + ' 列，期望 ' + expected + ' 列',
+            message: t("列数不一致：第 {row} 行有 {got} 列，期望 {want} 列", { row: i + 1, got: colCounts[i], want: expected }),
             startLineNumber: i + 1, startColumn: 1, endLineNumber: i + 1, endColumn: lines[i].length + 1,
           });
         }
@@ -525,7 +525,7 @@ export function setupModelDiagnostics(monaco: any, editor: any): (() => void) | 
       try {
         (window as any).jsyaml.load(text, { schema: (window as any).jsyaml.DEFAULT_SCHEMA });
       } catch (e: any) {
-        const msg = (e && e.message) || 'YAML 语法错误';
+        const msg = (e && e.message) || t('YAML 语法错误');
         const lineMatch = msg.match(/line (\d+)/i);
         const line = lineMatch ? parseInt(lineMatch[1]) : 1;
         markers.push({

@@ -98,27 +98,27 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
     try {
       body = await req.json();
     } catch {
-      return json({ ok: false, error: "body 需为 JSON" }, 400);
+      return json({ ok: false, error: "body must be JSON" }, 400);
     }
     const filePath = typeof body.filePath === "string" ? body.filePath : "";
     const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
-    if (!filePath) return json({ ok: false, error: "需要 filePath" }, 400);
+    if (!filePath) return json({ ok: false, error: "filePath is required" }, 400);
 
     const ext = (filePath.match(/\.([a-z0-9]+)$/i)?.[1] || "").toLowerCase();
     const conv = opts.conversions[ext];
     if (!conv) {
-      return json({ ok: false, error: "源扩展不支持（支持: " + Object.keys(opts.conversions).map((k) => "." + k).join(" ") + "）" }, 400);
+      return json({ ok: false, error: "Unsupported source extension (supported: " + Object.keys(opts.conversions).map((k) => "." + k).join(" ") + ")" }, 400);
     }
     const target = resolveAllowedWriteRoot(filePath, cwd);
-    if (!target) return json({ ok: false, error: "路径不在可写白名单内" }, 400);
+    if (!target) return json({ ok: false, error: "Path is not in the writable allowlist" }, 400);
     let st;
     try {
       st = statSync(target);
     } catch {
-      return json({ ok: false, error: "源文件不存在" }, 400);
+      return json({ ok: false, error: "Source file does not exist" }, 400);
     }
-    if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
-    if (st.size > maxBytes) return json({ ok: false, error: "文件超过 " + Math.round(maxBytes / 1024 / 1024) + "MB 上限" }, 413);
+    if (!st.isFile()) return json({ ok: false, error: "Target is not a file" }, 400);
+    if (st.size > maxBytes) return json({ ok: false, error: "File exceeds the " + Math.round(maxBytes / 1024 / 1024) + "MB limit" }, 413);
 
     // 候选名（转换前定一次；rename 前再校验一次防并发竞争）
     const dir = dirname(target);
@@ -130,10 +130,10 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
       return json({
         ok: false,
         code: "soffice-missing",
-        error: "未找到 LibreOffice (soffice)：老格式转换需要它。可安装 LibreOffice，或在 aiti-editor 功能配置 soffice.path",
+        error: "LibreOffice (soffice) not found: legacy conversion requires it. Install LibreOffice or set soffice.path in the aiti-editor features",
       }, 503);
     }
-    if (mutex()) return json({ ok: false, error: "上一个转换还在进行，请稍后重试" }, 409);
+    if (mutex()) return json({ ok: false, error: "A previous conversion is still running; try again later" }, 409);
     const g = globalThis as any;
     g.__aitiConvertBusy = 1;
     const tmpOut = join(dir, "." + opts.extId + "-conv-" + process.pid + "-" + Date.now());
@@ -144,7 +144,7 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
       const producedName = sourceName.replace(/\.[^.]+$/, "") + "." + conv.toExt;
       const produced = join(tmpOut, producedName);
       const ps = statSync(produced); // 不存在会 throw → 落入 catch
-      if (ps.size === 0) throw new Error("转换产物为空");
+      if (ps.size === 0) throw new Error("Conversion output is empty");
       // rename 前最终防覆盖（转换期间目标可能被并发创建）
       finalPath = nextSaveAsPath(dir, sourceName, ext, conv.toExt, (p) => { try { statSync(p); return true; } catch { return false; } });
       renameSync(produced, finalPath);
@@ -154,10 +154,10 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
     } catch (e) {
       const msg = String((e as Error).message || e);
       if (msg.includes("ENOENT") && msg.includes(producedNameHint(sourceName, conv.toExt))) {
-        return json({ ok: false, error: "soffice 未产出转换结果（源文件可能损坏或格式不支持）" }, 500);
+        return json({ ok: false, error: "soffice produced no output (the source may be corrupt or the format unsupported)" }, 500);
       }
-      log("转换失败: " + msg.slice(0, 200));
-      return json({ ok: false, error: "转换失败: " + msg.slice(0, 200) }, 500);
+      log("Conversion failed: " + msg.slice(0, 200));
+      return json({ ok: false, error: "Conversion failed: " + msg.slice(0, 200) }, 500);
     } finally {
       try { require("node:fs").rmSync(tmpOut, { recursive: true, force: true }); } catch { /* 忽略 */ }
       g.__aitiConvertBusy = 0;

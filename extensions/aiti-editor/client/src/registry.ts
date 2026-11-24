@@ -304,7 +304,7 @@ const loadDmp = (): Promise<any> => {
        */
       registerMdRenderer(reg: any) {
         if (!reg || !isFenceLang(reg.lang) || typeof reg.render !== "function") {
-          console.warn("[aiti-editor] registerMdRenderer 已忽略（lang 须 [\\w-]+ 且 render 为函数）:", reg && reg.id);
+          console.warn("[aiti-editor] registerMdRenderer ignored (lang must match [\\w-]+ and render must be a function):", reg && reg.id);
           return () => {};
         }
         const at = reg.id ? mdRenderers.findIndex((r: any) => r && r.id === reg.id) : -1;
@@ -388,7 +388,7 @@ const loadDmp = (): Promise<any> => {
         // 仅真正关闭（丢弃）时需要确认
         if (dirtyMap[String(p)] && !isSwitch) blockers.push({
           id: "unsaved",
-          title: "文件有未保存的修改",
+          title: t("文件有未保存的修改"),
           actions: ["save", "discard"], // 保存并关闭 / 不保存关闭 / 取消（cancel 总是有）
           onSave: () => { _cacheDrop(String(p)); },   // 保存并关闭：已持久化，丢弃缓存
           onDiscard: () => { _cacheDrop(String(p)); }, // 不保存关闭：丢弃缓存
@@ -537,21 +537,21 @@ const loadDmp = (): Promise<any> => {
     priority: "default",
     supportsEdit: true,
     about: {
-      summary: "Monaco 在线文本/代码编辑器（含 Markdown 双模式）",
+      summary: t("Monaco 在线文本/代码编辑器（含 Markdown 双模式）"),
       capabilities: [
-        "语法高亮与补全（40+ 语言，TS/JS 智能提示、JSON 大纲、CSV 彩虹列）",
-        "Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）",
-        "HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）",
-        "多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）",
-        "保存冲突检测（外部修改 → 409 → 合并或覆盖）",
-        "git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）",
-        "未保存内容自动缓存（停手 2s + 页面关闭兜底，刷新后恢复）",
-        "AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历",
-        "YAML / TOML / SQL 一键格式化",
+        t("语法高亮与补全（40+ 语言，TS/JS 智能提示、JSON 大纲、CSV 彩虹列）"),
+        t("Markdown 编辑 / 分栏 / 预览（GFM、TOC、滚动同步、变更块定位、导出 HTML/PDF）"),
+        t("HTML 编辑 / 分栏 / 预览（快速态看缓冲、真预览态走目录级预览路由；视口预设、报错回传、相对链接改道 dock）"),
+        t("多编码打开与保存（UTF-8 / UTF-16 / GBK / Latin-1，含 BOM）"),
+        t("保存冲突检测（外部修改 → 409 → 合并或覆盖）"),
+        t("git 变更视图（工作区 vs HEAD：行级标注 / 左右 / 合并 / 大纲）"),
+        t("未保存内容自动缓存（停手 2s + 页面关闭兜底，刷新后恢复）"),
+        t("AI 选区（问 AI / 解释 / 重构 / 新会话）、@ 提及、同目录 ‹› 遍历"),
+        t("YAML / TOML / SQL 一键格式化"),
       ],
       limits: [
-        "单文件超过 1MB 只读",
-        "二进制文件不接管（交给对应查看器 / 编辑器扩展）",
+        t("单文件超过 1MB 只读"),
+        t("二进制文件不接管（交给对应查看器 / 编辑器扩展）"),
       ],
       vendor: "Monaco Editor (MIT)",
     },
@@ -640,10 +640,10 @@ const loadDmp = (): Promise<any> => {
       priority: "default",
       supportsEdit: false,
       about: {
-        summary: "原生图片查看器",
-        capabilities: ["缩放 / 平移 / 100% 复位", "EXIF 信息读取"],
-        limits: ["仅浏览器可解码的格式", "只读"],
-        vendor: "浏览器原生 <img>",
+        summary: t("原生图片查看器"),
+        capabilities: [t("缩放 / 平移 / 100% 复位"), t("EXIF 信息读取")],
+        limits: [t("仅浏览器可解码的格式"), t("只读")],
+        vendor: "Browser-native <img>",
       },
     },
     {
@@ -653,10 +653,10 @@ const loadDmp = (): Promise<any> => {
       priority: "default",
       supportsEdit: false,
       about: {
-        summary: "原生视频播放器",
-        capabilities: ["Range 流式播放（拖进度条不整载）", "时长显示", "文件变化实时跟随（watch）"],
-        limits: ["取决于浏览器解码器（mp4/webm/ogg 系友好；部分 .avi/.mkv 可能无法解码）", "只读"],
-        vendor: "浏览器原生 <video>",
+        summary: t("原生视频播放器"),
+        capabilities: [t("Range 流式播放（拖进度条不整载）"), t("时长显示"), t("文件变化实时跟随（watch）")],
+        limits: [t("取决于浏览器解码器（mp4/webm/ogg 系友好；部分 .avi/.mkv 可能无法解码）"), t("只读")],
+        vendor: "Browser-native <video>",
       },
     },
     {
@@ -666,10 +666,10 @@ const loadDmp = (): Promise<any> => {
       priority: "default",
       supportsEdit: false,
       about: {
-        summary: "原生音频播放器",
-        capabilities: ["流式播放", "时长显示", "文件变化实时跟随（watch）"],
-        limits: ["取决于浏览器解码器（.mid 多数浏览器不可播）", "只读"],
-        vendor: "浏览器原生 <audio>",
+        summary: t("原生音频播放器"),
+        capabilities: [t("流式播放"), t("时长显示"), t("文件变化实时跟随（watch）")],
+        limits: [t("取决于浏览器解码器（.mid 多数浏览器不可播）"), t("只读")],
+        vendor: "Browser-native <audio>",
       },
     },
     {
@@ -679,10 +679,10 @@ const loadDmp = (): Promise<any> => {
       priority: "default",
       supportsEdit: false,
       about: {
-        summary: "PDF 只读预览",
-        capabilities: ["浏览器内置 PDF 引擎渲染"],
-        limits: ["只读（编辑 / 批注请用专业 PDF 工具）"],
-        vendor: "浏览器原生 <iframe>",
+        summary: t("PDF 只读预览"),
+        capabilities: [t("浏览器内置 PDF 引擎渲染")],
+        limits: [t("只读（编辑 / 批注请用专业 PDF 工具）")],
+        vendor: "Browser-native <iframe>",
       },
     },
     {
@@ -692,9 +692,9 @@ const loadDmp = (): Promise<any> => {
       priority: "default",
       supportsEdit: false,
       about: {
-        summary: "压缩包浏览（纯 JS 优先 + 7-Zip 兜底）",
-        capabilities: ["zip/tar/7z/rar/cab/iso 等列出清单", "压缩包内文件点击提取并打开", "7za 缺失时自动下载 portable 版（客户机零安装）"],
-        limits: ["加密 / 带密码压缩包不支持", "只读（解包请用命令行）"],
+        summary: t("压缩包浏览（纯 JS 优先 + 7-Zip 兜底）"),
+        capabilities: [t("zip/tar/7z/rar/cab/iso 等列出清单"), t("压缩包内文件点击提取并打开"), t("7za 缺失时自动下载 portable 版（客户机零安装）")],
+        limits: [t("加密 / 带密码压缩包不支持"), t("只读（解包请用命令行）")],
         vendor: "yauzl / tar-stream / 7-Zip (LGPL)",
       },
     },
@@ -706,19 +706,19 @@ const loadDmp = (): Promise<any> => {
   // ── 内建：老格式（.doc/.ppt/odt/odp）→ soffice 转 PDF 只读预览（方案矩阵：读 ✅ 写 ❌，编辑引导 docx 化）──
   w2.__aitiEditor.registerEditorProvider({
     id: "aiti-editor.doc-pdf",
-    displayName: "旧格式转 PDF 预览",
+    displayName: t("旧格式转 PDF 预览"),
     sourceExt: "aiti-editor",
     selector: { extensions: [".doc", ".ppt", ".pptx", ".odt", ".odp"] },
     priority: "default",
     capabilities: ["preview"],
     supportsEdit: false,
     about: {
-      summary: "老格式（.doc / .ppt / .pptx / .odt / .odp）经 soffice 转 PDF 只读预览",
-      capabilities: ["PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）", "转换结果按 mtime 键控缓存——二次打开秒开", "单文件上限 50MB"],
+      summary: t("老格式（.doc / .ppt / .pptx / .odt / .odp）经 soffice 转 PDF 只读预览"),
+      capabilities: [t("PDF 只读预览（浏览器原生渲染，可缩放 / 打印 / 下载）"), t("转换结果按 mtime 键控缓存——二次打开秒开"), t("单文件上限 50MB")],
       limits: [
-        "只读：编辑请先另存 / 转换为 .docx（Word）",
-        "首次打开需数秒（soffice 无头转换）；排版保真取决于 LibreOffice 对原格式的还原度",
-        "并发转换时会提示稍后重试",
+        t("只读：编辑请先另存 / 转换为 .docx（Word）"),
+        t("首次打开需数秒（soffice 无头转换）；排版保真取决于 LibreOffice 对原格式的还原度"),
+        t("并发转换时会提示稍后重试"),
       ],
       vendor: "LibreOffice headless (MPL-2.0)",
     },
@@ -817,7 +817,9 @@ const loadDmp = (): Promise<any> => {
 
   // ── 内置注册：md 围栏渲染器（md-plugins M0）——mermaid 降级为第一个经点注册的消费者（dogfood）。
   //    必须早于晚到队列 flush：内置恒 priority:"default" 且占首位 ⇒ 同优先级平局内置赢。 ──
-  w2.__aitiEditor.registerMdRenderer(mermaidRenderer);
+  // Translate at registration time: module top-level runs before __setCtx, so t() there would
+  // freeze the key. displayName is the only user-visible string in this registration.
+  w2.__aitiEditor.registerMdRenderer({ ...mermaidRenderer, displayName: t(mermaidRenderer.displayName || "") });
 
   // ── 晚到 provider 缓冲重放（§1.5）：aiti-editor 晚于实现扩展加载时，实现扩展把
   //    注册函数推进 __aitiEditorQueue；这里注册表就绪后排空队列，再广播 registry-ready。
@@ -827,7 +829,7 @@ const loadDmp = (): Promise<any> => {
     (w2 as any).__aitiEditorQueue = [];
     for (const fn of lateQueue) {
       if (typeof fn !== "function") continue;
-      try { fn(); } catch (e) { console.error("[aiti-editor] 队列注册失败:", e); }
+      try { fn(); } catch (e) { console.error("[aiti-editor] queue registration failed:", e); }
     }
   }
   try { window.dispatchEvent(new CustomEvent("aiti-editor:registry-ready")); } catch { /* 忽略 */ }

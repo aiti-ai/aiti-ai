@@ -109,7 +109,7 @@ test("resolvePreviewTarget：非法百分号编码不炸路由（400 而非 thro
   const r = resolvePreviewTarget(ENTRY, "css/%zz%zz.css", probe({}));
   assert.equal(r.ok, false);
   assert.equal(r.status, 400);
-  assert.match(r.error, /解码/);
+  assert.match(r.error, /Failed to decode path/);
   assert.throws(() => decodeURIComponent("%zz")); // 前提：确实会让裸解码抛
 });
 
@@ -186,7 +186,7 @@ test("resolvePreviewTarget：越界之外的第二道闸——.env/.pem/.git 读
     const r = resolvePreviewTarget(ENTRY, rel, p);
     assert.equal(r.ok, false, rel);
     assert.equal(r.status, 403, rel + " 应白名单 403");
-    assert.match(r.error, /预览不接受/);
+    assert.match(r.error, /Preview does not accept/);
   }
 });
 
@@ -209,7 +209,7 @@ test("resolvePreviewTarget：软链指向目录外 → 403；指向目录内 →
   const r1 = resolvePreviewTarget(ENTRY, "out.css", escape);
   assert.equal(r1.ok, false);
   assert.equal(r1.status, 403);
-  assert.match(r1.error, /软链/);
+  assert.match(r1.error, /Symlink points outside/);
 
   const vendor = IN("vendor", "lib.css");
   const libReal = IN("libs", "lib.css");
@@ -430,13 +430,13 @@ test("shim：JS 异常回传（消息 + 文件:行:列）", () => {
 test("shim：子资源加载失败回传（capture 阶段才收得到 img/link 的 error）", () => {
   const h = runShim({ base: PREVIEW_BASE, docRel: "" });
   h.fire("window", "error", { target: { tagName: "IMG", src: PREVIEW_BASE + "img/miss.png" } });
-  assert.match(h.of(PREVIEW_MSG.report)[0].text, /^资源加载失败 <img> miss\.png$/);
+  assert.match(h.of(PREVIEW_MSG.report)[0].text, /^Resource failed to load <img> miss\.png$/);
 });
 
 test("shim：unhandledrejection 回传（对象 reason 走 safe 序列化，不出现 [object Object]）", () => {
   const h = runShim({ base: PREVIEW_BASE, docRel: "" });
   h.fire("window", "unhandledrejection", { reason: { code: "boom" } });
-  assert.match(h.of(PREVIEW_MSG.report)[0].text, /Promise 未捕获: \{"code":"boom"\}/);
+  assert.match(h.of(PREVIEW_MSG.report)[0].text, /Uncaught promise: \{"code":"boom"\}/);
 });
 
 test("shim：console.error/warn 转发且原函数照调；console.log 不点徽标", () => {
@@ -517,7 +517,7 @@ test("shim：表单提交被阻止并提示（预览无同源能力）", () => {
   assert.equal(prevented, true);
   const n = h.of(PREVIEW_MSG.report)[0];
   assert.equal(n.kind, "notice");
-  assert.match(n.text, /表单提交已阻止/);
+  assert.match(n.text, /Form submission blocked/);
 });
 
 test("shim：消息上限 60 条（坏页面死循环 console.error 不冲垮父页）", () => {

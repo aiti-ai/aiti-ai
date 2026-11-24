@@ -71,6 +71,17 @@ export function isFilePathAllowed(target: string, allowedRoots: Set<string>): bo
   return isPathWithinRoots(target, allowedRoots);
 }
 
+/**
+ * The host's file-access answer for one path. Sandbox off (the default) allows
+ * everything without building the roots set: scanning every session file for a
+ * set that is never consulted stalled the host for seconds when a file viewer
+ * opened. Sandbox on keeps the full check.
+ */
+export async function isFilePathAllowedNow(target: string): Promise<boolean> {
+  if (!isFileSandboxEnabled()) return true;
+  return isFilePathAllowed(target, await getAllowedFileRoots());
+}
+
 /** Authorize an existing path after resolving symbolic links. */
 export function isExistingFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
   if (!isFileSandboxEnabled()) return true;
