@@ -6046,7 +6046,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     promptAnchorActive,
     showScrollToBottom,
     // Refs
-    sessionIdRef, messagesEndRef, scrollContainerRef, runStartedAtRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef, runStartedAtRef, userScrolledAwayRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
     handleSend, handleAbort, startSideChat, handleFork, handleForkNew, forkIntoCwd, handleNavigate, handleEditFromStartSend, handleModelChange,
