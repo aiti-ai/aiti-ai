@@ -24,6 +24,7 @@ import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } fro
 import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { MessageView, estimateTokens } from "./MessageView.tsx";
 import { UpdateGuideDialog } from "./UpdateGuideDialog.tsx";
+import { getExtClientService } from "./ExtSlots";
 import { SessionRequestCardHost } from "./SessionRequestSlot.tsx";
 import { MarkdownBody } from "./MarkdownBody.tsx";
 import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput.tsx";
@@ -283,7 +284,18 @@ function NewSessionUpdateLink({
       type="button"
       title={t("appUpdate.dialogTitle")}
       aria-label={t("appUpdate.updateButton")}
-      onClick={() => setGuideOpen(true)}
+      onClick={() => {
+        // ui-takeover: when the aiti-updater extension is loaded it owns the
+        // upgrade flow (launch pipeline → standalone assistant window with the
+        // confirm gate); the guide dialog stays as the no-extension fallback —
+        // also on launch failure, so the click never dead-ends silently.
+        const launcher = getExtClientService<() => Promise<unknown>>("aiti-updater.launch");
+        if (launcher) {
+          void Promise.resolve(launcher()).catch(() => setGuideOpen(true));
+          return;
+        }
+        setGuideOpen(true);
+      }}
       onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
       onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
       style={{
