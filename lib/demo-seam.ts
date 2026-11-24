@@ -42,3 +42,17 @@ export function openFullHistory(sessionId: string, url: string): void {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+export type TitleDecorator = (title: string) => string;
+
+let titleDecorator: TitleDecorator | null = null;
+
+/** Install a window-title decorator (null restores the host title verbatim). */
+export function setTitleDecorator(decorator: TitleDecorator | null): void {
+  titleDecorator = decorator;
+}
+
+/** Apply the decorator (identity in production) — used where the title is written. */
+export function decorateTitle(title: string): string {
+  return titleDecorator ? titleDecorator(title) : title;
+}
