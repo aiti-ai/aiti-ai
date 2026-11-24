@@ -1553,7 +1553,7 @@ export function SessionsPanel(props: any) {
             style={{ ...miniBtn, opacity: isBusy(sess.id) ? 0.8 : 0.45, fontSize: 10, flexShrink: 0, color: ensureReadability("#a78bfa") }}
           >{isBusy(sess.id) ? "⟳" : "⚡"}</button>
           <button
-            title={t("sm.import.button")}
+            title={t("sm.extViewHint") ?? "查看外部会话（可在查看器里导入为 pi 会话）"}
             onClick={(e) => {
               e.stopPropagation();
               openExtViewer(sess.id);
@@ -1584,6 +1584,13 @@ export function SessionsPanel(props: any) {
           // 外部源行（zcode/cursor 等只读镜像）：归档管线不收 → 提供视图层「从列表移除」（源数据不动，可恢复）。
           // 带子会话（外部子代理链 parentSessionId）时平铺两项：连同子会话一起移除 vs 仅移除自己
           // （否则只移除主会话，子会话留在列表变孤儿）——与行内 📦（ArchiveMenu）平铺同语义。
+          // Explicit "view" entry: same path as clicking the row / the inline ⬇ button (openExtViewer).
+          // External-source rows used to offer only the view-layer "remove from list" item, so users
+          // could not find the raw-session viewer from the menu at all.
+          items.push({
+            key: "ext-view", icon: <SIc name="eye" size={13} />, label: t("sm.extView") ?? "查看",
+            onClick: () => { collapsePanelIfCovering(); openExtViewer(String(sess.id)); },
+          });
           const extChildIds = collectSubtreeIds(store.sessions, String(sess.id));
           const extHideRun = async (ids: string[]) => {
             if (isBusy(sess.id)) return;
