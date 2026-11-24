@@ -51,6 +51,10 @@ import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockC
 import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
 import { uiConfirm } from "../../../_shared/ui-dialogs";
 export const PANEL_KEY = "aiti-prompts:panel";
+/** Dock-header icon declaration: the extension's own bookmark ribbon (same shape as the
+ *  toolbar button and the float dialog header) in the `{ svg }` markup form, so the dock
+ *  header does not depend on a shared name-table entry. */
+export const PROMPT_DOCK_ICON = { svg: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>' };
 function setState(patch: Record<string, any>) {
   if ("panelOpen" in patch) {
     const { panelOpen, ...rest } = patch;
@@ -790,7 +794,7 @@ function PromptsPanel(props: Record<string, any>) {
     );
   }
   return (
-    <DockBody itemKey={PANEL_KEY} title={t("pp.title")} icon="library" chrome="section" kind="dockable"
+    <DockBody itemKey={PANEL_KEY} title={t("pp.title")} icon={PROMPT_DOCK_ICON} chrome="section" kind="dockable"
       count={ppCount > 0 ? ppCount : undefined}
       zones={[sidebarZoneOf(PANEL_KEY), "right-panel"]} defaultZone={sidebarZoneOf(PANEL_KEY)}
       headerActions={actions}>

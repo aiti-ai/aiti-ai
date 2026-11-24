@@ -11,8 +11,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
-import { PANEL_KEY } from "./prompts-app";
+import { PANEL_KEY, PROMPT_DOCK_ICON } from "./prompts-app";
 import { openFromToolbar, PromptsPanelSlot, PromptsDockLeft, PromptsDockRight, PromptsSaveSlot, PromptsMessageAction, __bindSendChat, __openExternal, setAppCtx } from "./prompts-app";
 import { exportPromptsOnClick, ExportPromptsDialog } from "./export-dialog";
 import { t as t2, apiUrl as tApiUrl } from "./host-shim";
@@ -89,7 +88,7 @@ export default function register(ctx: Record<string, any>) {
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(PANEL_KEY, sidebarZoneOf(PANEL_KEY));
   declareDockZones(PANEL_KEY, [sidebarZoneOf(PANEL_KEY), "right-panel"], sidebarZoneOf(PANEL_KEY));
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "i18n:it.panel.title", icon: dockIconDecl("library") } }]);
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "i18n:it.panel.title", icon: PROMPT_DOCK_ICON } }]);
   ctx.registerItems("sidebarExplorerDock", [{ id: "panel", render: PromptsDockLeft, meta: { title: "i18n:it.panel.title.2", priority: 3 } }]);
   ctx.registerItems("userMessageActions", [{
     id: "aiti-prompts-save-message",
