@@ -861,6 +861,37 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(chatWindowSource, /step-follow is fully owned by smartFollowStep/);
 });
 
+test("idle re-pin never yanks a history reader back to the tail", () => {
+  // Bug report: while the user scrolls up reading history, an idle chat kept
+  // snapping the viewport back to the bottom. Root cause: the messages/agentRunning
+  // useLayoutEffect's idle re-pin branch gated on `completionScrollAllowedRef ||
+  // isNearBottomRef` — completionScrollAllowedRef is never written false, so the
+  // condition was always true, and every idle messages.length change (older-page
+  // prepend during back-reading, background reconcile) or a background run's
+  // agentRunning true→false edge fired scrollToBottom regardless of the walked-away
+  // state. smartFollowStep already respects userScrolledAwayRef; the re-pin paths
+  // must too. History readers stay put; users still at/near the tail keep the
+  // smooth re-pin. Same guard applies to the composing-release catch-up scroll.
+  const scrollEffectSource = source.slice(
+    source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
+    source.indexOf("// Step-follow trigger signals"),
+  );
+  const releaseSource = source.slice(
+    source.indexOf("const release = () => {"),
+    source.indexOf("const arm = (event: Event) => {"),
+  );
+  assert.match(
+    scrollEffectSource,
+    /!agentRunningRef\.current && !userPointerDownRef\.current && !userScrolledAwayRef\.current/,
+  );
+  assert.match(
+    releaseSource,
+    /!userPointerDownRef\.current && !userScrolledAwayRef\.current/,
+  );
+  // The streaming follow path already had the guard — keep it pinned by assertion.
+  assert.match(source, /if \(userScrolledAwayRef\.current\) return;/);
+});
+
 test("applies the running eye-room padding in the same commit as the send jump", () => {
   // Root cause (2026-08-28, surfaced after the upstream merge): bottomEyeRoom used to be
   // passive-effect + state, landing one beat after handleSend's optimistic commit
