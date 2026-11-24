@@ -9,8 +9,8 @@ import { apiUrl } from "@/lib/base-path";
 // React.lazy (P1.1).
 import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
 import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { default as vs } from "react-syntax-highlighter/dist/esm/styles/prism/vs";
+import { default as vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus";
 
 const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite.tsx"));
 import ReactMarkdown, { type Components } from "react-markdown";

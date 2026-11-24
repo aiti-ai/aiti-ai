@@ -1,8 +1,8 @@
 "use client";
 
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { default as vs } from "react-syntax-highlighter/dist/esm/styles/prism/vs";
+import { default as vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
