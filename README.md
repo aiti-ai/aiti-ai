@@ -4,6 +4,8 @@
 
 **AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi) — and the base of the [aiti](https://aiti.pw/) tooling ecosystem: page-injected debugging tools, an MCP bridge for AI agents, and a growing library of bundled extensions.
 
+**Try it without installing anything: [demo.aiti.pw](https://demo.aiti.pw/)** — the real UI and the real extension host, running on recorded mock data (no server, no model calls).
+
 ### Why this fork?
 
 Upstream [pi-web](https://github.com/agegr/pi-web) is an excellent local UI for pi — but building a full
@@ -48,6 +50,8 @@ Beyond the workbench, the [aiti ecosystem](https://aiti.pw/) adds page-injection
 - **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially. Change it under Settings → General → Language.
 
 ## Quick Start
+
+Want to look around first? A static, backend-free copy of this UI is live at **[demo.aiti.pw](https://demo.aiti.pw/)** — same workbench, same extensions, recorded data.
 
 Pi Web requires Node.js 22.19.0 or newer. Check your version with `node --version`, then run:
 
@@ -261,7 +265,7 @@ lib/             Session, agent, model, file, Git, and security logic
 public/          Static assets and PWA files
 bin/             npm CLI entrypoint and launch option parsing
 docs/            Focused user and contributor guides
-demo/            Static browser demo published to GitHub Pages (see demo/README.md)
+demo/            Legacy in-repo demo directory; the live demo is its own repo → https://github.com/aiti-ai/aiti-demos (served at https://demo.aiti.pw)
 ```
 
 See **[ARCHITECTURE.md](https://github.com/aiti-ai/aiti-ai/blob/main/ARCHITECTURE.md)** for the full architecture map — including the bundled extension structure (anatomy, kinds, registration slots, loading & priority, runtime-dependency reconcile) — and [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) for development notes.

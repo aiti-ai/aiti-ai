@@ -170,7 +170,7 @@ lib/             Логика сессий, агента, моделей, фай
 public/          Статические ресурсы и файлы PWA
 bin/             Точка входа npm CLI и разбор параметров запуска
 docs/            Тематические руководства для пользователей и участников
-demo/            Статическое демо для GitHub Pages (см. demo/README.md)
+demo/            Старое демо в репозитории; живое демо — отдельный репозиторий → https://github.com/aiti-ai/aiti-demos (на https://demo.aiti.pw)
 ```
 
 Описание архитектуры и подробная карта файлов приведены в [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md).
