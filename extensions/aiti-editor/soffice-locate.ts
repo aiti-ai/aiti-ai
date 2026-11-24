@@ -24,8 +24,8 @@ export interface SofficeLocateResult {
 export const SOFFICE_INSTALL_HINTS = {
   linux: "sudo apt install libreoffice",
   macos: "brew install --cask libreoffice",
-  windows: "winget install --id TheDocumentFoundation.LibreOffice -e（或 https://www.libreoffice.org/download/download/ ）",
-  feature: "扩展管理器 → aiti-editor → 功能 → soffice 路径",
+  windows: "winget install --id TheDocumentFoundation.LibreOffice -e (or https://www.libreoffice.org/download/download/ )",
+  feature: "Extension manager → aiti-editor → Features → soffice path",
 };
 
 const COMMON_PATHS = [

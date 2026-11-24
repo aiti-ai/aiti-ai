@@ -444,16 +444,16 @@ export function ImageViewer(props: {
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12.5 }}>{name}</div>
           {[
-            ["格式", ext],
-            ["尺寸", dims ? (dims.w + " × " + dims.h + " px") : "—"],
-            ["大小", typeof fileSize === "number" && fileSize > 0 ? formatSize(fileSize) : "—"],
-            ["修改时间", fmtTime(mtimeMs)],
-            ["缩放", pct + "%" + (mode === "fit" ? "（适应窗口）" : "")],
-            ["旋转", rot === 0 ? "—" : (rot + "°")],
-          ].map(([k, v]) => (
+            [t("格式"), ext, false],
+            [t("尺寸"), dims ? (dims.w + " × " + dims.h + " px") : "—", true],
+            [t("大小"), typeof fileSize === "number" && fileSize > 0 ? formatSize(fileSize) : "—", false],
+            [t("修改时间"), fmtTime(mtimeMs), false],
+            [t("缩放"), pct + "%" + (mode === "fit" ? t("（适应窗口）") : ""), true],
+            [t("旋转"), rot === 0 ? "—" : (rot + "°"), true],
+          ].map(([k, v, mono]) => (
             <div key={k as string} style={{ display: "flex", gap: 10 }}>
               <span style={{ flex: "0 0 auto", opacity: 0.6 }}>{k}</span>
-              <span style={{ fontFamily: k === "尺寸" || k === "缩放" || k === "旋转" ? "var(--font-mono, ui-monospace, monospace)" : undefined }}>{v as string}</span>
+              <span style={{ fontFamily: mono ? "var(--font-mono, ui-monospace, monospace)" : undefined }}>{v as string}</span>
             </div>
           ))}
           {/* EXIF 区块：懒解析，点开 ⓘ 才拉取 */}

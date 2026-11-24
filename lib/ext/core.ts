@@ -9,7 +9,7 @@
 import { homedir } from "os";
 import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionContext } from "../session-reader.ts";
 import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } from "../rpc-manager.ts";
-import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "../file-access.ts";
+import { allowFileRoot, isFilePathAllowedNow } from "../file-access.ts";
 import { readModelsConfig, writeModelsConfig } from "../models-config-store.ts";
 import { generateImages as coreGenerateImages, listImageModels as coreListImageModels, registerImageProvider as coreRegisterImageProvider } from "../image-generation.ts";
 import { readLiveHandleSession } from "./core-live-session.ts";
@@ -84,8 +84,7 @@ export function makeExtCore(): ExtCoreApi {
         allowFileRoot(root);
       },
       async isAllowed(p) {
-        const roots = await getAllowedFileRoots();
-        return isFilePathAllowed(p, roots);
+        return isFilePathAllowedNow(p);
       },
     },
   };

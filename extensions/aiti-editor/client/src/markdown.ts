@@ -143,9 +143,19 @@ export function fenceShellCss(dark: boolean): string {
  */
 export function fenceShellScript(dark: boolean, langs: string[]): string {
   const langsJson = JSON.stringify((langs || []).filter(isFenceLang));
+  // Fence-shell copy is baked into the srcdoc: translate it here (the iframe has no ctx.t).
+  const i18nJson = JSON.stringify({
+    src: t("源码"),
+    preview: t("预览"),
+    previewChart: t("预览图表"),
+    viewSource: t("查看源码"),
+    rendering: t("正在渲染"),
+    renderFailed: t("渲染失败"),
+  });
   return `  // ── 围栏渲染器（md-plugins M0）：壳归内置（本段），render 函数在父页 ──
   // 函数不可序列化进 srcdoc；srcdoc 与父页同源（无 sandbox），故经 parent.__aitiEditor 直取直调。
   var MD_DARK = ${dark ? "true" : "false"};
+  var __i18n = ${i18nJson};
   var __mdFence = [];
   (function(){
     var ED = null;
@@ -165,7 +175,7 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
       var head = document.createElement("div"); head.className = "md-fence-head";
       head.innerHTML = '<span class="md-fence-lang">' + lm[1] + '</span>'
         + '<span class="md-fence-actions">'
-        + '<button type="button" class="md-fbtn md-fence-toggle" title="查看源码">源码</button>'
+        + '<button type="button" class="md-fbtn md-fence-toggle" title="' + __i18n.viewSource + '">' + __i18n.src + '</button>'
         + '</span>';
       var body = document.createElement("div"); body.className = "md-fence-body";
       // 预览本体用真 <button>（键盘可达 / hover / focus-visible；渲染器可自行接点击开查看器）
@@ -173,7 +183,7 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
       view.type = "button";
       view.className = "md-fence-view md-fence-loading";
       view.setAttribute("data-md-fence", lm[1]); // 渲染器据此定位自己的块（CSS + 事件委托，先于异步 render 就位）
-      view.setAttribute("aria-label", "正在渲染 " + lm[1] + "…");
+      view.setAttribute("aria-label", __i18n.rendering + " " + lm[1] + "…");
       var err = document.createElement("div"); err.className = "md-fence-error"; err.hidden = true;
       var srcPre = document.createElement("pre"); srcPre.className = "md-fence-src";
       var srcCode = document.createElement("code"); srcCode.textContent = src;
@@ -191,7 +201,7 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
       if (settled) return; settled = true;
       it.view.classList.remove("md-fence-loading");
       it.w.classList.add("is-error");
-      it.err.textContent = msg || (it.lang + " 渲染失败");
+      it.err.textContent = msg || (it.lang + " " + __i18n.renderFailed);
       it.err.hidden = false;
     }
     function ok(){
@@ -216,8 +226,8 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
     if (!fw) return;
     var toSrc = !fw.classList.contains("srcmode");
     fw.classList.toggle("srcmode", toSrc);
-    b.textContent = toSrc ? "预览" : "源码";
-    b.title = toSrc ? "预览图表" : "查看源码";
+    b.textContent = toSrc ? __i18n.preview : __i18n.src;
+    b.title = toSrc ? __i18n.previewChart : __i18n.viewSource;
     b.classList.toggle("is-active", toSrc);
   });
 `;
@@ -251,7 +261,7 @@ export function markdownPreviewHtml(
   }
   let tocHtml = "";
   if (tocItems.length > 0) {
-    tocHtml = "<div class=\"toc\"><div class=\"toc-title\">## Contents</div>";
+    tocHtml = "<div class=\"toc\"><div class=\"toc-title\">" + t("内容目录") + "</div>";
     for (const item of tocItems) {
       const anchor = mdSlug(item.text);
       tocHtml += "<div class=\"toc-item\" style=\"padding-left:" + ((item.level - 1) * 16) + "px\"><a href=\"#" + anchor + "\">" + item.text + "</a></div>";

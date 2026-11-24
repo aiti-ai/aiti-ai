@@ -1821,7 +1821,7 @@ function TextlistFeatureInput({ f, id, busy, onSave }: { f: any; id: string; bus
   };
   const lines = Math.max(4, draft.split("\n").length + 1);
   return (
-    <textarea ref={ref} value={draft} placeholder={f.placeholder || ""} disabled={busy} rows={lines}
+    <textarea ref={ref} value={draft} placeholder={extUi18nExact(id)["feat." + f.id + ".placeholder"] || f.placeholder || ""} disabled={busy} rows={lines}
       onBlur={commit}
       onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
       style={{ width: "100%", marginTop: 2, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", font: "12px/1.6 var(--font-mono), monospace", outline: "none", boxSizing: "border-box", resize: "vertical", whiteSpace: "pre" }} />
@@ -1842,7 +1842,7 @@ function StringFeatureInput({ f, id, busy, onSave }: { f: any; id: string; busy:
     onSave(v);
   };
   return (
-    <input ref={ref} value={draft} placeholder={f.placeholder || ""} disabled={busy}
+    <input ref={ref} value={draft} placeholder={extUi18nExact(id)["feat." + f.id + ".placeholder"] || f.placeholder || ""} disabled={busy}
       onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
       onBlur={commit}
       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } }}

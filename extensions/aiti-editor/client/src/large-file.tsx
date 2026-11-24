@@ -39,6 +39,8 @@ export interface LargeFileInfoProps {
   /** Offer "I know the risk, open anyway" (beyond the Monaco ceiling, within forceMaxMB). */
   canForce: boolean;
   forceMaxMB: number;
+  /** A large /raw read is in flight (the card must show progress, not look dead). */
+  busy?: boolean;
   onOpenViewer: () => void;
   onOpenEditor: () => void;
   onForceOpen: () => void;
@@ -67,11 +69,12 @@ export function LargeFileInfo(props: LargeFileInfoProps): unknown {
           {t("文件较大（{size}），已暂停加载全文，避免页面卡顿。", { size: formatSize(props.size) })}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <button type="button" style={btnPrimary} onClick={props.onOpenViewer}>{t("只显示部分（只读）")}</button>
-          {props.canEdit && <button type="button" style={btn} onClick={props.onOpenEditor}>{t("用编辑器打开（只读）")}</button>}
+          <button type="button" style={btnPrimary} disabled={props.busy} onClick={props.onOpenViewer}>{t("只显示部分（只读）")}</button>
+          {props.canEdit && <button type="button" style={btn} disabled={props.busy} onClick={props.onOpenEditor}>{t("用编辑器打开（只读）")}</button>}
           {!props.canEdit && props.canForce && (
             <button
               type="button"
+              disabled={props.busy}
               style={{ ...btn, borderColor: "var(--warn,#d97706)", color: "var(--warn,#d97706)" }}
               onClick={async () => {
                 const ok = await uiConfirm({
@@ -88,6 +91,12 @@ export function LargeFileInfo(props: LargeFileInfoProps): unknown {
           <button type="button" style={btn} onClick={props.onDownload}>{t("下载")}</button>
           <button type="button" style={btn} onClick={props.onCopyPath}>{t("复制路径")}</button>
         </div>
+        {props.busy && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-dim,#888)" }}>
+            <span style={{ width: 12, height: 12, border: "2px solid var(--border,#ddd)", borderTopColor: "#4f8ef7", borderRadius: "50%", display: "inline-block", animation: "aiti-spin 0.6s linear infinite" }} />
+            {t("正在读取文件…（大文件可能需要数秒，页面暂无响应属正常）")}
+          </div>
+        )}
         <div style={{ marginTop: 12, fontSize: 11.5, color: "var(--text-dim,#888)" }}>
           {t("分块只读查看不会加载全文；@ 引用、文件 chip、下载等能力不受影响。")}
         </div>

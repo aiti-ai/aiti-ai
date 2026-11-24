@@ -92,14 +92,14 @@ const fsProbe: PreviewProbe = {
 
 /** 相对段是否可接受（先于任何文件系统访问的语法级拒绝）。 */
 function badRel(rel: string): string | null {
-  if (!rel) return "缺少资源路径";
-  if (rel.indexOf("\\") >= 0) return "路径不得含反斜杠"; // Windows 分隔符/转义歧义，一律拒
-  if (rel.indexOf("\0") >= 0) return "路径含非法字符";
-  if (isAbsolute(rel) || /^[a-zA-Z]:\//.test(rel)) return "不接受绝对路径";
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rel.split("/")[0] || "")) return "不接受带协议的地址";
+  if (!rel) return "Missing resource path";
+  if (rel.indexOf("\\") >= 0) return "Path must not contain backslashes"; // Windows separators are ambiguous here: always reject
+  if (rel.indexOf("\0") >= 0) return "Path contains invalid characters";
+  if (isAbsolute(rel) || /^[a-zA-Z]:\//.test(rel)) return "Absolute paths are not accepted";
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rel.split("/")[0] || "")) return "Protocol URLs are not accepted";
   for (const seg of rel.split("/")) {
     if (seg === ".") continue;
-    if (seg === "") return "路径含空段";
+    if (seg === "") return "Path contains an empty segment";
   }
   // 不在这里再解码一次：rel 已是解码后的形态，二次解码会把文件名里的字面 `%`（`100%.html`）
   // 判成 "URI malformed" → 这类文件永远取不到。编码合法性由 resolvePreviewTarget 顶部那次解码负责。
@@ -127,30 +127,30 @@ export function resolvePreviewTarget(entryPath: string, rel: string, probe: Prev
   const rootDir = dirname(entryPath);
   let cleaned: string;
   try { cleaned = decodeURIComponent(rel).replace(/^\/+/, ""); }
-  catch { return { ok: false, status: 400, error: "路径解码失败" }; }
+  catch { return { ok: false, status: 400, error: "Failed to decode path" }; }
   const bad = badRel(cleaned);
   if (bad) return { ok: false, status: 400, error: bad };
 
   let target: string;
-  try { target = resolve(rootDir, cleaned); } catch { return { ok: false, status: 400, error: "路径解析失败" }; }
+  try { target = resolve(rootDir, cleaned); } catch { return { ok: false, status: 400, error: "Failed to resolve path" }; }
   const relFromRoot = relative(rootDir, target);
   if (relFromRoot === "" || isAbsolute(relFromRoot) || relFromRoot === ".." || relFromRoot.startsWith(".." + sep)) {
-    return { ok: false, status: 403, error: "越出预览目录（相对路径不得跳出入口文件所在目录）" };
+    return { ok: false, status: 403, error: "Escapes the preview directory (relative paths must stay inside the entry file's directory)" };
   }
 
   const ext = previewExtOf(target);
   if (!PREVIEW_ALLOWED_EXT.has(ext)) {
-    return { ok: false, status: 403, error: "预览不接受 ." + (ext || "?") + " 文件（仅静态资产白名单）" };
+    return { ok: false, status: 403, error: "Preview does not accept ." + (ext || "?") + " files (static-asset allowlist only)" };
   }
-  if (!probe.isFile(target)) return { ok: false, status: 404, error: "资源不存在" };
+  if (!probe.isFile(target)) return { ok: false, status: 404, error: "Resource not found" };
 
   // 软链逃逸：两端都取真实路径再校验一次（`link -> /etc` 这类必须挡住）
   let realRoot: string, realTarget: string;
   try { realRoot = probe.realpath(rootDir); realTarget = probe.realpath(target); }
-  catch { return { ok: false, status: 404, error: "资源不可读" }; }
+  catch { return { ok: false, status: 404, error: "Resource is not readable" }; }
   const realRel = relative(realRoot, realTarget);
   if (realRel === "" || isAbsolute(realRel) || realRel === ".." || realRel.startsWith(".." + sep)) {
-    return { ok: false, status: 403, error: "软链指向预览目录之外" };
+    return { ok: false, status: 403, error: "Symlink points outside the preview directory" };
   }
   return { ok: true, target: realTarget, ext };
 }

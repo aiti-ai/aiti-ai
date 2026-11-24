@@ -69,13 +69,13 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     "  var t=e.target;",
     "  if(t&&t!==window&&t.tagName){",
     "    var u=t.currentSrc||t.src||t.href||'';",
-    "    send('"+PREVIEW_MSG.report+"',{kind:'error',level:'error',text:'资源加载失败 <'+String(t.tagName).toLowerCase()+'> '+short(String(u).split('/').pop())});",
+    "    send('"+PREVIEW_MSG.report+"',{kind:'error',level:'error',text:'Resource failed to load <'+String(t.tagName).toLowerCase()+'> '+short(String(u).split('/').pop())});",
     "    return;",
     "  }",
-    "  jsErr(e&&e.message?e.message:'脚本执行出错',e&&e.filename,e&&e.lineno,e&&e.colno);",
+    "  jsErr(e&&e.message?e.message:'Script error',e&&e.filename,e&&e.lineno,e&&e.colno);",
     "},true);",
     "window.addEventListener('unhandledrejection',function(e){",
-    "  jsErr('Promise 未捕获: '+safe(e&&e.reason));",
+    "  jsErr('Uncaught promise: '+safe(e&&e.reason));",
     "});",
     // 2) console 转发（只报 warn/error——log 不该点亮徽标）
     "(function(){",
@@ -116,7 +116,7 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     // 4) 表单提交钳制
     "document.addEventListener('submit',function(e){",
     "  e.preventDefault();",
-    "  send('"+PREVIEW_MSG.report+"',{kind:'notice',level:'info',text:'预览内表单提交已阻止（预览无同源能力）'});",
+    "  send('"+PREVIEW_MSG.report+"',{kind:'notice',level:'info',text:'Form submission blocked in preview (no same-origin capability)'});",
     "},true);",
     // 4.5) Selection report (cross-origin popover): mouseup + non-collapsed selection → text +
     //      selection rect (this viewport's coords); the parent translates and calls the msg-smart

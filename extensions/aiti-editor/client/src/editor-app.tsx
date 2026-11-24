@@ -217,6 +217,7 @@ export function EditorApp(props: Record<string, any>) {
   const [limits, setLimits] = useState<EditorLimits>(DEFAULT_LIMITS);
   const limitB = useMemo(() => limitBytes(limits), [limits]);
   const [lineCount, setLineCount] = useState<number | null>(null);
+  const [openingEditor, setOpeningEditor] = useState(false);
   const [infoTick, setInfoTick] = useState(0);
   useEffect(() => { setViewerOpen(false); setLineCount(null); setOpenMode("edit"); }, [filePath]);
   const [openEncoding, setOpenEncoding] = useState("auto"); // 以指定编码重新打开
@@ -1802,6 +1803,7 @@ useEffect(() => {
     if (!st) return;
     const u = new URLSearchParams({ encoding: openEncoding });
     if (force) u.set("force", "1");
+    setOpeningEditor(true);
     api("/raw?filePath=" + encodeURIComponent(filePath) + "&" + u.toString())
       .then((r) => r.json())
       .then((d) => {
@@ -1817,7 +1819,8 @@ useEffect(() => {
         (window as any).__aitiEditor._setDirty(filePath, false);
         if (force) setNotice({ kind: "warn", text: t("已按你的选择强制打开（大文件，可能较卡）") });
       })
-      .catch((e) => setNotice({ kind: "warn", text: String(e) }));
+      .catch((e) => setNotice({ kind: "warn", text: String(e) }))
+      .finally(() => setOpeningEditor(false));
   }, [statInfo, filePath, openEncoding, language]);
   const cardSize = (statInfo && statInfo.size) || (meta && meta.size) || 0;
 
@@ -2068,7 +2071,7 @@ useEffect(() => {
       .then((m) => { setFileInfo(m && m.ok ? { size: m.size, mtimeMs: m.mtimeMs } : { size: meta ? meta.size : 0, mtimeMs: 0 }); })
       .catch(() => setFileInfo({ size: meta ? meta.size : 0, mtimeMs: 0 }));
   };
-  const binaryTypeLabel = (({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || "文件");
+  const binaryTypeLabel = (({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || t("文件"));
   const fmtTime = (ms: any) => { try { return ms ? new Date(ms).toLocaleString() : "—"; } catch { return "—"; } };
   const infoRow = (k: string, v: any, mono?: boolean) => (
     <div key={k} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
@@ -2353,7 +2356,7 @@ useEffect(() => {
   if (isBinaryView) {
     const fileUrl = pathTicket ? editorBase() + "/t/" + pathTicket + "/file" : "";
     const mediaSrc = fileUrl && mediaBust > 0 ? fileUrl + "&v=" + mediaBust : fileUrl;
-    const typeLabel = ({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || "文件";
+    const typeLabel = ({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || t("文件");
     let body: any;
     if (fileType === "archive") {
       body = archiveErr
@@ -2516,7 +2519,7 @@ useEffect(() => {
       {status.phase === "error" && (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
           <div>
-            {"aiti-editor \u63A5\u7BA1\u5931\u8D25"}<br />{String(status.error)}
+            {t("aiti-editor 接管失败")}<br />{String(status.error)}
             <div style={{ marginTop: 10 }}>
               <button type="button" onClick={loadContent} style={T.btn}>{t("重试")}</button>
             </div>
@@ -2542,6 +2545,7 @@ useEffect(() => {
             canEdit={canOpenInEditorWith(limits, cardSize)}
             canForce={canForceOpenWith(limits, cardSize)}
             forceMaxMB={limits.forceMaxMB}
+            busy={openingEditor}
             onOpenViewer={() => setViewerOpen(true)}
             onOpenEditor={() => openInEditorNow(false)}
             onForceOpen={() => openInEditorNow(true)}
@@ -2809,11 +2813,11 @@ useEffect(() => {
               background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)",
               borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 11 }}>
               <button title={t("插入 @文件#行 引用到当前会话输入框（不发送）")} onClick={() => { doMention(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@</button>
-              <button title={t("插入 @引用到新会话输入框（不发送）")} onClick={() => { doMentionNewSession(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@到新会话</button>
-              <button title={t("选区写入当前会话输入框，自主决定是否发送")} onClick={() => aiInsert("重构这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>重构</button>
-              <button title={t("立即以 steer 发送到当前会话")} onClick={() => aiAction("解释这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>解释</button>
+              <button title={t("插入 @引用到新会话输入框（不发送）")} onClick={() => { doMentionNewSession(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>{t("@ 到新会话")}</button>
+              <button title={t("选区写入当前会话输入框，自主决定是否发送")} onClick={() => aiInsert(t("重构这段代码：\n"))} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>{t("重构")}</button>
+              <button title={t("立即以 steer 发送到当前会话")} onClick={() => aiAction(t("解释这段代码：\n"))} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>{t("解释")}</button>
               {isMarkdown && detectTable(editorRef.current) && (
-                <button title={t("按列宽对齐光标所在 Markdown 表格（Alt+Shift+F 同款）")} onClick={() => { formatTable(editorRef.current); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>表格优化</button>
+                <button title={t("按列宽对齐光标所在 Markdown 表格（Alt+Shift+F 同款）")} onClick={() => { formatTable(editorRef.current); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>{t("表格优化")}</button>
               )}
               {/* External selection actions — same msg-popover-top-action contract as msg-smart
                   cards (registerTopicItem(topic, { id, label, title?, onClick(text, cwd) })).

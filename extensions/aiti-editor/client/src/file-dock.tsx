@@ -228,16 +228,16 @@ export function FileDockBlock(props: FileFaceProps) {
   const extSvc = (k: string) => (fileDockCtx as any)?.getExtService?.(k);
   useDockHeaderMenuItems(key, [
     ...(props.onAtMention ? [{
-      kind: "item" as const, id: "at", label: "@ 到聊天", icon: <MiAt />,
+      kind: "item" as const, id: "at", label: t("@ 到聊天"), icon: <MiAt />,
       run: () => { try { props.onAtMention!(path, false); } catch { /* noop */ } },
     }] : []),
     {
-      kind: "item" as const, id: "atn", label: "@ 到新会话", icon: <MiAt />,
+      kind: "item" as const, id: "atn", label: t("@ 到新会话"), icon: <MiAt />,
       run: () => { void openNewSessionWithExtSvc({ text: buildAtText(path), targetDir: path.slice(0, path.lastIndexOf("/")) || path, targetPath: path, currentCwd: props.cwd, apiUrl, extSvc }); },
     },
     { kind: "sep" as const },
     {
-      kind: "item" as const, id: "cp", label: "复制路径",
+      kind: "item" as const, id: "cp", label: t("复制路径"),
       run: () => { try { navigator.clipboard?.writeText(path); } catch { /* noop */ } },
     },
   ]);

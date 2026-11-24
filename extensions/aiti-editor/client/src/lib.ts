@@ -260,12 +260,12 @@ export function loadVendorGlobal(url: string, globalName: string, factory?: (g: 
   if (_vendorPromises[key]) return _vendorPromises[key];
   const p = new Promise((resolve, reject) => {
     fetch(url, { cache: 'no-store' })
-      .then((r) => { if (!r.ok) throw new Error('vendor 加载失败: ' + url); return r.text(); })
+      .then((r) => { if (!r.ok) throw new Error(t("vendor 加载失败：{url}", { url })); return r.text(); })
       .then((code) => {
         try { new Function('exports', 'module', 'define', code)(undefined, undefined, undefined); }
         catch {}
         if (w[globalName]) resolve(factory ? factory(w[globalName]) : w[globalName]);
-        else reject(new Error('vendor 全局未挂载: ' + globalName));
+        else reject(new Error(t("vendor 全局未挂载：{name}", { name: globalName })));
       })
       .catch(reject);
   });

@@ -122,7 +122,7 @@ test("非法注册忽略（lang 非 [\\w-] 或 render 非函数），退订恒�
       assert.equal(typeof A.registerMdRenderer(null), "function");
     } finally { console.warn = origWarn; }
     assert.equal(warns.length, 3);
-    assert.match(warns[0], /registerMdRenderer 已忽略/);
+    assert.match(warns[0], /registerMdRenderer ignored/);
     assert.deepEqual(A.resolveMdRenderers("bad lang"), []);
     assert.deepEqual(A.resolveMdRenderers("ok"), []);
     assert.deepEqual(A.mdFenceDescriptors(false).map((d) => d.lang), ["mermaid"]); // 只有内置
