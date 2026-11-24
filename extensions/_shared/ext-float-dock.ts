@@ -19,6 +19,7 @@ const DOCK_MENU_WORDS: Record<string, { "zh-CN": string; en: string }> = {
   block: { "zh-CN": "区块", en: "Block" },
   position: { "zh-CN": "切换停靠位置", en: "Change dock position" },
   actions: { "zh-CN": "区块操作", en: "Block actions" },
+  dragReorder: { "zh-CN": "拖动排序", en: "Drag to reorder" },
   move: { "zh-CN": "移动", en: "Move" },
   pin: { "zh-CN": "钉住", en: "Pin" },
   unpin: { "zh-CN": "取消钉住", en: "Unpin" },
@@ -612,7 +613,7 @@ export function DockBody(props: {
     // Drag handle only for dockable blocks (reserved = fixed-order resident blocks, e.g.
     // projects: no "drag to reorder" tooltip, not a drag handle; click-to-collapse unaffected).
     headerProps.draggable = true;
-    headerProps.title = props.headerHint ?? "拖动排序";
+    headerProps.title = props.headerHint ?? menuWord("dragReorder");
     headerProps.onDragStart = onDragStart;
     headerProps.onDragOver = (e: any) => { if (isDockDrag(e) && dragKey !== blockKey) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; dropMark(e, true); } };
     headerProps.onDragLeave = (e: any) => { try { if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return; } catch { /* ignore */ } dropMark(e, false); };
