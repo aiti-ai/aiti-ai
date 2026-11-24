@@ -11,7 +11,7 @@
  * then opened in the host file viewer so the user can @-reference it from any session.
  */
 import { useEffect, useState } from "react";
-import { apiUrl, openFile, t } from "./host-shim";
+import { apiUrl, createPortal, openFile, t } from "./host-shim";
 import { ensureReadability, ghostBtn, inputStyle } from "./helpers";
 import { showToast } from "./toast";
 import { createLazyModule, lazyExtView } from "../../../_shared/ext-lazy";
@@ -103,10 +103,15 @@ function ExportDialog(props: { target: ExportTarget; onClose: () => void }) {
   });
 
   const close = () => { if (!busy) props.onClose(); };
-  return (
+  // Portal to <body> + a z-index above the aiti-float raise ceiling (2147483000), same
+  // ordering as row-menu (3500) / confirm (3600) / toast (3700): the All Sessions panel
+  // is itself a float overlay, so a locally-scoped z-index landed BEHIND it. While the
+  // DirectoryPicker (its own body portal, z 1000) is open we drop below it so it stays
+  // clickable on top of this dialog.
+  const overlay = (
     <>
       <div
-        style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}
+        style={{ position: "fixed", inset: 0, zIndex: pickOpen ? 900 : 2147483560, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}
         onClick={close}
       >
         <div
@@ -147,6 +152,8 @@ function ExportDialog(props: { target: ExportTarget; onClose: () => void }) {
       {picker}
     </>
   );
+  const body = typeof document !== "undefined" ? document.body : null;
+  return body ? (createPortal(overlay, body) as React.ReactElement) : overlay;
 }
 
 /** Always-mounted host (entry `dialogs` slot); renders nothing until a target is set. */
