@@ -19,6 +19,7 @@ import { t, apiUrl, getCtx } from "./host-shim";
 import { ensureReadability, sessionTitle, SIc } from "./helpers";
 import { refreshSessions, applySessionNameLocal } from "./store";
 import { showRelatedDocs } from "./related-docs";
+import { openExportDialog } from "./export-dialog";
 import { showToast } from "./toast";
 
 /** Topic-item icon → menu ReactNode: "{ svg }" (inner markup of a 24×24 line
@@ -243,6 +244,11 @@ export function buildLivePiRowMenuItems(opts: {
     });
   }
   items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
+  // Portable JSON export: lets the user @-reference the session file from any other agent session.
+  items.push({
+    key: "export-json", icon: <SIc name="download" size={13} />, label: t("sm.export.button"),
+    onClick: () => openExportDialog({ id: sess.id, agent: sess.agent, name: sessionTitle(sess), cwd: sess.cwd }),
+  });
   items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });
   // External row-menu actions via topic extension point (e.g. aiti-msg-share's
   // "share session"). Providers register at client boot and gate themselves via match().

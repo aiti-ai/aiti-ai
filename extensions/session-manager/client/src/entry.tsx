@@ -63,6 +63,7 @@ import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/ho
 import { TopbarTags, RowActions } from "./topbar";
 import { ConfirmDialogHost } from "./confirm-dialog";
 import { RelatedDocsHost } from "./related-docs";
+import { SessionExportHost } from "./export-dialog";
 import { ToastHost, showToast } from "./toast";
 import { TagPopoverHost, SidebarRowTags } from "./tag-ui";
 import { SidebarEntry, ToolbarSearch } from "./entries";
@@ -531,6 +532,8 @@ export default function register(ctx: Record<string, unknown>) {
     { id: "confirm-dialog", render: ConfirmDialogHost },
     // 相关文档弹层宿主（会话触达文档，aiti-doc-center services 进程内消费）
     { id: "related-docs", render: RelatedDocsHost },
+    // Session → JSON export dialog host (viewer buttons + row menus; module-level target, renders null until opened)
+    { id: "export-dialog", render: SessionExportHost },
     // 行「⋮」菜单常驻宿主（row-menu.tsx）：All Sessions 行 + SidebarDock 左栏行两面共用；
     // z 2147483500 高于 aiti-float 抬升上限，不依赖面板 overlay 抬升
     { id: "row-menu", render: RowMenuHostLazy },

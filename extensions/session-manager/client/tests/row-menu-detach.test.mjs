@@ -64,6 +64,7 @@ export function refreshSessions() {}
 export function applySessionNameLocal() {}
 `;
 const RELATED_STUB = `export function showRelatedDocs() {}\n`;
+const EXPORT_STUB = `export function openExportDialog() {}\n`;
 const TOAST_STUB = `export function showToast(m) { globalThis.__smToast = m; }\n`;
 const ENTRY = `export * from "./row-menu.tsx";\n`;
 
@@ -78,6 +79,7 @@ async function loadRowMenu(t) {
   writeFileSync(join(src, "store.ts"), STORE_STUB);
   writeFileSync(join(src, "related-docs.ts"), RELATED_STUB);
   writeFileSync(join(src, "toast.ts"), TOAST_STUB);
+  writeFileSync(join(src, "export-dialog.tsx"), EXPORT_STUB);
   writeFileSync(join(src, "__test-entry.ts"), ENTRY);
   const reactStub = join(dir, "react-stub.js");
   const runtimeStub = join(dir, "jsx-runtime-stub.js");

@@ -26,6 +26,7 @@ export const SM_ICONS: Record<string, SvgNode[]> = {
   image: [{ tag: "rect", attrs: { x: 3, y: 3, width: 18, height: 18, rx: 2 } }, { tag: "circle", attrs: { cx: 9, cy: 9, r: 2 } }, _p("m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21")],
   eye: [_p("M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"), { tag: "circle", attrs: { cx: 12, cy: 12, r: 3 } }],
   arrowDown: [_p("M12 5v14"), _p("m19 12-7 7-7-7")],
+  download: [_p("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"), { tag: "polyline", attrs: { points: "7 10 12 15 17 10" } }, { tag: "line", attrs: { x1: 12, x2: 12, y1: 15, y2: 3 } }],
   chartColumn: [_p("M3 3v16a2 2 0 0 0 2 2h16"), _p("M18 17V9"), _p("M13 17V5"), _p("M8 17v-3")],
   filter: [_p("M22 3H2l8 9.46V19l4 2v-8.54L22 3Z")],
   play: [_p("m6 3 14 9-14 9V3z")],

@@ -32,6 +32,7 @@ import { computeStats } from "../lib/session-stats.ts";
 import { dropActivityRows } from "./activity-bus.ts";
 import { activateSource, activeAgents, autoSyncStaleSources, deactivateSource, discoverSources, enrichExtPlaceholders, ensureProviders, getAdapter, refreshLiveExtTimestamps, registerProvider, resolveExtId, syncSource, unregisterProvider } from "./ext-sources.ts";
 import { writePiSession, encodeCwd } from "../lib/agents/to-pi.ts";
+import { splitExtId } from "../lib/agents/types.ts";
 import { archiveCapableAgents } from "../lib/agents/registry.ts";
 import { extractHotwordsFromDBAsync } from "../lib/hotwords.ts";
 import { encodeSessionsV2 } from "./payload.ts";
@@ -953,6 +954,48 @@ function docListEndpoint(ctx: ExtApiCtx): Response {
   }
 }
 
+/** Parse an external session (adapter list + parse). Shared by the viewer and export endpoints. */
+async function parseExtSession(ctx: ExtApiCtx, id: string): Promise<
+  | { ok: true; agent: string; agentLabel: string; file: string | null; meta: unknown; messages: unknown[] }
+  | { ok: false; status: number; error: string }
+> {
+  await ensureProviders(ctx.configDir);
+  const resolved = resolveExtId(ctx.configDir, id);
+  if (!resolved) return { ok: false, status: 400, error: "unknown agent" };
+  let refs: Awaited<ReturnType<typeof resolved.adapter.list>>;
+  try { refs = await resolved.adapter.list(); } catch (e) { return { ok: false, status: 503, error: `source list failed: ${String(e)}` }; }
+  const ref = refs.find((r) => r.sid === resolved.sid);
+  if (!ref) return { ok: false, status: 404, error: "not found" };
+  const parsed = await resolved.adapter.parse(ref);
+  if (!parsed) return { ok: false, status: 500, error: "parse failed" };
+  return { ok: true, agent: resolved.adapter.id, agentLabel: resolved.adapter.label, file: ref.path ?? null, meta: parsed.meta, messages: parsed.messages };
+}
+
+/**
+ * Portable JSON payload for any session kind: external (`agent:<sid>`), archived pi (.pwarc),
+ * or live pi (session file). POST /export-json only takes id/dir/filename from the client.
+ */
+async function buildJsonExportPayload(ctx: ExtApiCtx, id: string): Promise<
+  | { ok: true; kind: "ext" | "archived" | "live"; agent: string; label: string | null; file: string | null; meta: unknown; messages: unknown[] }
+  | { ok: false; status: number; error: string }
+> {
+  const { agent } = splitExtId(id);
+  if (agent !== "pi") {
+    const ext = await parseExtSession(ctx, id);
+    if (!ext.ok) return ext;
+    return { ok: true, kind: "ext", agent: ext.agent, label: ext.agentLabel, file: ext.file, meta: ext.meta, messages: ext.messages };
+  }
+  const row = runtime(ctx.configDir).index.getSession(id);
+  if (!row) return { ok: false, status: 404, error: "not found" };
+  const filePath = row.archived ? extractArchived(ctx.configDir, id) : row.path;
+  if (!filePath) return { ok: false, status: 500, error: row.archived ? "extract failed" : "session file missing" };
+  let raw: string;
+  try { raw = readFileSync(filePath, "utf8"); } catch (e) { return { ok: false, status: 500, error: `read failed: ${e instanceof Error ? e.message : String(e)}` }; }
+  const parsed = parseSessionFile(filePath, raw);
+  if (!parsed) return { ok: false, status: 500, error: "parse failed" };
+  return { ok: true, kind: row.archived ? "archived" : "live", agent: row.agent ?? "pi", label: null, file: filePath, meta: parsed.meta, messages: parsed.messages };
+}
+
 function archivedSessionEndpoint(ctx: ExtApiCtx, sessionId: string): Promise<Response> {  return (async () => {
   const idx = runtime(ctx.configDir).index;
   const row = idx.getSession(sessionId);
@@ -1276,21 +1319,15 @@ export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null
     case "session-ext": {
       // read-only viewer payload for one external session (?id=claude:<uuid>)
       const id = ctx.searchParams.get("id") ?? "";
-      await ensureProviders(ctx.configDir);
-      const resolved = resolveExtId(ctx.configDir, id);
-      if (!resolved) return json({ error: "unknown agent" }, 400);
-      let refs: Awaited<ReturnType<typeof resolved.adapter.list>>;
-      try { refs = await resolved.adapter.list(); } catch (e) { return json({ error: `source list failed: ${String(e)}` }, 503); }
-      const ref = refs.find((r) => r.sid === resolved.sid);
-      if (!ref) return json({ error: "not found" }, 404);
-      const parsed = await resolved.adapter.parse(ref);
-      if (!parsed) return json({ error: "parse failed" }, 500);
+      const ext = await parseExtSession(ctx, id);
+      if (!ext.ok) return json({ error: ext.error }, ext.status);
       const imported = runtime(ctx.configDir).settings.extImports?.[id] ?? null;
-      return json({ id, agent: resolved.adapter.id, label: resolved.adapter.label, meta: parsed.meta, messages: parsed.messages, importedSessionId: imported?.sessionId ?? null });
+      return json({ id, agent: ext.agent, label: ext.agentLabel, meta: ext.meta, messages: ext.messages, importedSessionId: imported?.sessionId ?? null });
     }
-    case "session-ext-export": {
-      // Dump one external session into a portable JSON file (POST { id, dir, filename }) so it
-      // can be opened in the editor or @-referenced from another agent's session.
+    case "export-json": {
+      // Dump any session (external / archived pi / live pi) into one portable JSON file
+      // (POST { id, dir, filename }) so it can be opened in the editor or @-referenced
+      // from another agent's session.
       if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
       const id = typeof body?.id === "string" ? body.id : "";
       const dir = typeof body?.dir === "string" ? body.dir.trim() : "";
@@ -1305,38 +1342,32 @@ export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null
       let dirStat: Awaited<ReturnType<typeof fsp.stat>>;
       try { dirStat = await fsp.stat(dirAbs); } catch { return json({ error: "directory not found" }, 400); }
       if (!dirStat.isDirectory()) return json({ error: "not a directory" }, 400);
-      await ensureProviders(ctx.configDir);
-      const resolved = resolveExtId(ctx.configDir, id);
-      if (!resolved) return json({ error: "unknown agent" }, 400);
-      let refs: Awaited<ReturnType<typeof resolved.adapter.list>>;
-      try { refs = await resolved.adapter.list(); } catch (e) { return json({ error: `source list failed: ${String(e)}` }, 503); }
-      const ref = refs.find((r) => r.sid === resolved.sid);
-      if (!ref) return json({ error: "not found" }, 404);
-      const parsed = await resolved.adapter.parse(ref);
-      if (!parsed) return json({ error: "parse failed" }, 500);
-      const target = join(dirAbs, filename);
+      const built = await buildJsonExportPayload(ctx, id);
+      if (!built.ok) return json({ error: built.error }, built.status);
       const payload = {
-        format: "pi-web/external-session@1",
+        format: "pi-web/session-export@1",
         exportedAt: new Date().toISOString(),
+        kind: built.kind,
         source: {
           id,
-          agent: resolved.adapter.id,
-          agentLabel: resolved.adapter.label,
-          file: ref.path ?? null,
+          agent: built.agent,
+          label: built.label,
+          file: built.file,
         },
-        meta: parsed.meta,
-        messageCount: parsed.messages.length,
-        messages: parsed.messages,
-        note: "Read-only export of an external agent session (pi-web / session-manager). "
+        meta: built.meta,
+        messageCount: built.messages.length,
+        messages: built.messages,
+        note: "Read-only export of a session (pi-web / session-manager). "
           + "Reference this file (@path) from any agent session to inspect or continue the work.",
       };
       const text = JSON.stringify(payload, null, 2) + "\n";
+      const target = join(dirAbs, filename);
       try {
         await fsp.writeFile(target, text, "utf8");
       } catch (e) {
         return json({ error: `write failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
       }
-      return json({ ok: true, path: target, filename, bytes: Buffer.byteLength(text, "utf8") });
+      return json({ ok: true, path: target, filename, bytes: Buffer.byteLength(text, "utf8"), kind: built.kind });
     }
     case "open-live": {
       // attach-from-history: open an external session as a LIVE driving session
