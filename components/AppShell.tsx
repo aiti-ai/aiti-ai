@@ -3483,7 +3483,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const itemsRowRef = useRef<HTMLDivElement>(null);
   const measureStripRef = useRef<HTMLDivElement>(null);
   const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [moreRect, setMoreRect] = useState<{ top: number; right: number; topbarBottom: number } | null>(null);
+  const [moreRect, setMoreRect] = useState<{ top: number; right: number; topbarBottom: number; maxHeight: number } | null>(null);
   const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
   const [storedHidden, setStoredHidden] = useState<TopbarItemId[]>([]);
 
@@ -3654,15 +3654,27 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // (panel max width 300 + 8px margin → right cap vw-8-300)
       const right = Math.max(4, Math.min(vw - r.right + 4, vw - 8 - 300));
       const topbarBottom = topBarRef.current?.getBoundingClientRect().bottom ?? r.bottom;
-      setMoreRect({ top: r.bottom + 4, right, topbarBottom });
+      const top = r.bottom + 4;
+      // Anchor-bound height: the panel is fixed to `top`, so its height budget is the
+      // viewport left BELOW that anchor — a plain 100dvh cap overflows the bottom on
+      // phones (last rows, e.g. the customize entry, end up off-screen and unreachable).
+      // 8px bottom margin; 200px floor so a keyboard-shrunk viewport keeps scrolling
+      // inside the panel instead of collapsing it.
+      const viewportH = window.visualViewport?.height ?? window.innerHeight;
+      const maxHeight = Math.max(200, Math.round(viewportH - top - 8));
+      setMoreRect({ top, right, topbarBottom, maxHeight });
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(btn);
     window.addEventListener("resize", update);
+    // Mobile URL-bar/keyboard changes shrink the visual viewport without always
+    // firing window#resize — re-measure so the panel bottom stays reachable.
+    window.visualViewport?.addEventListener("resize", update);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("resize", update);
     };
   }, [moreOpen, customizeOpen]);
 
@@ -5927,7 +5939,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
             <div
               data-topbar-dropdown
-              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, minWidth: 196, maxWidth: "min(300px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 4 }}
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, minWidth: 196, maxWidth: "min(300px, calc(100vw - 16px))", maxHeight: moreRect.maxHeight, overflowY: "auto", overscrollBehavior: "contain", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 4 }}
             >
               {overflowMenuNodes.length > 0 && (
                 <>
@@ -5966,7 +5978,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           <>
             <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={closePopovers} />
             <div
-              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: moreRect.maxHeight, overflowY: "auto", overscrollBehavior: "contain", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
             >
               <div style={{ padding: "8px 14px 6px", fontSize: 11, fontWeight: 700, color: "var(--text)", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
                 {translate("topbar.customize")}
