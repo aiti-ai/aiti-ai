@@ -23,7 +23,7 @@ import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel.tsx";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots.tsx";
 import { ProviderUsagePanel } from "./ProviderUsagePanel.tsx";
-import { openFullHistory } from "@/lib/demo-seam";
+import { decorateTitle, openFullHistory } from "@/lib/demo-seam";
 /** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
  *  has a taker) this component is not rendered at all and the chunk never loads, keeping
  *  the main bundle slim; in fallback mode it is fetched on first render (local chunk,
@@ -3459,7 +3459,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Subagent work tabs: like files, only the active one is mounted.
   const activeAgentTab = agentTabs.find((tab) => `agent:${tab.sessionId}` === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
-  const windowTitle = activeCwdName ? `${activeCwdName} - Pi Web` : "Pi Web";
+  // decorateTitle is an identity function in production; the static demo uses it
+  // to append its "aiti-ai demo (mock)" suffix without patching the host.
+  const windowTitle = decorateTitle(activeCwdName ? `${activeCwdName} - Pi Web` : "Pi Web");
 
   useEffect(() => {
     const syncWindowTitle = () => {
