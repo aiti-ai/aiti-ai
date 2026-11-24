@@ -30,9 +30,8 @@ import { showRelatedDocs } from "./related-docs";
 // 行「⋮」菜单共享件（MenuItem/触发/宿主/活动 pi 会话全量项构建）——与 SidebarDock 左栏行同源
 import { RowMenu, closeRowMenu, openSessionTimeline, buildLivePiRowMenuItems, type MenuItem } from "./row-menu";
 import { showToast } from "./toast";
-// Export dialog's folder picker (lazy: DirectoryPicker is only imported when "Browse" is clicked)
-import { createLazyModule, lazyExtView } from "../../../_shared/ext-lazy";
-const dirPickerRef = createLazyModule(() => import("./sidebar/directory-picker"));
+// Session → portable JSON export dialog (shared by viewers, row menus and the sidebar dock)
+import { openExportDialog } from "./export-dialog";
 // 移动会话弹窗模块态宿主（showMoveDialog 触发；Esc 守卫用 useMoveDialogOpen）
 import { showMoveDialog, useMoveDialogOpen } from "./move-dialog";
 // dock v3（P3 批）：显隐收口展示状态机 + 右栏停靠 face
@@ -352,122 +351,12 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
 export function ExtViewer(props: any) { return renderExtViewer(props, "float"); }
 export function ExtViewerDockFace(props: any) { return renderExtViewer(props, "dock"); }
 
-/** Default export file name: <agent>-<session-slug>-<yyyyMMdd-HHmm>.json */
-function defaultExtExportName(data: any): string {
-  const agent = String(data?.agent || "session");
-  const raw = String(data?.meta?.name || data?.meta?.firstMessage || data?.label || "").trim();
-  const slug = raw.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  return `${agent}${slug ? `-${slug}` : ""}-${stamp}.json`;
-}
-
-/**
- * "Export as JSON" dialog (external sessions): folder + file name. On success the host opens
- * the JSON in the file viewer and the path is toast-ed — the user can copy it and @-reference
- * the file from a new session so another agent can read/continue the work.
- */
-function ExtExportDialog(props: { id: string; data: any; onClose: () => void }) {
-  const [dir, setDir] = useState<string>(() => String(props.data?.meta?.cwd || ""));
-  const [name, setName] = useState<string>(() => defaultExtExportName(props.data));
-  const [pickOpen, setPickOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const doExport = async () => {
-    if (busy) return;
-    const targetDir = dir.trim();
-    const filename = name.trim();
-    if (!targetDir) { setErr(t("sm.export.noDir") ?? "请选择导出目录"); return; }
-    if (!filename) { setErr(t("sm.export.noName") ?? "请填写文件名"); return; }
-    setBusy(true); setErr(null);
-    try {
-      const res = await fetch(apiUrl("/api/extensions/session-manager/session-ext-export"), {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: props.id, dir: targetDir, filename }),
-      });
-      const d = await res.json().catch(() => ({} as { ok?: boolean; path?: string; filename?: string; error?: string }));
-      if (!res.ok || d?.ok !== true) {
-        setErr(`${t("sm.export.failed") ?? "导出失败"}：${d?.error ?? `HTTP ${res.status}`}`);
-        return;
-      }
-      // Open the exported JSON right away (editor tab); the path stays in the toast for @-reference.
-      try { openFile(String(d.path), String(d.filename || filename)); } catch { /* open failure must not hide the export */ }
-      showToast(`${t("sm.export.done") ?? "已导出"}：${d.path}`);
-      props.onClose();
-    } catch (e) {
-      setErr(`${t("sm.export.failed") ?? "导出失败"}：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const picker = lazyExtView({
-    active: pickOpen,
-    load: dirPickerRef,
-    pick: "DirectoryPicker",
-    props: {
-      initialPath: dir || undefined,
-      onCancel: () => setPickOpen(false),
-      onSelect: (path: string) => { setDir(path); setPickOpen(false); },
-    },
-  });
-
-  const close = () => { if (!busy) props.onClose(); };
-  return (
-    <>
-      <div
-        style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}
-        onClick={close}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="sm-export-dialog"
-          role="dialog"
-          aria-label={t("sm.export.title") ?? "Export as JSON"}
-          style={{ width: "min(520px, 94vw)", display: "flex", flexDirection: "column", gap: 10, padding: 16, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 18px 60px rgba(0,0,0,0.4)" }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <strong style={{ fontSize: 13 }}>{t("sm.export.title") ?? "Export as JSON"}</strong>
-            <button onClick={close} disabled={busy} aria-label={t("sm.close")} title={t("sm.close")}
-              style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text-muted)", cursor: busy ? "default" : "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>{t("sm.export.hint") ?? ""}</div>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("sm.export.dir") ?? "Folder"}</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input value={dir} onChange={(e) => setDir(e.target.value)} spellCheck={false} disabled={busy} style={inputStyle as React.CSSProperties} />
-              <button onClick={() => setPickOpen(true)} disabled={busy} style={ghostBtn as React.CSSProperties}>{t("sm.export.browse") ?? "Browse…"}</button>
-            </div>
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("sm.export.name") ?? "File name"}</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} disabled={busy} style={inputStyle as React.CSSProperties} />
-          </label>
-          {err && (
-            <div style={{ padding: "6px 10px", borderRadius: 6, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>{err}</div>
-          )}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={close} disabled={busy} style={ghostBtn as React.CSSProperties}>{t("i18n.cancel") ?? "Cancel"}</button>
-            <button onClick={() => void doExport()} disabled={busy} style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}>
-              {busy ? "…" : (t("sm.export.do") ?? "Export")}
-            </button>
-          </div>
-        </div>
-      </div>
-      {picker}
-    </>
-  );
-}
-
 function renderExtViewer(props: any, face?: string) {
   const st = usePresent(EXT_VIEWER_KEY);
   const [id, setId] = useState<string | null>(extViewerId());
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openErr, setOpenErr] = useState<string | null>(null);
   useEffect(() => subscribeExtViewer(() => setId(extViewerId())), []);
@@ -579,10 +468,15 @@ function renderExtViewer(props: any, face?: string) {
             )}
             <button
               disabled={!data}
-              onClick={() => setExportOpen(true)}
-              title={t("sm.export.hintBtn") ?? ""}
+              onClick={() => openExportDialog({
+                id,
+                agent: data?.agent,
+                name: data?.meta?.name || data?.meta?.firstMessage || data?.label,
+                cwd: data?.meta?.cwd,
+              })}
+              title={t("sm.export.hintBtn")}
               style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}
-            >{t("sm.export.button") ?? "Export JSON"}</button>
+            >{t("sm.export.button")}</button>
             {face === "float" && <button onClick={close} aria-label={t("sm.close")} title={t("sm.close")}
               style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>}
           </span>
@@ -595,7 +489,6 @@ function renderExtViewer(props: any, face?: string) {
         {err ? <div style={{ padding: 20, color: ensureReadability("var(--danger, #f87171)"), fontSize: 12 }}>{err}</div>
           : !data ? <div style={{ padding: 20, color: "var(--text-muted)", fontSize: 12 }}>{t("sm.loading") ?? "…"}</div>
           : <ViewerMessages key={id} messages={data.messages} agent={data?.agent} />}
-        {exportOpen && id && <ExtExportDialog id={id} data={data} onClose={() => setExportOpen(false)} />}
     </>
   );
   // dock v3 分面：float = 遮罩+浮窗壳；dock = 右栏 tab（DockBody chrome 带 ⇲/位置菜单，TabBar ✕ 关闭）
@@ -889,6 +782,17 @@ function renderArchivedViewer(props: any, face?: string) {
               title={t("sm.relatedDocs") ?? "相关文档"}
               style={{ ...ghostBtn } as React.CSSProperties}
             >{`${t("sm.relatedDocsShort") ?? "文档"}`}</button>
+            <button
+              disabled={!data}
+              onClick={() => openExportDialog({
+                id: sessionId,
+                agent: data?.session?.agent,
+                name: data?.session?.name || data?.meta?.name || data?.meta?.firstMessage,
+                cwd: data?.meta?.cwd ?? data?.session?.cwd,
+              })}
+              title={t("sm.export.hintBtn")}
+              style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}
+            >{t("sm.export.button")}</button>
             {data?.session?.archiveRef !== "__ext__" && (
               <>
                 <a
@@ -1673,7 +1577,7 @@ export function SessionsPanel(props: any) {
             style={{ ...miniBtn, opacity: isBusy(sess.id) ? 0.8 : 0.45, fontSize: 10, flexShrink: 0, color: ensureReadability("#a78bfa") }}
           >{isBusy(sess.id) ? "⟳" : "⚡"}</button>
           <button
-            title={t("sm.extViewHint") ?? "查看外部会话（可在查看器里导入为 pi 会话）"}
+            title={t("sm.extViewHint")}
             onClick={(e) => {
               e.stopPropagation();
               openExtViewer(sess.id);
@@ -1708,8 +1612,12 @@ export function SessionsPanel(props: any) {
           // External-source rows used to offer only the view-layer "remove from list" item, so users
           // could not find the raw-session viewer from the menu at all.
           items.push({
-            key: "ext-view", icon: <SIc name="eye" size={13} />, label: t("sm.extView") ?? "查看",
+            key: "ext-view", icon: <SIc name="eye" size={13} />, label: t("sm.extView"),
             onClick: () => { collapsePanelIfCovering(); openExtViewer(String(sess.id)); },
+          });
+          items.push({
+            key: "ext-export", icon: <SIc name="download" size={13} />, label: t("sm.export.button"),
+            onClick: () => openExportDialog({ id: String(sess.id), agent: sess.agent, name: sessionTitle(sess), cwd: sess.cwd }),
           });
           const extChildIds = collectSubtreeIds(store.sessions, String(sess.id));
           const extHideRun = async (ids: string[]) => {
