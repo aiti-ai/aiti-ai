@@ -5825,7 +5825,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!wasComposing || pendingScrollToUserRef.current) return;
       if (agentRunningRef.current) {
         scheduleFollowStep();
-      } else if (!userPointerDownRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+      } else if (!userPointerDownRef.current && !userScrolledAwayRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
         scrollToBottom("smooth");
       }
     };
@@ -5891,7 +5891,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // First paint of an opened session always lands at the tail even if a
         // composer autofocus already counts as "editing".
         scrollToBottom("instant", { force: true });
-      } else if (!agentRunningRef.current && !userPointerDownRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+      } else if (!agentRunningRef.current && !userPointerDownRef.current && !userScrolledAwayRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+        // Idle re-pin (completion scroll / message reconcile / older-page prepend
+        // growing messages.length) must respect the walked-away state: the user
+        // reading history — scrolled up, or a background run finishing while they
+        // are scrolled up — must NOT be yanked back to the tail. Only a user who
+        // is still at/near the tail gets the smooth re-pin.
         scrollToBottom("smooth");
       }
     }
