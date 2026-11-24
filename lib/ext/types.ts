@@ -1148,6 +1148,14 @@ export interface ExtUiDefinition {
    *  point — the "lazy marker ineffective" static diagnostic exempts them (what is exempted is the diagnostic,
    *  not the mechanism: only service-triggered lazy extensions without the credential get false-positived). */
   clientLazyVia?: "service";
+  /** Opt-in host idle materialization (paired with clientImmediately:false): the host materializes
+   *  this lazy extension in the first idle window after boot (ExtSlots scheduleIdleMaterialize —
+   *  media/data-saver aware). For extensions whose registration target is another extension or a
+   *  window-level registry (e.g. aiti-editor's provider registry) rather than a host UI slot, and
+   *  whose client has no connect side effects. The "lazy marker ineffective" diagnostic exempts
+   *  them (deterministic trigger, same class as clientLazyVia). Boot never awaits this: first-paint
+   *  cost is untouched; only the idle window pays the fetch. */
+  prefetchOnIdle?: boolean;
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }

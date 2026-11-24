@@ -803,9 +803,12 @@ export class ExtRegistryImpl {
     // delivered via a client service; the consumer deterministically calls
     // ensureMaterialized at an always-mounted point, e.g. the app-center
     // extension) → has a trigger, exempt.
+    // ui.prefetchOnIdle:true = host idle materialization (ExtSlots
+    // scheduleIdleMaterialize) — a deterministic trigger too, exempt.
     for (const ext of this.extensions.values()) {
       if (ext.ext.ui?.clientImmediately !== false) continue;
       if (ext.ext.ui?.clientLazyVia === "service") continue;
+      if (ext.ext.ui?.prefetchOnIdle) continue;
       const hasStaticEntry = Object.entries(ext.ext.ui).some(
         ([k, v]) => !["i18n", "provides", "clientDependsOn", "clientImmediately", "clientLazyVia"].includes(k) && Array.isArray(v) && v.length > 0,
       );
