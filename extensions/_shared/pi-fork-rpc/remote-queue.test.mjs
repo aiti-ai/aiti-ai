@@ -153,3 +153,55 @@ test("重注入期间又入队的条目：以子进程帧为准，镜像与返�
   assert.deepEqual(r.followUp, ["a", "late"], "帧里存在的 late 不能被 plan 覆盖掉");
   assert.deepEqual(support.snapshot().followUp, ["a", "late"]);
 });
+
+// ── hydrate (empty mirror after a reattach must recover the child queue) ─────
+// Scenario: after a pi-web restart / wrapper recovery the new handle starts with an
+// empty mirror; the wrapper journal is a 4 MB ring, so a long session's last
+// queue_update is gone and the panel stays empty until the user queues a new message.
+
+test("hydrate：未观察到帧时 clear+重注入拉回子进程队列（镜像被回填）", async () => {
+  const t = rig();
+  assert.equal(t.support.needsHydrate(), true, "never synced -> hydrate is needed");
+  t.setClearResult({ steering: ["s1"], followUp: ["f1", "f2"] });
+  await t.support.hydrate();
+  assert.equal(t.clearCount(), 1, "a single clear");
+  assert.deepEqual(t.reinjections, [
+    { text: "s1", kind: "steer" },
+    { text: "f1", kind: "followUp" },
+    { text: "f2", kind: "followUp" },
+  ], "order and kind preserved");
+  assert.deepEqual(t.support.snapshot(), { steering: ["s1"], followUp: ["f1", "f2"] }, "no frames from the backend -> cleared snapshot fills the mirror");
+  assert.equal(t.support.needsHydrate(), false, "no repeat after hydrate");
+  await t.support.hydrate();
+  assert.equal(t.clearCount(), 1, "already hydrated -> no-op");
+});
+
+test("hydrate：镜像已由帧同步 → no-op（不打扰子进程队列）", async () => {
+  const t = rig();
+  t.feed([], ["keep-me"]);
+  assert.equal(t.support.needsHydrate(), false);
+  await t.support.hydrate();
+  assert.equal(t.clearCount(), 0, "never clear when already synced");
+  assert.deepEqual(t.support.snapshot(), { steering: [], followUp: ["keep-me"] });
+});
+
+test("hydrate：子进程队列为空 → 不重注入，镜像保持空", async () => {
+  const t = rig();
+  t.setClearResult({ steering: [], followUp: [] });
+  await t.support.hydrate();
+  assert.equal(t.clearCount(), 1);
+  assert.deepEqual(t.reinjections, []);
+  assert.deepEqual(t.support.snapshot(), { steering: [], followUp: [] });
+  assert.equal(t.support.needsHydrate(), false);
+});
+
+test("hydrate：排队的 clear 执行前已有帧到达 → 跳过（帧权威）", async () => {
+  const t = rig();
+  // Queue a mutation first, then feed a frame (a late journal replay) before it runs.
+  const first = t.support.queueManage({ action: "clear" });
+  const second = t.support.hydrate();
+  t.feed([], ["replayed"]);
+  await Promise.all([first, second]);
+  assert.equal(t.clearCount(), 1, "only the explicit clear runs; hydrate skips after seeing the frame");
+  assert.deepEqual(t.reinjections, [], "hydrate does not re-inject (the frame synced it)");
+});

@@ -583,3 +583,47 @@ test("alive(): a wrapper facade with a closed stdin is not alive (undrivable)", 
   Object.defineProperty(child.stdin, "writable", { value: false, configurable: true });
   assert.equal(h.alive(), false);
 });
+
+// ── attach warm-up: model echo + remote-queue hydrate (2026-11-24) ────────────
+// A reattached handle starts with an empty queue mirror and no model (spawn args
+// emit no model_select). The wrapper journal (4 MB ring) may have dropped the last
+// queue_update, so the panel stayed empty until the user queued something new.
+test("attach 预热：get_state 回显 model + pending>0 时 hydrate 远端队列", async () => {
+  const child = fakeChild();
+  const attachPromise = PiSpawnHandle.attach({ child, sessionId: "attach-1" }, PI_SPEC);
+  await later(360); // whenReady (300ms) → warm-up get_state (context usage + model/queue)
+  const getStates = child.frames().filter((f) => f.type === "get_state");
+  assert.ok(getStates.length >= 1, "attach 后应发 get_state 预热");
+  for (const frame of getStates) {
+    child.stdout.write(JSON.stringify({
+      id: frame.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { model: { id: "m1", provider: "p1" }, pendingMessageCount: 1 },
+    }) + "\n");
+  }
+  await later(80);
+  const clear = child.frames().find((f) => f.type === "clear_queue");
+  assert.ok(clear, "子进程报告 pending>0 且镜像未同步 → 应发 clear_queue 拉取队列");
+  child.stdout.write(JSON.stringify({
+    id: clear.id,
+    type: "response",
+    command: "clear_queue",
+    success: true,
+    data: { steering: [], followUp: ["q1"] },
+  }) + "\n");
+  await later(100);
+  const reinject = child.frames().find((f) => f.type === "follow_up" && f.message === "q1");
+  assert.ok(reinject, "清出的条目应按原 kind 重注入");
+  child.stdout.write(JSON.stringify({
+    id: reinject.id,
+    type: "response",
+    command: "follow_up",
+    success: true,
+    data: { disposition: "queued" },
+  }) + "\n");
+  const handle = await attachPromise;
+  assert.deepEqual(handle.queueManage && (await handle.queueManage({ action: "list" })).followUp, ["q1"], "镜像被 hydrate 回填");
+  assert.deepEqual(handle.getModel(), { id: "m1", provider: "p1" }, "首个 state 读取即可拿到启动模型");
+});

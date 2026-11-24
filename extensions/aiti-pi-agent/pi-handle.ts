@@ -208,6 +208,8 @@ interface PendingUI {
 
 /** pendingUI 封顶：超过即自动取消最老一条（防子进程刷 UI 请求撑爆内存）。 */
 const MAX_PENDING_UI = 32;
+/** Bound for the reattach warm-up get_state: a busy child must not stall the first read. */
+const ATTACH_WARMUP_TIMEOUT_MS = 5_000;
 
 /** pi fork 会话 handle。 */
 export class PiSpawnHandle extends RpcChildHost {
@@ -350,6 +352,7 @@ export class PiSpawnHandle extends RpcChildHost {
     recordId: string,
     child: ChildProcess,
     cwd: string,
+    options: { awaitWarmup?: boolean; warmupTimeoutMs?: number } = {},
   ): Promise<PiSpawnHandle> {
     const handle = new PiSpawnHandle(spec, recordId, child, cwd);
     await handle.whenReady;
@@ -360,19 +363,15 @@ export class PiSpawnHandle extends RpcChildHost {
     // B3（拆分计划）：pi 消费 --provider/--model 启动参数（实测 get_state.data.model 回显完整
     // 解析模型）——ready 后拉一次 get_state 合成 model 状态，agentRunModelRef 即刻对齐实际
     // 运行模型，不必等 pi 主动发 model_select（setModel 切换仍走既有事件链）。
-    void (async () => {
-      try {
-        // request() 已解包返回 frame.data（wire.ts p.resolve(msg.data)）——此前写成 d.data.model
-        // 多剥一层导致启动模型回显从未命中（2026-09-19 顺带修复，随 contextUsage 预热同路径实测）。
-        const d = (await handle.request({ type: "get_state" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS })) as {
-          model?: { id?: unknown; provider?: unknown };
-        };
-        const m = d?.model;
-        if (m && typeof m.id === "string" && m.id && !handle.getModel()) {
-          handle.adoptStartModel({ id: m.id, provider: typeof m.provider === "string" && m.provider ? m.provider : "pi" });
-        }
-      } catch { /* 状态读取失败不影响会话（model 待 pi model_select 事件） */ }
-    })();
+    // 2026-11-24: the warm-up is awaited (below) because lazy open reads state
+    // right after the attach / ensure_session: a fire-and-forget echo raced it and
+    // the composer showed "Select model." with an empty queue panel.
+    const warmup = handle.warmUp(options.warmupTimeoutMs);
+    // Await by default: the first state read (ensure_session / lazy open right after
+    // the attach) must see the startup model and the restored queue. Callers may opt
+    // out for an explicitly non-blocking provisioning path.
+    if (options.awaitWarmup !== false) await warmup;
+    else void warmup;
     return handle;
   }
 
@@ -385,7 +384,10 @@ export class PiSpawnHandle extends RpcChildHost {
     // opts.cwd = the adopted process's true workspace (wrapper registry entry) — never
     // the host's process.cwd(): the handle cwd feeds the UI workspace identity, and a
     // wrong value pins the session to the wrong project (sidebar/files pointed away).
-    return PiSpawnHandle.adopt(spec, opts.sessionId, opts.child, opts.cwd || process.cwd());
+    return PiSpawnHandle.adopt(spec, opts.sessionId, opts.child, opts.cwd || process.cwd(), {
+      awaitWarmup: true,
+      warmupTimeoutMs: ATTACH_WARMUP_TIMEOUT_MS,
+    });
   }
 
   /** 覆写：非 response 帧的 pi 语义分发。 */
@@ -568,6 +570,43 @@ export class PiSpawnHandle extends RpcChildHost {
   getContextUsage(): { percent: number | null; contextWindow: number; tokens: number | null } | undefined {
     void this.refreshContextUsage(); // 兜底预热（幂等：ctxRefreshing 防重入）
     return this.lastContextUsage;
+  }
+
+  /**
+   * One-shot post-adopt warm-up: ask the child for its state once so a freshly
+   * adopted handle answers the first get_state with the real model and queue.
+   *
+   * - model: pi takes --provider/--model as spawn args and emits no model_select
+   *   for the startup model. A reattached handle used to report no model until the
+   *   next run, which the composer rendered as "Select model." (lazy open reads
+   *   state right after the attach, so the old fire-and-forget echo raced it).
+   * - queue: a reattach starts with an empty remote-queue mirror. The wrapper
+   *   journal is a 4 MB ring; a long session's last queue_update is already gone,
+   *   so the restored panel stayed empty until the user queued something new.
+   *   With pending messages present, hydrate() rebuilds the mirror from the child.
+   *
+   * Never throws: a failed read only degrades to the old event-driven behavior.
+   */
+  private async warmUp(timeoutMs: number = ATTACH_WARMUP_TIMEOUT_MS): Promise<void> {
+    let state: { model?: { id?: unknown; provider?: unknown }; pendingMessageCount?: unknown } | undefined;
+    try {
+      // request() already unwraps frame.data (wire.ts resolves msg.data).
+      state = (await this.request({ type: "get_state" }, { timeoutMs })) as typeof state;
+    } catch {
+      return; // read failure never blocks adoption (model arrives via model_select)
+    }
+    const m = state?.model;
+    if (m && typeof m.id === "string" && m.id && !this.getModel()) {
+      this.adoptStartModel({ id: m.id, provider: typeof m.provider === "string" && m.provider ? m.provider : "pi" });
+    }
+    const pending = Number(state?.pendingMessageCount ?? 0);
+    if (pending > 0 && this.rq.needsHydrate()) {
+      try {
+        await this.rq.hydrate();
+      } catch (e) {
+        console.warn(`[aiti-pi-agent] remote queue hydrate failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   async steer(text: string): Promise<void> {

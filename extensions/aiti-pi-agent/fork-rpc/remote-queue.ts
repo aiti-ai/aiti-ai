@@ -6,9 +6,14 @@
  * 子进程持有，协议原生支持 clear_queue（返回清空前文本，与 pi-web core clearQueue 同契约）
  * 与 steer/follow_up 重注入；子进程经 RPC 流转发 queue_update 帧（含完整文本数组）。
  *
- * 镜像正确性：handle 生命周期 == 子进程生命周期，双方同起点（皆空），无重连缺口——
- * 镜像只从 observeFrame 喂入的 queue_update 帧维护。get_state 仅有 pendingMessageCount
- * （无文本），不存在「拉全量」原语，重连场景不在本层适配范围。
+ * Mirror freshness: the mirror is fed only by queue_update frames (observeFrame). A
+ * reattach starts empty, and the wrapper journal is a 4 MB ring — a long session's last
+ * queue frame is already dropped on replay. adopt() therefore calls hydrate() once: when
+ * the child still reports pending messages and no frame was observed yet, the mirror is
+ * rebuilt through one clear_queue + re-inject round-trip (the protocol has no list-queue
+ * command; get_state carries pendingMessageCount only). Text survives the round-trip,
+ * queued images do not — pi's queue text channel never carried them (same semantics as
+ * move/remove/convert).
  *
  * 变更类操作语义（与 pi-web core rpc-manager move_queue 同款）：镜像算出新序 →
  * clear_queue 全量清空 → 按新序重注入。运行中 steer 重注入可能被立即消费的竞态
@@ -36,6 +41,10 @@ export interface RemoteQueueManageResult {
 export interface RemotePiQueue {
   /** handle.onFrame 里喂入子进程帧；只消费 queue_update（镜像维护，不重复广播——原帧由 handle 照常 emit）。 */
   observeFrame(msg: Record<string, unknown>): void;
+  /** True while no queue_update was ever observed: the mirror has not been synced with the child yet. */
+  needsHydrate(): boolean;
+  /** Rebuild the mirror from the child after a reattach (no-op once a queue_update was observed). */
+  hydrate(): Promise<void>;
   /** SessionHandle.queueManage 直转发。 */
   queueManage(req: RemoteQueueManageReq): Promise<RemoteQueueManageResult>;
   /** 当前镜像快照（steer/followUp 两组文本）。 */
@@ -52,11 +61,17 @@ export function createRemotePiQueueSupport(opts: {
   /** Observed queue_update frames: after a re-inject loop the child's own frames
    *  are the authoritative state (they also carry entries enqueued meanwhile). */
   let frameSeq = 0;
+  /** A hydrate() already rebuilt the mirror (covers backends whose clear/re-inject emits no
+   *  queue_update at all — frameSeq stays 0 there and must not trigger a second round-trip). */
+  let hydrated = false;
   /** Mutation chain: every mutation is clear-all + re-inject, so two of them
    *  interleaved would each wipe the other's entries (and the mirror). */
   let mutationChain: Promise<unknown> = Promise.resolve();
 
   const snapshot = () => ({ steering: [...mirror.steering], followUp: [...mirror.followUp] });
+
+  /** True while the mirror has never been synchronized with the child (no queue_update observed). */
+  const needsHydrate = (): boolean => frameSeq === 0 && !hydrated;
 
   const observeFrame = (msg: Record<string, unknown>): void => {
     if (msg.type !== "queue_update") return;
@@ -87,6 +102,42 @@ export function createRemotePiQueueSupport(opts: {
     mutationChain = result.catch(() => undefined);
     return result;
   };
+
+  /**
+   * One-shot mirror rebuild after a reattach (pi-web restart / detached-wrapper recovery).
+   *
+   * A reattached handle starts with an empty mirror and is only fed by queue_update
+   * frames. The wrapper journal replays recent frames, but it is a 4 MB ring: on a
+   * long-running session the frame that last reported the queue has long been dropped,
+   * so the restored handle reports an empty queue until the user queues something new
+   * (that frame then carries the full arrays). The RPC protocol has no "list queue"
+   * command (get_state carries pendingMessageCount only), so the only way to recover
+   * the remaining text is the same clear + re-inject round-trip the mutation actions
+   * use. Images do not survive this (pi's queue text channel never carried them —
+   * move/remove/convert already share that semantics); callers run it only when the
+   * child still reports pending messages AND the mirror was never synced.
+   */
+  const hydrate = (): Promise<void> => serialized(async () => {
+    // A replayed or live frame already synced the mirror while this call was queued.
+    if (frameSeq > 0 || hydrated) return;
+    const base = snapshot();
+    const framesBefore = frameSeq;
+    const cleared = await opts.clearRemote();
+    const clearedSteering = (cleared.steering ?? []).map(String);
+    const clearedFollowUp = (cleared.followUp ?? []).map(String);
+    const extras = {
+      steering: minus(clearedSteering, base.steering),
+      followUp: minus(clearedFollowUp, base.followUp),
+    };
+    for (const text of extras.steering) await opts.reinject(text, "steer");
+    for (const text of extras.followUp) await opts.reinject(text, "followUp");
+    // Frames emitted by the clear/re-inject are authoritative; only fall back to the
+    // cleared snapshot when this backend emits no queue_update at all.
+    if (frameSeq === framesBefore) {
+      mirror = { steering: [...extras.steering], followUp: [...extras.followUp] };
+    }
+    hydrated = true;
+  });
 
   /**
    * Shared skeleton for mutating actions: plan the new order from the mirror,
@@ -208,5 +259,5 @@ export function createRemotePiQueueSupport(opts: {
     }
   };
 
-  return { observeFrame, queueManage, snapshot };
+  return { observeFrame, needsHydrate, hydrate, queueManage, snapshot };
 }
