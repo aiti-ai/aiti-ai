@@ -30,7 +30,7 @@ import { existsSync } from "node:fs";
 import { DirectStarter } from "./direct.ts";
 import { LinuxMacWrapperStarter } from "./wrapper.ts";
 import { probeRunner } from "./runner.ts";
-import { pruneDeadEntries, setDetachedPreference, starterRoot } from "./registry.ts";
+import { backfillDetachedPreferences, listEntries, pruneDeadEntries, setDetachedPreference, starterRoot } from "./registry.ts";
 import type { AgentStarter, WrapperStarter } from "./types.ts";
 
 export type { AgentStarter, AgentStarterSpawnOptions, WrapperStarter } from "./types.ts";
@@ -52,6 +52,7 @@ export {
   getDetachedPreference,
   clearDetachedPreference,
   listDetachedPreferenceIds,
+  backfillDetachedPreferences,
   type SessionEntry,
   type DetachedPreference,
   type RunnerKind,
@@ -117,8 +118,13 @@ async function buildStarters(): Promise<AgentStarters> {
     if (!globalThis.__agentStartersPruned) {
       globalThis.__agentStartersPruned = true;
       // Startup sweep: entries whose wrapper died (crash, reboot) are noise in
-      // holds() lookups; pruning here keeps the probe cheap.
-      void pruneDeadEntries().catch(() => {});
+      // holds() lookups; pruning here keeps the probe cheap. The wrappers that are
+      // still alive then get their survive-restart marker backfilled: spawns from
+      // older builds left none, and the next idle reap is the last moment the fact
+      // "this session was hosted detached" can be written down.
+      void pruneDeadEntries()
+        .then(() => backfillDetachedPreferences(listEntries()))
+        .catch(() => {});
     }
     return { direct, wrapper, detail: `${probe.kind}: ${probe.detail}` };
   } catch (err) {

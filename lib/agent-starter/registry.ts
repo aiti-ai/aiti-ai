@@ -218,6 +218,14 @@ export function rebindEntry(oldSessionId: string, newSessionId: string): boolean
   const next = nativeId(newSessionId);
   if (!next || next === entry.sessionId) return false;
   writeEntry({ ...entry, sessionId: next });
+  // The survive-restart marker is keyed by the native id as well; a backend that
+  // announces its real id only after start would otherwise keep the marker on the
+  // provisional id and lose the detached preference on the next cold open.
+  try {
+    renameSync(prefPath(entry.sessionId), prefPath(next));
+  } catch {
+    /* no marker for the old id (or already moved) — nothing to carry over */
+  }
   return true;
 }
 
@@ -393,4 +401,33 @@ export function listDetachedPreferenceIds(): Set<string> {
     /* no prefs directory yet */
   }
   return out;
+}
+
+/**
+ * Record the survive-restart preference for sessions a wrapper hosts right now
+ * without a marker.
+ *
+ * Spawns write the marker themselves; a registry entry from an older build (or one
+ * whose marker was removed by hand) would otherwise be the last chance to remember
+ * the choice: once the wrapper is gone (idle reap, restart) nothing on disk says how
+ * the session used to be hosted, and the next open falls back to the local runtime.
+ * Markers already present win, so a deliberate choice is never overwritten.
+ */
+export function backfillDetachedPreferences(entries: SessionEntry[]): number {
+  let written = 0;
+  for (const entry of entries) {
+    if (!entry.sessionId || getDetachedPreference(entry.sessionId)) continue;
+    try {
+      setDetachedPreference(entry.sessionId, {
+        mode: "subprocess-detached",
+        ...(entry.providerType ? { providerType: entry.providerType } : {}),
+        ...(entry.agentKey ? { agentKey: entry.agentKey } : {}),
+        ...(entry.cwd ? { cwd: entry.cwd } : {}),
+      });
+      written += 1;
+    } catch {
+      /* best effort: diagnostics only */
+    }
+  }
+  return written;
 }
