@@ -12,12 +12,12 @@ const path = require("path");
 const NPM_LATEST_URL = "https://registry.npmjs.org/@aiti-ai%2Fpi-web/latest";
 const FETCH_TIMEOUT_MS = 10_000;
 // npm ≥11.16 gates install scripts behind an allowScripts approval; without an
-// explicit allowlist, esbuild/node-pty binaries and pi-web's own postinstall
-// (patch-package) silently don't run. Older npm ignores the flag.
+// explicit allowlist pi-web's own postinstall (terminal prep + patch-package)
+// silently doesn't run. Older npm ignores the flag.
 // `--allow-scripts` is a list-valued option: always use `=...` AFTER the
 // positional spec. A bare flag swallows the spec (npm installs the cwd instead)
 // or the next flag, producing obscure npm errors.
-const ALLOW_SCRIPTS = "@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver";
+const ALLOW_SCRIPTS = "@aiti-ai/pi-web";
 const MANUAL_COMMAND = `npm install -g @aiti-ai/pi-web@latest --allow-scripts=${ALLOW_SCRIPTS}`;
 
 function npmInstallArgs(spec) {

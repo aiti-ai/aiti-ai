@@ -62,7 +62,7 @@ If no model provider is configured yet, open the **Models** panel to sign in or 
 To install the `pi-web` command globally:
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver
+npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web
 pi-web
 ```
 
