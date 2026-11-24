@@ -890,6 +890,17 @@ test("idle re-pin never yanks a history reader back to the tail", () => {
   );
   // The streaming follow path already had the guard — keep it pinned by assertion.
   assert.match(source, /if \(userScrolledAwayRef\.current\) return;/);
+  // The composer-growth re-pin in ChatWindow (error banner / queue banner resizing
+  // the composer while the view is tail-pinned) must respect the same walked-away
+  // state, and must read the ref (stable identity) rather than the reactive
+  // followPaused mirror, whose stale closure would defeat the check.
+  const composerResizeSource = chatWindowSource.slice(
+    chatWindowSource.indexOf("const updateBottomComposerHeight"),
+    chatWindowSource.indexOf("const observer = typeof ResizeObserver"),
+  );
+  assert.match(composerResizeSource, /!userScrolledAwayRef\.current && distanceFromBottom <=/);
+  assert.match(chatWindowSource, /sessionIdRef, messagesEndRef, scrollContainerRef, userScrolledAwayRef,/);
+  assert.match(source, /scrollContainerRef, runStartedAtRef, userScrolledAwayRef,/);
 });
 
 test("applies the running eye-room padding in the same commit as the send jump", () => {

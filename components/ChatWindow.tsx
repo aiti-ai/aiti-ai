@@ -567,7 +567,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     agentPhase,
     runStartedAtRef,
     isNew,
-    sessionIdRef, messagesEndRef, scrollContainerRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef, userScrolledAwayRef,
     lastUserMsgRef, promptAnchorActive,
     editEntryId, cancelEdit,
     showScrollToBottom,
@@ -1601,7 +1601,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           ? currentContainer.scrollHeight - currentContainer.clientHeight - currentContainer.scrollTop
           : Number.POSITIVE_INFINITY;
         // Preserve a tail-pinned view while avoiding a jump for history readers.
-        if (distanceFromBottom <= Math.abs(nextHeight - previousHeight) + 1) {
+        // The walked-away check also blocks this: a user who just wheeled up a
+        // few pixels must not be snapped back to the tail by a composer resize
+        // (error banner / queue banner appearing) — same bug family as the idle
+        // re-pin in useAgentSession.
+        if (!userScrolledAwayRef.current && distanceFromBottom <= Math.abs(nextHeight - previousHeight) + 1) {
           scrollToBottom("auto");
         }
       });
