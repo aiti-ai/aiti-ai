@@ -91,3 +91,6 @@ extensions/aiti-devtools/package-lock.json
 extensions/**/monaco/
 aiti-web-v*-*.*-universal.*
 cache/logs/*.log
+.tmp-qoder/
+extensions/*/package-lock.json
+*.log
