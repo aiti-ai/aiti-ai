@@ -1360,7 +1360,9 @@ test("an adopted backend's readiness agent_start does not claim a run (no stuck 
   // as a real run start set the phase to waiting_model with nothing running — the chip stayed
   // for minutes (observed 1m01s, 2026-11-23). The handler must keep the stream and claim nothing.
   const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
+  // The source blob is stored with CRLF (no .gitattributes); normalize so the
+  // \n-based assertions below match on every platform's checkout.
+  const source = (await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
   const branch = source.slice(source.indexOf('case "agent_start":'), source.indexOf('case "model_select":'));
   assert.match(branch, /resumed\?: unknown/);
   assert.match(branch, /if \(\(event as \{ resumed\?: unknown \}\)\.resumed === true\) \{\n\s+cancelEventStreamGrace\(\);\n\s+break;\n\s+\}/);
