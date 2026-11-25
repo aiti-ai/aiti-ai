@@ -46,6 +46,13 @@ export type ExtModelEntry = {
   /** Right-aligned dim text in the model picker row (e.g. qoder billing coefficient "0.5x").
    *  Locale-neutral string rendered as-is; absent → host falls back to the provider id. */
   hint?: string;
+  /** Server marked the model unavailable (gateway enable:false — quota exhausted / plan state).
+   *  Disabled rows stay visible (greyed, not selectable) instead of being filtered out, so an
+   *  all-models-disabled account no longer looks like a broken catalog. */
+  disabled?: boolean;
+  /** Short pill tag from catalog metadata ("New" / "Free" / server-off-peak promo). Locale-keyed;
+   *  the host renders it in the picker row with the active locale. */
+  badge?: { en: string; zh: string };
 };
 
 export type ExtModelState = {
@@ -336,10 +343,21 @@ export function withCurrentFirst(models: ExtModelEntry[], current?: { id: string
  * provider/label），不合成条目。静态目录供新建页默认项（前端取 list[0]），
  * 若用 withCurrentFirst 会为 provider 不匹配的 pi 模型合成裸条目 → 列表重复。
  * 无命中/已在首位 → 原数组。
+ *  If the hit row is disabled (server-disabled, quota exhausted, etc.) it must not be
+ *  promoted — the default entry has to be selectable; promote the first enabled row
+ *  instead and leave disabled rows in place (still listed, see ExtModelEntry.disabled).
  */
 export function withLastUsedFirst(models: ExtModelEntry[], lastUsedId?: string | null): ExtModelEntry[] {
   if (!lastUsedId) return models;
   const idx = models.findIndex((m) => m.id === lastUsedId);
+  if (idx < 0) return models;
+  if (models[idx].disabled) {
+    // A disabled last-used must not become the default: promote the first enabled row;
+    // no enabled row (or already first) → original order.
+    const enabled = models.findIndex((m) => !m.disabled);
+    if (enabled <= 0) return models;
+    return [models[enabled], ...models.slice(0, enabled), ...models.slice(enabled + 1)];
+  }
   if (idx <= 0) return models;
   return [models[idx], ...models.slice(0, idx), ...models.slice(idx + 1)];
 }

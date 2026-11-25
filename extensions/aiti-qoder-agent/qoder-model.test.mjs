@@ -34,6 +34,8 @@ function fakeClient() {
       { key: "auto", display_name: "Auto", enable: true },
       { key: "qmodel_38max", display_name: "Qwen3.8-Max", enable: true },
       { key: "qfmodel", display_name: "Qwen3.8-Flash", enable: true },
+      // Server-disabled (enable:false) rows are no longer filtered — keep them flagged
+      // disabled, the host renders them greyed
       { key: "hidden", display_name: "Hidden", enable: false },
     ],
   };
@@ -95,7 +97,7 @@ test("persistModelState: 目录外的模型名原样保留（不猜、不合成�
 test("qoderStaticCatalog: 上次使用的模型置顶（新建页默认项）", async () => {
   writeLastModelKV({ id: "qfmodel", provider: "qoder" });
   const list = await qoderStaticCatalog(fakeClient(), STATE_KEY);
-  assert.deepEqual(list.map((m) => m.id), ["qfmodel", "auto", "qmodel_38max"], "置顶前移，禁用的不入目录");
+  assert.deepEqual(list.map((m) => m.id), ["qfmodel", "auto", "qmodel_38max", "hidden"], "last-used promoted; disabled rows stay at the catalog tail (no longer filtered)");
 });
 
 test("qoderStaticCatalog: 存量 label 形态的 KV 同样置顶（老版本写坏的状态不再退化 auto）", async () => {
@@ -108,7 +110,41 @@ test("qoderStaticCatalog: 无 last-used 时保持目录原序", async () => {
   rmSync(join(stateDir, STATE_KEY, "_last-model.json"), { force: true });
   resetAgentLastModelCacheForTests();
   const list = await qoderStaticCatalog(fakeClient(), STATE_KEY);
-  assert.deepEqual(list.map((m) => m.id), ["auto", "qmodel_38max", "qfmodel"]);
+  assert.deepEqual(list.map((m) => m.id), ["auto", "qmodel_38max", "qfmodel", "hidden"]);
+});
+
+test("qoderCatalog: enable:false kept as a disabled row (quota exhaustion no longer masquerades as a broken catalog)", async () => {
+  rmSync(join(stateDir, STATE_KEY, "_last-model.json"), { force: true });
+  resetAgentLastModelCacheForTests();
+  const list = await qoderStaticCatalog(fakeClient(), STATE_KEY);
+  const hidden = list.find((m) => m.id === "hidden");
+  assert.equal(hidden?.disabled, true, "disabled rows carry the disabled mark");
+  assert.equal(hidden?.label, "Hidden", "label preserved as-is (host renders greyed)");
+  assert.equal(hidden?.source, "ext");
+  const enabled = list.find((m) => m.id === "auto");
+  assert.equal(enabled?.disabled, undefined, "enabled rows carry no disabled field");
+});
+
+test("catalog metadata: badges (promotion passthrough > free > new) and the discounted hint while off-peak is active", async () => {
+  rmSync(join(stateDir, STATE_KEY, "_last-model.json"), { force: true });
+  resetAgentLastModelCacheForTests();
+  const client = {
+    listModels: async () => [
+      { key: "newm", display_name: "New", enable: true, tags: ["new"], price_factor: 0.4 },
+      { key: "freem", display_name: "Free", enable: true, is_free: true, tags: ["new"], price_factor: 0 },
+      { key: "offpeak", display_name: "OffPeak", enable: true, price_factor: 0.5, promotion: { active: false, badge: { en: "Off-Peak 60% off", zh: "错峰 4 折" }, discount_factor: 0.4 } },
+      { key: "offpeak_on", display_name: "OffPeakOn", enable: true, price_factor: 0.5, promotion: { active: true, badge: { en: "Off-Peak 60% off", zh: "错峰 4 折" }, discount_factor: 0.4 } },
+      { key: "plain", display_name: "Plain", enable: true },
+    ],
+  };
+  const list = await qoderStaticCatalog(client, STATE_KEY);
+  const byId = Object.fromEntries(list.map((m) => [m.id, m]));
+  assert.deepEqual(byId.newm.badge, { en: "New", zh: "New" });
+  assert.deepEqual(byId.freem.badge, { en: "Free", zh: "免费" }, "is_free wins over tags:new");
+  assert.deepEqual(byId.offpeak.badge, { en: "Off-Peak 60% off", zh: "错峰 4 折" }, "server promo badge passes its bilingual copy through, highest priority");
+  assert.equal(byId.offpeak.hint, "0.5x", "off-peak inactive → catalog factor as-is");
+  assert.equal(byId.offpeak_on.hint, "0.2x", "off-peak active → discounted effective factor (0.5×0.4)");
+  assert.equal(byId.plain.badge, undefined);
 });
 
 test("qoderStaticCatalog: price_factor 映射为选择器 hint（尾零裁剪；非有限数/缺失不编数据）", async () => {

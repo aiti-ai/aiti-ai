@@ -311,30 +311,74 @@ async function restoredCwdFor(sessionId?: string): Promise<string | null> {
  * 计费系数（price_factor，服务端目录下发）→ 选择器行右侧弱化文本（"0.5x"）。
  * 尾零裁剪对齐 CLI 截图观感（0.5→"0.5x"、1→"1x"）；非有限数一律无 hint（不编数据）。
  * original_price_factor 更高（限时降价）时附原价："0.1x→0.5x"（现价→原价，locale 中立）。
+ * With an active off-peak window (promotion.active, e.g. 22:00-08:00 at 40%) shows the
+ * discounted effective factor — matching the CLI's actual charge; otherwise the catalog
+ * factor (the discount teaser is the badge's job, see catalogBadge).
  */
-function priceFactorHint(m: { price_factor?: unknown; original_price_factor?: unknown }): string | undefined {
-  const f = typeof m.price_factor === "number" && Number.isFinite(m.price_factor) ? m.price_factor : null;
-  if (f === null) return undefined;
+function priceFactorHint(m: { price_factor?: unknown; original_price_factor?: unknown; promotion?: { active?: unknown; discount_factor?: unknown } }): string | undefined {
+  const pf = typeof m.price_factor === "number" && Number.isFinite(m.price_factor) ? m.price_factor : null;
+  if (pf === null) return undefined;
+  const df = m.promotion?.discount_factor;
+  if (m.promotion?.active === true && typeof df === "number" && Number.isFinite(df)) {
+    return `${trimFactor(pf * df)}x`;
+  }
   const trim = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
-  const orig = typeof m.original_price_factor === "number" && Number.isFinite(m.original_price_factor) && m.original_price_factor > f
+  const orig = typeof m.original_price_factor === "number" && Number.isFinite(m.original_price_factor) && m.original_price_factor > pf
     ? m.original_price_factor
     : null;
-  return orig !== null ? `${trim(f)}x→${trim(orig)}x` : `${trim(f)}x`;
+  return orig !== null ? `${trim(pf)}x→${trim(orig)}x` : `${trim(pf)}x`;
+}
+
+/** Same trailing-zero trim as priceFactorHint (shared by the promo branch; a separate function keeps the two branches decoupled). */
+function trimFactor(n: number): string {
+  return n.toFixed(2).replace(/\.?0+$/, "");
+}
+
+/**
+ * Catalog metadata → selector-row badge (an {en,zh} pair the host renders in the current
+ * language; mirrors the official CLI's "New"/"Free"/off-peak corner marks). Priority:
+ * server off-peak promotion (badge ships its own bilingual copy, passed through) >
+ * free (is_free) > New (tags); the badge slot is single, so the most actionable hit wins.
+ */
+function catalogBadge(m: { is_free?: unknown; tags?: unknown; promotion?: { badge?: unknown } }): ExtModelEntry["badge"] {
+  const promo = m.promotion?.badge;
+  if (promo && typeof promo === "object") {
+    const b = promo as { en?: unknown; zh?: unknown };
+    const en = typeof b.en === "string" && b.en.trim() ? b.en.trim() : "";
+    const zh = typeof b.zh === "string" && b.zh.trim() ? b.zh.trim() : "";
+    if (en || zh) return { en: en || zh, zh: zh || en };
+  }
+  if (m.is_free === true) return { en: "Free", zh: "免费" };
+  if (Array.isArray(m.tags) && m.tags.some((t) => t === "new")) return { en: "New", zh: "New" };
+  return undefined;
 }
 
 /**
  * 模型目录核心（handle 方法与注册级静态 listModels 共用）：
  * 网关目录（WASM 签名拉取，client 可为 null——未就绪时静默降级为仅 pi 目录）
  * + pi 目录（models.json 实时扁平化，"pi" 分组）。当前模型置顶。
+ * enable:false rows are no longer filtered out (2026-11-25 retrospective: with quota
+ * exhausted the server disables every model, and filtering them all made the catalog
+ * look broken) — keep them flagged disabled and let the host render them greyed; when
+ * everything is disabled the selector shows why at a glance instead of leaving only
+ * the pi catalog, misread as a code regression.
  */
 async function qoderCatalog(client: QoderClient | null, current?: { id: string; provider: string }): Promise<ExtModelEntry[]> {
   const external: ExtModelEntry[] = [];
   if (client) {
     try {
       for (const m of await client.listModels()) {
-        if (m.enable === false) continue;
         const hint = priceFactorHint(m);
-        external.push({ id: m.key, provider: "qoder", label: m.display_name || m.key, source: "ext", ...(hint ? { hint } : {}) });
+        const badge = catalogBadge(m);
+        external.push({
+          id: m.key,
+          provider: "qoder",
+          label: m.display_name || m.key,
+          source: "ext",
+          ...(m.enable === false ? { disabled: true } : {}),
+          ...(hint ? { hint } : {}),
+          ...(badge ? { badge } : {}),
+        });
       }
     } catch (e) {
       console.warn("[aiti-qoder-agent] listModels failed:", e instanceof Error ? e.message : e);
