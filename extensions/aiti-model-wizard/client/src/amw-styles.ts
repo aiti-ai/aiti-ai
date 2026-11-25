@@ -124,8 +124,8 @@ export const STYLES = `
   background: color-mix(in srgb, var(--accent, #2563eb) 88%, #000);
   border-color: color-mix(in srgb, var(--accent, #2563eb) 88%, #000); color: #fff;
 }
-.amw-btn.is-ok { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 600; }
-.amw-btn.is-ok:not(:disabled):hover { background: #15803d; border-color: #15803d; }
+.amw-btn.is-ok { background: var(--ok, #16a34a); border-color: var(--ok, #16a34a); color: #fff; font-weight: 600; }
+.amw-btn.is-ok:not(:disabled):hover { background: color-mix(in srgb, var(--ok, #16a34a) 85%, #000); border-color: color-mix(in srgb, var(--ok, #16a34a) 85%, #000); }
 .amw-btn.is-danger { background: color-mix(in srgb, var(--danger, #ef4444) 6%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 35%, transparent); color: var(--danger, #ef4444); }
 .amw-btn.is-danger:not(:disabled):hover { background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 50%, transparent); }
 
@@ -168,9 +168,9 @@ export const STYLES = `
   background: var(--bg-panel, #f5f5f5); color: var(--text-muted, #374151);
   font-size: 12px; line-height: 1.5;
 }
-.amw-note.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); color: #16a34a; }
-.amw-note.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent); border-color: color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent); color: #b45309; }
-.amw-note.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent); color: #dc2626; }
+.amw-note.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); color: var(--ok, #16a34a); }
+.amw-note.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent); border-color: color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent); color: var(--warn, #b45309); }
+.amw-note.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent); color: var(--danger, #dc2626); }
 
 /* ===== 标签 / 徽标 / 芯片 ===== */
 .amw-tag {
@@ -178,27 +178,27 @@ export const STYLES = `
   padding: 1px 7px; border-radius: 999px; border: 1px solid transparent;
   font-size: 11px; font-weight: 650; white-space: nowrap;
 }
-.amw-tag.is-combo { background: rgba(217, 119, 6, 0.14); color: #d97706; border-color: rgba(217, 119, 6, 0.35); }
-.amw-tag.is-oauth { background: rgba(99, 102, 241, 0.14); color: #4f46e5; border-color: rgba(99, 102, 241, 0.35); }
-.amw-tag.is-new { background: color-mix(in srgb, var(--ok, #22c55e) 14%, transparent); color: #15803d; border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); }
-.amw-tag.is-ro { background: rgba(99, 102, 241, 0.14); color: #4f46e5; border-color: rgba(99, 102, 241, 0.35); }
+.amw-tag.is-combo { background: rgba(217, 119, 6, 0.14); color: var(--warn, #d97706); border-color: rgba(217, 119, 6, 0.35); }
+.amw-tag.is-oauth { background: rgba(99, 102, 241, 0.14); color: var(--accent, #4f46e5); border-color: rgba(99, 102, 241, 0.35); }
+.amw-tag.is-new { background: color-mix(in srgb, var(--ok, #22c55e) 14%, transparent); color: var(--ok, #15803d); border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); }
+.amw-tag.is-ro { background: rgba(99, 102, 241, 0.14); color: var(--accent, #4f46e5); border-color: rgba(99, 102, 241, 0.35); }
 .amw-chip {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 0 5px; border-radius: 4px;
   font-size: 11px; line-height: 16px; white-space: nowrap;
 }
 .amw-chip.is-key { background: rgba(37, 99, 235, 0.10); color: var(--accent, #2563eb); }
-.amw-chip.is-combo { background: rgba(217, 119, 6, 0.14); color: #d97706; }
-.amw-chip.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); color: #16a34a; }
-.amw-chip.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 16%, transparent); color: #b45309; }
-.amw-chip.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent); color: #dc2626; }
+.amw-chip.is-combo { background: rgba(217, 119, 6, 0.14); color: var(--warn, #d97706); }
+.amw-chip.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); color: var(--ok, #16a34a); }
+.amw-chip.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 16%, transparent); color: var(--warn, #b45309); }
+.amw-chip.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent); color: var(--danger, #dc2626); }
 .amw-pill {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 8px; border-radius: 999px;
   background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.25);
-  font-size: 11px; font-weight: 600; color: #4f46e5;
+  font-size: 11px; font-weight: 600; color: var(--accent, #4f46e5);
 }
-.amw-dot { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: #16a34a; flex-shrink: 0; }
+.amw-dot { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--ok, #16a34a); flex-shrink: 0; }
 /* 可用性徽标（模型树）：颜色由内联给定，形状/尺寸统一 */
 .amw-vdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
@@ -367,10 +367,10 @@ export const STYLES = `
 }
 .amw-combo-confirm {
   display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
-  font-size: 11px; font-weight: 600; color: #b45309; cursor: pointer;
+  font-size: 11px; font-weight: 600; color: var(--warn, #b45309); cursor: pointer;
 }
 .amw-combo-confirm > input { accent-color: var(--warn, #f59e0b); cursor: pointer; }
-.amw-combo-confirm.is-done { cursor: default; color: var(--text-subtle, #6b7280); font-weight: 400; }
+.amw-combo-confirm.is-done { cursor: default; color: var(--text-dim, #6b7280); font-weight: 400; }
 .amw-combo-confirm.is-done > input { cursor: default; opacity: 0.6; }
 /* Numbered section heads: group -> virtual model -> members hierarchy made explicit */
 .amw-combo-sect { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 14px 2px 8px; }
