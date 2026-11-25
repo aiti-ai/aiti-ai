@@ -886,8 +886,20 @@ test("idle re-pin never yanks a history reader back to the tail", () => {
   );
   assert.match(
     releaseSource,
-    /!userPointerDownRef\.current && !userScrolledAwayRef\.current/,
+    /!userPointerDownRef\.current && !userScrolledAwayRef\.current && isNearBottomRef\.current/,
   );
+  assert.match(
+    scrollEffectSource,
+    /!userScrolledAwayRef\.current && isNearBottomRef\.current/,
+  );
+  // The re-pin guard must be POSITIONAL (isNearBottom, the upstream semantics):
+  // while idle nothing grows the transcript, so "away from the bottom"
+  // reliably means "the user scrolled up to read". The intent flag alone is
+  // unseedable in an idle session — the scroll handler is gated by
+  // agentRunning — so an intent-only guard never fires there. The old
+  // always-true completionScrollAllowedRef condition yanked readers instead.
+  assert.ok(!/completionScrollAllowedRef/.test(source), "the always-true completionScrollAllowedRef must stay deleted");
+  assert.match(source, /addEventListener\("wheel", markUserScrollIntent/);
   // The streaming follow path already had the guard — keep it pinned by assertion.
   assert.match(source, /if \(userScrolledAwayRef\.current\) return;/);
   // The agentRunning running edge must NOT clear the walked-away state any more:

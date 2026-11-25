@@ -1032,7 +1032,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const initialScrollDoneRef = useRef(Boolean(opts.deferInitialScroll));
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
-  const completionScrollAllowedRef = useRef(true);
   const isNearBottomRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const liveFollowFrameRef = useRef<number | null>(null);
@@ -5790,6 +5789,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const setPointerDown = () => { userPointerDownRef.current = true; };
     const setPointerUp = () => { userPointerDownRef.current = false; };
     window.addEventListener("keydown", markUserScrollIntent);
+    // Wheel-up is a definitive leave-the-tail signal (no programmatic scroll
+    // ever emits wheel events). The WheelEvent branch of markUserScrollIntent
+    // is dead without this registration — an upward wheel in an idle session
+    // (where the scroll handler is gated by agentRunning) would never set the
+    // walked-away state.
+    window.addEventListener("wheel", markUserScrollIntent, { passive: true });
     // Any press also opens the scroll-intent reserve window (10s); the hold
     // flag additionally freezes auto-follow for the whole press.
     window.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
@@ -5825,7 +5830,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!wasComposing || pendingScrollToUserRef.current) return;
       if (agentRunningRef.current) {
         scheduleFollowStep();
-      } else if (!userPointerDownRef.current && !userScrolledAwayRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+      } else if (!userPointerDownRef.current && !userScrolledAwayRef.current && isNearBottomRef.current) {
         scrollToBottom("smooth");
       }
     };
@@ -5894,12 +5899,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // First paint of an opened session always lands at the tail even if a
         // composer autofocus already counts as "editing".
         scrollToBottom("instant", { force: true });
-      } else if (!agentRunningRef.current && !userPointerDownRef.current && !userScrolledAwayRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+      } else if (!agentRunningRef.current && !userPointerDownRef.current && !userScrolledAwayRef.current && isNearBottomRef.current) {
         // Idle re-pin (completion scroll / message reconcile / older-page prepend
-        // growing messages.length) must respect the walked-away state: the user
-        // reading history — scrolled up, or a background run finishing while they
-        // are scrolled up — must NOT be yanked back to the tail. Only a user who
-        // is still at/near the tail gets the smooth re-pin.
+        // growing messages.length) must only re-pin a user who is STILL at the
+        // tail. The guard is positional (isNearBottom, the upstream semantics):
+        // while the agent is idle nothing grows the transcript, so "away from
+        // the bottom" reliably means "the user scrolled up to read" — an intent
+        // flag alone cannot work here, because in an idle session nothing ever
+        // sets it (the wheel/keydown intent markers and the agentRunning-gated
+        // scroll handler all miss idle upward scrolls). An intent flip (another
+        // client starting a run, reconcile adoption) must not clear this either.
         scrollToBottom("smooth");
       }
     }
