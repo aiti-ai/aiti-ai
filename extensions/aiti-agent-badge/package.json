@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-badge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Agent badge for the composer toolbar: current session agent, live/running state, hosting mode (in-process / subprocess / subprocess-detached) with a compact switch panel.",
   "displayNameI18n": {

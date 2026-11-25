@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ensureReadability, agentMeta, agentShort } from "./agent-meta";
-import { localizeText, type HostingController, type HostingMode, type HostingModeOption } from "./hosting-client";
+import { fetchBackendUsage, localizeText, type BackendUsage, type HostingController, type HostingMode, type HostingModeOption } from "./hosting-client";
 import { getLocale, showToast, t } from "./host-shim";
 
 function tOr(key: string, fallback: string): string {
@@ -67,6 +67,65 @@ function Row(props: { label: string; value: string; title?: string; mono?: boole
         title={props.title ?? props.value}
       >
         {props.value}
+      </span>
+    </>
+  );
+}
+
+const fmtNum = (n: number): string => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+/**
+ * Account quota row for backend sessions (get_usage capability; qoder credits/buckets today).
+ * Fetches once on mount, click-to-refresh; no polling. Failure semantics: never fetched → the
+ * row renders nothing; fetched before but refresh failed → last value dims with the fetch time
+ * in the title (data courtesy of the backend extension, so a stale number beats no number).
+ */
+function QuotaRow(props: { sessionId: string }) {
+  const [usage, setUsage] = useState<BackendUsage | null>(null);
+  const [fetchedAt, setFetchedAt] = useState(0);
+  const [stale, setStale] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setBusy(true);
+    fetchBackendUsage(props.sessionId).then((u) => {
+      if (!alive) return;
+      setBusy(false);
+      if (u) {
+        setUsage(u);
+        setFetchedAt(Date.now());
+        setStale(false);
+      } else {
+        setStale(true); // never fetched → stays hidden below; had a value → keep it dimmed
+      }
+    }).catch(() => {
+      if (alive) { setBusy(false); setStale(true); }
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.sessionId]);
+  if (!usage) return null;
+  const unit = usage.credits?.unit ?? "credits";
+  const parts: string[] = [];
+  if (usage.credits?.remaining !== undefined) parts.push(tOr("badge.quota.remaining", "{remaining} {unit} left").replace("{remaining}", fmtNum(usage.credits.remaining)).replace("{unit}", unit));
+  else if (usage.credits?.usedPercent !== undefined) parts.push(tOr("badge.quota.usedPercent", "{pct}% used").replace("{pct}", fmtNum(Math.round(usage.credits.usedPercent))));
+  for (const b of usage.buckets ?? []) {
+    if (b.remaining !== undefined && b.total !== undefined) parts.push(`${b.name} ${fmtNum(b.remaining)}/${fmtNum(b.total)}`);
+  }
+  if (parts.length === 0) return null;
+  const exceeded = usage.quotaExceeded === true;
+  const title = [tOr("badge.quota.refreshHint", "Click to refresh"), fetchedAt ? new Date(fetchedAt).toLocaleTimeString() : "", stale ? tOr("badge.quota.stale", "Refresh failed — showing the last result") : ""].filter(Boolean).join(" · ");
+  return (
+    <>
+      <span style={rowLabelStyle}>{tOr("badge.field.quota", "Quota")}</span>
+      <span
+        role="button"
+        tabIndex={0}
+        title={title}
+        onClick={() => { if (!busy) { setStale(false); void fetchBackendUsage(props.sessionId).then((u) => { if (u) { setUsage(u); setFetchedAt(Date.now()); } else { setStale(true); } }); } }}
+        style={{ ...rowValueStyle, cursor: busy ? "default" : "pointer", color: exceeded ? "var(--danger, #ef4444)" : stale ? "var(--text-dim, #777)" : "var(--text, #ddd)", opacity: stale ? 0.75 : 1 }}
+      >
+        {parts.join(" · ")}{exceeded ? ` · ${tOr("badge.quota.exceeded", "quota exhausted")}` : ""}
       </span>
     </>
   );
@@ -408,6 +467,7 @@ export function HostingPanel(props: {
               {info.alive ? <Row label={t("badge.field.detached")} value={detached ? t("badge.yes") : t("badge.no")} /> : null}
               <Row label={t("badge.field.session")} value={info.nativeSessionId} mono />
               {info.cwd ? <Row label={t("badge.field.cwd")} value={info.cwd} mono /> : null}
+              {info.agentKind === "external" ? <QuotaRow key={info.sessionId} sessionId={info.sessionId} /> : null}
             </div>
           ) : null}
 
