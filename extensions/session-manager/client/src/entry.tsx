@@ -51,7 +51,7 @@ import { buildAtText, openNewSession } from "../../../_shared/new-session-cwd";
 import {
   refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget,
   onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
-  managerOpen, SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, useFlag, openViewer,
+  managerOpen, SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, useFlag, openViewer, openExtViewer,
 } from "./store";
 // 跨扩展复用（构建期内联）：aiti-folder 的目录选择器 DirectoryBrowser。它内部引用
 // aiti-folder 自己的 host-shim 副本——register 时把同一 ctx 也注入那份副本，
@@ -415,6 +415,24 @@ export default function register(ctx: Record<string, unknown>) {
       const key = getProjectSessionsTarget();
       if (key) void refreshProjectSessions(key);
     });
+  } catch { /* non-DOM */ }
+
+  // The host's main-chat route dispatches this event when an "external history source"
+  // 404s (useAgentSession): such sessions (e.g. qodercnide, a read-only IDE-local store)
+  // have no session file and may have no driving backend, so the chat page would just
+  // be an empty table — open the read-only viewer (session-ext payload) instead.
+  // Window-level dedup flag: register can re-mount on hydration, and repeated
+  // addEventListener would stack listeners (module-level variables are unreliable
+  // across hot reloads too).
+  try {
+    const w = window as { __smSessionUnopenableHook?: boolean };
+    if (!w.__smSessionUnopenableHook) {
+      w.__smSessionUnopenableHook = true;
+      window.addEventListener("pi-web:session-unopenable", (e) => {
+        const id = (e as CustomEvent<{ id?: unknown }>).detail?.id;
+        if (typeof id === "string" && id) openExtViewer(id);
+      });
+    }
   } catch { /* non-DOM */ }
 
   // 跨 tab 会话列表帧分发：新会话创建（rpc-manager publish，草稿行+补拉转正）+

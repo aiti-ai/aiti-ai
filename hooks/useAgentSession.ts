@@ -1472,6 +1472,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setError(null);
         }
         deleteSessionViewSnapshot(sid);
+        // Composite external id (qodercnide:<sid>, zed:<sid>, …): read-only history
+        // sources have no session file and may have no driving backend, so this route
+        // 404s. Hand it to the extensions (session-manager opens its read-only viewer)
+        // instead of leaving an empty chat behind a sidebar click / ?session= restore.
+        if (sid.includes(":") && !sid.includes(":new-")) {
+          try {
+            window.dispatchEvent(new CustomEvent("pi-web:session-unopenable", { detail: { id: sid } }));
+          } catch { /* non-DOM */ }
+        }
         return null;
       }
       if (!res.ok) {
