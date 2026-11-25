@@ -60,7 +60,7 @@ export const STYLES = `
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 .amw-tab:not(:disabled):hover { background: var(--bg-hover, rgba(0, 0, 0, 0.05)); }
-.amw-tab.is-on { background: var(--accent, #2563eb); color: #fff; font-weight: 600; }
+.amw-tab.is-on { background: var(--accent, #2563eb); color: var(--accent-contrast, #fff); font-weight: 600; }
 .amw-tab:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: -2px; }
 .amw-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; }
 .amw-close {
@@ -119,10 +119,10 @@ export const STYLES = `
 .amw-btn:not(:disabled):hover { background: var(--bg-hover, rgba(0, 0, 0, 0.04)); color: var(--text, #1a1a1a); }
 .amw-btn:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .amw-btn:disabled { cursor: default; opacity: 0.5; }
-.amw-btn.is-primary { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: #fff; font-weight: 600; }
+.amw-btn.is-primary { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: var(--accent-contrast, #fff); font-weight: 600; }
 .amw-btn.is-primary:not(:disabled):hover {
   background: color-mix(in srgb, var(--accent, #2563eb) 88%, #000);
-  border-color: color-mix(in srgb, var(--accent, #2563eb) 88%, #000); color: #fff;
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 88%, #000); color: var(--accent-contrast, #fff);
 }
 .amw-btn.is-ok { background: var(--ok, #16a34a); border-color: var(--ok, #16a34a); color: #fff; font-weight: 600; }
 .amw-btn.is-ok:not(:disabled):hover { background: color-mix(in srgb, var(--ok, #16a34a) 85%, #000); border-color: color-mix(in srgb, var(--ok, #16a34a) 85%, #000); }
@@ -240,7 +240,7 @@ export const STYLES = `
 .amw-step-dot {
   width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--accent, #2563eb); color: #fff; font-size: 11px; font-weight: 700;
+  background: var(--accent, #2563eb); color: var(--accent-contrast, #fff); font-size: 11px; font-weight: 700;
 }
 .amw-step-title { font-size: 13px; font-weight: 700; flex-shrink: 0; color: var(--text, #1a1a1a); }
 .amw-step-hint { color: var(--text-dim, #9ca3af); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

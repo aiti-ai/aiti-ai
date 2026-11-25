@@ -403,7 +403,7 @@ function OauthCodeInput({ onSubmit, placeholder, allowEmpty }: { onSubmit: (v: s
       <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} value={v} placeholder={placeholder || ""}
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && (allowEmpty || v.trim())) onSubmit(v); }} />
-      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={!allowEmpty && !v.trim()} onClick={() => onSubmit(v)}>{ti("mw.tx.13")}</button>
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" }} disabled={!allowEmpty && !v.trim()} onClick={() => onSubmit(v)}>{ti("mw.tx.13")}</button>
     </div>
   );
 }
@@ -796,7 +796,7 @@ function EyeBtn({ title, onClick }: { title: string; onClick: () => void }) {
 function StepHead({ n, title, hint, right }: { n: number | string; title: string; hint?: string; right?: any }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 7, margin: "16px 0 8px", minHeight: 24 }}>
-      <span style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--accent,#2563eb)", color: "#fff", fontSize: 11, fontWeight: 700,
+      <span style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", fontSize: 11, fontWeight: 700,
         display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{n}</span>
       <span style={{ fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{title}</span>
       {hint ? <span style={{ color: "var(--text-dim,#999)", fontSize: 11, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hint}</span> : null}
@@ -2054,7 +2054,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <input className="amw-input" style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.248")} value={e.newKey || ""} onChange={(ev) => setE({ newKey: ev.target.value })} />
               <input className="amw-input" style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" value={e.newRpm || ""} onChange={(ev) => setE({ newRpm: ev.target.value })} />
               <input className="amw-input" style={{width: 72, flexShrink: 0}} placeholder={ti("mw.a.240")} title={ti("mw.a.249")} value={e.newMiv || ""} onChange={(ev) => setE({ newMiv: ev.target.value })} />
-              <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "4px 10px", flexShrink: 0 }} disabled={e.busy || !((e.newKey || "").trim())} onClick={() => editKeyAdd(p.provider)}>{ti("mw.tx.36")}</button>
+              <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "4px 10px", flexShrink: 0 }} disabled={e.busy || !((e.newKey || "").trim())} onClick={() => editKeyAdd(p.provider)}>{ti("mw.tx.36")}</button>
             </div>
           </div>
         ) : null}
@@ -2103,7 +2103,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {/* ── 模型（刷新可选 / 增删）── */}
         <div className="amw-section" style={{margin: "0 0 6px"}}>{ti("mw.a.253") + (avail ? availChecked.length + ti("mw.a.254") + avail.models.length + ti("mw.a.255") : draft.length + ti("mw.a.9")) + "）"}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={() => refreshEditModels(p.provider, p)} disabled={!!refreshBusy[p.provider]}>
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "3px 10px" }} onClick={() => refreshEditModels(p.provider, p)} disabled={!!refreshBusy[p.provider]}>
             {refreshBusy[p.provider] ? ti("mw.a.48") : (<><Ic size={12} paths={ICONS.refresh} />{" "}{ti("mw.tx.185")}</>)}
           </button>
           {avail ? <button className="amw-btn" onClick={() => setEditAvail((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; })}>{ti("mw.tx.38")}</button> : null}
@@ -2175,7 +2175,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked: maskedHeaders } }))} />
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} title={ti("mw.tx.51")} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "3px 10px" }} title={ti("mw.tx.51")} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
             {(keyTests[p.provider] && keyTests[p.provider].busy) ? ti("mw.a.76") : (<>{ti("mw.tx.50")}</>)}
           </button>
         </div>
@@ -2351,7 +2351,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         placeholder={configured ? ti("mw.a.293") : "sk-…"} value={akDraft[id] || ""}
         onChange={(e) => setAkDraft((prev) => ({ ...prev, [id]: e.target.value }))}
         onKeyDown={(e: any) => { if (e.key === "Enter" && (akDraft[id] || "").trim()) void saveAuthKey(id, akDraft[id]); }} />
-      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", flexShrink: 0 }} disabled={akBusy === id || !(akDraft[id] || "").trim()}
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", flexShrink: 0 }} disabled={akBusy === id || !(akDraft[id] || "").trim()}
         onClick={() => void saveAuthKey(id, akDraft[id])}>{akBusy === id ? ti("mw.a.55") : ti("mw.a.56")}</button>
       {configured ? (
         <button className="amw-btn" style={{ color: "var(--danger, #dc2626)", flexShrink: 0 }} disabled={akBusy === id} title={ti("mw.a.294")}
@@ -2436,7 +2436,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <div style={{ fontWeight: 650, fontSize: 13 }}>{pr.name || pid}</div>
                   <div style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{OAUTH_META[pid] || ti("mw.a.300")}</div>
                 </div>
-                <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }}
+                <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "3px 10px", fontSize: 11 }}
                   onClick={() => { setSubActive(active ? null : pid); checkOauthStatus([pid]); if (!active) startOauthLogin(pid); }}>
                   {ti("mw.tx.188")}
                 </button>
@@ -2517,7 +2517,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div className="amw-section">{ti("mw.tx.63")}</div>
         <div className="amw-note">{ti("mw.tx.64")}</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={() => startOauthLogin(pid)} disabled={working}>
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" }} onClick={() => startOauthLogin(pid)} disabled={working}>
             {ti("mw.tx.191", { name: p.name || pid })}
           </button>
           {working ? <button className="amw-btn" onClick={stopOauthLogin}>{ti("mw.tx.12")}</button> : null}
@@ -2639,7 +2639,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.331")}
           title={ti("mw.tx.76") + ti("mw.tx.48") + ti("mw.tx.77")}
           value={token} onChange={(e) => setToken(e.target.value)} />
-        <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", height: 32, flexShrink: 0 }} title={ti("mw.a.332")}
+        <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", height: 32, flexShrink: 0 }} title={ti("mw.a.332")}
           onClick={() => doTestCreds(p.baseUrl, p.apiType, hdrs)} disabled={testing || (!token.trim() && !validKeyRows.length)}>
           {testing ? ti("mw.a.76") : (<><Ic size={13} paths={ICONS.search} />{ti("mw.tx.75")}</>)}
         </button>
@@ -2674,7 +2674,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
       <StepHead n={3} title={ti("mw.a.335")} hint={known.length ? ti("mw.a.336") : undefined}
         right={<>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.337")} disabled={discBusy || (!token.trim() && !validKeyRows.length)} onClick={() => doDiscoverCreds(p.baseUrl, p.apiType, hdrs)}>
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.337")} disabled={discBusy || (!token.trim() && !validKeyRows.length)} onClick={() => doDiscoverCreds(p.baseUrl, p.apiType, hdrs)}>
             {discBusy ? ti("mw.a.338") : (<><Ic size={11} paths={ICONS.refresh} />{ti("mw.tx.82")}</>)}
           </button>
           {known.length ? <span style={{ fontSize: 11, color: "var(--text-dim,#666)", whiteSpace: "nowrap" }}>{ti("mw.a.339") + checked.length + " / " + known.length}</span> : null}
@@ -2922,7 +2922,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-dim,#666)" }}>{ti("mw.a.387") + cd.modelsError.slice(0, 90)}</div> : null}
         <div style={{ display: "flex", gap: 6, margin: "8px 0", alignItems: "center", flexWrap: "wrap" }}>
           {cd.baseUrl ? <span className="amw-mono" style={{ padding: "3px 8px", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)" }}>{"api=" + cd.api + " · baseUrl=" + cd.baseUrl}</span> : null}
-          {cd.api ? <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={onApply}>{ti("mw.tx.93")}</button> : null}
+          {cd.api ? <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" }} onClick={onApply}>{ti("mw.tx.93")}</button> : null}
         </div>
       </div>
     );
@@ -3037,7 +3037,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <StepHead n={1} title={ti("mw.a.401")} />
           <form style={{ display: "flex", gap: 8, marginBottom: 10 }} onSubmit={doSearch}>
             <input className="amw-input" style={{flex: 1}} title={ti("mw.a.402")} placeholder={ti("mw.a.403")} value={q} onChange={(e) => { setQ(e.target.value); setSearchDetect(null); setReverseRes(null); }} />
-            <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={searching}>{searching ? ti("mw.a.404") : <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.search} />{ti("mw.tx.103")}</span>}</button>
+            <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" }} disabled={searching}>{searching ? ti("mw.a.404") : <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.search} />{ti("mw.tx.103")}</span>}</button>
             {/* 常驻「＋ 自定义」：不搜索也能直接进面板（2026-09-17 拍板） */}
             <button type="button" className="amw-btn" style={{ flexShrink: 0 }} title={ti("mw.a.405")} onClick={startCustom}>{ti("mw.tx.104")}</button>
           </form>
@@ -3127,7 +3127,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-dim,#666)" }} title={ti("mw.a.431")}>{ti("mw.tx.110")}</div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="API key / token" value={probeKey} onChange={(e) => setProbeKey(e.target.value)} />
-                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? ti("mw.a.432") : ti("mw.a.433")}</button>
+                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? ti("mw.a.432") : ti("mw.a.433")}</button>
                   </div>
                 </div>
               ) : null}
@@ -4592,7 +4592,7 @@ export function Banner() {
         ? (avail ? "（" + avail.rateLimited + ti("mw.a.116") + avail.errorCount + ti("mw.a.464") + (avail.lastBlocked && avail.lastBlocked.marked ? ti("mw.a.617") : "") + ti("mw.a.618") : ti("mw.a.619"))
         : ti("mw.a.620")}</span>
       {state.allUnavailable && hasCheck() ? <button className="amw-btn" style={{ background: "var(--danger, #dc2626)", color: "#fff", padding: "3px 10px" }} onClick={openCheck}>{ti("mw.tx.181")}</button> : null}
-      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={openWizard}>{state.allUnavailable ? ti("mw.a.621") : ti("mw.a.622")}</button>
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)", padding: "3px 10px" }} onClick={openWizard}>{state.allUnavailable ? ti("mw.a.621") : ti("mw.a.622")}</button>
     </div>
   );
 }
