@@ -612,18 +612,49 @@ function reconcilePendingDrafts(now = Date.now()): void {
   // 归档桶同查：选中归档会话打开页面 → 永不进 live 桶 → 旧实现误判「未落盘」
   // → 155s 窗口内指数退避补拉全量 refresh=1（每次 ~221KB）首载连打 5-6 次。
   const archIds = new Set((store.archived ?? []).map((s) => String(s.id)));
+  // Promoted ids (drafts leaving the pending bucket into the live one): the dock renders
+  // the scoped bucket, so once reconcile drops the draft row and the scoped channel has
+  // not refetched, the row vanishes from the sidebar list — splice it into the scoped
+  // bucket at promotion time (zero request).
+  const promoted: string[] = [];
+  for (const p of store.pendingDrafts) {
+    const id = String(p.session.id);
+    if (liveIds.has(id)) promoted.push(id);
+  }
   const next = store.pendingDrafts.filter(
     (p) => !liveIds.has(String(p.session.id)) && !archIds.has(String(p.session.id))
       && now - p.notedAt < PENDING_DRAFT_TTL_MS,
   );
   const changed = next.length !== store.pendingDrafts.length;
   store.pendingDrafts = next;
+  if (promoted.length) syncPromotedRowsToScoped(promoted);
   if (next.length === 0) {
     stopPendingRetryChain(); // 全部转正/清理：结束补拉链
   } else if (next.some((p) => now - p.notedAt < PENDING_DRAFT_RETRY_WINDOW_MS)) {
     schedulePendingRetry();
   }
   if (changed) emit();
+}
+
+/** Draft-promotion handoff: splice rows that just landed in the full list into the scoped
+ *  bucket of the current project (absent-only — rows already present stay owned by the
+ *  scoped channel, both channels share the same server source). Without this the dock
+ *  shows the draft row, the row lands, the draft is pruned, and the session disappears
+ *  from the sidebar until the user switches projects. */
+function syncPromotedRowsToScoped(promotedIds: string[]): void {
+  const target = projectSessionsTarget;
+  // Resident rows must already belong to the target (a project switch in flight keeps
+  // the previous project's rows — the incoming landing will carry the promoted row).
+  if (!target || store.projectSessionsKey !== target) return;
+  const scoped = (store.projectSessions ?? []) as Record<string, unknown>[];
+  const have = new Set(scoped.map((r) => String(r.id)));
+  const want = new Set(promotedIds);
+  const add = ((store.sessions ?? []) as Record<string, unknown>[]).filter((r) =>
+    want.has(String(r.id))
+    && !have.has(String(r.id))
+    && normalizeWorkspaceKey(String(r.projectKey ?? r.projectRoot ?? r.cwd ?? "")) === target,
+  );
+  if (add.length) store.projectSessions = [...add, ...scoped] as any[];
 }
 
 /** 跨 tab「新会话创建」帧处理（服务端 sm:session-created：rpc-manager 全新本地会话
@@ -708,9 +739,43 @@ function applyActivityRow(row: Record<string, unknown>): void {
   else { archById.delete(id); byId.set(id, row); }
   store.sessions = [...byId.values()] as any[];
   store.archived = [...archById.values()] as any[];
+  syncScopedActivityRow(row);
   syncWorkspacesFromRow(row); // keep the project aggregate in step with live row changes (block comment below)
   reconcileLocalNames(); // 乐观改名套回（防在途旧名广播盖回；与 refreshSessions 同 stance）
   emit();
+}
+
+/**
+ * Mirror one activity-frame row into the scoped bucket (the dock's render source).
+ * Activity frames used to patch only the full buckets, so a session created/updated by
+ * another tab (e.g. a backend handle starting to run) stayed absent or frozen in the
+ * sidebar until a project switch. Rows outside the current target project are ignored;
+ * archived rows leave the live-only scoped bucket; an unknown id is inserted (the frame
+ * only fires for rows the full bucket knows).
+ */
+function syncScopedActivityRow(row: Record<string, unknown>): void {
+  const target = projectSessionsTarget;
+  // Same guard as the promotion handoff: never splice rows into a bucket that still
+  // belongs to the previous project (the switch landing replaces it wholesale anyway).
+  if (!target || store.projectSessionsKey !== target) return;
+  const id = String(row.id ?? "");
+  if (!id) return;
+  const scoped = (store.projectSessions ?? []) as Record<string, unknown>[];
+  if (row.archived) {
+    if (scoped.some((r) => String(r.id) === id)) {
+      store.projectSessions = scoped.filter((r) => String(r.id) !== id) as any[];
+    }
+    return;
+  }
+  if (normalizeWorkspaceKey(String(row.projectKey ?? row.projectRoot ?? row.cwd ?? "")) !== target) return;
+  const at = scoped.findIndex((r) => String(r.id) === id);
+  if (at >= 0) {
+    const next = [...scoped];
+    next[at] = row;
+    store.projectSessions = next as any[];
+  } else {
+    store.projectSessions = [row, ...scoped] as any[];
+  }
 }
 
 /* ── Row-level sync into the workspaces aggregate ([通道拆分] follow-up, 2026-11-09) ──
@@ -1256,6 +1321,9 @@ export async function sourceAction(op: "activate" | "sync", agent: string) {
     const d = await res.json();
     void refreshSources();
     void refreshSessions({ force: true });
+    // Newly indexed external rows must reach the dock's scoped bucket as well.
+    const key = projectSessionsTarget;
+    if (key) void refreshProjectSessions(key, { force: true });
     if (op === "activate") selectAgent(agent); // 新加载的源自动选中
     return d;
   } catch {
@@ -1273,6 +1341,8 @@ export async function importSession(id: string): Promise<string | null> {
     if (!res.ok) return null;
     const d = await res.json();
     void refreshSessions({ force: true });
+    const key = projectSessionsTarget;
+    if (key) void refreshProjectSessions(key, { force: true });
     return (d.sessionId as string) ?? null;
   } catch {
     return null;

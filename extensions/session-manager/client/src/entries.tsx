@@ -7,7 +7,8 @@ import { createPortal } from "react-dom";
 import { t } from "./host-shim";
 import {
   store, useStore, panelOpen, kanbanOpen,
-  refreshRunning, refreshSessions, refreshWorkspaces, emit, setPendingSearch, displayCwd,
+  refreshRunning, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget,
+  emit, setPendingSearch, displayCwd,
   applyRunningFrame, subscribeRunningFrames, isRunningSseHealthy,
   hidePendingRow, subscribePendingRemovals, collapsePanelIfCovering,
 } from "./store";
@@ -47,6 +48,13 @@ export function SidebarEntry() {
             const changed = applyRunningFrame(frame.runningSessionIds as string[]);
             if (changed) {
               void refreshSessions({ refresh: hasNewId });
+              // The dock renders the scoped channel (store.projectSessions), which only
+              // refreshProjectSessions writes. A run starting/stopping in another tab used
+              // to refresh only the full channel → the new session row (e.g. a qoder
+              // backend handle) stayed absent from the dock until the user switched
+              // projects. Keep the scoped view in step with the same signal.
+              const key = getProjectSessionsTarget();
+              if (key) void refreshProjectSessions(key, { refresh: hasNewId });
               // Running-set change → refill the project aggregate (runningCount badges;
               // server-authoritative lastModified alignment). 5s throttle + ETag 304 →
               // zero payload in steady state; parameterless call reuses the last unread

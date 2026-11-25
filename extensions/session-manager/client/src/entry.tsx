@@ -49,7 +49,8 @@
 import { __setCtx, t, apiUrl, useState, useEffect, useRef, getExtService } from "./host-shim";
 import { buildAtText, openNewSession } from "../../../_shared/new-session-cwd";
 import {
-  refreshSessions, refreshWorkspaces, onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
+  refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget,
+  onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
   managerOpen, SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, useFlag, openViewer,
 } from "./store";
 // 跨扩展复用（构建期内联）：aiti-folder 的目录选择器 DirectoryBrowser。它内部引用
@@ -407,7 +408,13 @@ export default function register(ctx: Record<string, unknown>) {
   //（宿主 Header 刷新按钮 / 其他扩展 notifySessionsChanged）→ 本扩展 store 刷新
   // （ETag/304 + 并发合流节流；notify 本身不在此监听器路径上，无循环）。
   try {
-    window.addEventListener("sm:sessions-changed", () => { void refreshSessions(); });
+    window.addEventListener("sm:sessions-changed", () => {
+      void refreshSessions();
+      // Dock rows come from the scoped channel — an external refresh trigger must
+      // converge it too, or the left list stays stale until a project switch.
+      const key = getProjectSessionsTarget();
+      if (key) void refreshProjectSessions(key);
+    });
   } catch { /* non-DOM */ }
 
   // 跨 tab 会话列表帧分发：新会话创建（rpc-manager publish，草稿行+补拉转正）+

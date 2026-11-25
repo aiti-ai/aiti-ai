@@ -1,6 +1,6 @@
 /**
- * session-manager · 全部会话面板（SessionsPanel）+ 归档会话查看器（ArchivedViewer）。
- * 自手写版迁移，交互/性能优化点（T-1 双帧挂载 / T-2 淡入动画 / content-visibility）一比一保留。
+ * session-manager · All Sessions panel (SessionsPanel) + archived-session viewer (ArchivedViewer).
+ * Migrated from the hand-written version; interaction and performance optimizations (T-1 dual-frame mount / T-2 fade-in / content-visibility) preserved one-to-one.
  */
 import { useState, useEffect, useRef, useLayoutEffect } from "react"
 import type { ReactNode } from "react";
@@ -27,18 +27,18 @@ import { StarButton, TagEditPopover, TagChip } from "./tag-ui";
 import { ArchiveMenu } from "./archive-menu";
 import { showConfirm } from "./confirm-dialog";
 import { showRelatedDocs } from "./related-docs";
-// 行「⋮」菜单共享件（MenuItem/触发/宿主/活动 pi 会话全量项构建）——与 SidebarDock 左栏行同源
+// Session-row "⋮" menu shared pieces (MenuItem / trigger / host / full menu for running pi sessions) — same source as SidebarDock rows
 import { RowMenu, closeRowMenu, openSessionTimeline, buildLivePiRowMenuItems, type MenuItem } from "./row-menu";
 import { showToast } from "./toast";
 // Session → portable JSON export dialog (shared by viewers, row menus and the sidebar dock)
 import { openExportDialog } from "./export-dialog";
-// 移动会话弹窗模块态宿主（showMoveDialog 触发；Esc 守卫用 useMoveDialogOpen）
+// Module-level host for the move-session dialog (opened via showMoveDialog; Esc guard uses useMoveDialogOpen)
 import { showMoveDialog, useMoveDialogOpen } from "./move-dialog";
-// dock v3（P3 批）：显隐收口展示状态机 + 右栏停靠 face
+// dock v3 (P3 batch): show/hide state machine + right-panel dock face
 import { useGate, usePresent, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
 import { ViewerMessages } from "./viewer-messages";
-// 跨扩展复用（构建期内联，见 entry.tsx 说明）：aiti-folder 的 workspace 切换弹窗
-//（已知 workspace 优先列表 + 过滤 + 自定义路径兜底 DirectoryBrowser）。
+// Cross-extension reuse (inlined at build time; see entry.tsx): aiti-folder's workspace switcher dialog
+// (known-workspace priority list + filter + custom-path fallback DirectoryBrowser).
 import { WorkspaceDropdown } from "../../../aiti-folder/client/src/folder-switcher";
 import { MoveCwdPicker } from "./move-cwd-picker";
 import { truncateRunErrorText } from "./sidebar/pure";
@@ -57,23 +57,23 @@ function resolveSelectSession(props: any) {
     | undefined;
 }
 
-/** 目录过滤匹配：cwd 是否精确等于所选目录（root）—— 只匹配该目录本身的会话，
+/** Directory filter: whether cwd exactly equals the selected root — only sessions in that directory itself,
  * excludes its subdirectories (picking ~/workspace does not cover ~/workspace/demo-repo); accepts both \\ and / . */
 const normDir = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
 const underRoot = (cwd: string | undefined, root: string) =>
   !!cwd && !!root && normDir(cwd) === normDir(root);
 
 /*
- * 行内「⋯」更多菜单（收藏/标签以外的低频操作收进来，行上只留高频的 ★ 和标签弹层）：
- * MenuItem / RowMenu（触发）/ RowMenuHost（常驻弹层）已抽至 row-menu.tsx —— 与
- * SidebarDock 左栏行同源共用；宿主改挂 entry.tsx dialogs slot（全局一次，固定定位 +
- * z 2147483500 高于 aiti-float 抬升上限，不再依赖面板 overlay 抬升）。
+ * Row "⋯" more menu (low-frequency actions beyond favorites/tags; rows keep the hot ★ and tag popover):
+ * MenuItem / RowMenu (trigger) / RowMenuHost (persistent popover) live in row-menu.tsx — shared with
+ * SidebarDock rows; the host now mounts in entry.tsx's dialogs slot (global, fixed positioning +
+ * z 2147483500 above aiti-float's lift ceiling, no longer relying on panel-overlay lifting).
  */
 
 /**
- * 批量移动对话框：共享一个默认目标位置 + 逐会话展示（当前 cwd + 检测到的真实 cwd），
- * 每行可独立改目标覆盖默认值。全部移动时逐会话调用 /move（sessionId 不变，历史/收藏/标签保留）；
- * 运行中/外部 agent 会话标记跳过。
+ * Batch move dialog: one shared default target + per-session display (current cwd + detected real cwd);
+ * each row can override the default target. A full move calls /move per session (sessionId unchanged, history/favorites/tags kept);
+ * running / external-agent sessions are marked and skipped.
  */
 function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () => void; onClose: () => void }) {
   const [defaultCwd, setDefaultCwd] = useState("");
@@ -81,11 +81,11 @@ function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () 
   const [detected, setDetected] = useState<Record<string, { current: string; candidates: Array<{ root: string; count: number }> }>>({});
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<string | null>(null);
-  // 行会话：只取 live pi 会话（外部 agent/归档记录不适用 move，标记跳过）
+  // Row sessions: only live pi sessions (external agents / archive records do not support move, marked skipped)
   const rows = props.ids.map((id) => props.allSessions.find((x) => x.id === id)).filter(Boolean);
   const movables = rows.filter((s: any) => (!s.agent || s.agent === "pi") && !s.archived);
 
-  // 逐会话识别真实 cwd（串行限流）
+  // Detect each session's real cwd (serial, throttled)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -106,15 +106,15 @@ function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () 
     setBusy(true); setResults(null);
     const moved: string[] = []; const errs: string[] = [];
     for (const s of movables) {
-      // overrides 为空串/未设 → 回落到默认目标 target（submit 已保证 target 非空，故 t 不会为空）；
-      // 防御性保留空判：万一为空则跳过该行（不再计 skipped——真正的 skip 是「不可移动」那些）。
+      // overrides empty/unset → fall back to the default target (submit guarantees target is non-empty, so t is never empty);
+      // defensive empty check kept: skip the row if empty (not counted as skipped — real skips are the "not movable" ones).
       const t = (overrides[s.id] || target).trim();
       if (!t) continue;
       const err = await moveSession(s.id, t);
       if (err) errs.push(`${sessionTitle(s)}: ${err}`); else moved.push(s.id);
     }
     setBusy(false);
-    // 跳过 = 不可移动（外部 agent / 归档），即未进入 movables 的那部分
+    // Skipped = not movable (external agent / archived), i.e. the rows that never entered movables
     const skippedCount = rows.length - movables.length;
     let msg = t("sm.moveBatchDone", { count: moved.length }) ?? `已移动 ${moved.length} 个会话`;
     if (skippedCount > 0) msg += ` · ${t("sm.moveBatchSkip", { n: skippedCount }) ?? `${skippedCount} 个会话不可移动已跳过`}`;
@@ -212,8 +212,8 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
     const rollbackAll = () => { for (const rb of rollbacks.values()) rb(); rollbacks.clear(); };
     try {
       if (mode === "delete") {
-        // 直接删除（未归档）：与归档是两个独立功能——不经过归档直接删会话文件
-        // 自绘确认弹窗（替换浏览器原生 confirm）；失败错误显示在确认弹窗内
+        // Direct delete (not archived): independent of archiving — deletes the session file directly
+        // Custom confirm dialog (replaces native confirm); failures render inside the dialog
         showConfirm({
           title: t("sm.deleteTitle") ?? "彻底删除",
           message: isSingle
@@ -252,7 +252,7 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
       }
       for (const id of piIds) {
         if (mode === "resolved" || mode === "unresolved") {
-          // 归档前先打 tag（多语名称；不存在则自动创建，默认颜色：已完成=绿 / 未完成=灰）
+          // Tag before archiving (localized names; auto-created when missing; default colors: resolved=green / unresolved=gray)
           const tagPath = mode === "resolved" ? t("sm.archiveTagResolved") : t("sm.archiveTagUnresolved");
           const ok = await act("assign", { sessionId: id, path: tagPath });
           if (!ok) { rollbackAll(); setErr(`${id.slice(0, 8)} tag 失败`); return; }
@@ -341,8 +341,8 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
 }
 
 /* ── M1: external session viewer (read-only + import-to-pi) ──
- * dock v3（P3 批）：显隐收口展示状态机；id 状态机已收编 store.ts（薄壳拆分 §5.1，
- * kanban/entry 的 openExtViewer 不依赖本懒 chunk）。 */
+ * dock v3 (P3 batch): show/hide state machine; the id state machine moved into store.ts (thin-shell split §5.1,
+ * kanban/entry openExtViewer no longer depends on this lazy chunk). */
 
 /**
  * Read-only viewer for external (non-pi) sessions: shows the normalized
@@ -414,8 +414,8 @@ function renderExtViewer(props: any, face?: string) {
       const result = await openLiveSession(id, data?.meta?.cwd ?? undefined);
       if (result.ok) {
         closeExtViewer();
-        // 合成 SessionInfo 切主聊天窗：loadSession 对未知 id 走 404 空态，
-        // SSE/命令经 handle adapter 打到 live 后端。
+        // Synthesize a SessionInfo to switch the main chat window: loadSession hits the 404 empty state for unknown ids,
+        // SSE/commands go through the handle adapter to the live backend.
         resolveSelectSession(props)?.({
           id: result.sessionId,
           path: "",
@@ -431,8 +431,8 @@ function renderExtViewer(props: any, face?: string) {
       } else {
         setOpenErr(
           result.reason === "no_provider"
-            ? `未安装能驱动该 agent 的后端扩展（agentKey 见会话徽标；如 aiti-claude-code-agent）`
-            : `打开失败：${result.error ?? result.reason}`,
+            ? t("sm.openLive.noProvider", { agent: data?.agent ?? id.split(":")[0] })
+            : t("sm.openLive.failed", { error: result.error ?? result.reason }),
         );
       }
     } finally {
@@ -491,7 +491,7 @@ function renderExtViewer(props: any, face?: string) {
           : <ViewerMessages key={id} messages={data.messages} agent={data?.agent} />}
     </>
   );
-  // dock v3 分面：float = 遮罩+浮窗壳；dock = 右栏 tab（DockBody chrome 带 ⇲/位置菜单，TabBar ✕ 关闭）
+  // dock v3 faces: float = overlay + floating shell; dock = right-panel tab (DockBody chrome with ⇲/position menu, TabBar ✕ closes)
   if (face === "dock") {
     return (
       <DockBody itemKey={EXT_VIEWER_KEY} zone="right-panel" title={t("sm.viewer.extSession")} chrome="tab"
@@ -513,12 +513,12 @@ function renderExtViewer(props: any, face?: string) {
   );
 }
 
-/* ── 弹窗消息区（归档/外部查看器共用）：聊天式布局，见 ./viewer-messages.tsx ── */
+/* ── Viewer message area (shared by archived/external viewers): chat layout, see ./viewer-messages.tsx ── */
 
 /**
- * 查看器头部两行式信息（归档/外部共用）：
- *   第一行：前缀（📦 / agent 徽标）+ 会话名 ‖ 首条用户消息（截 60）
- *   第二行：小字 sid/agent label · cwd · 创建日期 · N 条
+ * Two-line viewer header (shared by archived/external):
+ *   line 1: prefix (📦 / agent badge) + session name ‖ first user message (truncated to 60)
+ *   line 2: small text sid/agent label · cwd · created date · N messages
  */
 function ViewerTitle(props: { prefix: any; name?: string; firstMessage?: string; fallback: string; subParts: Array<string | undefined | null> }) {
   const raw = (props.name || props.firstMessage || "").trim().replace(/\s+/g, " ");
@@ -543,8 +543,8 @@ const fmtDay = (iso?: string) => {
 };
 
 /**
- * 弹窗顶部「本会话操作过的文件」strip：服务端从 toolCall 块提取（read/edit/write）。
- * chip = 文件名（title 全路径），点击经宿主 ctx.openFile 在主窗文件查看器打开。
+ * "Files touched by this session" strip above the viewer: the server extracts it from toolCall blocks (read/edit/write).
+ * chip = file name (title shows the full path); clicking opens it in the main-window file viewer via ctx.openFile.
  */
 function FilesStrip(props: { files: string[] }) {
   const files = props.files;
@@ -583,11 +583,11 @@ function FilesStrip(props: { files: string[] }) {
 }
 
 /* ── archived session viewer (read-only) ──
- * viewerState/openViewer/closeViewer 已收编 store.ts（薄壳拆分 §5.1）。 */
+ * viewerState/openViewer/closeViewer moved into store.ts (thin-shell split §5.1). */
 
 /**
- * ArchivedViewer 操作：恢复（回到 live）/ 重开（恢复并直接打开）/ 彻底删除。
- * 供工具条按钮用；restore 成功后会话已回到 live，查看器随之关闭。
+ * ArchivedViewer actions: restore (back to live) / reopen (restore and open directly) / delete permanently.
+ * Used by the toolbar buttons; after a successful restore the session is live and the viewer closes.
  */
 function viewerAction(
   kind: "restore" | "reopen" | "delete",
@@ -629,7 +629,7 @@ function viewerAction(
     closeViewer();
     if (kind === "reopen") {
       const row = data?.session ?? {};
-      // ext 视图层归档行：恢复后直接走后端扩展接管（⚡ 同链路），回活会话
+      // Ext-viewer archived row: after restore, take it over through the backend extension (same path as ⚡), back to a live session
       if (row.archiveRef === "__ext__") {
         void openLiveSession(sessionId, row.cwd ?? data?.meta?.cwd ?? "").then((r) => {
           if (r.ok) {
@@ -661,11 +661,11 @@ function viewerAction(
   });
 }
 
-/** 归档会话相关文档 strip（v2 迭代，§9）：打开查看器即见该会话触达的 md，
- *  不再藏在工具条 📄 文档 弹层后（与 doc-center「点会话即见文档」能力对齐）。
- *  数据：fetchRelatedDocs → session-manager /related-docs → doc-center
- *  services.docs.docsOfSession（归档不改 sid，doc_sessions 历史关联照常命中）。
- *  降级：doc-center 缺席 / 无关联 → 不渲染。 */
+/** Related-docs strip for archived sessions (v2, §9): opening the viewer shows the md files this session touched,
+ *  no longer hidden behind the toolbar 📄 Docs popover (aligned with doc-center's "open a session, see its docs").
+ *  Data: fetchRelatedDocs → session-manager /related-docs → doc-center
+ *  services.docs.docsOfSession (archiving keeps the sid, so historical doc_sessions links still match).
+ *  Degradation: doc-center absent / no related docs → render nothing. */
 function RelatedDocsStrip(props: { sessionId: string }) {
   const [docs, setDocs] = useState<any[] | null>(null);
   useEffect(() => {
@@ -818,7 +818,7 @@ function renderArchivedViewer(props: any, face?: string) {
             </>}
     </>
   );
-  // dock v3 分面：float = 遮罩+浮窗壳；dock = 右栏 tab
+  // dock v3 face: float = overlay + floating shell; dock = right-panel tab
   if (face === "dock") {
     return (
       <DockBody itemKey={ARCHIVED_VIEWER_KEY} zone="right-panel" title="归档查看器" chrome="tab"
@@ -850,12 +850,12 @@ function renderArchivedViewer(props: any, face?: string) {
 
 export function SessionsPanel(props: any) {
   const s = useStore();
-  // dock 双 face：挂载即开（浮窗/嵌入的显隐由 entry.tsx 的 useGate 门控，flag 不再驱动渲染）；
-  // embedded=true：渲染为 DockBody 内的全尺寸嵌入块（不带 data-ext-float，float scan 不增强）
+  // dock dual face: mount opens it (show/hide of float/embedded is gated by entry.tsx's useGate; the flag no longer drives rendering);
+  // embedded=true: render as a full-size embedded block inside DockBody (no data-ext-float, float scan skips it)
   const open = true;
   const embedded = !!props.embedded;
-  // 面板关闭时清掉「⋮」菜单模块态（宿主已上提 entry dialogs 全局一次；面板关闭后菜单不应残留）
-  // 不清会在下次打开时残留上次的展开项）。gate 卸载即 unmount，此处恒 open 无需清理触发。
+  // Clear the "⋮" menu module state when the panel closes (host hoisted to entry dialogs globally once; the menu must not linger)
+  // otherwise it would reopen with the last expanded item next time). gate unmounts on unload, so always-open here needs no cleanup.
   useEffect(() => { if (!open) closeRowMenu(); }, [open]);
 
   // T-1: defer the list content to the frame AFTER the overlay/frame appears.
@@ -877,10 +877,10 @@ export function SessionsPanel(props: any) {
   const [page, setPage] = useState(0);
   const [debounced, setDebounced] = useState("");
   const [searchHits, setSearchHits] = useState<any[] | null>(null); // null = not searching
-  // 搜索重跑 nonce：searchHits 是独立 FTS 快照，只随 query/filter 刷新——归档/删除/恢复/
-  // 移动等列表写操作后旧 hit（archived=false）残留，已归档行不消失（2026-11-15 修复）。
-  // refreshListChannels 完成时广播 sm:sessions-changed，借它 bump 让下方搜索 effect 重跑；
-  // 归档管线服务端同步 markArchived，重跑即命中 archived=1 → 默认视图（非已归档）自然滤掉。
+  // Search rerun nonce: searchHits is an independent FTS snapshot, refreshed only by query/filter — after list writes
+  // such as archive/delete/restore/move, stale hits (archived=false) linger and archived rows stay visible (fixed 2026-11-15).
+  // refreshListChannels broadcasts sm:sessions-changed on completion; bump on it so the search effect below reruns;
+  // the archive pipeline marks archived on the server, so the rerun matches archived=1 → the default (non-archived) view filters them out.
   const [searchNonce, setSearchNonce] = useState(0);
   useEffect(() => {
     const bump = () => setSearchNonce((v) => v + 1);
@@ -893,8 +893,8 @@ export function SessionsPanel(props: any) {
   const markBusy = (id: string) => setRowBusy((prev) => new Set(prev).add(id));
   const markDone = (id: string) => setRowBusy((prev) => { const n = new Set(prev); n.delete(id); return n; });
   const isBusy = (id: string) => rowBusy.has(id);
-  // 行移除操作进行中（归档/删除/从列表移除）置灰订阅：模块级 Map 变更不触发 store.emit，
-  // 单独订阅驱动重渲染（行内 isPendingRemoval 读最新值）
+  // Pending row removal (archive/delete/remove-from-list) gray-out subscription: module-level Map changes do not emit store events,
+  // a dedicated subscription drives the rerender (row isPendingRemoval reads the latest value)
   const [, setPendingTick] = useState(0);
   useEffect(() => subscribePendingRemovals(() => setPendingTick((v) => v + 1)), []);
   const [archivedOnly, setArchivedOnly] = useState(false);
@@ -906,7 +906,7 @@ export function SessionsPanel(props: any) {
   const [datePreset, setDatePreset] = useState("");
   const [cwdFilter, setCwdFilter] = useState(""); // 目录过滤（aiti-folder DirectoryBrowser 选择）
   const [cwdPickerOpen, setCwdPickerOpen] = useState(false);
-  // 移动会话弹窗模块态订阅（showMoveDialog 触发；Esc 守卫用）
+  // Move-session dialog module state subscription (opened by showMoveDialog; used by the Esc guard)
   const moveOpen = useMoveDialogOpen();
   const [sortBy, setSortBy] = useState("modified");
   const [sortAsc, setSortAsc] = useState(false);
@@ -934,9 +934,9 @@ export function SessionsPanel(props: any) {
   const agentFilter = useAgentFilter(); // 默认只选 pi（§4.7 反馈：外部源默认不显示）
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // 小屏（data-ext-float-full 触发：≤640px 宽）下把「标签云 + agent 云 +
-  // 外部源条 + 会话列表」合并成一个滚动容器（整窗一个滚动位置），并在向下滚动时
-  // 把标签云/agent 云各自收拢到 2 行，紧凑展示会话；滚回顶部自动展开。大屏不启用。
+  // On small screens (data-ext-float-full: ≤640px wide) merge "tag cloud + agent cloud +
+  // external-source strip + session list" into one scroll container (single scroll position); while scrolling down
+  // collapse the tag/agent clouds to 2 rows each for a compact session view; scrolling back to top expands them. Disabled on large screens.
   const [scrunch, setScrunch] = useState<"full" | "brief" | "expanded">("full");
   // Lazy-init from matchMedia so the compact (mobile) header layout renders on first paint.
   const [compact, setCompact] = useState(() =>
@@ -952,7 +952,7 @@ export function SessionsPanel(props: any) {
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
   }, []);
-  // 滚动方向：向下滚动（内容上移，scrollTop 增大）→ 收拢到 2 行；滚回顶部 → 自动展开。
+  // Scroll direction: scrolling down (content moves up, scrollTop grows) → collapse to 2 rows; back to top → expand automatically.
   useEffect(() => {
     if (!compact || !open) return;
     const el = scrunchRef.current;
@@ -960,7 +960,7 @@ export function SessionsPanel(props: any) {
     const onScroll = () => {
       const st = el.scrollTop;
       if (st > 60) {
-        // 向下滚过阈值：若手动展开过则保持 expanded，否则收拢
+        // Scrolled past the threshold: keep expanded if the user expanded manually, otherwise collapse
         setScrunch((prev) => (prev === "expanded" ? prev : "brief"));
       } else if (st < 8) {
         setScrunch("full");
@@ -969,8 +969,8 @@ export function SessionsPanel(props: any) {
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, [compact, open]);
-  // 顶栏搜索框：每次提交（含面板已打开状态）把查询词注入面板 + 聚焦搜索框；
-  // 面板关闭时也注册（返回 null 的组件 hooks 仍生效），打开后查询词即生效。
+  // Top-bar search box: every submit (even with the panel open) injects the query into the panel + focuses the search box;
+  // registered even while the panel is closed (hooks still run in components returning null), so the query applies once opened.
   useEffect(() => {
     const l = () => {
       const q = consumePendingSearch();
@@ -989,7 +989,7 @@ export function SessionsPanel(props: any) {
   }, [query]);
 
   const cwdMenuRef = useRef<HTMLSpanElement>(null);
-  // 菜单开：点外部关；Esc 关（面板 Esc 守卫已让位）
+  // Menu open: close on outside click; close on Esc (the panel Esc guard yields)
   useEffect(() => {
     if (!cwdPickerOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -1013,8 +1013,8 @@ export function SessionsPanel(props: any) {
         // (capture-phase panel handler must not steal it).
         const el = document.activeElement;
         if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
-        // 子弹窗（移动对话框/目录选择器）打开时 Esc 只归它自己——否则本 handler
-        // （先注册先执行）会把整个面板连带关掉。moveOpen = move-dialog 模块态订阅。
+        // When a child dialog (move dialog / directory picker) is open, Esc belongs to it alone — otherwise this handler
+        // (registered first, runs first) would close the whole panel too. moveOpen = move-dialog module state subscription.
         if (cwdPickerOpen || moveOpen) return;
         panelOpen.onClose();
       }
@@ -1074,14 +1074,14 @@ export function SessionsPanel(props: any) {
     void ensureTags();
     void refreshSources();
     refreshArchStatus();
-    // 零轮询：订阅宿主共享 broker（页面级单例；旧宿主回退原生 EventSource）——服务端
-    // running 集合变化才广播（新会话创建/结束都会触发）→ 事件驱动 refreshSessions。
-    // 只过滤 running 帧：共享 broker 也转发其它扩展帧（pf:remind/mc:avail/ed-watch），
-    // 那些不该触发会话列表全量拉取（3s 节流+并发合流虽能兜底，但语义上不该打）。
+    // Zero polling: subscribe to the host's shared broker (page-level singleton; older hosts fall back to native EventSource) — broadcasts
+    // only when the server's running set changes (new session created/finished) → event-driven refreshSessions.
+    // Filter to running frames only: the shared broker also forwards other extensions' frames (pf:remind/mc:avail/ed-watch),
+    // which must not trigger a full session-list fetch (the 3s throttle + concurrency merge would absorb it, but semantically it should not fire).
     const unsub = subscribeRunningFrames((frame) => {
       if (frame?.type !== "running" || !Array.isArray(frame.runningSessionIds)) return;
-      // 新 id 出现（新会话开始跑）→ refresh=1 绕 5s 扫描缓存（jsonl 刚落盘/将落盘，
-      // 普通刷新命中缓存拿不到新行）；其余变化帧普通刷新（合流节流兑底）。
+      // New id appeared (a new session started) → refresh=1 bypasses the 5s scan cache (the jsonl just landed/about to land,
+      // a normal refresh would hit the cache and miss the new row); other change frames use a normal refresh (merge throttle as backstop).
       const hasNewId = (frame.runningSessionIds as string[]).some((id) => !store.running.has(id));
       void refreshSessions({ refresh: hasNewId });
     });
@@ -1099,8 +1099,8 @@ export function SessionsPanel(props: any) {
   // (filter/search) so pagination always starts from the first page.
   useEffect(() => { setFavLoaded(SECTION_PAGE_SIZE); setRunningLoaded(SECTION_PAGE_SIZE); }, [debounced, modelFilter, roleFilter, datePreset, cwdFilter, archivedOnly, favOnly, selectedTags.join("\u0000")]);
 
-  // ── A16① 联合 tag 视图：选中 tag 时拉取该 tag（含子树）关联的文档（doc-center 经本扩展代理），
-  // 会话列表照旧 tag 过滤——一个 tag 同时看会话与文档，跨维检索零跳转。──
+  // ── A16① joint tag view: with a tag selected, fetch the docs linked to that tag (and its subtree; doc-center proxied via this extension),
+  // the session list still filters by tag — see sessions and docs for one tag, cross-dimensional lookup with zero jumps.──
   const [tagDocs, setTagDocs] = useState<{ docs: any[]; open: boolean }>({ docs: [], open: false });
   const tagKeySig = selectedTags.join("\u0000");
   useEffect(() => {
@@ -1158,7 +1158,7 @@ export function SessionsPanel(props: any) {
   const byIdL = new Map(base.map((x) => [x.id, x]));
 
   // §14.2.2/14.2.3: local filters (list mode) + sort.
-  // Archived sessions are HIDDEN by default — the 📦 已归档 chip opts in
+  // Archived sessions are HIDDEN by default — the 📦 archived chip opts in
   // (and then shows archived only). Exception: FAVOURITED sessions keep
   // appearing in the default favourites section even after archiving.
   const favIds = new Set<string>(data.favoriteIds);
@@ -1211,8 +1211,8 @@ export function SessionsPanel(props: any) {
     const children = data.tags.filter((n: any) => n.parentId === node.id)
       .sort((a: any, b: any) => a.name.localeCompare(b.name));
     const count = usageCount(node.id);
-    // 计数为 0 的 tag 不显示（计数含后代汇总：子树全空 → 整枝隐藏；
-    // 当前已选中的 tag 豁免——活动过滤 chip 始终可见、可点击取消）。
+    // Tags with count 0 are hidden (counts include descendants: a fully empty subtree hides the whole branch);
+    // the currently selected tag is exempt — an active filter chip stays visible and clickable to clear).
     if (count === 0 && !selectedTags.includes(node.id)) return [];
     const isParent = children.length > 0;
     const expanded = expandedTags.has(node.id);
@@ -1300,7 +1300,7 @@ export function SessionsPanel(props: any) {
   };
   const batchDelete = async () => {
     if (batchBusy) return;
-    // 彻底删除（活）：只删未归档活会话；已归档项跳过（归档记录删除在已归档行的 ⋮）。
+    // Permanent delete (live): only unarchived live sessions; archived rows are skipped (delete their record from the archived row's ⋮).
     const ids = [...selection].filter((id) => !byIdL.get(id)?.archived);
     const skipped = selection.size - ids.length;
     if (ids.length === 0) {
@@ -1345,7 +1345,7 @@ export function SessionsPanel(props: any) {
   };
   const startRename = (sess: any) => {
     setRenamingId(sess.id);
-    // 无存储名时回退首消息（前 50 字），与 dock 行内改名默认值对齐；避免空输入框
+    // Without a stored name, fall back to the first message (first 50 chars), matching the dock row rename default; avoids an empty input
     const first = sess.firstMessage ? String(sess.firstMessage).slice(0, 50) : "";
     setRenameVal(sess.name || first || String(sess.id ?? "").slice(0, 12));
   };
@@ -1361,11 +1361,11 @@ export function SessionsPanel(props: any) {
     if (res.ok) applySessionNameLocal(id, name); // 就地更新 store：UI 立即反映，不等列表刷新往返
     void refreshSessions(); // 后台对齐（节流合流；服务端 rev 指纹含 name）
   };
-  // AI 自动生成会话名（pi-web core auto-name 端点；归档/外部会话不适用）
+  // AI-generated session name (pi-web core auto-name endpoint; not applicable to archived/external sessions)
   const doAutoName = async (sess: any) => {
     const key = "auto:" + sess.id;
     if (isBusy(key)) return;
-    // 桥占用 → 降级为手动重命名（菜单 onClick 已探测，此处为直调路径兜底）
+    // Bridge busy → degrade to manual rename (the menu onClick already probes; this is the direct-call fallback)
     try {
       const pr = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sess.id)}/state`));
       const pd = await pr.json().catch(() => ({}));
@@ -1390,7 +1390,7 @@ export function SessionsPanel(props: any) {
   };
 
   const row = (sess: any) => {
-    // 移除操作进行中（归档/删除/从列表移除，带桶：live 视图 vs 归档视图）→ 置灰 + 禁点
+    // Removal in progress (archive/delete/remove-from-list, per bucket: live view vs archived view) → gray out + disable clicks
     const pending = isPendingRemoval(sess.id, sess.archived ? "archived" : "live");
     return (
     <div
@@ -1567,8 +1567,8 @@ export function SessionsPanel(props: any) {
                   } else {
                     window.alert?.(
                       r.reason === "no_provider"
-                        ? "未安装能驱动该 agent 的后端扩展（如 aiti-claude-code-agent）"
-                        : `打开失败：${r.error ?? r.reason}`,
+                        ? t("sm.openLive.noProvider", { agent: sess.agent ?? String(sess.id).split(":")[0] })
+                        : t("sm.openLive.failed", { error: r.error ?? r.reason }),
                     );
                   }
                 })
@@ -1600,14 +1600,14 @@ export function SessionsPanel(props: any) {
             running,
             startRename: () => startRename(sess),
             onMove: () => showMoveDialog(sess),
-            // 面板沿用自身 rowBusy 记账（行内 ⚡ 按钮同源）；不传则回落模块级 runAutoNameSession
+            // The panel keeps its own rowBusy bookkeeping (same source as the row ⚡ button); when omitted, falls back to module-level runAutoNameSession
             autoNameBusy: isBusy("auto:" + sess.id),
             runAutoName: () => void doAutoName(sess),
           }));
         } else if (!sess.archived && !isPi) {
-          // 外部源行（zcode/cursor 等只读镜像）：归档管线不收 → 提供视图层「从列表移除」（源数据不动，可恢复）。
-          // 带子会话（外部子代理链 parentSessionId）时平铺两项：连同子会话一起移除 vs 仅移除自己
-          // （否则只移除主会话，子会话留在列表变孤儿）——与行内 📦（ArchiveMenu）平铺同语义。
+          // External source rows (zcode/cursor and other read-only mirrors): the archive pipeline does not take them → offer view-layer "remove from list" (source data untouched, restorable).
+          // With child sessions (external subagent chains via parentSessionId) flatten to two items: remove together with children vs remove only itself
+          // (otherwise only the parent is removed and children are left orphaned) — same semantics as the row 📦 (ArchiveMenu) flattening.
           // Explicit "view" entry: same path as clicking the row / the inline ⬇ button (openExtViewer).
           // External-source rows used to offer only the view-layer "remove from list" item, so users
           // could not find the raw-session viewer from the menu at all.
@@ -1670,7 +1670,7 @@ export function SessionsPanel(props: any) {
               const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived", row: sess as unknown as Record<string, unknown>, to: "live" }]);
               void restoreSession(sess.id).then((ok) => {
                 if (!ok) { rollback(); showToast(`${t("sm.reopenFailed") ?? "重开失败"}：${sess.id.slice(0, 8)}`); return; }
-                // ext 视图层归档行：恢复后直接走后端扩展接管（⚡ 同链路）
+                // Ext-viewer archived row: after restore, take it over through the backend extension (same path as ⚡)
                 if (isExtArchived) {
                   return openLiveSession(sess.id, sess.cwd).then((r) => {
                     if (r.ok) resolveSelectSession(props)?.({ ...sess, archived: false, id: r.sessionId, transient: true });
@@ -1693,8 +1693,8 @@ export function SessionsPanel(props: any) {
               void restoreSession(sess.id)
                 .then((ok) => {
                   if (!ok) {
-                    // 失败必须可见（对齐 reopen/delete 路径）：曾因服务端读写成路径分裂导致
-                    // restore 404 而这里静默回滚样式，用户只看到「没成功也没报错」
+                    // Failures must be visible (aligned with reopen/delete paths): a server read/write path split once caused
+                    // restore 404 while this silently rolled back the style, so users only saw "neither success nor error"
                     rollback();
                     showToast(`${t("sm.restoreFailed") ?? "恢复失败"}：${sess.id.slice(0, 8)}`);
                   }
@@ -1707,7 +1707,7 @@ export function SessionsPanel(props: any) {
             disabled: isBusy(sess.id),
             onClick: () => {
               if (isBusy(sess.id)) return;
-              // 自绘确认弹窗（替换浏览器原生 confirm）
+              // Custom confirm dialog (replaces native confirm)
               showConfirm({
                 title: t("sm.deleteArchive") ?? "彻底删除",
                 message: t("sm.confirmDeleteArchive") ?? "彻底删除该已归档会话？先归档才能删除，删后不可恢复。",
@@ -1725,7 +1725,7 @@ export function SessionsPanel(props: any) {
             },
           });
           items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
-          // 已归档 pi 会话的台账仍在（归档不动 git-trace configDir）→ 时间线照常可看；外部镜像行不追踪，不给入口
+          // Archived pi sessions keep their ledger (archiving does not touch the git-trace configDir) → timeline still available; external mirror rows are not tracked, no entry point
           if (!isExtArchived) items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });
         }
         return items.length > 0 ? <RowMenu items={items} /> : null;
@@ -1884,9 +1884,9 @@ export function SessionsPanel(props: any) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        // aiti-float 浮动契约：拖拽/缩放/位置持久化/自动最大化按钮；小屏全屏。
-        // 首个子元素（标题栏）= 拖拽把手（搜索框/按钮等交互元素不触发拖拽）。
-        // style 尺寸保留作未装 aiti-float 时的兜底居中弹窗。
+        // aiti-float floating contract: drag/resize/position persistence/auto-maximize button; fullscreen on small screens.
+        // First child (title bar) = drag handle (interactive elements such as search boxes/buttons do not trigger dragging).
+        // Inline size styles remain as the centered fallback when aiti-float is not installed.
         {...(embedded ? {} : { "data-ext-float": "1", "data-ext-float-w": 680, "data-ext-float-h": 700, "data-ext-float-full": "1" })}
         style={embedded ? {
           width: "100%", height: "100%",
@@ -2283,8 +2283,8 @@ export function SessionsPanel(props: any) {
   );
 }
 
-/** 右栏 dock face（DockBody + embedded 面板）——薄壳拆分（§5.1）后随本懒 chunk 走，
- *  entry 只注册 useGate 门控的懒包装，首屏不加载本 chunk。 */
+/** Right-panel dock face (DockBody + embedded panel) — after the thin-shell split (§5.1) it ships in this lazy chunk;
+ *  entry only registers a useGate-gated lazy wrapper, so the first paint does not load this chunk. */
 export function PanelDockFace(props: any) {
   return (
     <DockBody itemKey={SM_PANEL_KEY} zone="right-panel" title="All Sessions" chrome="tab" zones={["right-panel"]}>
