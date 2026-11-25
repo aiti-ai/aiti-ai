@@ -154,7 +154,7 @@ export interface SessionProvider {
    * catalog is bound to a session (e.g. ACP requires session/new) and the
    * frontend falls back to its local list.
    */
-  listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
+  listModels?(): Promise<Array<{ id: string; provider: string; label?: string; hint?: string; disabled?: boolean; badge?: { en: string; zh: string } }>>;
 
   /**
    * Manually refresh the model catalog (new-session page "refresh models"

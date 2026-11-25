@@ -2104,6 +2104,8 @@ export const enLocale: LocalePlugin = {
     "modelSel.errBadge": "✗ error",
     "modelSel.unprobedTitle": "Availability not probed yet (model check has not run)",
     "modelSel.unprobedBadge": "untested",
+    "modelSel.disabledTitle": "Disabled by the provider (quota/plan state) — selecting it would be rejected by the backend",
+    "modelSel.disabledBadge": "disabled",
     "tabbar.posDock": "Position (floating window / left dock / right dock)",
     "sidebar.expandList": "Expand session list",
     "sidebar.collapseList": "Collapse session list",

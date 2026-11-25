@@ -2104,6 +2104,8 @@ export const zhCNLocale: LocalePlugin = {
     "modelSel.errBadge": "✗ 异常",
     "modelSel.unprobedTitle": "尚未探测可用性（模型检查未跑过）",
     "modelSel.unprobedBadge": "未测",
+    "modelSel.disabledTitle": "服务端已禁用（配额/套餐状态）——选中会被后端拒绝",
+    "modelSel.disabledBadge": "已禁用",
     "tabbar.posDock": "位置（浮窗/左栏/右栏）",
     "sidebar.expandList": "展开会话列表",
     "sidebar.collapseList": "折叠会话列表",

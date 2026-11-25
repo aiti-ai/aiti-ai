@@ -2103,6 +2103,8 @@ export const zhTWLocale: LocalePlugin = {
     "modelSel.errBadge": "✗ 異常",
     "modelSel.unprobedTitle": "尚未探測可用性（模型檢查未跑過）",
     "modelSel.unprobedBadge": "未測",
+    "modelSel.disabledTitle": "伺服器已停用（配額/方案狀態）——選中會被後端拒絕",
+    "modelSel.disabledBadge": "已停用",
     "tabbar.posDock": "位置（浮窗/左欄/右欄）",
     "sidebar.expandList": "展開會話列表",
     "sidebar.collapseList": "摺疊會話列表",
