@@ -52,9 +52,7 @@ const rowValueStyle = {
   padding: "3px 0",
   minWidth: 0,
   color: "var(--text, #ddd)",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap" as const,
+  overflowWrap: "anywhere" as const,
 };
 
 /** Renders as two grid items of the surrounding `rowsGridStyle` container. */
