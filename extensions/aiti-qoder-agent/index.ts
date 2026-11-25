@@ -24,7 +24,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { homedir } from "node:os";
@@ -435,6 +435,94 @@ export function qoderContextWindow(modelId?: string): number | undefined {
 }
 
 /**
+ * Per-session usage from the qodercli native transcript
+ * (`~/.qoder{,-cn}/projects/<cwd-encoded>/<sid>.jsonl`). The ACP surface reports no
+ * token counts (usage all zeros), but each assistant record's usage carries the real
+ * `context_usage_ratio` (current context share, dropping after compaction) and
+ * per-turn `credits` (actually charged). Neither is fabricated: ratio is only
+ * converted to a percentage, credits only summed.
+ */
+type NativeSessionUsage = { percent?: number; credits?: number; model?: string };
+const NATIVE_USAGE_SYNC_READ_MAX = 8 * 1024 * 1024; // sync-read cap (engineering red line: no sync reads over 8MB)
+const NATIVE_USAGE_TAIL_BYTES = 2 * 1024 * 1024;
+const nativeSessionPathCache = new Map<string, string>();
+const nativeUsageCache = new Map<string, { key: string; usage: NativeSessionUsage }>();
+
+/** Transcript path: the projects dir shards by cwd, and shard-name casing/escaping varies
+ * across versions (both d-- and D-- seen) → scan the directories. */
+function resolveNativeSessionFile(nativeSid: string): string | undefined {
+  const cached = nativeSessionPathCache.get(nativeSid);
+  if (cached && existsSync(cached)) return cached;
+  for (const home of [".qoder-cn", ".qoder"]) {
+    const projects = join(homedir(), home, "projects");
+    let dirs: string[];
+    try { dirs = readdirSync(projects); } catch { continue; }
+    for (const dir of dirs) {
+      const fp = join(projects, dir, `${nativeSid}.jsonl`);
+      if (existsSync(fp)) {
+        nativeSessionPathCache.set(nativeSid, fp);
+        return fp;
+      }
+    }
+  }
+  return undefined;
+}
+
+function readTailText(fp: string, size: number, bytes: number): string {
+  const fd = openSync(fp, "r");
+  try {
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    return buf.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function scanNativeUsage(text: string, usage: { percent?: number; credits?: number; model?: string }): void {
+  for (const line of text.split("\n")) {
+    if (!line.includes('"usage"') && !line.includes('"model"')) continue;
+    let rec: { type?: unknown; model?: unknown; message?: { model?: unknown; usage?: Record<string, unknown> } };
+    try { rec = JSON.parse(line); } catch { continue; }
+    // runtime-config is written at session start; assistant records repeat the model.
+    // Either is the CLI's own answer — the host start options often carry no model.
+    if (typeof rec?.message?.model === "string" && rec.message.model) usage.model = rec.message.model;
+    else if (rec?.type === "runtime-config" && typeof rec.model === "string" && rec.model) usage.model = rec.model;
+    const u = rec?.message?.usage;
+    if (!u || typeof u !== "object") continue;
+    const ratio = u.context_usage_ratio;
+    if (typeof ratio === "number" && Number.isFinite(ratio)) usage.percent = Math.min(100, Math.max(0, ratio * 100));
+    const c = u.credits;
+    if (typeof c === "number" && Number.isFinite(c)) usage.credits = (usage.credits ?? 0) + c;
+  }
+}
+
+function readNativeSessionUsage(nativeSid: string): NativeSessionUsage | undefined {
+  const fp = resolveNativeSessionFile(nativeSid);
+  if (!fp) return undefined;
+  try {
+    const st = statSync(fp);
+    const key = `${st.size}:${st.mtimeMs}`;
+    const hit = nativeUsageCache.get(fp);
+    if (hit && hit.key === key) return hit.usage;
+    const usage: NativeSessionUsage = {};
+    if (st.size <= NATIVE_USAGE_SYNC_READ_MAX) {
+      scanNativeUsage(readFileSync(fp, "utf8"), usage);
+    } else {
+      // Over the cap, read only the tail: the ratio is a tail fact; credits needs a
+      // full sum, so when unavailable the whole entry is absent (never fabricated).
+      scanNativeUsage(readTailText(fp, st.size, NATIVE_USAGE_TAIL_BYTES), usage);
+      delete usage.credits;
+    }
+    nativeUsageCache.set(fp, { key, usage });
+    return usage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 基能力表（**不是**最终值：`steer` 由探针门控逐 CLI 覆盖，见 qoderCapabilitiesFor）。
  */
 const QODER_CAPABILITIES: SessionCapabilitiesLike = {
@@ -447,11 +535,10 @@ const QODER_CAPABILITIES: SessionCapabilitiesLike = {
   followUp: true,
   queueManage: true, // 共享层全 CRUD（followUp 组；steer 组只读——注入后归 CLI 自己的队列管）
   getMessages: true,
-  // 上下文占比：qodercli 的 assistant usage 里确实带 `context_usage_ratio`（本机 jsonl 实测），
-  // 但宿主后端会话链路没有出口——handle-adapter get_state 不吐 contextUsage 字段，
-  // 前端只在 `state.contextUsage !== undefined` 时采纳（useAgentSession:1083）。
-  // 声明了也没有消费方（zcode 的 contextUsage:true 同样悬空），等宿主补线再接。
-  contextUsage: false,
+  // Context share: arrives opportunistically in ACP usage_update frames; when absent,
+  // fall back to the native transcript's context_usage_ratio (the host has outlets in
+  // both get_state and get_session_stats).
+  contextUsage: true,
   // 2026-08 对 qodercli 1.1.17 取证：CC 族 control_request 支持 subtype "set_model"
   setModel: true,
   setThinkingLevel: false,
@@ -630,13 +717,17 @@ type SeedHistoryMessage = { role?: unknown; text?: unknown; model?: unknown; pro
  *
  * Shared by seedHistory (append) and the adopt path (compare against a wrapper-journal
  * replay and replace when the store is longer), so the two cannot drift in shape.
+ *
+ * The session-manager store has no per-message model (only a session-level meta.model),
+ * so replayed assistant rows would render the provider id ("aiti-qoder-agent") as their
+ * model label. `fallbackModel` (the native transcript's message.model) fills that in.
  */
-function seedHistoryEntries(messages: SeedHistoryMessage[]): unknown[] {
+function seedHistoryEntries(messages: SeedHistoryMessage[], fallbackModel?: string): unknown[] {
   const out: unknown[] = [];
   const replay = createSeedToolReplay("qoder-tool");
   for (const m of messages) {
     const role = m.role === "assistant" ? "assistant" : "user";
-    const model = typeof m.model === "string" && m.model ? m.model : "";
+    const model = (typeof m.model === "string" && m.model) || fallbackModel || "";
     const provider = typeof m.provider === "string" && m.provider ? m.provider : "aiti-qoder-agent";
     const tool = role === "assistant" ? replay.entries(m.tool, { model, provider }) : null;
     if (tool) {
@@ -1021,11 +1112,12 @@ export class QoderHandle {
       const status = String(u.status ?? "pending");
       // 出卡：pending/in_progress 直播即时出；completed（含 session/load 回放的单帧态）
       // 也必须出卡——只有 toolResult 没有调用卡时，刷新回放会变成匿名结果行。
+      const model = this.effectiveModel();
       const cardMsg = {
         role: "assistant",
         content: [{ type: "toolCall", toolCallId: id, toolName: name, input }],
-        model: this.model?.id ?? "",
-        provider: "aiti-qoder-agent",
+        model: model?.id ?? "",
+        provider: model?.provider ?? "aiti-qoder-agent",
         timestamp: Date.now(),
       };
       if (!alreadyCarded) {
@@ -1078,10 +1170,11 @@ export class QoderHandle {
   private ensureMessageStart(): void {
     if (this.messageStarted) return;
     this.messageStarted = true;
+    const model = this.effectiveModel();
     this.emit({
       type: "message_start",
       role: "assistant",
-      message: { role: "assistant", content: [], model: this.model?.id ?? "", provider: "aiti-qoder-agent" },
+      message: { role: "assistant", content: [], model: model?.id ?? "", provider: model?.provider ?? "aiti-qoder-agent" },
     });
   }
 
@@ -1105,11 +1198,12 @@ export class QoderHandle {
   /** session/load replay tail: accumulated assistant text lands as one liveHistory entry. */
   private flushReplayAssistant(): void {
     if (this.replayAssistant.trim()) {
+      const model = this.effectiveModel();
       this.liveHistory.push({
         role: "assistant",
         content: [{ type: "text", text: this.replayAssistant }],
-        model: this.model?.id ?? "",
-        provider: "aiti-qoder-agent",
+        model: model?.id ?? "",
+        provider: model?.provider ?? "aiti-qoder-agent",
       });
     }
     this.replayAssistant = "";
@@ -1125,11 +1219,12 @@ export class QoderHandle {
       });
       if (acc.text.trim()) {
         const block = kind === "thinking" ? { type: "thinking", thinking: acc.text } : { type: "text", text: acc.text };
+        const model = this.effectiveModel();
         const groupMsg = {
           role: "assistant",
           content: [block],
-          model: this.model?.id ?? "",
-          provider: "aiti-qoder-agent",
+          model: model?.id ?? "",
+          provider: model?.provider ?? "aiti-qoder-agent",
           timestamp: Date.now(),
         };
         this.liveHistoryPush(groupMsg);
@@ -1333,9 +1428,12 @@ export class QoderHandle {
         const stored = Array.isArray(external?.messages) ? external.messages.length : 0;
         if (stored > 0) {
           const messages = external!.messages as SeedHistoryMessage[];
-          if (handle.liveHistory.length === 0) handle.seedHistory(messages);
+          // The store carries no per-message model; take it from the native transcript so
+          // replayed rows show the model name, not the provider id.
+          const fallbackModel = readNativeSessionUsage(nativeSessionId)?.model;
+          if (handle.liveHistory.length === 0) handle.seedHistory(messages, fallbackModel);
           else {
-            const mapped = seedHistoryEntries(messages);
+            const mapped = seedHistoryEntries(messages, fallbackModel);
             if (mapped.length > handle.liveHistory.length) handle.restoreHistory(mapped);
           }
         }
@@ -1681,6 +1779,21 @@ export class QoderHandle {
   }
 
   /**
+   * Model fallback: host start options often omit model (detached/restore paths) and
+   * the CLI's ACP frames don't echo one either, so message headers degrade to the
+   * provider string ("aiti-qoder-agent"). The native transcript's runtime-config /
+   * assistant records are persistent facts — fill in from there when present, with
+   * provider "qoder" from the catalog (model display-name maps key on provider:model).
+   */
+  private effectiveModel(): { id: string; provider: string } | undefined {
+    if (this.model?.id) return this.model;
+    const sid = realSidOf(this.id);
+    const native = sid ? readNativeSessionUsage(sid) : undefined;
+    if (native?.model) this.model = { id: native.model, provider: "qoder" };
+    return this.model;
+  }
+
+  /**
    * 模型感知（后台切了我们能感知到）：init/assistant 帧模型变化时广播
    * model_select（pi 原生 ModelSelectEvent 形状）。首轮初始化不广播。
    */
@@ -1718,27 +1831,43 @@ export class QoderHandle {
   }
 
   /**
-   * @capability contextUsage（机会式）——最近 result 帧 usage 齐全且模型族窗口
-   * 可判才报（qmodel_* 等自研命名未公开窗口 → undefined，空轨态）。
+   * @capability contextUsage — usage_update frames first; otherwise the native
+   * transcript's context_usage_ratio (a real share; when the window is unpublished
+   * only the percentage is given: contextWindow 0 / tokens null). Neither source →
+   * undefined (empty-track state, no invented numbers).
    */
-  getContextUsage(): { percent: number; contextWindow: number; tokens: number } | undefined {
-    // 第一优先：agent 的 usage_update 帧（{used,size} 直接可判）。
+  getContextUsage(): { percent: number | null; contextWindow: number; tokens: number | null } | undefined {
     const frame = this.lastContextUsage;
     if (frame) {
       return { percent: Math.min(100, (frame.tokens / frame.contextWindow) * 100), contextWindow: frame.contextWindow, tokens: frame.tokens };
+    }
+    const sid = realSidOf(this.id);
+    const native = sid ? readNativeSessionUsage(sid) : undefined;
+    if (native?.percent !== undefined) {
+      return { percent: native.percent, contextWindow: 0, tokens: null };
     }
     const u = this.lastUsage;
     if (!u) return undefined;
     const tokens = (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
     if (!(tokens > 0)) return undefined;
-    const contextWindow = qoderContextWindow(this.model?.id ?? u.model);
+    const contextWindow = qoderContextWindow(this.effectiveModel()?.id ?? u.model);
     if (!contextWindow) return undefined;
     return { percent: Math.min(100, (tokens / contextWindow) * 100), contextWindow, tokens };
   }
 
-  /** @capability getUsageTotals —— 会话累计（宿主 get_session_stats 真实口径；无 usage 帧 → 全 0）。 */
+  /**
+   * @capability getUsageTotals — session totals (the host get_session_stats truth).
+   * Token counts: qodercli doesn't report them (native usage all zeros, stay 0);
+   * credits are summed per turn from the native transcript, staying continuous
+   * across restarts.
+   */
   getUsageTotals() {
-    return { ...this.usageTotals };
+    const sid = realSidOf(this.id);
+    const native = sid ? readNativeSessionUsage(sid) : undefined;
+    return {
+      ...this.usageTotals,
+      ...(native?.credits !== undefined ? { credits: native.credits } : {}),
+    };
   }
 
   /**
@@ -1813,8 +1942,8 @@ export class QoderHandle {
    * ToolCallBlock 渲成 pi 自家工具卡片）；🛠 {json} 文本行只作结构化缺席时的兜底
    * （交棒上下文语义：老索引/未知格式不丢内容）。
    */
-  seedHistory(messages: SeedHistoryMessage[]): void {
-    this.liveHistory.push(...seedHistoryEntries(messages));
+  seedHistory(messages: SeedHistoryMessage[], fallbackModel?: string): void {
+    this.liveHistory.push(...seedHistoryEntries(messages, fallbackModel ?? this.effectiveModel()?.id));
   }
 
   async abort(): Promise<void> {
@@ -2005,7 +2134,7 @@ export class QoderHandle {
   });
 
   getModel(): { id: string; provider: string } | undefined {
-    return this.model;
+    return this.effectiveModel();
   }
 
   /** 账号 credits（独立于子进程生命周期；WASM 未就绪或失败时 undefined）。 */
