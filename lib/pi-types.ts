@@ -63,6 +63,8 @@ export interface SessionStatsInfo {
     total: number;
   };
   cost: number;
+  /** Credits consumed by the session (backends billed in credits; rendered next to cost). */
+  credits?: number;
   contextUsage?: ContextUsage;
   /** Estimated active time across all entries in the session file. */
   totalActiveMs?: number;
