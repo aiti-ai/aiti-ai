@@ -215,13 +215,13 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
     })();
   };
 
-  if (loading && !view) return <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-subtle,#888)" }}>{ti("mw.eb.32")}</div>;
+  if (loading && !view) return <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-dim,#888)" }}>{ti("mw.eb.32")}</div>;
 
   // 横幅：作用域生效或存在失配时显示（原生 EnabledModelsBanner 同判据）
   const banner = view && (scoped || stale > 0) ? (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "5px 9px", marginBottom: 8, borderRadius: 8, background: "rgba(37,99,235,.08)", border: "1px solid rgba(37,99,235,.22)", fontSize: 11 }}>
       <code style={{ fontWeight: 650 }} title={view.settingsPath}>{view.settingsPath.split("/").slice(-2).join("/")}</code>
-      <code style={{ color: "var(--text-subtle,#666)" }} title={view.settingsPath}>
+      <code style={{ color: "var(--text-dim,#666)" }} title={view.settingsPath}>
         {"· enabledModels " + view.enabledTotal + "/" + view.availableTotal}
         {stale > 0 ? " · " + stale + ti("mw.eb.10") : ""}
       </code>
@@ -244,14 +244,14 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
     if (!view) return null;
     if (!provider) {
       // 不在运行时视图 ≠ 要去登录：custom→保存/key 提示（原生 enabledCustomEmpty 同义）
-      return <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-subtle,#888)" }}>{ti("mw.eb.35")}</div>;
+      return <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-dim,#888)" }}>{ti("mw.eb.35")}</div>;
     }
     const lastBlocked = editable && toggle!.checked && toggle!.blocked; // 全开被 last-model 挡（不能再关）
     return (
       <>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
           <span style={{ fontWeight: 650, fontSize: 12 }}>{ti("mw.eb.36")}</span>
-          <span style={{ fontSize: 11, color: "var(--text-subtle,#888)" }}>{ti("mw.eb.13") + provider.enabledCount + "/" + provider.models.length}</span>
+          <span style={{ fontSize: 11, color: "var(--text-dim,#888)" }}>{ti("mw.eb.13") + provider.enabledCount + "/" + provider.models.length}</span>
           <label style={{ display: "inline-flex", gap: 5, alignItems: "center", fontSize: 11.5, cursor: busy || toggle!.blocked || !editable ? "default" : "pointer" }} title={toggle!.blocked ? (editable ? REASON_TEXT["last-model"] : REASON_TEXT["project-scope"]) : ti("mw.eb.14") + (provider.name || providerId) + ti("mw.eb.15")}>
             <input type="checkbox" checked={toggle!.checked} disabled={busy || toggle!.blocked || !editable}
               onChange={(e) => setProviderEnabled(e.target.checked)} />
@@ -271,10 +271,10 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
             <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => setExpanded((v) => !v)}>{expanded ? ti("mw.eb.22") : ti("mw.eb.23")}</button>
           ) : null}
         </div>
-        {catNote ? <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginBottom: 6 }}>{catNote}</div> : null}
-        {!editable ? <div style={{ fontSize: 11, color: "#b45309", marginBottom: 6 }}>{REASON_TEXT["project-scope"]}</div> : null}
-        {failure ? <div style={{ fontSize: 11, color: "#dc2626", marginBottom: 6 }}>{failure}</div> : null}
-        {lastBlocked ? <div style={{ fontSize: 11, color: "#b45309", marginBottom: 6 }}>{REASON_TEXT["last-model"]}</div> : null}
+        {catNote ? <div style={{ fontSize: 11, color: "var(--text-dim,#888)", marginBottom: 6 }}>{catNote}</div> : null}
+        {!editable ? <div style={{ fontSize: 11, color: "var(--warn, #b45309)", marginBottom: 6 }}>{REASON_TEXT["project-scope"]}</div> : null}
+        {failure ? <div style={{ fontSize: 11, color: "var(--danger, #dc2626)", marginBottom: 6 }}>{failure}</div> : null}
+        {lastBlocked ? <div style={{ fontSize: 11, color: "var(--warn, #b45309)", marginBottom: 6 }}>{REASON_TEXT["last-model"]}</div> : null}
         {expanded && provider.kind === "builtin" ? (
           <div>
             {provider.models.length > 8 ? (
@@ -283,7 +283,7 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
             ) : null}
             <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border,#e5e7eb)", borderRadius: 8 }}>
               {shown.length === 0 ? (
-                <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-subtle,#888)" }}>{ti("mw.eb.38")}</div>
+                <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim,#888)" }}>{ti("mw.eb.38")}</div>
               ) : shown.map((m, i) => {
                 const lastOne = isLastEnabled(m);
                 const ov = overrides ? overrides[m.id] : undefined;
@@ -291,7 +291,7 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
                   <div key={m.ref} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", borderTop: i === 0 ? "none" : "1px solid var(--border,#eee)", fontSize: 11.5 }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                      <code style={{ display: "block", fontSize: 10, color: "var(--text-subtle,#888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.id}</code>
+                      <code style={{ display: "block", fontSize: 10, color: "var(--text-dim,#888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.id}</code>
                     </span>
                     {m.thinkingPin ? (
                       <span className="amw-tag" title={ti("mw.eb.27")}>{m.thinkingPin}</span>
@@ -315,14 +315,14 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
                 );
               })}
             </div>
-            <div style={{ fontSize: 10, color: "var(--text-subtle,#888)", marginTop: 4 }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim,#888)", marginTop: 4 }}>
               {ti("mw.eb.41")}
             </div>
-            {ovErr ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{ovErr}</div> : null}
+            {ovErr ? <div style={{ fontSize: 11, color: "var(--danger, #dc2626)", marginTop: 4 }}>{ovErr}</div> : null}
           </div>
         ) : null}
         {provider.kind === "custom" ? (
-          <div style={{ fontSize: 10.5, color: "var(--text-subtle,#888)" }}>{ti("mw.eb.39")}</div>
+          <div style={{ fontSize: 10.5, color: "var(--text-dim,#888)" }}>{ti("mw.eb.39")}</div>
         ) : null}
       </>
     );

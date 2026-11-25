@@ -307,8 +307,8 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
                         )}
                         <span style={{ marginLeft: 4 }}>req {fmtN(reqsOf(st))}</span>
                         {st.ok > 0 && <span> · ✓{fmtN(st.ok)}</span>}
-                        {st.err429 > 0 && <span style={{ color: "#d97706" }}> · 429×{fmtN(st.err429)}</span>}
-                        {errs > 0 && <span style={{ color: "#dc2626" }}> · ⚠{fmtN(errs)}</span>}
+                        {st.err429 > 0 && <span style={{ color: "var(--warn, #d97706)" }}> · 429×{fmtN(st.err429)}</span>}
+                        {errs > 0 && <span style={{ color: "var(--danger, #dc2626)" }}> · ⚠{fmtN(errs)}</span>}
                         {(() => {
                           const tok = tokOf(st);
                           if (!tok) return null;
@@ -373,23 +373,23 @@ export function MultiKeyStatusSummary({ onOpen, style }: { onOpen: () => void; s
   const { data, failed } = useProxyStatus();
   const sum = summaryOf(data);
   let bg = "rgba(148,163,184,.12)", fg = "var(--text-dim,#9ca3af)", txt = t("mw.st.sum.ready");
-  if (failed) { bg = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)"; fg = "#dc2626"; txt = t("mw.st.sum.failed"); }
+  if (failed) { bg = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)"; fg = "var(--danger, #dc2626)"; txt = t("mw.st.sum.failed"); }
   else if (data) {
     const keyIdx = buildKeyIndex(data.status);
     const anyFailing = data.status.some((p) =>
       (p.saturation?.length ?? 0) > 0) || [...keyIdx.values()].some((o) => o.health === "failing");
     const anyCooling = [...keyIdx.values()].some((o) => o.health === "cooling");
     if (data.status.length > 0 && anyFailing) {
-      bg = "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)"; fg = "#dc2626";
+      bg = "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)"; fg = "var(--danger, #dc2626)";
       txt = t("mw.st.sum.failing", { proxies: sum!.proxies });
     } else if (data.status.length > 0 && anyCooling) {
-      bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309";
+      bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "var(--warn, #b45309)";
       txt = t("mw.st.sum.cooling", { proxies: sum!.proxies });
     } else if (data.status.length > 0) {
-      bg = "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)"; fg = "#16a34a";
+      bg = "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)"; fg = "var(--ok, #16a34a)";
       txt = (sum!.slots ? t("mw.st.proxiesSlots", { proxies: sum!.proxies, slots: sum!.slots }) : t("mw.st.proxies", { proxies: sum!.proxies })) + (sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : "");
     } else if (data.loaded) { txt = t("mw.st.sum.empty"); }
-    else if (data.present) { bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309"; txt = t("mw.st.sum.old"); }
+    else if (data.present) { bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "var(--warn, #b45309)"; txt = t("mw.st.sum.old"); }
     else { txt = t("mw.st.sum.notLoaded"); }
   }
   return (

@@ -53,7 +53,7 @@ function SessionStatsShell(_props: Record<string, unknown>) {
     return () => { dead = true; };
   }, []);
   const base: any = { fontSize: 11, color: "var(--text-dim,#6b7280)", lineHeight: 1.5 };
-  if (failed) return <div style={{ ...base, color: "#dc2626" }}>{t("mw.st.shellFailed")}</div>;
+  if (failed) return <div style={{ ...base, color: "var(--danger, #dc2626)" }}>{t("mw.st.shellFailed")}</div>;
   if (!d) return <div style={base}>{t("mw.st.shellLoading")}</div>;
   // 汇总（简版；完整版覆盖后展示每槽位详情）
   let slots = 0, cooling = 0, fail = 0, sat = 0;
@@ -137,7 +137,7 @@ function WizardButtonShell() {
       {newTotal > 0 ? (
         <span key="badge" style={{
           position: "absolute", top: 3, right: 4, minWidth: 14, height: 14, padding: "0 3px",
-          borderRadius: 999, background: "#dc2626", color: "#fff", fontSize: 9, fontWeight: 700,
+          borderRadius: 999, background: "var(--danger, #dc2626)", color: "#fff", fontSize: 9, fontWeight: 700,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none",
           boxShadow: "0 0 0 2px var(--bg,#fff)",
         }}>{newTotal > 99 ? "99+" : String(newTotal)}</span>
@@ -200,8 +200,8 @@ function SettingsModelsFace(props: { currentSession?: unknown; cwd?: string | nu
       .catch(() => { if (!dead) setFailed(true); });
     return () => { dead = true; };
   }, []);
-  if (failed) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-subtle,#888)" }}>模型向导加载失败——刷新页面重试，或在扩展管理检查 aiti-model-wizard 状态。</div>;
-  if (!Heavy) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-subtle,#888)" }}>模型向导加载中…</div>;
+  if (failed) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-dim,#888)" }}>模型向导加载失败——刷新页面重试，或在扩展管理检查 aiti-model-wizard 状态。</div>;
+  if (!Heavy) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-dim,#888)" }}>模型向导加载中…</div>;
   return <Heavy.App open={true} initialTab="status" initialProvider={null} embedded variant="settings" cwd={props.cwd ?? null} onClose={props.onClose} />;
 }
 

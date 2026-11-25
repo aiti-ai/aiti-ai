@@ -190,16 +190,16 @@ function CheckupDialog({ st, onClose, onFix, onRerun }: { st: any; onClose: () =
             <div style={{ overflow: "auto", flex: 1, minHeight: 80, display: "flex", flexDirection: "column", gap: 3 }} aria-live="polite">
               {rows.map((r: any) => (
                 <div key={r.provider} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 8px", borderRadius: 8, border: "1px solid var(--border,#eee)", fontSize: 11.5 }}>
-                  <span style={{ flexShrink: 0, fontWeight: 700, color: r.skipped ? "var(--text-subtle,#999)" : r.pass ? (r.rateLimited ? "#d97706" : "#16a34a") : "#dc2626" }}>
+                  <span style={{ flexShrink: 0, fontWeight: 700, color: r.skipped ? "var(--text-dim,#999)" : r.pass ? (r.rateLimited ? "var(--warn, #d97706)" : "var(--ok, #16a34a)") : "var(--danger, #dc2626)" }}>
                     {r.skipped ? "⏭" : r.pass ? (r.rateLimited ? "🟡" : "✅") : "❌"}
                   </span>
                   <span className="amw-mono" style={{ fontWeight: 650, flexShrink: 0, minWidth: 90 }}>{r.provider}</span>
-                  <span style={{ flex: 1, minWidth: 0, color: r.skipped ? "var(--text-subtle,#999)" : "var(--text-muted,#555)", wordBreak: "break-all" }}>
+                  <span style={{ flex: 1, minWidth: 0, color: r.skipped ? "var(--text-dim,#999)" : "var(--text-muted,#555)", wordBreak: "break-all" }}>
                     {r.skipped ? r.reason
                       : (r.status ? "HTTP " + r.status + " · " : ti("mw.a.32")) + (r.latencyMs != null ? fmtLat(r.latencyMs) + " · " : "") + (r.detail || "")
                       + (r.model ? ti("mw.a.33") + r.model + "）" : "")}
                   </span>
-                  {!r.skipped && r.masked ? <span className="amw-mono" style={{ flexShrink: 0, color: "var(--text-subtle,#999)" }}>{r.keyName + " " + r.masked}</span> : null}
+                  {!r.skipped && r.masked ? <span className="amw-mono" style={{ flexShrink: 0, color: "var(--text-dim,#999)" }}>{r.keyName + " " + r.masked}</span> : null}
                   {!r.skipped && !r.pass ? (
                     <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5, flexShrink: 0 }} onClick={() => onFix(r.provider)}>{ti("mw.tx.2")}</button>
                   ) : null}
@@ -228,7 +228,7 @@ const SETTINGS_FLOAT_PROPS: any = {
 };
 /** 设置面板数字输入行（模块级组件：放对话框内部会因每次渲染组件身份变化导致输入失焦） */
 function SetNum({ label, hint, value, onChange }: { label: string; hint?: string; value: any; onChange: (v: string) => void }) {
-  const lbl = { fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 } as any;
+  const lbl = { fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 } as any;
   return (
     <div>
       <label style={lbl}>{label}</label>
@@ -272,7 +272,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   };
   const r = cfg && cfg.reminder, cat = cfg && cfg.catalog, pr = cfg && cfg.probe, ts = cfg && cfg.test;
   // label 样式（原与 SetNum 共享同名局部变量；SetNum 抽模块级组件后本组件需自持——缺失会 ReferenceError: lbl is not defined）
-  const lbl = { fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 } as any;
+  const lbl = { fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 } as any;
   const panel = (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -282,7 +282,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       </div>
       {err ? <div className="amw-note is-err" style={{ marginBottom: 6 }}>{"❌ " + err}</div> : null}
       {msg ? <div className="amw-note is-ok" style={{ marginBottom: 6 }}>{msg}</div> : null}
-      {!cfg ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div> : (
+      {!cfg ? <div style={{ color: "var(--text-dim,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div> : (
         <div style={{ overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
             <div className="amw-section" style={{ margin: "0 0 5px" }}>{ti("mw.tx.7")}</div>
@@ -388,8 +388,8 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
             {m.provider}/{m.model}
           </button>
         ))}
-        {!cands.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{pool.length ? ti("mw.a.58") : ti("mw.a.59")}</span>
-        : all.length > cap ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{ti("mw.a.60") + all.length + ti("mw.a.61") + cap + ti("mw.a.62")}</span> : null}
+        {!cands.length ? <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>{pool.length ? ti("mw.a.58") : ti("mw.a.59")}</span>
+        : all.length > cap ? <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>{ti("mw.a.60") + all.length + ti("mw.a.61") + cap + ti("mw.a.62")}</span> : null}
       </div>
     </div>
   );
@@ -456,21 +456,21 @@ function ProbeOut({ r }: { r: any }) {
   return (
     <span style={{ minWidth: 0, display: "inline-flex", flexDirection: "column", gap: 1 }}>
       {r.ok ? (
-        <span style={{ color: "#16a34a", fontWeight: 650, fontSize: 11.5 }}>
+        <span style={{ color: "var(--ok, #16a34a)", fontWeight: 650, fontSize: 11.5 }}>
           {ti("mw.a.66") + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : "")}
         </span>
       ) : r.status === 429 ? (
-        <span style={{ color: "#d97706", fontWeight: 650, fontSize: 11.5 }}>
+        <span style={{ color: "var(--warn, #d97706)", fontWeight: 650, fontSize: 11.5 }}>
           {ti("mw.a.67") + (r.predictedAvailableAt ? ti("mw.a.68") + new Date(r.predictedAvailableAt).toLocaleString("zh-CN", { hour12: false }) : "")}
         </span>
       ) : (
-        <span style={{ color: "#dc2626", fontWeight: 650, fontSize: 11.5 }}>
+        <span style={{ color: "var(--danger, #dc2626)", fontWeight: 650, fontSize: 11.5 }}>
           {("❌ " + (r.label || ti("mw.a.69")) + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : ""))}
         </span>
       )}
-      {r.error ? <span style={{ color: r.ok ? "var(--text-subtle,#666)" : "#dc2626", fontSize: 11, wordBreak: "break-all" }}>{String(r.error).slice(0, 160)}</span> : null}
+      {r.error ? <span style={{ color: r.ok ? "var(--text-dim,#666)" : "var(--danger, #dc2626)", fontSize: 11, wordBreak: "break-all" }}>{String(r.error).slice(0, 160)}</span> : null}
       {keys.length >= 2 ? keys.map((k: any) => (
-        <span key={k.keyName || k.name} style={{ fontSize: 10.5, fontWeight: 600, color: k.ok ? "#16a34a" : k.status === 429 ? "#d97706" : "#dc2626" }}>
+        <span key={k.keyName || k.name} style={{ fontSize: 10.5, fontWeight: 600, color: k.ok ? "var(--ok, #16a34a)" : k.status === 429 ? "var(--warn, #d97706)" : "var(--danger, #dc2626)" }}>
           {"　" + (k.ok ? "✅" : k.status === 429 ? "🟡" : "❌") + " " + (k.keyName || k.name || "key") + " · HTTP " + (k.status || "net") + " · " + fmtMs(k.latencyMs) + (k.label ? " · " + k.label : "")}
         </span>
       )) : null}
@@ -537,9 +537,9 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
             ? <button className="amw-btn" onClick={onClose}>{ti("mw.tx.14")}</button>
             : <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")}><Ic size={12} paths={ICONS.x} /></button>}
         </div>
-        {data.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div>
-          : data.error ? <div style={{ color: "#dc2626", fontSize: 12 }}>{"❌ " + data.error}</div>
-          : <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{data.readOnly ? ti("mw.a.71") : ti("mw.a.72")}</div>}
+        {data.loading ? <div style={{ color: "var(--text-dim,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div>
+          : data.error ? <div style={{ color: "var(--danger, #dc2626)", fontSize: 12 }}>{"❌ " + data.error}</div>
+          : <div style={{ color: "var(--text-dim,#666)", fontSize: 12 }}>{data.readOnly ? ti("mw.a.71") : ti("mw.a.72")}</div>}
         {!data.loading && !data.error && data.readOnly ? (
           <div style={{ marginTop: 10 }}>
             <button className="amw-btn is-ok" onClick={() => invokeAiHelperForMissing(data.provider, [{ id: data.id }], dialogEl || null)}>{ti("mw.tx.15")}</button>
@@ -627,7 +627,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
     } catch (e: any) { setErrMsg(String(e.message || e)); }
     setSaving(false);
   };
-  const lbl = { fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 } as any;
+  const lbl = { fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 } as any;
   const panel = (
     <>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -649,14 +649,14 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         {/* 🩺 测试结果行：仅独立弹窗显示，测完立即就地展示（读/编两态都在） */}
         {!embedded && probeSt ? (
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap", padding: "6px 9px", border: "1px solid var(--border,#eee)", borderRadius: 8, background: "var(--bg-subtle,#fafafa)", marginBottom: 8 }}>
-            {probeSt.busy ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11.5 }}>{ti("mw.a.78") + data.id + ti("mw.a.79")}</span> : null}
+            {probeSt.busy ? <span style={{ color: "var(--text-dim,#666)", fontSize: 11.5 }}>{ti("mw.a.78") + data.id + ti("mw.a.79")}</span> : null}
             {probeSt.done ? <ProbeOut r={probeSt.done} /> : null}
-            {probeSt.error ? <span style={{ color: "#b45309", fontSize: 11.5, minWidth: 0, wordBreak: "break-all" }}>{"⚠️ " + probeSt.error}</span> : null}
+            {probeSt.error ? <span style={{ color: "var(--warn, #b45309)", fontSize: 11.5, minWidth: 0, wordBreak: "break-all" }}>{"⚠️ " + probeSt.error}</span> : null}
           </div>
         ) : null}
         <div style={{ overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", wordBreak: "break-all" }}>{"provider: " + data.provider + " · api: " + (data.api || "—")}</div>
-          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#b45309", fontSize: 11 }}>{ti("mw.a.80") + data.crossFrom + ti("mw.a.81")}</div> : null}
+          <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-dim,#666)", wordBreak: "break-all" }}>{"provider: " + data.provider + " · api: " + (data.api || "—")}</div>
+          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "var(--warn, #b45309)", fontSize: 11 }}>{ti("mw.a.80") + data.crossFrom + ti("mw.a.81")}</div> : null}
         {edit ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
@@ -686,14 +686,14 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
                   <label style={lbl}>{ti("mw.tx.24")}</label>
                   <input className="amw-input" style={{ width: "100%" }} type="text" inputMode="numeric" value={draft.imageMaxBytes ?? ""}
                     onChange={(e) => D({ imageMaxBytes: e.target.value })} placeholder="4718592" />
-                  <span style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.25")} <code>inputLimits.images.resize.maxBytes</code></span>
+                  <span style={{ fontSize: 10, color: "var(--text-dim,#666)" }}>{ti("mw.tx.25")} <code>inputLimits.images.resize.maxBytes</code></span>
                 </div>
               ) : null}
             </div>
             {(draft.api || data.api) === "anthropic-messages" && !!draft.reasoning ? (
               <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}>
                 <input type="checkbox" checked={!!(draft.compat && draft.compat.forceAdaptiveThinking)} onChange={(e) => setCompat({ forceAdaptiveThinking: e.target.checked || undefined })} />
-                {ti("mw.tx.183")}<code className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>compat.forceAdaptiveThinking</code>
+                {ti("mw.tx.183")}<code className="amw-mono" style={{ fontSize: 10, color: "var(--text-dim,#666)" }}>compat.forceAdaptiveThinking</code>
               </label>
             ) : null}
             <div>
@@ -722,7 +722,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
                 <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
                   <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder="Header-Name" value={r.k} onChange={(e) => setHdrRows((prev) => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
                   <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder="value" value={r.v} onChange={(e) => setHdrRows((prev) => prev.map((x, j) => j === i ? { ...x, v: e.target.value } : x))} />
-                  <button className="amw-btn" style={{ padding: "2px 8px", color: "#dc2626" }} onClick={() => setHdrRows((prev) => prev.filter((_x, j) => j !== i))}>✕</button>
+                  <button className="amw-btn" style={{ padding: "2px 8px", color: "var(--danger, #dc2626)" }} onClick={() => setHdrRows((prev) => prev.filter((_x, j) => j !== i))}>✕</button>
                 </div>
               ))}
               <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setHdrRows((prev) => [...prev, { k: "", v: "" }])}>{ti("mw.tx.31")}</button>
@@ -749,7 +749,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
             if (v === null) return null;
             return (
               <div key={k} style={{ padding: "5px 6px", borderTop: "1px solid var(--border,#eee)", display: "flex", gap: 8, fontSize: 12 }}>
-                <span style={{ width: "min(160px, 42%)", flexShrink: 0, color: "var(--text-subtle,#666)" }}>{label}</span>
+                <span style={{ width: "min(160px, 42%)", flexShrink: 0, color: "var(--text-dim,#666)" }}>{label}</span>
                 <span className="amw-mono" style={{flex: 1, whiteSpace: "pre-wrap"}}>{v}</span>
               </div>
             );
@@ -758,7 +758,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         </div>
         {edit ? (
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, alignItems: "center", flexShrink: 0 }}>
-            {errMsg ? <span style={{ color: "#dc2626", fontSize: 11, flex: 1 }}>{errMsg}</span> : <span style={{ flex: 1 }} />}
+            {errMsg ? <span style={{ color: "var(--danger, #dc2626)", fontSize: 11, flex: 1 }}>{errMsg}</span> : <span style={{ flex: 1 }} />}
             <button className="amw-btn" disabled={saving} onClick={() => { setDraft(data.params ? JSON.parse(JSON.stringify(data.params)) : null); setHdrRows(Object.entries((data.params && data.params.headers) || {}).map(([k, v]: any) => ({ k, v: String(v) }))); setErrMsg(""); setEdit(false); }}>{ti("mw.tx.12")}</button>
             <button className="amw-btn is-ok" disabled={saving} onClick={save}>{saving ? ti("mw.a.55") : ti("mw.a.96")}</button>
           </div>
@@ -799,7 +799,7 @@ function StepHead({ n, title, hint, right }: { n: number | string; title: string
       <span style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--accent,#2563eb)", color: "#fff", fontSize: 11, fontWeight: 700,
         display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{n}</span>
       <span style={{ fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{title}</span>
-      {hint ? <span style={{ color: "var(--text-subtle,#999)", fontSize: 11, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hint}</span> : null}
+      {hint ? <span style={{ color: "var(--text-dim,#999)", fontSize: 11, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hint}</span> : null}
       {right ? <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>{right}</span> : null}
     </div>
   );
@@ -825,11 +825,11 @@ function HeaderRowsEditor({ rows, onChange, hint }: { rows: HeaderRowUI[]; onCha
           <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder={r.masked ? ti("mw.a.98") : "value"} value={r.v}
             title={r.masked ? ti("mw.a.99") : undefined}
             onChange={(e) => onChange(rows.map((x, j) => j === i ? { ...x, k: x.k, v: e.target.value, masked: false } : x))} />
-          <button className="amw-btn" style={{ padding: "2px 8px", color: "#dc2626" }} title={ti("mw.a.100")} onClick={() => onChange(rows.filter((_x, j) => j !== i))}>✕</button>
+          <button className="amw-btn" style={{ padding: "2px 8px", color: "var(--danger, #dc2626)" }} title={ti("mw.a.100")} onClick={() => onChange(rows.filter((_x, j) => j !== i))}>✕</button>
         </div>
       ))}
       <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => onChange([...rows, { k: "", v: "" }])}>{ti("mw.tx.31")}</button>
-      {hint ? <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)" }}>{hint}</div> : null}
+      {hint ? <div style={{ fontSize: 10.5, color: "var(--text-dim,#777)" }}>{hint}</div> : null}
     </div>
   );
 }
@@ -992,12 +992,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // 运行期错误主导类别：最近事件状态 → {icon,label,color,hot}；429=⚡限流 / 402=💸欠费 / 401=🔑key 无效 / ⛔无权限 / ⚠️服务端错 / 🔌网络错
   const rtErrInfo = useCallback((status: number): { icon: string; label: string; color: string } => {
     const s = Number(status) || 0;
-    if (s === 429) return { icon: "⚡", label: ti("mw.a.103"), color: "#dc2626" };
-    if (s === 402) return { icon: "💸", label: ti("mw.a.104"), color: "#dc2626" };
-    if (s === 401) return { icon: "🔑", label: ti("mw.a.105"), color: "#dc2626" };
-    if (s === 403) return { icon: "⛔", label: ti("mw.a.106"), color: "#dc2626" };
-    if (s >= 500) return { icon: "⚠️", label: s === 502 || s === 504 ? ti("mw.a.107") : ti("mw.a.108"), color: "#d97706" };
-    return { icon: "⚠️", label: s ? "HTTP " + s : ti("mw.a.69"), color: "#d97706" };
+    if (s === 429) return { icon: "⚡", label: ti("mw.a.103"), color: "var(--danger, #dc2626)" };
+    if (s === 402) return { icon: "💸", label: ti("mw.a.104"), color: "var(--danger, #dc2626)" };
+    if (s === 401) return { icon: "🔑", label: ti("mw.a.105"), color: "var(--danger, #dc2626)" };
+    if (s === 403) return { icon: "⛔", label: ti("mw.a.106"), color: "var(--danger, #dc2626)" };
+    if (s >= 500) return { icon: "⚠️", label: s === 502 || s === 504 ? ti("mw.a.107") : ti("mw.a.108"), color: "var(--warn, #d97706)" };
+    return { icon: "⚠️", label: s ? "HTTP " + s : ti("mw.a.69"), color: "var(--warn, #d97706)" };
   }, []);
   const rtTip = useCallback((rt: any) =>
     ti("mw.a.109") + rt.count1h + ti("mw.a.110") + rt.count24h + ti("mw.a.111")
@@ -1099,10 +1099,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const ck = chk && chk.state && chk.state.models ? chk.state.models[provider + "/" + id] : null;
     const rt = rtOf(provider, id); // 运行期错误观测（带外）：真实流量出错，未探测也可能故障中
     const rtDot = rt && rt.count24h > 0 ? (
-      <span style={{ fontSize: 9, color: rt.count1h > 0 ? "#dc2626" : "#d97706", flexShrink: 0, cursor: "default" }} title={rtTip(rt)}>{rtErrInfo(rt.lastStatus).icon}</span>
+      <span style={{ fontSize: 9, color: rt.count1h > 0 ? "var(--danger, #dc2626)" : "var(--warn, #d97706)", flexShrink: 0, cursor: "default" }} title={rtTip(rt)}>{rtErrInfo(rt.lastStatus).icon}</span>
     ) : null;
     const dot = !ck ? null
-      : ck.lastOk ? <span className="amw-vdot" style={{ background: "#16a34a" }} title={ti("mw.a.127")} />
+      : ck.lastOk ? <span className="amw-vdot" style={{ background: "var(--ok, #16a34a)" }} title={ti("mw.a.127")} />
       : ck.rateLimited ? <span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} title={ti("mw.a.128")} />
       : <span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} title={ti("mw.a.129")} />;
     if (!dot && !rtDot) return null;
@@ -2022,10 +2022,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             onClick={doKeysRefresh}>
             {e.busy ? ti("mw.a.48") : (<><Ic size={11} paths={ICONS.refresh} /> {ti("mw.tx.33")}</>)}
           </button>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{ti("mw.tx.34")}</span>
+          <span style={{ color: "var(--text-dim,#666)", fontSize: 10.5 }}>{ti("mw.tx.34")}</span>
         </div>
         {e.error ? <div className="amw-note is-err">❌ {e.error}</div> : null}
-        {e.refreshOut && !e.error ? <div style={{ fontSize: 11, marginBottom: 4, color: e.refreshOut.startsWith("⚠️") ? "#d97706" : "#15803d" }}>{e.refreshOut}</div> : null}
+        {e.refreshOut && !e.error ? <div style={{ fontSize: 11, marginBottom: 4, color: e.refreshOut.startsWith("⚠️") ? "var(--warn, #d97706)" : "var(--ok, #15803d)" }}>{e.refreshOut}</div> : null}
         {open ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {list.length ? list.map((k: any, i: number) => {
@@ -2034,13 +2034,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               const dirty = ((row.name || "").trim() && row.name.trim() !== k.name) || ((row.key || "").trim() !== "") || (row.rpm !== undefined && String(row.rpm).trim() !== String(k.rpm ?? "")) || (row.minIntervalMs !== undefined && String(row.minIntervalMs).trim() !== String(k.minIntervalMs ?? ""));
               return (
                 <div key={i} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, flexWrap: small ? "wrap" : "nowrap", ...(k.enabled === false ? { background: "rgba(127,127,127,.09)", borderRadius: 6, padding: "2px 4px" } : {}) }}>
-                  <span style={{ width: 16, flexShrink: 0, textAlign: "right", color: "var(--text-subtle,#aaa)", fontSize: 10 }}>{i + 1}</span>
-                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} title={ti("mw.a.236")} value={row.name ?? k.name} onChange={(ev) => rowSet({ name: ev.target.value })} />
-                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} type="password" placeholder={k.key ? ti("mw.a.237") + k.key + ti("mw.a.238") : "API key"} value={row.key || ""} onChange={(ev) => rowSet({ key: ev.target.value })} />
+                  <span style={{ width: 16, flexShrink: 0, textAlign: "right", color: "var(--text-dim,#aaa)", fontSize: 10 }}>{i + 1}</span>
+                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-dim,#999)" } : {})}} title={ti("mw.a.236")} value={row.name ?? k.name} onChange={(ev) => rowSet({ name: ev.target.value })} />
+                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-dim,#999)" } : {})}} type="password" placeholder={k.key ? ti("mw.a.237") + k.key + ti("mw.a.238") : "API key"} value={row.key || ""} onChange={(ev) => rowSet({ key: ev.target.value })} />
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" title={ti("mw.a.239")} value={row.rpm !== undefined ? row.rpm : (k.rpm || "")} onChange={(ev) => rowSet({ rpm: ev.target.value })} />
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 72, flexShrink: 0}} placeholder={ti("mw.a.240")} title={ti("mw.a.241")} value={row.minIntervalMs !== undefined ? row.minIntervalMs : (k.minIntervalMs ?? "")} onChange={(ev) => rowSet({ minIntervalMs: ev.target.value })} />
                   <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={dirty ? ti("mw.a.242") : ti("mw.a.243")} disabled={e.busy || !dirty} onClick={() => editKeySave(p.provider, k)}>💾</button>
-                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
+                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "var(--warn, #b45309)", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
                     title={k.enabled === false ? ti("mw.a.244") : ti("mw.a.245")}
                     disabled={e.busy} onClick={() => editKeyToggle(p.provider, k.name, k.enabled === false)}>
                     {k.enabled === false ? "▶" : "⏸"}
@@ -2048,7 +2048,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={ti("mw.a.246")} disabled={e.busy} onClick={() => editKeyRemove(p.provider, k.name)}>✕</button>
                 </div>
               );
-            }) : e.busy ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.6")}</div> : <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.35")}</div>}
+            }) : e.busy ? <div style={{ color: "var(--text-dim,#999)", fontSize: 11 }}>{ti("mw.tx.6")}</div> : <div style={{ color: "var(--text-dim,#999)", fontSize: 11 }}>{ti("mw.tx.35")}</div>}
             <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 4, flexWrap: small ? "wrap" : "nowrap" }}>
               <input className="amw-input" style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.247")} value={e.newName || ""} onChange={(ev) => setE({ newName: ev.target.value })} />
               <input className="amw-input" style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.248")} value={e.newKey || ""} onChange={(ev) => setE({ newKey: ev.target.value })} />
@@ -2080,7 +2080,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const pid = p.oauthProviderId || p.provider;
       return (
         <div data-amw-edit="1" style={{ marginTop: 10, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim,#666)", marginBottom: 6 }}>
             {ti("mw.tx.184")}
           </div>
           {oauthLoginPanel({ id: pid, name: p.provider })}
@@ -2129,10 +2129,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <EyeBtn title={ti("mw.a.260") + id + ti("mw.a.261")} onClick={() => viewModelParams(p.provider, id)} />
                   {capBadge(p.provider, id)}
                   {mtags.length ? <span style={{ color: "var(--text-muted, #6b7280)", fontSize: 9 }}>{mtags.join(" · ")}</span> : null}
-                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #22c55e) 16%, transparent)", color: "#15803d", fontSize: 9, fontWeight: 700 }}>{ti("mw.tx.42")}</span> : null}
+                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #22c55e) 16%, transparent)", color: "var(--ok, #15803d)", fontSize: 9, fontWeight: 700 }}>{ti("mw.tx.42")}</span> : null}
                 </label>
               );
-            }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.43")}</span>}
+            }) : <span style={{ color: "var(--text-dim,#999)", fontSize: 11 }}>{ti("mw.tx.43")}</span>}
           </div>
         ) : (
           <div>
@@ -2141,18 +2141,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 const mid = typeof id === "string" ? id : (id && id.id);
                 const mEn = !(typeof id === "object" && id && id.enabled === false);
                 return (
-                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
+                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "var(--warn, #b45309)" }) }}>
                   {mid}
-                  {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>{ti("mw.a.495")}</span> : null}
+                  {!mEn ? <span style={{ fontSize: 9, color: "var(--warn, #b45309)", fontWeight: 700 }}>{ti("mw.a.495")}</span> : null}
                   {capBadge(p.provider, mid)}
                   <EyeBtn title={ti("mw.a.262")} onClick={() => viewModelParams(p.provider, mid)} />
-                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "#d97706", padding: 0, fontSize: 12, lineHeight: 1 }}
+                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "var(--warn, #d97706)", padding: 0, fontSize: 12, lineHeight: 1 }}
                     title={mEn ? ti("mw.a.263") : ti("mw.a.264")}
                     onClick={() => doToggleModel(p.provider, mid, !mEn)}>{mEn ? "⏸" : "▶"}</button>
-                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "#dc2626", padding: 0, fontSize: 12, lineHeight: 1 }} onClick={() => removeEditModel(p.provider, mid, p.models)} aria-label={ti("mw.a.265") + mid}>✕</button>
+                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "var(--danger, #dc2626)", padding: 0, fontSize: 12, lineHeight: 1 }} onClick={() => removeEditModel(p.provider, mid, p.models)} aria-label={ti("mw.a.265") + mid}>✕</button>
                 </span>
                 );
-              }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.44")}</span>}
+              }) : <span style={{ color: "var(--text-dim,#999)", fontSize: 11 }}>{ti("mw.tx.44")}</span>}
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.266")} value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addEditModel(p.provider, p.models); }} />
@@ -2162,15 +2162,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         )}
         {/* ── 连接配置 ── */}
         <div className="amw-section" style={{margin: "0 0 6px"}}>{ti("mw.tx.45")}</div>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
+        <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
         <input className="amw-input" style={{width: "100%", marginBottom: 6, fontFamily: "ui-monospace,monospace"}} placeholder="https://api.example.com/v1" value={eff("baseUrl", p.baseUrl || "")} onChange={(e) => setField("baseUrl", e.target.value)} />
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
+        <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
         <select className="amw-input" style={{width: "100%", marginBottom: 6}} value={eff("api", p.api || "openai-completions")} onChange={(e) => setField("api", e.target.value)}>
           {apiOpts.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }} title={ti("mw.tx.47") + ti("mw.tx.48") + "）"}>{ti("mw.tx.229")}</label>
+        <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }} title={ti("mw.tx.47") + ti("mw.tx.48") + "）"}>{ti("mw.tx.229")}</label>
         <input className="amw-input" style={{width: "100%", fontFamily: "ui-monospace,monospace"}} type="password" placeholder={p.apiKeyMasked ? ti("mw.a.267") + p.apiKeyMasked + "）" : ti("mw.a.268")} value={editTok[p.provider] || ""} onChange={(e) => setEditTok((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} />
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", margin: "8px 0 3px" }}>{ti("mw.tx.49")}</label>
+        <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", margin: "8px 0 3px" }}>{ti("mw.tx.49")}</label>
         <EditHeadersEditor key={p.provider} initialHeaders={eff("headers", p.headers)} initialMasked={eff("headersMasked", p.maskedHeaders)}
           onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked: maskedHeaders } }))} />
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
@@ -2211,8 +2211,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     return (
       <div style={{ border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "10px 12px", background: "var(--bg-subtle,#fafafa)", marginBottom: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {p.baseUrl ? <span title={p.baseUrl + " · " + p.apiType} className="amw-mono" style={{ padding: "3px 10px", borderRadius: 999, background: "var(--bg,#fff)", border: "1px solid var(--border,#e5e5e5)", fontSize: 11, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.baseUrl}<span style={{ color: "var(--text-subtle,#999)" }}>{" · " + p.apiType}</span></span> : null}
-          {(p.models && p.models.length) ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", flexShrink: 0 }}>{ti("mw.a.269") + p.models.length + ti("mw.a.9")}</span> : null}
+          {p.baseUrl ? <span title={p.baseUrl + " · " + p.apiType} className="amw-mono" style={{ padding: "3px 10px", borderRadius: 999, background: "var(--bg,#fff)", border: "1px solid var(--border,#e5e5e5)", fontSize: 11, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.baseUrl}<span style={{ color: "var(--text-dim,#999)" }}>{" · " + p.apiType}</span></span> : null}
+          {(p.models && p.models.length) ? <span style={{ fontSize: 11, color: "var(--text-dim,#666)", flexShrink: 0 }}>{ti("mw.a.269") + p.models.length + ti("mw.a.9")}</span> : null}
         </div>
         {hasLinks ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: p.baseUrl ? 8 : 0 }}>
@@ -2223,7 +2223,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         ) : null}
         {/* register note: single-line ellipsis by default (full text on hover, click to expand) */}
         {p.register ? <div title={p.register} onClick={() => setRegOpenId(regOpen ? "" : regPid)}
-          style={{ marginTop: 8, fontSize: 11, lineHeight: 1.55, color: "var(--text-subtle,#666)", cursor: regOpen ? "auto" : "pointer", ...(regOpen ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }) }}>{p.register}</div> : null}
+          style={{ marginTop: 8, fontSize: 11, lineHeight: 1.55, color: "var(--text-dim,#666)", cursor: regOpen ? "auto" : "pointer", ...(regOpen ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }) }}>{p.register}</div> : null}
       </div>
     );
   };
@@ -2281,7 +2281,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {(all ? "✅" : t.passCount > 0 ? "🟡" : "❌") + ti("mw.a.274") + t.passCount + "/" + t.total + ti("mw.a.275")}
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 3 }}>
             {t.results.map((x: any) => (
-              <div key={x.name} style={{ fontFamily: "ui-monospace,monospace", fontSize: 11, color: x.pass ? ("var(--ok,#15803d)") : ("var(--err,#b91c1c)") }}>
+              <div key={x.name} style={{ fontFamily: "ui-monospace,monospace", fontSize: 11, color: x.pass ? ("var(--ok,#15803d)") : ("var(--danger,#b91c1c)") }}>
                 {x.pass ? (x.rateLimited ? "🟡" : "✅") : "❌"} {x.name}（{x.masked}）· HTTP {x.status ?? "net"}{x.latencyMs != null ? " · " + (x.latencyMs / 1000).toFixed(1) + "s" : ""}{x.detail ? " · " + x.detail : ""}
               </div>
             ))}
@@ -2354,10 +2354,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", flexShrink: 0 }} disabled={akBusy === id || !(akDraft[id] || "").trim()}
         onClick={() => void saveAuthKey(id, akDraft[id])}>{akBusy === id ? ti("mw.a.55") : ti("mw.a.56")}</button>
       {configured ? (
-        <button className="amw-btn" style={{ color: "#dc2626", flexShrink: 0 }} disabled={akBusy === id} title={ti("mw.a.294")}
+        <button className="amw-btn" style={{ color: "var(--danger, #dc2626)", flexShrink: 0 }} disabled={akBusy === id} title={ti("mw.a.294")}
           onClick={() => void removeAuthKey(id)}>{akBusy === id ? "…" : ti("mw.a.295")}</button>
       ) : null}
-      {akMsg[id] ? <span style={{ fontSize: 11, color: akMsg[id].startsWith("✅") ? "#16a34a" : "#dc2626", flexBasis: "100%" }}>{akMsg[id]}</span> : null}
+      {akMsg[id] ? <span style={{ fontSize: 11, color: akMsg[id].startsWith("✅") ? "var(--ok, #16a34a)" : "var(--danger, #dc2626)", flexBasis: "100%" }}>{akMsg[id]}</span> : null}
     </div>
   );
 
@@ -2376,7 +2376,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // catalog = 目录静态清单（运行时未注册该 provider）→ id 可能与选择器实际不符，刷新也不会变。
   const modelSourceTag = (source?: string) => (
     source === "runtime"
-      ? <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-subtle,#666)" }}> {ti("mw.tx.53")}</span>
+      ? <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-dim,#666)" }}> {ti("mw.tx.53")}</span>
       : <span style={{ fontWeight: 400, fontSize: 11, color: "var(--warn,#b45309)" }}> {ti("mw.tx.54")}</span>
   );
   // 厂商常返回混淆 id（如 Qoder 网关的 dmodel/gm51model），而选择器里显示的是 display name
@@ -2401,7 +2401,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div style={{ fontSize: 11, color: "var(--warn,#b45309)", marginTop: 3 }}>{ti("mw.tx.186", { pid })}</div>
       ) : null}
       {related && related.length ? (
-        <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginTop: 3 }}>
+        <div style={{ fontSize: 11, color: "var(--text-dim,#666)", marginTop: 3 }}>
           {ti("mw.tx.187")}{related.map((r: any) => r.provider + "（" + r.count + ti("mw.a.297")).join(" · ")}
         </div>
       ) : null}
@@ -2434,7 +2434,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <ProviderAvatar id={pid} name={pr.name || pid} size={26} radius={8} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 650, fontSize: 13 }}>{pr.name || pid}</div>
-                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{OAUTH_META[pid] || ti("mw.a.300")}</div>
+                  <div style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{OAUTH_META[pid] || ti("mw.a.300")}</div>
                 </div>
                 <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }}
                   onClick={() => { setSubActive(active ? null : pid); checkOauthStatus([pid]); if (!active) startOauthLogin(pid); }}>
@@ -2446,7 +2446,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   {active ? ti("mw.a.302") : ti("mw.a.303")}
                 </button>
                 {(info?.loggedIn || pr.loggedIn) ? (
-                  <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === pid}
+                  <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "var(--danger, #dc2626)" }} disabled={logoutBusy === pid}
                     title={ti("mw.a.304")}
                     onClick={() => void doOauthLogout(pid, pr.name || pid)}>
                     {logoutBusy === pid ? ti("mw.a.305") : ti("mw.a.121")}
@@ -2460,13 +2460,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.expiresAt ? ti("mw.a.306") + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
                   {info?.addOn ? <span title={ti("mw.a.307")}>{ti("mw.tx.189")} {info.addOn.remaining}/{info.addOn.total}{info.addOn.used != null ? ti("mw.a.308") + info.addOn.used + "）" : ""}</span> : null}
                   {info?.packages?.length ? <span title={ti("mw.a.309")}>🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
-                  {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
+                  {cr?.exceeded ? <span style={{ color: "var(--danger, #dc2626)", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
                 </div>
               ) : active ? <div className="amw-note is-warn">{ti("mw.tx.60")}</div> : null}
               {active ? oauthLoginPanel({ id: pid, name: pr.name || pid }) : null}
               {active && models.length ? (
                 <div style={{ marginTop: 6 }}>
-                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11, marginBottom: 3 }}>{ti("mw.tx.190", { n: models.length })}{modelSourceTag(d?.modelsSource)}</div>
+                  <div style={{ color: "var(--text-dim,#666)", fontSize: 11, marginBottom: 3 }}>{ti("mw.tx.190", { n: models.length })}{modelSourceTag(d?.modelsSource)}</div>
                   {renderModelPills(pid, models, d?.modelsSource, d?.related)}
                 </div>
               ) : null}
@@ -2490,7 +2490,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <ProviderAvatar id={pr.id} name={pr.displayName || pr.id} size={24} radius={7} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 650, fontSize: 12.5 }}>{pr.displayName || pr.id}</div>
-                    <div style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{(pr.modelCount === 1 ? ti("mw.a.312") : (pr.modelCount || 0) + ti("mw.a.198")) + (pr.supportsOAuth ? ti("mw.a.313") : "")}</div>
+                    <div style={{ color: "var(--text-dim,#666)", fontSize: 10.5 }}>{(pr.modelCount === 1 ? ti("mw.a.312") : (pr.modelCount || 0) + ti("mw.a.198")) + (pr.supportsOAuth ? ti("mw.a.313") : "")}</div>
                   </div>
                 </div>
                 {apiKeyRow(pr.id, pr.displayName || pr.id, !!pr.configured, true)}
@@ -2523,7 +2523,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {working ? <button className="amw-btn" onClick={stopOauthLogin}>{ti("mw.tx.12")}</button> : null}
           <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => checkOauthStatus([pid])}>{info ? ti("mw.a.314") : ti("mw.a.315")}</button>
           {info?.loggedIn || (p as any).loggedIn ? (
-            <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === pid}
+            <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "var(--danger, #dc2626)" }} disabled={logoutBusy === pid}
               title={ti("mw.a.316")}
               onClick={() => void doOauthLogout(pid, p.name || pid)}>
               {logoutBusy === pid ? ti("mw.a.305") : ti("mw.a.121")}
@@ -2538,7 +2538,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.used != null ? ti("mw.a.308") + cr.used + "）" : ""}{cr.expiresAt ? ti("mw.a.306") + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
             {info?.addOn ? <span title={ti("mw.a.307")}>{ti("mw.tx.66")} <b>{info.addOn.remaining}</b> / {info.addOn.total} {info.addOn.unit}{info.addOn.used != null ? ti("mw.a.308") + info.addOn.used + "）" : ""}</span> : null}
             {info?.packages?.length ? <span title={ti("mw.a.309")}>🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
-            {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
+            {cr?.exceeded ? <span style={{ color: "var(--danger, #dc2626)", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
           </div>
         ) : null}
         {info?.loggedIn && !info.credits && !info.quotaError ? <div className="amw-note">{ti("mw.tx.67")}</div> : null}
@@ -2597,7 +2597,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div className="amw-note">{ti("mw.tx.70")}</div>
           {apiKeyRow(p.id, p.name || p.id, false)}
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border,#eee)" }}>
-            <span style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.71")}</span>
+            <span style={{ fontSize: 11, color: "var(--text-dim,#666)" }}>{ti("mw.tx.71")}</span>
           </div>
         </div>
       );
@@ -2607,14 +2607,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       {p.id === "custom" ? (
         <>
           <div className="amw-section" style={{ margin: "12px 0 6px" }}>{ti("mw.tx.72")}</div>
-          <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
+          <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder="https://api.example.com/v1" value={p.baseUrl || ""}
               onChange={(e) => setSel((prev: any) => ({ ...(prev || {}), baseUrl: e.target.value }))} />
             <button className="amw-btn" style={{ flexShrink: 0 }} disabled={!p.baseUrl?.trim() || customDetecting}
               title={ti("mw.a.320")} onClick={detectCustom}>{customDetecting ? ti("mw.a.126") : ti("mw.a.321")}</button>
           </div>
-          <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
+          <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
           <select className="amw-input" style={{ width: "100%", marginBottom: 8 }} value={p.apiType || "openai-completions"}
             onChange={(e) => setSel((prev: any) => ({ ...(prev || {}), apiType: e.target.value }))}>
             {["openai-completions", "anthropic-messages", "openai-responses", "google-generative-ai"].map((o) => <option key={o} value={o}>{o}</option>)}
@@ -2634,7 +2634,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
       <StepHead n={2} title={ti("mw.a.327")}
         hint={ti("mw.a.328")}
-        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? ti("mw.a.329") : ti("mw.a.330")}</span> : null} />
+        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "var(--ok, #16a34a)" : "var(--danger, #dc2626)", whiteSpace: "nowrap" }}>{testRes.pass ? ti("mw.a.329") : ti("mw.a.330")}</span> : null} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.331")}
           title={ti("mw.tx.76") + ti("mw.tx.48") + ti("mw.tx.77")}
@@ -2652,10 +2652,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 12.5, color: "#4f46e5" }}><Ic size={14} paths={ICONS.key} />{ti("mw.tx.78")}</span>
           <span style={{ padding: "1px 8px", borderRadius: 999, border: "1px solid rgba(79,70,229,.35)", color: "#4f46e5", fontSize: 9.5 }}>{ti("mw.tx.228")}</span>
           {validKeyRows.length ? <span style={{ padding: "1px 8px", borderRadius: 999, background: "rgba(79,70,229,.14)", color: "#4f46e5", fontSize: 10.5, fontWeight: 700 }}>{validKeyRows.length + ti("mw.a.190")}</span> : null}
-          <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-subtle,#777)" }}>{mkOpen ? "▾" : "▸"}</span>
+          <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dim,#777)" }}>{mkOpen ? "▾" : "▸"}</span>
         </div>
         {mkOpen ? <>
-          <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-subtle,#777)" }}>{ti("mw.tx.80")}</div>
+          <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-dim,#777)" }}>{ti("mw.tx.80")}</div>
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {keyRows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -2677,7 +2677,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.337")} disabled={discBusy || (!token.trim() && !validKeyRows.length)} onClick={() => doDiscoverCreds(p.baseUrl, p.apiType, hdrs)}>
             {discBusy ? ti("mw.a.338") : (<><Ic size={11} paths={ICONS.refresh} />{ti("mw.tx.82")}</>)}
           </button>
-          {known.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", whiteSpace: "nowrap" }}>{ti("mw.a.339") + checked.length + " / " + known.length}</span> : null}
+          {known.length ? <span style={{ fontSize: 11, color: "var(--text-dim,#666)", whiteSpace: "nowrap" }}>{ti("mw.a.339") + checked.length + " / " + known.length}</span> : null}
         </>} />
       {known.length ? (
         <div>
@@ -2686,7 +2686,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked([...new Set([...checked, ...filteredModels()])])}>{ti("mw.tx.39")}</button>
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => [...prev.filter((id) => !filteredModels().includes(id)), ...filteredModels().filter((id) => !prev.includes(id))])}>{ti("mw.tx.40")}</button>
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => prev.filter((id) => !filteredModels().includes(id)))}>{ti("mw.tx.41")}</button>
-            {modelFilter.trim() ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{ti("mw.a.341") + filteredModels().length + " / " + known.length}</span> : null}
+            {modelFilter.trim() ? <span style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{ti("mw.a.341") + filteredModels().length + " / " + known.length}</span> : null}
           </div>
           {discMsg ? <div className={"amw-note " + (discMsg.startsWith("✅") ? "is-ok" : "is-err")} style={{ marginBottom: 6 }}>{discMsg}</div> : null}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8, maxHeight: 220, overflow: "auto", padding: 2 }}>
@@ -2709,7 +2709,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
       {/* 底部操作条：提示居左，主按钮右对齐加大（符合习惯的确认位置） */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border,#eee)" }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text-subtle,#666)", lineHeight: 1.5 }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text-dim,#666)", lineHeight: 1.5 }}>
           {checked.length ? ti("mw.a.339") + checked.length + ti("mw.a.198") : ti("mw.a.344")}
           {validKeyRows.length ? ti("mw.a.345") + validKeyRows.length + ti("mw.a.190") : ""}
           {!token && !validKeyRows.length ? ti("mw.a.346") : ""}
@@ -2784,7 +2784,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   }, [impDlg]);
   const renderImportDlg = () => {
     const rows: any[] = impDlg?.rows || [];
-    const kindColor: any = { new: "#16a34a", same: "#b45309", conflict: "#dc2626" };
+    const kindColor: any = { new: "var(--ok, #16a34a)", same: "var(--warn, #b45309)", conflict: "var(--danger, #dc2626)" };
     const kindLabel: any = { new: ti("mw.a.359"), same: ti("mw.a.360"), conflict: ti("mw.a.361") };
     return (
       <div className="amw-overlay" onClick={(e) => { if (e.target === e.currentTarget) setImpDlg(null); }}>
@@ -2823,13 +2823,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <div key={r.name} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "5px 8px", borderBottom: "1px solid var(--border)", fontSize: 11.5 }}>
                     <span style={{ flexShrink: 0, padding: "1px 7px", borderRadius: 8, color: "#fff", background: kindColor[r.kind], fontSize: 10 }}>{kindLabel[r.kind]}</span>
                     <span style={{ fontWeight: 600, minWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-subtle,#666)" }}>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim,#666)" }}>
                       {r.kind === "conflict" && r.reason ? r.reason : r.modelsExisting + " → " + r.modelsIncoming + ti("mw.a.207")}
                     </span>
-                    {r.keepKey ? <span style={{ flexShrink: 0, fontSize: 10, color: "#16a34a" }}>{ti("mw.tx.87")}</span> : null}
+                    {r.keepKey ? <span style={{ flexShrink: 0, fontSize: 10, color: "var(--ok, #16a34a)" }}>{ti("mw.tx.87")}</span> : null}
                   </div>
                 ))}
-                {!rows.length ? <div style={{ padding: 10, fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.88")}</div> : null}
+                {!rows.length ? <div style={{ padding: 10, fontSize: 11, color: "var(--text-dim,#666)" }}>{ti("mw.tx.88")}</div> : null}
               </div>
               {(impDlg.errors || []).length ? <div className="amw-note is-warn" style={{ marginTop: 6, fontSize: 11 }}>{impDlg.errors.join("；")}</div> : null}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
@@ -2855,14 +2855,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     <div className="amw-overlay" onClick={(e) => { if (e.target === e.currentTarget) setSaveDlg(null); }}>
       <div {...SAVE_FLOAT_PROPS} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(440px, 100%)", padding: 14 }}>
         <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Ic size={14} paths={ICONS.tag} />{ti("mw.tx.90")}</div>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.91")}</label>
+        <label style={{ fontSize: 11, color: "var(--text-dim,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.91")}</label>
         <input className="amw-input" style={{width: "100%", marginBottom: 8, fontWeight: 600}} value={saveDlg.name} onChange={(e) => setSaveDlg((prev: any) => ({ ...prev, name: e.target.value }))} />
-        <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 4, wordBreak: "break-all" }}>{"baseUrl: " + saveDlg.baseUrl}</div>
-        <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 8 }}>{"api: " + saveDlg.api + ti("mw.a.370") + saveDlg.modelCount + ti("mw.a.9") + (token ? ti("mw.a.371") : validKeyRowsDlg.length ? ti("mw.a.345") + validKeyRowsDlg.length + ti("mw.a.372") : ti("mw.a.346"))}</div>
+        <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-dim,#666)", marginBottom: 4, wordBreak: "break-all" }}>{"baseUrl: " + saveDlg.baseUrl}</div>
+        <div style={{ fontSize: 11, color: "var(--text-dim,#666)", marginBottom: 8 }}>{"api: " + saveDlg.api + ti("mw.a.370") + saveDlg.modelCount + ti("mw.a.9") + (token ? ti("mw.a.371") : validKeyRowsDlg.length ? ti("mw.a.345") + validKeyRowsDlg.length + ti("mw.a.372") : ti("mw.a.346"))}</div>
         {ltPass ? (
-          <div style={{ ...barStyle, background: "rgba(22,163,74,.12)", color: "#16a34a" }}>{ti("mw.tx.198")}{lt.latencyMs != null ? " (" + lt.latencyMs + "ms)" : ""} — safe to save</div>
+          <div style={{ ...barStyle, background: "rgba(22,163,74,.12)", color: "var(--ok, #16a34a)" }}>{ti("mw.tx.198")}{lt.latencyMs != null ? " (" + lt.latencyMs + "ms)" : ""} — safe to save</div>
         ) : ltFail ? (
-          <div style={{ ...barStyle, background: "rgba(220,38,38,.12)", color: "#dc2626" }}>
+          <div style={{ ...barStyle, background: "rgba(220,38,38,.12)", color: "var(--danger, #dc2626)" }}>
             <span style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{ti("mw.a.373") + String(lt.detail || "").slice(0, 80)}</span>
             <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", flexShrink: 0, color: "var(--text,#333)" }}>
               <input type="checkbox" checked={saveForce} onChange={(e) => setSaveForce(e.target.checked)} />
@@ -2870,7 +2870,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </label>
           </div>
         ) : (
-          <div style={{ ...barStyle, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309" }}>
+          <div style={{ ...barStyle, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "var(--warn, #b45309)" }}>
             <span style={{ flex: "1 1 auto" }}>{ti("mw.tx.92")}</span>
             <button
               className="amw-btn"
@@ -2914,12 +2914,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div className="amw-note is-ok">{"✅ " + cd.hint}</div>
         {rows.map((r, i) => (
           <div key={i} style={{ marginBottom: 4, fontSize: 12 }}>
-            <span style={{ padding: "2px 8px", borderRadius: 8, background: r.strong ? "rgba(37,99,235,.1)" : "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: r.strong ? "var(--accent,#2563eb)" : "#b45309", marginRight: 6 }}>{r.text}</span>
-            <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{r.src}</span>
+            <span style={{ padding: "2px 8px", borderRadius: 8, background: r.strong ? "rgba(37,99,235,.1)" : "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: r.strong ? "var(--accent,#2563eb)" : "var(--warn, #b45309)", marginRight: 6 }}>{r.text}</span>
+            <span style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{r.src}</span>
           </div>
         ))}
-        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "#16a34a" }}>{ti("mw.a.385") + cd.modelCount + ti("mw.a.386")}</div>
-          : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.a.387") + cd.modelsError.slice(0, 90)}</div> : null}
+        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "var(--ok, #16a34a)" }}>{ti("mw.a.385") + cd.modelCount + ti("mw.a.386")}</div>
+          : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-dim,#666)" }}>{ti("mw.a.387") + cd.modelsError.slice(0, 90)}</div> : null}
         <div style={{ display: "flex", gap: 6, margin: "8px 0", alignItems: "center", flexWrap: "wrap" }}>
           {cd.baseUrl ? <span className="amw-mono" style={{ padding: "3px 8px", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)" }}>{"api=" + cd.api + " · baseUrl=" + cd.baseUrl}</span> : null}
           {cd.api ? <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={onApply}>{ti("mw.tx.93")}</button> : null}
@@ -2961,7 +2961,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div style={{ maxHeight: "min(52dvh, 460px)", overflow: "auto", border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "0 8px" }}>
           {groups.map(([g, provs]: any) => (
             <div key={g}>
-              <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--bg,#fff)", fontWeight: 700, fontSize: 12, color: "var(--text-subtle,#666)", padding: "6px 2px", borderBottom: "1px solid var(--border,#eee)" }}>{g}<span style={{ fontWeight: 400, marginLeft: 6, fontSize: 10.5 }}>{provs.length + ti("mw.a.394")}</span></div>
+              <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--bg,#fff)", fontWeight: 700, fontSize: 12, color: "var(--text-dim,#666)", padding: "6px 2px", borderBottom: "1px solid var(--border,#eee)" }}>{g}<span style={{ fontWeight: 400, marginLeft: 6, fontSize: 10.5 }}>{provs.length + ti("mw.a.394")}</span></div>
               {provs.map((p: any) => {
                 const open = !!browseOpen[p.id];
                 const det = browseDetail[p.id] || {};
@@ -2972,14 +2972,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       onClick={() => browseToggleProv(p.id)} title={open ? ti("mw.a.302") : ti("mw.a.395")}
                       onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-subtle,#f7f7fb)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>
-                      <span style={{ width: 13, color: "var(--text-subtle,#999)", fontSize: 11, flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
+                      <span style={{ width: 13, color: "var(--text-dim,#999)", fontSize: 11, flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
                       <ProviderAvatar id={p.id} name={[p.cnName, p.name].filter(Boolean).join(" / ")} size={22} radius={7} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {[p.cnName, p.name].filter(Boolean).join(" / ") || p.id}
                           {p.hasCn ? <span style={{ marginLeft: 6, padding: "0 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 9 }}>{ti("mw.tx.96")}</span> : null}
                         </div>
-                        <div className="amw-mono" style={{ fontSize: 10.5, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <div className="amw-mono" style={{ fontSize: 10.5, color: "var(--text-dim,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {p.baseUrl || p.id}{det.models && det.models.length ? " · " + det.models.length + ti("mw.a.207") : ""}
                         </div>
                       </div>
@@ -2987,15 +2987,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     </div>
                     {open ? (
                       <div style={{ padding: "0 2px 8px 43px" }}>
-                        {det.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{ti("mw.tx.97")}</div>
+                        {det.loading ? <div style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{ti("mw.tx.97")}</div>
                           : det.error ? <div className="amw-note is-err" style={{fontSize: 11}}>{"❌ " + det.error}</div> : null}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11, marginBottom: 3, alignItems: "center" }}>
-                          {p.apiType ? <span className="amw-mono" style={{color: "var(--text-subtle,#666)"}}>{"api: " + p.apiType}</span> : null}
+                          {p.apiType ? <span className="amw-mono" style={{color: "var(--text-dim,#666)"}}>{"api: " + p.apiType}</span> : null}
                           {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={ti("mw.a.396")}>{ti("mw.tx.98")}</a> : null}
-                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
+                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "var(--ok, #15803d)", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
                           {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.398")}>{ti("mw.tx.100")}</a> : null}
                         </div>
-                        {p.register ? <div style={{ fontSize: 11, color: "var(--text-subtle,#555)", margin: "2px 0" }}>{String(p.register).slice(0, 160)}</div> : null}
+                        {p.register ? <div style={{ fontSize: 11, color: "var(--text-dim,#555)", margin: "2px 0" }}>{String(p.register).slice(0, 160)}</div> : null}
                         {det.models && det.models.length ? (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                             {det.models.map((m: any, i: number) => (
@@ -3003,11 +3003,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                                 className="amw-mono" style={{ padding: "2px 8px", borderRadius: 8, border: "1px solid var(--border,#e5e5e5)", background: "var(--bg-subtle,#fafafa)", fontSize: 11, cursor: "pointer" }}
                                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(99,102,241,.5)"; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = ""; }}>
-                                {m.id}{m.name && m.name !== m.id ? <span style={{ color: "var(--text-subtle,#999)" }}>{" · " + m.name}</span> : null}
+                                {m.id}{m.name && m.name !== m.id ? <span style={{ color: "var(--text-dim,#999)" }}>{" · " + m.name}</span> : null}
                               </span>
                             ))}
                           </div>
-                        ) : !det.loading && !det.error ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.101")}</div> : null}
+                        ) : !det.loading && !det.error ? <div style={{ color: "var(--text-dim,#999)", fontSize: 11 }}>{ti("mw.tx.101")}</div> : null}
                       </div>
                     ) : null}
                   </div>
@@ -3042,7 +3042,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <button type="button" className="amw-btn" style={{ flexShrink: 0 }} title={ti("mw.a.405")} onClick={startCustom}>{ti("mw.tx.104")}</button>
           </form>
           {cat ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: cat.cache && cat.cache.stale ? "#b45309" : "var(--text-subtle,#666)", fontSize: 11, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: cat.cache && cat.cache.stale ? "var(--warn, #b45309)" : "var(--text-dim,#666)", fontSize: 11, marginBottom: 8 }}>
               {(() => { const c = cat.cache || {}; const hours = c.ageMs != null ? c.ageMs / 3600000 : null;
                 const ageTxt = hours == null ? "" : hours < 1 ? ti("mw.a.406") : hours < 48 ? Math.round(hours) + ti("mw.a.407") : Math.round(hours / 24) + ti("mw.a.408");
                 return [
@@ -3052,7 +3052,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <button key="btn" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} disabled={catRefreshing} onClick={doRefreshCatalog} title={ti("mw.a.416")}>{catRefreshing ? ti("mw.a.48") : ti("mw.a.417")}</button>,
                   <button key="browse" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setBrowse((v) => !v)} title={ti("mw.a.418")}>{browse ? ti("mw.a.419") : ti("mw.a.420")}</button>,
                 ]; })()}
-              {catMsg ? <span style={{ color: catMsg.startsWith("✅") ? "#15803d" : "#b91c1c" }}>{catMsg}</span> : null}
+              {catMsg ? <span style={{ color: catMsg.startsWith("✅") ? "var(--ok, #15803d)" : "var(--danger, #b91c1c)" }}>{catMsg}</span> : null}
             </div>
           ) : null}
           {/* 浏览目录开启 → 替换热门推荐区位置；关闭时未搜索才展示推荐卡片。 */}
@@ -3070,13 +3070,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         <ProviderAvatar id={c.id} name={c.main.cnName || c.main.name} size={22} radius={7} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 650, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.cnName || c.main.name}</div>
-                          <div style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.name || ""}</div>
+                          <div style={{ fontSize: 10, color: "var(--text-dim,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.name || ""}</div>
                         </div>
                       </div>
-                      <div title={c.main.register || ti("mw.a.421")} style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.register || ti("mw.a.421")}</div>
+                      <div title={c.main.register || ti("mw.a.421")} style={{ fontSize: 10.5, color: "var(--text-dim,#777)", margin: "0 0 5px", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.register || ti("mw.a.421")}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
                         {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={ti("mw.a.396")}>{ti("mw.tx.106")}</a> : null}
-                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
+                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "var(--ok, #15803d)", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
                         {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.398")}>{ti("mw.tx.100")}</a> : null}
                       </div>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -3087,7 +3087,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                             title={pl.provider.baseUrl + "（" + pl.provider.apiType + "）"} onClick={() => pickPlan(pl)}>{pl.label}</button>
                         ))}
                         {aff && aff[c.id] && aff[c.id].link ? (
-                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || ti("mw.a.422")}>{ti("mw.tx.107")}</a>
+                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "var(--ok, #15803d)", textDecoration: "none" }} title={aff[c.id].note || ti("mw.a.422")}>{ti("mw.tx.107")}</a>
                         ) : null}
                       </div>
                     </div>
@@ -3101,10 +3101,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             : results.map((p: any) => (
               <div key={p.id} className={"amw-card" + (sel && sel.id === p.id ? " is-on" : "")} onClick={() => pickProvider(p)}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>{ti("mw.tx.96")}</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>{ti("mw.tx.109")}</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{ti("mw.a.423") + p.reverseScore}</span> : null}</span>
-                  <span className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{p.matchedBaseUrl || p.baseUrl || ""}</span>
+                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>{ti("mw.tx.96")}</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "var(--ok, #15803d)", fontSize: 10 }}>{ti("mw.tx.109")}</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "var(--warn, #b45309)", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{ti("mw.a.423") + p.reverseScore}</span> : null}</span>
+                  <span className="amw-mono" style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{p.matchedBaseUrl || p.baseUrl || ""}</span>
                 </div>
-                <div title={p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || "")} style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? ti("mw.a.426") + p.models.length + ti("mw.a.9") : ti("mw.a.427")))}</div>
+                <div title={p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || "")} style={{ color: "var(--text-dim,#555)", fontSize: 11, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? ti("mw.a.426") + p.models.length + ti("mw.a.9") : ti("mw.a.427")))}</div>
               </div>
             ))}
           {searchDetect ? <div style={{ marginTop: 8 }}>{renderDetectCard(searchDetect, applySearchDetect)}</div> : null}
@@ -3116,7 +3116,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   {reverseRes.candidates.map((cand: any) => (
                     <div key={cand.id} className={"amw-card" + (sel && sel.id === cand.id ? " is-on" : "")} onClick={() => { setSel({ ...cand, baseUrl: cand.matchedBaseUrl || cand.baseUrl }); setToken(""); setTestRes(null); setChecked([]); setManual(""); setKnown((cand.models || []).map((m: any) => m.id)); }}>
                       <div style={{ fontWeight: 600 }}>{[cand.cnName, cand.name].filter(Boolean).join(" / ") + ti("mw.a.430") + cand.score + "）"}</div>
-                      <div className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{cand.matchedBaseUrl || cand.baseUrl}</div>
+                      <div className="amw-mono" style={{ color: "var(--text-dim,#666)", fontSize: 11 }}>{cand.matchedBaseUrl || cand.baseUrl}</div>
                     </div>
                   ))}
                 </div>
@@ -3124,7 +3124,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {reverseRes.detect ? <div style={{ marginTop: 6 }}>{renderDetectCard(reverseRes.detect, applyReverseDetect)}</div> : null}
               {!reverseRes.usedKey ? (
                 <div style={{ marginTop: 8, padding: 10, border: "1px dashed var(--border,#e0e0e0)", borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-subtle,#666)" }} title={ti("mw.a.431")}>{ti("mw.tx.110")}</div>
+                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-dim,#666)" }} title={ti("mw.a.431")}>{ti("mw.tx.110")}</div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="API key / token" value={probeKey} onChange={(e) => setProbeKey(e.target.value)} />
                     <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? ti("mw.a.432") : ti("mw.a.433")}</button>
@@ -3139,7 +3139,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <span style={{ width: 28, height: 28, borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ic size={14} paths={ICONS.plus} /></span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600 }}>{ti("mw.tx.111")}</div>
-              <div style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.a.435")}</div>
+              <div style={{ fontSize: 11, color: "var(--text-dim,#666)" }}>{ti("mw.a.435")}</div>
             </div>
             <span className="amw-btn" style={{ flexShrink: 0 }}>{ti("mw.tx.112")}</span>
           </div>
@@ -3210,7 +3210,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div className="amw-sidebar-list">
         <div className="amw-group-label">{ti("mw.a.440") + st.providers.length + (kws.length ? ti("mw.a.441") + provs.length + "/" + st.providers.length + " provider" : "")}</div>
         {checkAvail === false ? (
-          <div style={{ padding: "0 8px 4px", fontSize: 11, color: "#d97706", lineHeight: 1.5, display: "flex", alignItems: "flex-start", gap: 4 }}>
+          <div style={{ padding: "0 8px 4px", fontSize: 11, color: "var(--warn, #d97706)", lineHeight: 1.5, display: "flex", alignItems: "flex-start", gap: 4 }}>
             <span>{ti("mw.tx.113")}</span>
           </div>
         ) : null}
@@ -3239,7 +3239,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.126")}>⏳</span>
                   : agg && (agg.ok || agg.rl || agg.err) ? (
                   <span style={{ fontSize: 11, display: "inline-flex", gap: 3, flexShrink: 0 }}>
-                    {agg.ok > 0 ? <span style={{ color: "#16a34a", fontWeight: 600 }}>{agg.ok}✓</span> : null}
+                    {agg.ok > 0 ? <span style={{ color: "var(--ok, #16a34a)", fontWeight: 600 }}>{agg.ok}✓</span> : null}
                     {agg.rl > 0 ? <span style={{ color: "var(--warn, #f59e0b)", fontWeight: 600 }}>{agg.rl}{ti("mw.tx.199")}</span> : null}
                     {agg.err > 0 ? <span style={{ color: "var(--danger, #ef4444)", fontWeight: 600 }}>{agg.err}✗</span> : null}
                   </span>
@@ -3252,11 +3252,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   const age = lt.ts ? ti("mw.a.444") + fmtTimeStr(lt.ts) : "";
                   const okTxt = lt.rateLimited ? ti("mw.a.445") : ti("mw.a.446");
                   if (lt.pass && !lt.partial) {
-                    return <span style={{ fontSize: 10, color: lt.rateLimited ? "#d97706" : "#16a34a", fontWeight: 600, flexShrink: 0, cursor: "default" }}
+                    return <span style={{ fontSize: 10, color: lt.rateLimited ? "var(--warn, #d97706)" : "var(--ok, #16a34a)", fontWeight: 600, flexShrink: 0, cursor: "default" }}
                       title={ti("mw.a.447") + okTxt + (lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "") + age + (lt.keyName ? " · key " + lt.keyName : "")}>
                       {lt.rateLimited ? "🟡" : "✓"}{lt.latencyMs != null ? " " + fmtLat(lt.latencyMs) : ""}</span>;
                   }
-                  return <span style={{ fontSize: 10, color: lt.partial ? "#d97706" : "#dc2626", fontWeight: 600, flexShrink: 0, cursor: "default" }}
+                  return <span style={{ fontSize: 10, color: lt.partial ? "var(--warn, #d97706)" : "var(--danger, #dc2626)", fontWeight: 600, flexShrink: 0, cursor: "default" }}
                     title={ti("mw.a.447") + (lt.detail || (lt.partial ? ti("mw.a.448") : ti("mw.a.449"))) + age}>
                     {lt.partial ? "🟡" : "✗"}</span>;
                 })()}
@@ -3273,16 +3273,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   }
                   if (!c24) return null;
                   const info = rtErrInfo(lastStatus);
-                  return <span style={{ fontSize: 10, flexShrink: 0, cursor: "default", color: c1h ? "#dc2626" : "#d97706", fontWeight: 600 }}
+                  return <span style={{ fontSize: 10, flexShrink: 0, cursor: "default", color: c1h ? "var(--danger, #dc2626)" : "var(--warn, #d97706)", fontWeight: 600 }}
                     title={rtTip({ count1h: c1h, count24h: c24, byStatus: null, lastAt, lastStatus })}>{info.icon}{c24}</span>;
                 })()}
                 {p.combo ? <span className="amw-tag is-combo">🧩</span> : null}
-                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }} title={ti("mw.a.451")}>{ti("mw.a.495")}</span> : null}
+                {p.enabled === false ? <span className="amw-tag" style={{ color: "var(--warn, #b45309)", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }} title={ti("mw.a.451")}>{ti("mw.a.495")}</span> : null}
                 {(() => {
                   // 树上禁用 key 数徽标：不点详情也能看到有 key 处于禁用态
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
-                  return <span style={{ fontSize: 9, flexShrink: 0, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", borderRadius: 5, padding: "0 4px", cursor: "default" }}
+                  return <span style={{ fontSize: 9, flexShrink: 0, color: "var(--warn, #b45309)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", borderRadius: 5, padding: "0 4px", cursor: "default" }}
                     title={dis + ti("mw.a.452")}>🔑⏸{dis}</span>;
                 })()}
                 {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐</span> : null}
@@ -3301,8 +3301,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 return (
                   <button key={id} className="amw-sb-item is-indent" aria-current={isModelSel ? "page" : undefined}
                     onClick={() => selectNode({ type: "model", provider: p.provider, id })}>
-                    <span className="amw-sb-text is-grow" style={{ color: mEn ? "var(--text-muted)" : "#b45309", ...(mEn ? {} : { textDecoration: "line-through", opacity: 0.55 }) }}>{id}</span>
-                    {!mEn ? <span style={{ fontSize: 9, color: "#b45309", flexShrink: 0 }} title={ti("mw.a.453")}>⏸</span> : null}
+                    <span className="amw-sb-text is-grow" style={{ color: mEn ? "var(--text-muted)" : "var(--warn, #b45309)", ...(mEn ? {} : { textDecoration: "line-through", opacity: 0.55 }) }}>{id}</span>
+                    {!mEn ? <span style={{ fontSize: 9, color: "var(--warn, #b45309)", flexShrink: 0 }} title={ti("mw.a.453")}>⏸</span> : null}
                     {checkDot(p.provider, id)}
                     {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.454")}>⏳</span> : null}
                     {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "var(--ok, #10b981)", flexShrink: 0 }} title={probe.corrected ? ti("mw.a.455") : ti("mw.a.456")}>{probe.corrected ? "↓" : "✓"}</span> : null}
@@ -3346,8 +3346,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border,#eee)", flexShrink: 0 }}>
             <span className="amw-mono" style={{ fontWeight: 650, fontSize: 12.5 }}>{selNode.id}</span>
             {probing ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)" }}>{ti("mw.a.126")}</span>
-              : checkAvail === false ? <span style={{ fontSize: 11, color: "#d97706" }}>{ti("mw.tx.119")}</span>
-              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "#16a34a" : ck.rateLimited ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)" }}>{ck.lastOk ? ti("mw.a.457") : ck.rateLimited ? ti("mw.a.458") : ti("mw.a.459")}</span>
+              : checkAvail === false ? <span style={{ fontSize: 11, color: "var(--warn, #d97706)" }}>{ti("mw.tx.119")}</span>
+              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "var(--ok, #16a34a)" : ck.rateLimited ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)" }}>{ck.lastOk ? ti("mw.a.457") : ck.rateLimited ? ti("mw.a.458") : ti("mw.a.459")}</span>
               : <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>{ti("mw.a.475")}</span>}
             {(() => {
               const rt = rtOf(selNode.provider, selNode.id);
@@ -3355,7 +3355,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               const hot = rt.count1h > 0;
               const info = rtErrInfo(rt.lastStatus);
               return (
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: hot ? "#dc2626" : info.color, cursor: "default" }}
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: hot ? "var(--danger, #dc2626)" : info.color, cursor: "default" }}
                   title={rtTip(rt)}>
                   {info.icon + ti("mw.a.460") + info.label + " ×" + rt.count24h + (hot ? "（1h×" + rt.count1h + "）" : "")}
                 </span>
@@ -3393,9 +3393,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const agg = aggCheck(p.provider);
     const segs: any[] = [];
     if (agg) {
-      if (agg.ok) segs.push({ t: agg.ok + ti("mw.a.275"), c: "#16a34a" });
-      if (agg.rl) segs.push({ t: agg.rl + ti("mw.a.463"), c: "#dc2626" });
-      if (agg.err) segs.push({ t: agg.err + ti("mw.a.464"), c: "#d97706" });
+      if (agg.ok) segs.push({ t: agg.ok + ti("mw.a.275"), c: "var(--ok, #16a34a)" });
+      if (agg.rl) segs.push({ t: agg.rl + ti("mw.a.463"), c: "var(--danger, #dc2626)" });
+      if (agg.err) segs.push({ t: agg.err + ti("mw.a.464"), c: "var(--warn, #d97706)" });
       if (agg.pend) segs.push({ t: agg.pend + ti("mw.a.465"), c: "#9ca3af" });
     }
     // 运行期错误观测（带外 · 代理真实流量非 2xx/3xx）：与探测状态独立，临时故障可能尚未反映到探测
@@ -3407,7 +3407,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         if (!k.startsWith(p.provider + "/") || !m.count24h) continue;
         n++; c1h += m.count1h || 0; c24 += m.count24h || 0;
       }
-      if (n) segs.push({ t: "⚡ " + n + ti("mw.a.466") + c24 + "/24h" + (c1h ? "（1h×" + c1h + "）" : ""), c: c1h ? "#dc2626" : "#d97706" });
+      if (n) segs.push({ t: "⚡ " + n + ti("mw.a.466") + c24 + "/24h" + (c1h ? "（1h×" + c1h + "）" : ""), c: c1h ? "var(--danger, #dc2626)" : "var(--warn, #d97706)" });
     })()}
     const ids = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
     return (
@@ -3425,14 +3425,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
               </div>
               <div style={{ fontSize: 11, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "#d97706" }}>{ti("mw.tx.122")}</span> : <span style={{ color: "var(--text-subtle,#999)" }}>{ti("mw.tx.123")}</span>}
-                <span style={{ color: "var(--text-subtle,#999)" }}>{p.runtime ? ids.length + ti("mw.a.467") : ids.length + ti("mw.a.468") + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : ti("mw.a.469")) : ti("mw.a.470"))}</span>
+                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "var(--warn, #d97706)" }}>{ti("mw.tx.122")}</span> : <span style={{ color: "var(--text-dim,#999)" }}>{ti("mw.tx.123")}</span>}
+                <span style={{ color: "var(--text-dim,#999)" }}>{p.runtime ? ids.length + ti("mw.a.467") : ids.length + ti("mw.a.468") + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : ti("mw.a.469")) : ti("mw.a.470"))}</span>
                 {(() => {
                   // 禁用 key 计数徽标：禁用态只在「多 Key 轮转」折叠区可见，摘要层面
                   // 不提示的话"是否禁用"完全不可知（keys 由 /status 带出，maskKeyEntry 保留 enabled）
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
-                  return <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }}
+                  return <span className="amw-tag" style={{ color: "var(--warn, #b45309)", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }}
                     title={ti("mw.a.471") + dis + ti("mw.a.472")}>{ti("mw.tx.200", { n: dis })}</span>;
                 })()}
                 {(() => {
@@ -3451,7 +3451,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   const hasAny = lt || qt || us || bal || bad;
                   if (!hasAny) {
                     return (
-                      <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 8, color: "var(--text-subtle,#999)", flexWrap: "wrap" }}>
+                      <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 8, color: "var(--text-dim,#999)", flexWrap: "wrap" }}>
                         <span>{ti("mw.tx.124")}</span>
                       </span>
                     );
@@ -3460,7 +3460,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 3 }}>
                       {/* ① 向导测试结论（留存）+ 重测 */}
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                        <span style={{ color: !lt ? "var(--text-subtle,#999)" : lt.pass ? (lt.rateLimited ? "#d97706" : "#16a34a") : lt.partial ? "#d97706" : "#dc2626", fontWeight: 600 }}
+                        <span style={{ color: !lt ? "var(--text-dim,#999)" : lt.pass ? (lt.rateLimited ? "var(--warn, #d97706)" : "var(--ok, #16a34a)") : lt.partial ? "var(--warn, #d97706)" : "var(--danger, #dc2626)", fontWeight: 600 }}
                           title={lt ? (ti("mw.a.473") + (lt.detail || "") + (lt.ts ? ti("mw.a.444") + fmtTimeStr(lt.ts) : "") + (lt.keyName ? " · key " + lt.keyName : "")) : ti("mw.a.474")}>
                           {"🩺 " + (!lt ? ti("mw.a.475") : lt.pass && !lt.partial ? (lt.rateLimited ? ti("mw.a.476") : ti("mw.a.446")) : lt.partial ? ti("mw.a.477") : ti("mw.a.449")) + (lt && lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "")}
                         </span>
@@ -3470,20 +3470,20 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       </span>
                       {/* ② 余额：provider-usage 优先；qt.res 测试反馈行内展示 */}
                       {us && us.phase === "ok" && us.entry && us.entry.status === "ready" && uText ? (
-                        <span style={{ color: uBad ? "#dc2626" : "var(--text-subtle,#999)", fontWeight: uBad ? 600 : 400, cursor: "default" }}
+                        <span style={{ color: uBad ? "var(--danger, #dc2626)" : "var(--text-dim,#999)", fontWeight: uBad ? 600 : 400, cursor: "default" }}
                           title={(us.entry.report && Array.isArray(us.entry.report.buckets) ? us.entry.report.buckets.map((b: any) => (b.label || b.id) + ": " + [b.used != null ? ti("mw.a.480") + b.used : "", b.remaining != null ? ti("mw.a.481") + b.remaining : "", b.limit != null ? ti("mw.a.482") + b.limit : ""].filter(Boolean).join("/")).join("\n") : "")
                             + (us.capturedAt ? ti("mw.a.483") + fmtTimeStr(us.capturedAt) + ti("mw.a.484") : "")}>
                           {"💰 " + (uBad ? ti("mw.a.485") : ti("mw.a.486")) + uText}
                         </span>
-                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-subtle,#999)" }}>{ti("mw.tx.125")}</span>
+                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-dim,#999)" }}>{ti("mw.tx.125")}</span>
                         : us && (us.phase === "err" || (us.phase === "ok" && us.error)) ? (
-                          <span style={{ display: "inline-flex", gap: 5, alignItems: "center", color: "#d97706" }}>
+                          <span style={{ display: "inline-flex", gap: 5, alignItems: "center", color: "var(--warn, #d97706)" }}>
                             <span title={us.message || us.error}>{ti("mw.tx.126")}</span>
                             <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} onClick={() => void loadUsage(p.provider, true)}>{ti("mw.tx.127")}</button>
                           </span>
                         ) : us && us.phase === "na" ? null
                         : (bal || bad) ? (
-                          <span style={{ color: balBad ? "#dc2626" : "var(--text-subtle,#999)", fontWeight: balBad ? 600 : 400 }}>
+                          <span style={{ color: balBad ? "var(--danger, #dc2626)" : "var(--text-dim,#999)", fontWeight: balBad ? 600 : 400 }}>
                             {"💰 " + (bal && bal.exhausted ? ti("mw.a.487") : bad ? ti("mw.a.488") : (bal && bal.text) || ti("mw.a.489"))}
                           </span>
                         ) : null}
@@ -3498,7 +3498,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </button>
             {p.runtime ? null : <button className="amw-btn" style={{ padding: "3px 8px" }} title={ti("mw.a.491")} onClick={() => doRefreshProxies(p.provider)}><Ic size={12} paths={ICONS.refresh} /></button>}
             {p.runtime || p.authType === "oauth" ? null : (
-              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
+              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "var(--warn, #b45309)", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
                 title={p.enabled === false ? ti("mw.a.492") : ti("mw.a.493")}
                 onClick={() => doToggleProvider(p.provider, p.enabled === false)}>
                 {p.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
@@ -3516,7 +3516,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ flex: 1 }}>{ti("mw.tx.130")}</span>
               {p.hasKey ? (
-                <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === p.provider}
+                <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "var(--danger, #dc2626)" }} disabled={logoutBusy === p.provider}
                   title={ti("mw.a.316")}
                   onClick={() => void doOauthLogout(p.provider, p.name || p.provider)}>
                   {logoutBusy === p.provider ? ti("mw.a.305") : ti("mw.a.121")}
@@ -3613,24 +3613,24 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {cleanupEdit.plan.map((e: any) => (
                 <div key={e.provider} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, padding: "2px 0" }}>
                   <span style={{ fontWeight: 650 }}>{e.provider}</span>
-                  {e.skip === "combo" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.134")}</span>
-                    : e.skip === "oauth" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.135")}</span>
-                    : e.skip === "runtime" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.136")}</span>
-                    : e.saved ? <span style={{ color: "#16a34a", fontWeight: 600 }}>{ti("mw.tx.137")}</span>
+                  {e.skip === "combo" ? <span style={{ color: "var(--text-dim,#666)" }}>{ti("mw.tx.134")}</span>
+                    : e.skip === "oauth" ? <span style={{ color: "var(--text-dim,#666)" }}>{ti("mw.tx.135")}</span>
+                    : e.skip === "runtime" ? <span style={{ color: "var(--text-dim,#666)" }}>{ti("mw.tx.136")}</span>
+                    : e.saved ? <span style={{ color: "var(--ok, #16a34a)", fontWeight: 600 }}>{ti("mw.tx.137")}</span>
                     : <>
-                      <span style={{ color: "#16a34a" }}>{ti("mw.a.506") + e.keep.length}</span>
+                      <span style={{ color: "var(--ok, #16a34a)" }}>{ti("mw.a.506") + e.keep.length}</span>
                       {e.remove.length ? (
-                        <span style={{ color: "#dc2626" }} title={ti("mw.a.507") + e.remove.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
+                        <span style={{ color: "var(--danger, #dc2626)" }} title={ti("mw.a.507") + e.remove.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
                           {ti("mw.a.265") + e.remove.length + "：" + e.remove.slice(0, 4).map((r: any) => r.id + "（" + r.label + "）").join("、") + (e.remove.length > 4 ? ti("mw.a.508") : "")}
                         </span>
                       ) : null}
                       {e.soft.length ? (
-                        <span style={{ color: "#d97706" }} title={ti("mw.a.509") + e.soft.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
+                        <span style={{ color: "var(--warn, #d97706)" }} title={ti("mw.a.509") + e.soft.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
                           {ti("mw.a.510") + e.soft.length + ti("mw.a.511")}
                         </span>
                       ) : null}
                       {e.remove.length && !e.keep.length ? (
-                        <span style={{ color: "#dc2626", fontWeight: 600 }} title={ti("mw.a.512")}>{ti("mw.tx.138")}</span>
+                        <span style={{ color: "var(--danger, #dc2626)", fontWeight: 600 }} title={ti("mw.a.512")}>{ti("mw.tx.138")}</span>
                       ) : null}
                       <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
                         <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} title={ti("mw.a.513")} onClick={() => openEdit(e.provider)}>{ti("mw.tx.17")}</button>
@@ -3642,7 +3642,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-subtle,#666)" }}>
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-dim,#666)" }}>
               {ti("mw.tx.202")}
             </div>
           </div>
@@ -3650,21 +3650,22 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {niRows.length ? (
           <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{ti("mw.a.514") + niTotal + ti("mw.a.515")}</span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: "var(--ok, #15803d)", flex: 1 }}>{ti("mw.a.514") + niTotal + ti("mw.a.515")}</span>
               <button className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.516")} onClick={() => ackNew()}>{ti("mw.tx.139")}</button>
             </div>
             {niRows.map(([name, v]: any) => {
               const all = v.newModels || [];
+              // Inner card follows the theme surface (`--bg`): a hardcoded white wash made white text unreadable in dark mode.
               return (
-                <div key={name} style={{ marginTop: 8, padding: "7px 9px", background: "rgba(255,255,255,.6)", borderRadius: 8 }}>
+                <div key={name} style={{ marginTop: 8, padding: "7px 9px", background: "var(--bg, #fff)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 22%, transparent)", borderRadius: 8, color: "var(--text, #1a1a1a)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 650, fontSize: 12, color: "#15803d", flex: 1 }}>{name + ti("mw.a.517") + v.count}</span>
+                    <span style={{ fontWeight: 650, fontSize: 12, color: "var(--ok, #15803d)", flex: 1 }}>{name + ti("mw.a.517") + v.count}</span>
                     <button disabled={nmBusy === name || !all.length} onClick={() => selAllNew(name, all)} title={ti("mw.a.518")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.39")}</button>
                     <button disabled={nmBusy === name || !all.length} onClick={() => selInvNew(name, all)} title={ti("mw.a.519")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.40")}</button>
                     <button disabled={nmBusy === name || !all.length} onClick={() => selNoneNew(name)} title={ti("mw.a.520")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.41")}</button>
                     <button disabled={nmBusy === name || !all.length}
                       onClick={() => enableNewModels(name, nmSel[name] !== undefined ? nmSel[name] : all)}
-                      className="amw-btn" style={{ background: nmBusy === name ? "#9ca3af" : "#16a34a", color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 650, cursor: "pointer" }}>
+                      className="amw-btn" style={{ background: nmBusy === name ? "var(--text-dim, #9ca3af)" : "var(--ok, #16a34a)", color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 650, cursor: "pointer" }}>
                       {nmBusy === name ? ti("mw.a.521") : ti("mw.a.522")}
                     </button>
                     <button onClick={() => openEdit(name)} title={ti("mw.a.523")} className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>{ti("mw.tx.17")}</button>
@@ -3682,7 +3683,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     return (
                       <label key={id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, padding: "2px 0 2px 2px", cursor: "pointer" }}>
                         <input type="checkbox" checked={isSel(name, id)} onChange={() => toggleSel(name, id, all)} />
-                        <span className="amw-mono" style={{fontWeight: 600}}>{id}</span>
+                        <span className="amw-mono" style={{fontWeight: 600, color: "var(--text, #1a1a1a)"}}>{id}</span>
                         {tags.length ? <span style={{ color: "var(--text-muted, #6b7280)", fontSize: 10 }}>{tags.join(" · ")}</span> : null}
                       </label>
                     );
@@ -3693,7 +3694,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           </div>
         ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-          {([["ok", ti("mw.a.66"), "#16a34a", ti("mw.a.127")], ["rl", ti("mw.a.103"), "var(--warn, #f59e0b)", ti("mw.a.128")], ["bad", ti("mw.tx.114"), "var(--danger, #ef4444)", ti("mw.a.129")], ["rt", ti("mw.tx.115"), "#d97706", ti("mw.a.442")], ["untested", ti("mw.a.475"), "var(--text-dim,#9ca3af)", ti("mw.tx.116")]] as [string, string, string, string][]).map(([key, label, color, tip]) => (
+          {([["ok", ti("mw.a.66"), "var(--ok, #16a34a)", ti("mw.a.127")], ["rl", ti("mw.a.103"), "var(--warn, #f59e0b)", ti("mw.a.128")], ["bad", ti("mw.tx.114"), "var(--danger, #ef4444)", ti("mw.a.129")], ["rt", ti("mw.tx.115"), "var(--warn, #d97706)", ti("mw.a.442")], ["untested", ti("mw.a.475"), "var(--text-dim,#9ca3af)", ti("mw.tx.116")]] as [string, string, string, string][]).map(([key, label, color, tip]) => (
             <button key={key} className="amw-legend-chip" aria-pressed={treeStatusFilter === key}
               title={tip}
               style={treeStatusFilter === key ? { borderColor: "var(--accent, #2563eb)", color: "var(--accent, #2563eb)", background: "color-mix(in srgb, var(--accent, #2563eb) 10%, transparent)" } : undefined}
@@ -3706,8 +3707,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             onClick={runCheckup}>
             {(checkupSt && checkupSt.running) ? ti("mw.a.439") : ti("mw.a.23")}
           </button>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ti("mw.a.525") + st.providers.length + ti("mw.a.526") + st.file}</span>
-          {undoInfo ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#b45309" }} title={ti("mw.a.527") + undoInfo + ti("mw.a.528")} onClick={undoSave}>{ti("mw.tx.141")}</button> : null}
+          <span style={{ color: "var(--text-dim,#666)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ti("mw.a.525") + st.providers.length + ti("mw.a.526") + st.file}</span>
+          {undoInfo ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "var(--warn, #b45309)" }} title={ti("mw.a.527") + undoInfo + ti("mw.a.528")} onClick={undoSave}>{ti("mw.tx.141")}</button> : null}
           <button className="amw-btn" title={ti("mw.a.529")} onClick={() => doRefreshProxies()}><Ic size={12} paths={ICONS.refresh} /> {ti("mw.tx.142")}</button>
           <button className="amw-btn" onClick={loadStatus} disabled={busy}>{ti("mw.tx.33")}</button>
         </div>
@@ -3881,7 +3882,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div className="amw-combo-toolbar">
             <button className="amw-btn" onClick={() => setComboEditor(null)}>‹ {ti("mw.tx.143")}</button>
             <span className="amw-combo-toolbar-title">🧩 {String(ed.displayName || ed.provider || ti("mw.a.596"))}</span>
-            {effProvider ? <span className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#999)" }}>{effProvider}</span> : null}
+            {effProvider ? <span className="amw-mono" style={{ fontSize: 10, color: "var(--text-dim,#999)" }}>{effProvider}</span> : null}
             <div style={{ flex: 1 }} />
             {saveBlockers.length ? <span className="amw-chip is-err" title={saveBlockedReason}>⛔ {saveBlockers.length}</span>
               : needConfirm ? <span className="amw-chip is-warn">{ti("mw.tx.206", { n: allWarn.length })}</span>
@@ -3923,8 +3924,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   onChange={(e) => setComboEditor({ ...ed, provider: e.target.value })} />
               </label>
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 6 }}>{ti("mw.a.627")}</div>
-            {nameBad ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{ti("mw.tx.146")}</div> : null}
+            <div style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: 6 }}>{ti("mw.a.627")}</div>
+            {nameBad ? <div style={{ fontSize: 11, color: "var(--danger, #dc2626)", marginTop: 4 }}>{ti("mw.tx.146")}</div> : null}
           </div>
           <div className="amw-combo-sect">
             <span className="amw-step-dot">2</span>
@@ -3945,12 +3946,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <input className="amw-input" style={{width: small ? "auto" : 200, flex: small ? "1 1 140px" : undefined, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder={ti("mw.a.545")}
                     onChange={(e) => setVm(i, { id: e.target.value })} />
                   {String(vm.id || "").trim() && (String(ed.provider || "").trim() || String(ed.displayName || "").trim()) ? (
-                    <span style={{ fontSize: 11, color: "var(--text-subtle,#888)" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-dim,#888)" }}>
                       {ti("mw.tx.204")}<b className="amw-mono" style={{ color: "#4f46e5" }}>{(String(ed.provider || "").trim() || String(ed.displayName || "").trim())}/{String(vm.id).trim()}</b>
                     </span>
                   ) : null}
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", flex: 1 }}>{apis.length === 1 ? ti("mw.a.546") + apis[0] : apis.length ? ti("mw.a.547") : ""}</span>
-                  <button className="amw-btn" style={{ padding: "3px 8px", ...(vm.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
+                  <span style={{ fontSize: 11, color: "var(--text-dim,#888)", flex: 1 }}>{apis.length === 1 ? ti("mw.a.546") + apis[0] : apis.length ? ti("mw.a.547") : ""}</span>
+                  <button className="amw-btn" style={{ padding: "3px 8px", ...(vm.enabled === false ? { color: "var(--ok, #16a34a)", borderColor: "var(--ok, #22c55e)" } : { color: "var(--warn, #d97706)", borderColor: "var(--warn, #f59e0b)" }) }}
                     title={vm.enabled === false ? ti("mw.a.548") : ti("mw.a.549")}
                     onClick={() => setVm(i, { enabled: vm.enabled === false ? undefined : false })}>
                     {vm.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
@@ -4002,21 +4003,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         ...(abnormal && rEn ? { boxShadow: "inset 0 0 0 1.5px rgba(217,119,6,.55)", background: "rgba(217,119,6,.06)" } : {}),
                         ...(!rEn ? { boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" } : {}) }}>
                       <ProviderAvatar id={r.provider} name={r.provider} size={20} radius={6} />
-                      <span style={{ fontSize: 12, fontWeight: 600, flex: "0 0 auto", ...(!rEn ? { color: "#b45309" } : {}) }}>{r.provider}</span>
-                      <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "#b45309", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : ti("mw.a.559")}>{r.model}</span>
-                      {!rEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>{ti("mw.a.495")}</span> : null}
+                      <span style={{ fontSize: 12, fontWeight: 600, flex: "0 0 auto", ...(!rEn ? { color: "var(--warn, #b45309)" } : {}) }}>{r.provider}</span>
+                      <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "var(--warn, #b45309)", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : ti("mw.a.559")}>{r.model}</span>
+                      {!rEn ? <span style={{ fontSize: 9, color: "var(--warn, #b45309)", fontWeight: 700, flexShrink: 0 }}>{ti("mw.a.495")}</span> : null}
                       {meta ? <>
-                        <span title={ti("mw.a.560")} className="amw-mono" style={{ fontSize: 10, color: isCtxMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isCtxMin ? 700 : 400, background: isCtxMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"ctx " + fmtK(cw)}{isCtxMin ? " ⚠" : ""}</span>
-                        <span title={ti("mw.a.561")} className="amw-mono" style={{ fontSize: 10, color: isOutMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isOutMin ? 700 : 400, background: isOutMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"out " + fmtK(ot)}{isOutMin ? " ⚠" : ""}</span>
-                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "#15803d", fontWeight: 650, flexShrink: 0 }}>vision</span> : noVision ? <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, flexShrink: 0 }}>{ti("mw.tx.149")}</span> : null}
+                        <span title={ti("mw.a.560")} className="amw-mono" style={{ fontSize: 10, color: isCtxMin ? "var(--warn, #d97706)" : "var(--text-dim,#888)", fontWeight: isCtxMin ? 700 : 400, background: isCtxMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"ctx " + fmtK(cw)}{isCtxMin ? " ⚠" : ""}</span>
+                        <span title={ti("mw.a.561")} className="amw-mono" style={{ fontSize: 10, color: isOutMin ? "var(--warn, #d97706)" : "var(--text-dim,#888)", fontWeight: isOutMin ? 700 : 400, background: isOutMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"out " + fmtK(ot)}{isOutMin ? " ⚠" : ""}</span>
+                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "var(--ok, #15803d)", fontWeight: 650, flexShrink: 0 }}>vision</span> : noVision ? <span style={{ fontSize: 10, color: "var(--warn, #d97706)", fontWeight: 700, flexShrink: 0 }}>{ti("mw.tx.149")}</span> : null}
                         {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>{ti("mw.a.1")}</span> : null}
-                        <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", flexShrink: 0 }}>{meta.keyCount + " key"}</span>
-                      </> : <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 650 }}>{ti("mw.a.559")}</span>}
-                      <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>{ti("mw.tx.150")}</span>
+                        <span style={{ fontSize: 10, color: "var(--text-dim,#999)", flexShrink: 0 }}>{meta.keyCount + " key"}</span>
+                      </> : <span style={{ fontSize: 10, color: "var(--danger, #dc2626)", fontWeight: 650 }}>{ti("mw.a.559")}</span>}
+                      <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>{ti("mw.tx.150")}</span>
                       <input type="number" min={1} step={1} className="amw-input" disabled={!rEn} style={{width: 64, padding: "3px 6px", flexShrink: 0}} value={r.weight ?? 10}
                         title={ti("mw.a.562")}
                         onChange={(e) => { const v = Math.max(1, Math.floor(Number(e.target.value) || 1)); const members = vm.members.map((x: any, j: number) => j === mi ? { ...x, weight: v } : x); setVm(i, { members }); }} />
-                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }} title={ti("mw.a.563")}>{ti("mw.tx.151")}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-dim,#777)", whiteSpace: "nowrap", flexShrink: 0 }} title={ti("mw.a.563")}>{ti("mw.tx.151")}</span>
                       {(() => {
                         const rTypes: string[] = Array.isArray(r.types) ? r.types : [];
                         const hasVision = !!(meta && (meta.input || []).includes("image"));      // 能力决定可勾选项
@@ -4036,7 +4037,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         const chip = (ct: string, ctLabel: string, on: boolean, locked: boolean, tip: string) => (
                           <label key={ct} title={tip}
                             style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 7px", borderRadius: 999, fontSize: 11, cursor: locked || !rEn ? "not-allowed" : "pointer", flexShrink: 0,
-                              background: on ? "#2563eb" : "rgba(127,127,127,.12)", color: on ? "#fff" : "var(--text-subtle,#888)", opacity: rEn ? (locked ? 0.8 : 1) : 0.5, userSelect: "none", border: "1px solid " + (on ? "#2563eb" : "transparent") }}>
+                              background: on ? "#2563eb" : "rgba(127,127,127,.12)", color: on ? "#fff" : "var(--text-dim,#888)", opacity: rEn ? (locked ? 0.8 : 1) : 0.5, userSelect: "none", border: "1px solid " + (on ? "#2563eb" : "transparent") }}>
                             <input type="checkbox" style={{ display: "none" }} checked={on} disabled={locked || !rEn} onChange={() => toggle(ct)} />
                             {ctLabel}{locked ? " 🔒" : ""}
                           </label>
@@ -4049,7 +4050,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       {!(Array.isArray(r.types) && r.types.length > 0)
                         ? <span className="amw-chip is-ok" style={{ flexShrink: 0 }} title={ti("mw.a.569")}>{ti("mw.tx.152")}</span>
                         : null}
-                      <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "#d97706", borderColor: "var(--warn, #f59e0b)" } : { color: "#16a34a", borderColor: "var(--ok, #22c55e)" }) }}
+                      <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "var(--warn, #d97706)", borderColor: "var(--warn, #f59e0b)" } : { color: "var(--ok, #16a34a)", borderColor: "var(--ok, #22c55e)" }) }}
                         title={rEn ? ti("mw.a.570") : ti("mw.a.571")}
                         onClick={() => setVm(i, { members: vm.members.map((x: any, j: number) => j === mi ? { ...x, enabled: !rEn } : x) })}>{rEn ? "⏸" : "▶"}</button>
                       <button className="amw-btn is-danger" style={{ padding: "2px 7px", flexShrink: 0 }} onClick={() => setVm(i, { members: vm.members.filter((_: any, j: number) => j !== mi) })}>✕</button>
@@ -4061,15 +4062,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <MemberPicker pool={pool} exclude={(vm.members || []).map((r: any) => r.provider + "/" + r.model)} onPick={(p: any) => setVm(i, { members: [...(vm.members || []), { provider: p.provider, model: p.model, weight: 10 }] })} />
                 {/* stickyTtl 高级项 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap" }}>{ti("mw.tx.225")}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-dim,#777)", whiteSpace: "nowrap" }}>{ti("mw.tx.225")}</span>
                   <input type="number" min={1} className="amw-input" style={{width: 72, padding: "3px 6px"}} value={vm.stickyTtlMin ?? ""} placeholder="15"
                     onChange={(e) => setVm(i, { stickyTtlMin: e.target.value ? Math.max(1, Math.floor(Number(e.target.value) || 15)) : undefined })} />
                 </div>
                 {/* 警告分级 */}
-                {w.block.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>🔴 {t}</div>)}
+                {w.block.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "var(--danger, #dc2626)", marginTop: 4 }}>🔴 {t}</div>)}
                 {w.warn.length ? (
                   <div className="amw-combo-warn">
-                    {w.warn.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#b45309" }}>🟡 {t}</div>)}
+                    {w.warn.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "var(--warn, #b45309)" }}>🟡 {t}</div>)}
                     {comboNeedsConfirm(vm) ? (
                       <label className="amw-combo-confirm">
                         <input type="checkbox" checked={false} onChange={() => setVm(i, { ackWarn: { sig: comboWarnSig(w.warn), members: comboMemberSig(vm) } })} />
@@ -4083,7 +4084,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     )}
                   </div>
                 ) : null}
-                {w.hint.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 4 }}>🟢 {t}</div>)}
+                {w.hint.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: 4 }}>🟢 {t}</div>)}
               </div>
             );
           })}
@@ -4127,17 +4128,17 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontWeight: 650, fontSize: 13 }}>{cb.name}</span>
-                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
-                  <span className="amw-mono" style={{fontSize: 10, color: "var(--text-subtle,#999)"}}>{cb.providerId}</span>
+                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "var(--warn, #b45309)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
+                  <span className="amw-mono" style={{fontSize: 10, color: "var(--text-dim,#999)"}}>{cb.providerId}</span>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 3 }}>
+                <div style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: 3 }}>
                   {cb.models.length + ti("mw.a.576") + (cb.api || "?")}
                   {allMembers.length ? <span> · {allMembers.length}{ti("mw.a.628")}</span> : null}
-                  {disabledCount ? <span style={{ color: "#b45309" }}> · {disabledCount}{ti("mw.a.629")}</span> : null}
+                  {disabledCount ? <span style={{ color: "var(--warn, #b45309)" }}> · {disabledCount}{ti("mw.a.629")}</span> : null}
                 </div>
               </div>
               <button className="amw-btn" onClick={() => setComboEditor(buildComboEditor(cb))}>✎ {ti("mw.tx.17")}</button>
-              <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
+              <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "var(--ok, #16a34a)", borderColor: "var(--ok, #22c55e)" } : { color: "var(--warn, #d97706)", borderColor: "var(--warn, #f59e0b)" }) }}
                 title={cb.enabled === false ? ti("mw.a.577") : ti("mw.a.578")}
                 onClick={() => doToggleProvider(cb.providerId, cb.enabled === false)}>
                 {cb.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
@@ -4146,11 +4147,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </div>
             {cb.models.map((m: any) => (
               <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 7, padding: "6px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", ...(m.enabled === false ? { opacity: 0.62, boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 45%, transparent)" } : {}) }}>
-                <span className="amw-mono" style={{fontSize: 12, fontWeight: 700, color: m.enabled === false ? "#b45309" : "#4f46e5"}}>{cb.providerId}/{m.id}</span>
-                {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
-                <span style={{ color: "var(--text-subtle,#aaa)", fontSize: 11 }}>＝</span>
+                <span className="amw-mono" style={{fontSize: 12, fontWeight: 700, color: m.enabled === false ? "var(--warn, #b45309)" : "#4f46e5"}}>{cb.providerId}/{m.id}</span>
+                {m.enabled === false ? <span style={{ fontSize: 10, color: "var(--warn, #b45309)", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
+                <span style={{ color: "var(--text-dim,#aaa)", fontSize: 11 }}>＝</span>
                 {(m.members || []).map((r: any, j: number) => (
-                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
+                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "var(--warn, #b45309)", textDecoration: "line-through" } : {}) }}>
                     {r.provider}/{r.model}{r.enabled === false ? " ⏸" : ""}{r.weight != null && r.weight !== 10 ? <b style={{ color: "#4f46e5" }}> ×{r.weight}</b> : null}
                     {Array.isArray(r.types) && r.types.length > 0
                       ? <span style={{ fontSize: 10, color: "#0891b2", fontWeight: 650 }}> [{r.types.map((x: string) => x === "text" ? ti("mw.a.564") : x === "vision" ? ti("mw.a.567") : ti("mw.a.580")).join("/")}]</span>
@@ -4187,7 +4188,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <div style={{ fontWeight: 600, fontSize: 13 }}>
                   {it.name || it.id}
                   {it.installed
-                    ? <span style={{ marginLeft: 8, fontSize: 11, color: "#16a34a", border: "1px solid rgba(22,163,74,.35)", borderRadius: 999, padding: "1px 8px" }}>{ti("mw.tx.168")}</span>
+                    ? <span style={{ marginLeft: 8, fontSize: 11, color: "var(--ok, #16a34a)", border: "1px solid rgba(22,163,74,.35)", borderRadius: 999, padding: "1px 8px" }}>{ti("mw.tx.168")}</span>
                     : null}
                 </div>
                 {it.desc ? <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>{it.desc}</div> : null}
@@ -4213,7 +4214,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {it.installed && (
                   <>
                     <button className="amw-btn" disabled={busy} title={ti("mw.a.583")} onClick={() => freeAction(it.id, "update")}>{busy ? "…" : ti("mw.a.584")}</button>
-                    <button className="amw-btn" disabled={busy} style={freeConfirm === it.id ? { color: "#dc2626", borderColor: "#dc2626" } : undefined}
+                    <button className="amw-btn" disabled={busy} style={freeConfirm === it.id ? { color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" } : undefined}
                       title={freeConfirm === it.id ? ti("mw.a.585") : ti("mw.a.586")}
                       onClick={() => { if (freeConfirm === it.id) freeAction(it.id, "remove"); else setFreeConfirm(it.id); }}>
                       {busy ? "…" : freeConfirm === it.id ? ti("mw.a.587") : ti("mw.a.588")}
@@ -4340,12 +4341,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         </div>
       </div>
       <div key={"body-" + tab} className="amw-body" style={bodyStyle}>
-        {busy ? <div style={{ color: "var(--text-subtle,#666)", marginBottom: 6 }}>{ti("mw.tx.179")}</div> : null}
+        {busy ? <div style={{ color: "var(--text-dim,#666)", marginBottom: 6 }}>{ti("mw.tx.179")}</div> : null}
         {msg ? <div className="amw-note">{msg}</div> : null}
         {missingInfo && Array.isArray(missingInfo.models) && missingInfo.models.length ? (
           <div className="amw-note is-warn" style={{marginBottom: 8}}>
             <div style={{ fontWeight: 600, marginBottom: 3 }}>{"⚠️ " + missingInfo.models.length + ti("mw.a.611") + missingInfo.models.map((m: any) => m.id).join("、")}</div>
-            <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-subtle,#666)" }}>
+            <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-dim,#666)" }}>
               {ti("mw.a.612")}
               <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {missingInfo.models.map((m: any) => (
@@ -4435,7 +4436,7 @@ export function WizardButton() {
       {newTotal > 0 ? (
         <span key="badge" style={{
           position: "absolute", top: 3, right: 4, minWidth: 14, height: 14, padding: "0 3px",
-          borderRadius: 999, background: "#dc2626", color: "#fff", fontSize: 9, fontWeight: 700,
+          borderRadius: 999, background: "var(--danger, #dc2626)", color: "#fff", fontSize: 9, fontWeight: 700,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none",
           boxShadow: "0 0 0 2px var(--bg,#fff)",
         }}>{newTotal > 99 ? "99+" : String(newTotal)}</span>
@@ -4587,10 +4588,10 @@ export function Banner() {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", margin: "6px 0 0", flexWrap: "wrap", background: state.allUnavailable ? "rgba(220,38,38,.07)" : "rgba(37,99,235,.08)", border: "1px solid " + (state.allUnavailable ? "rgba(220,38,38,.3)" : "rgba(37,99,235,.25)"), borderRadius: 10, fontSize: 12.5 }}>
       <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={14} paths={ICONS.wand} />{state.allUnavailable ? ti("mw.a.615") : ti("mw.a.616")}</span>
-      <span style={{ color: "var(--text-subtle,#666)" }}>{state.allUnavailable
+      <span style={{ color: "var(--text-dim,#666)" }}>{state.allUnavailable
         ? (avail ? "（" + avail.rateLimited + ti("mw.a.116") + avail.errorCount + ti("mw.a.464") + (avail.lastBlocked && avail.lastBlocked.marked ? ti("mw.a.617") : "") + ti("mw.a.618") : ti("mw.a.619"))
         : ti("mw.a.620")}</span>
-      {state.allUnavailable && hasCheck() ? <button className="amw-btn" style={{ background: "#dc2626", color: "#fff", padding: "3px 10px" }} onClick={openCheck}>{ti("mw.tx.181")}</button> : null}
+      {state.allUnavailable && hasCheck() ? <button className="amw-btn" style={{ background: "var(--danger, #dc2626)", color: "#fff", padding: "3px 10px" }} onClick={openCheck}>{ti("mw.tx.181")}</button> : null}
       <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={openWizard}>{state.allUnavailable ? ti("mw.a.621") : ti("mw.a.622")}</button>
     </div>
   );
