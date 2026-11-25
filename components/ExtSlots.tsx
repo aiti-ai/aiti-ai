@@ -1619,10 +1619,19 @@ export const MemoExtSlot = memo(ExtSlot, (prev, next) =>
 //    extension was disabled/uninstalled) → clear the memory when the window
 //    elapses and keep the fallback.
 const TAKEOVER_MEM_PREFIX = "pi-web:takeover:";
-/** Anti-deadlock ceiling for the TakeoverSlot waiting window (slow-flash fix):
- *  only a hung network (no boot settle / no materialize-settle event) waits this
- *  out; deterministic failures release the fallback much sooner. */
+/** Waiting-window ceilings (slow-flash fix). Two independent anti-deadlock caps:
+ *  · TAKEOVER_HOLD_CEILING_MS counts from **boot settle** (manifest + every eager
+ *    materialization done/failed). Before settle the taker's resources may still
+ *    be in flight — on a slow link the whole graph can legitimately take 30s+ to
+ *    download, and holding is exactly what we want meanwhile; releasing early
+ *    just flashes the native fallback, whose own first fetch then competes with
+ *    the still-downloading takeover bundle. After settle nothing is in flight
+ *    anymore, so a slot with still no items 15s later is a genuine no-show.
+ *  · TAKEOVER_HOLD_ABSOLUTE_MS counts from mount and covers a boot that never
+ *    settles at all (hung manifest fetch / loader bug): the placeholder must not
+ *    outlive the page. Deterministic failures release sooner via allFailed. */
 const TAKEOVER_HOLD_CEILING_MS = 15000;
+const TAKEOVER_HOLD_ABSOLUTE_MS = 45000;
 const emptySubscribe = () => () => {};
 export function takeoverMemKey(name: string): string { return TAKEOVER_MEM_PREFIX + name; }
 function readTakeoverMem(name: string, legacyKey?: string): boolean {
@@ -1690,8 +1699,10 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession,
   //    or has no boot-graph entry at all once the graph landed (client file
   //    missing/unreadable — the server kept it out of the graph; it can never
   //    register rendered items);
-  //  · timedOut: anti-deadlock ceiling (15s) for a hung network where no settle
-  //    signal ever fires. Fast failures release much sooner through the first two.
+  //  · timedOut: the anti-deadlock ceilings — 15s after boot settle (nothing in
+  //    flight, slot still a no-show) or 45s from mount when boot itself never
+  //    settles (hung network / loader bug). Fast failures release much sooner
+  //    through the first two.
   const bootSettled = useSyncExternalStore(subscribeExtBootSettled, () => extBootSettled, () => false);
   const [, bumpTick] = useState(0);
   useEffect(() => onMaterializeSettled(() => bumpTick((t) => t + 1)), []);
@@ -1707,9 +1718,17 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession,
   const [timedOut, setTimedOut] = useState(false);
   useEffect(() => {
     if (!hydrated || takeover || settledAbsent || allFailed || timedOut) return;
-    const timer = setTimeout(() => setTimedOut(true), TAKEOVER_HOLD_CEILING_MS);
+    // Boot settled: nothing is in flight anymore — a slot still without items is
+    // a no-show; release after the grace window.
+    if (bootSettled) {
+      const timer = setTimeout(() => setTimedOut(true), TAKEOVER_HOLD_CEILING_MS);
+      return () => clearTimeout(timer);
+    }
+    // Boot still pending: resources are legitimately in flight on a slow link —
+    // hold (up to the absolute cap for a boot that never settles).
+    const timer = setTimeout(() => setTimedOut(true), TAKEOVER_HOLD_ABSOLUTE_MS);
     return () => clearTimeout(timer);
-  }, [hydrated, takeover, settledAbsent, allFailed, timedOut]);
+  }, [hydrated, takeover, settledAbsent, allFailed, timedOut, bootSettled]);
   const released = settledAbsent || allFailed || timedOut;
   // Waiting window: declared on the first frame or the memory hit, but items not
   // yet arrived → render the placeholder instead of the whole fallback. hintPending
