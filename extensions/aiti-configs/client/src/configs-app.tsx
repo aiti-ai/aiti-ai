@@ -41,15 +41,15 @@ const C: Record<string, any> = {
   head: { display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border,#e0e0e0)", background: "var(--bg-subtle,#f5f5f5)" },
   tabs: { display: "flex", gap: 4, flex: 1, overflowX: "auto" },
   tab: { padding: "5px 12px", border: "none", borderRadius: 8, cursor: "pointer", background: "transparent", color: "var(--text,#1a1a1a)", fontWeight: 500 },
-  tabOn: { background: "var(--accent,#2563eb)", color: "#fff" },
+  tabOn: { background: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" },
   body: { padding: 12, overflow: "auto", flex: 1 },
   btn: { padding: "5px 12px", border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, cursor: "pointer", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontWeight: 500 },
-  btnPrimary: { background: "var(--accent,#2563eb)", borderColor: "var(--accent,#2563eb)", color: "#fff" },
+  btnPrimary: { background: "var(--accent,#2563eb)", borderColor: "var(--accent,#2563eb)", color: "var(--accent-contrast, #fff)" },
   row: { padding: "6px 8px", borderBottom: "1px solid var(--border,#e0e0e0)", cursor: "pointer" },
   mono: { font: "11.5px/1.5 ui-monospace, monospace", wordBreak: "break-all" },
   pre: { background: "var(--bg-subtle,#f5f5f5)", border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, padding: 10, overflow: "auto", maxHeight: 260, whiteSpace: "pre-wrap", wordBreak: "break-all", font: "11.5px/1.5 ui-monospace, monospace" },
   // 黄色错误提示样式：当有错误时显示黄色警告框
-  errorMsg: { padding: "6px 10px", borderRadius: 8, background: "#fef3c7", color: "#92400e", marginBottom: 8, fontSize: 12, border: "1px solid #fcd34d" },
+  errorMsg: { padding: "6px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "var(--warn, #b45309)", marginBottom: 8, fontSize: 12, border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 38%, transparent)" },
   msg: { padding: "6px 10px", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", marginBottom: 8, fontSize: 12 },
 };
 
@@ -177,7 +177,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     return (
       <div>
         {rs && rs.url ? (
-          <div style={{ fontSize: 12, marginBottom: 8, padding: "6px 8px", borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8" }}>
+          <div style={{ fontSize: 12, marginBottom: 8, padding: "6px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--accent, #2563eb) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--accent, #2563eb) 30%, transparent)", color: "var(--accent, #2563eb)" }}>
             {t("远端同步：") + (rs.push ? t("启用") : t("停用")) + " · " + rs.url + (rs.autoPull ? " · pull --rebase" : "") + " · branch=" + (rs.branch || "main")}
           </div>
         ) : null}
@@ -188,14 +188,14 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
           <button style={C.btn} onClick={() => load("status")}>{t("↻ 刷新")}</button>
         </div>
         {d.clean === true ? (
-          <div style={{ color: "#16a34a", fontWeight: 600 }}>{t("工作区干净（无可提交变更）")}</div>
+          <div style={{ color: "var(--ok, #16a34a)", fontWeight: 600 }}>{t("工作区干净（无可提交变更）")}</div>
         ) : (d.changed && d.changed.length ? (
           <div>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("待提交 ") + d.changed.length + t(" 个文件：")}</div>
             {d.changed.map((c: any, i: number) => (
               <div key={i} style={{ ...C.row, background: fileDiff?.path === c.path ? "var(--bg-subtle,#f5f5f5)" : undefined }}
                 onClick={() => showFileDiff(c.path)} title={t("点击查看该文件未提交 diff")}>
-                <span style={{ color: c.status === "D" ? "#dc2626" : c.status === "??" ? "#16a34a" : "#2563eb", fontWeight: 700, marginRight: 6 }}>
+                <span style={{ color: c.status === "D" ? "var(--danger, #dc2626)" : c.status === "??" ? "var(--ok, #16a34a)" : "var(--accent, #2563eb)", fontWeight: 700, marginRight: 6 }}>
                   {c.status === "D" ? "DEL" : c.status === "??" ? "NEW" : "MOD"}
                 </span>
                 <span style={C.mono}>{c.path}</span>
@@ -210,7 +210,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
           </div>
         ) : null)}
         {d.skipped && d.skipped.length > 0 ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#d97706" }}>
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--warn, #d97706)" }}>
             {t("拦截 ") + d.skipped.length + t(" 项：") + d.skipped.map((s: any) => s.reason).slice(0, 5).join("；") + (d.skipped.length > 5 ? "…" : "")}
           </div>
         ) : null}
@@ -233,9 +233,9 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         {tagList && tagList.tags && tagList.tags.length > 0 ? (
           <div style={{ marginBottom: 8 }}>
             {tagList.tags.map((tag: any) => (
-              <span key={tag.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, margin: "0 6px 4px 0", padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 11, border: "1px solid #fcd34d" }}>
+              <span key={tag.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, margin: "0 6px 4px 0", padding: "2px 8px", borderRadius: 10, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "var(--warn, #b45309)", fontSize: 11, border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 38%, transparent)" }}>
                 <Ic size={11} paths={ICONS.tag} />{" "}{tag.name}
-                <button style={{ border: "none", background: "transparent", cursor: "pointer", color: "#92400e", display: "flex" }} onClick={() => doDelTag(t.name)} aria-label={t("删除 tag")}>
+                <button style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--warn, #b45309)", display: "flex" }} onClick={() => doDelTag(t.name)} aria-label={t("删除 tag")}>
                   <Ic size={10} paths={ICONS.x} />
                 </button>
               </span>
@@ -246,9 +246,9 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
           <div key={r.hash} style={C.row} onClick={() => showDiff(r.hash)}>
             <div>
               <span style={{ color: "var(--accent,#2563eb)", fontWeight: 700, marginRight: 6 }}>{r.hash}</span>
-              <span style={{ color: "var(--text-subtle,#666)", marginRight: 6 }}>{String(r.date || "").slice(5, 16)}</span>
+              <span style={{ color: "var(--text-dim,#666)", marginRight: 6 }}>{String(r.date || "").slice(5, 16)}</span>
               {(r.tags || []).map((tag: string) => (
-                <span key={tag} style={{ marginRight: 4, padding: "1px 6px", borderRadius: 8, background: "#fef3c7", color: "#92400e", fontSize: 10 }}>
+                <span key={tag} style={{ marginRight: 4, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "var(--warn, #b45309)", fontSize: 10 }}>
                   <Ic size={10} paths={ICONS.tag} />{tag}
                 </span>
               ))}
@@ -276,14 +276,14 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     const d = data || {};
     return (
       <div>
-        <div style={{ fontWeight: 600, marginBottom: 6, color: d.ok ? "#16a34a" : "#dc2626" }}>
+        <div style={{ fontWeight: 600, marginBottom: 6, color: d.ok ? "var(--ok, #16a34a)" : "var(--danger, #dc2626)" }}>
           {d.ok ? t("自检通过") : t("自检未通过（") + ((d.bad || []).length) + t(" 项）")}
         </div>
         {(d.rows || []).map((r: any, i: number) => (
           <div key={i} style={C.row}>
             <span style={{ marginRight: 6, display: "inline-flex" }}><Ic size={13} paths={r.ok ? ICONS.check : ICONS.x} /></span>
             <b>{r.name}</b>
-            <span style={{ color: "var(--text-subtle,#666)", marginLeft: 6 }}>{r.detail}</span>
+            <span style={{ color: "var(--text-dim,#666)", marginLeft: 6 }}>{r.detail}</span>
           </div>
         ))}
         <button style={{ ...C.btn, marginTop: 8 }} onClick={() => load("selfcheck")}>{t("↻ 重新自检")}</button>
@@ -307,7 +307,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     const rc = (d.config && d.config.remote) || {};
     const en = (d.config && d.config.encrypt) || {};
     const es = encStatus && encStatus.encrypt ? encStatus.encrypt : {};
-    const warn = { padding: "8px 10px", borderRadius: 8, background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", fontSize: 12, marginBottom: 8, lineHeight: 1.6 };
+    const warn = { padding: "8px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 32%, transparent)", color: "var(--danger, #b91c1c)", fontSize: 12, marginBottom: 8, lineHeight: 1.6 };
     const inp = { padding: "5px 8px", border: "1px solid var(--border,#e0e0e0)", borderRadius: 6, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 12 };
     const g = (id: string) => document.getElementById(id) as HTMLInputElement | null;
     return (
@@ -338,7 +338,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <div style={{ display: "flex", gap: 14, marginBottom: 6, fontSize: 12, alignItems: "center" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-enc-enabled" type="checkbox" defaultChecked={en.enabled === true} />{t("启用密文")} commit</label>
-          <span style={{ color: es.keyExists === true ? "#16a34a" : "#dc2626" }}>{es.keyExists === true ? t("密钥已生成（") + (es.keyFile || "") + "）" : t("密钥未生成（先点生成密钥）")}</span>
+          <span style={{ color: es.keyExists === true ? "var(--ok, #16a34a)" : "var(--danger, #dc2626)" }}>{es.keyExists === true ? t("密钥已生成（") + (es.keyFile || "") + "）" : t("密钥未生成（先点生成密钥）")}</span>
         </div>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
           <input id="cfg-enc-patterns" type="text" defaultValue={(en.patterns || ["pi/agent/**"]).join(",")} placeholder={t("加密文件 glob（逗号分隔，如 pi/agent/**）")} style={{ flex: 1, ...inp }} />
@@ -382,7 +382,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         <button style={C.btn} onClick={() => onClose()} aria-label={t("关闭")}><Ic size={12} paths={ICONS.x} /></button>
       </div>
       <div style={bodyStyle}>
-        {busy ? <div style={{ color: "var(--text-subtle,#666)", marginBottom: 6 }}>{t("处理中…")}</div> : null}
+        {busy ? <div style={{ color: "var(--text-dim,#666)", marginBottom: 6 }}>{t("处理中…")}</div> : null}
         {msg ? (<div style={C.msg}>{msg.startsWith("❌") || msg.startsWith("⚠") || msg.startsWith("错误") || msg.startsWith("失败") || msg.startsWith("\u274c") ? <div style={C.errorMsg}>{msg}</div> : <div style={C.msg}>{msg}</div>}</div>) : null}
         {tab === "status" ? renderStatus() : tab === "log" ? renderLog() : tab === "selfcheck" ? renderSelfcheck() : renderConfig()}
       </div>
