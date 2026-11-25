@@ -39,9 +39,9 @@ function makeHandle() {
   return new QoderHandle("qodercn:new-history", child, null, "/tmp", "cn");
 }
 
-const rows = (seed) => {
+const rows = (seed, fallbackModel) => {
   const h = makeHandle();
-  h.seedHistory(seed);
+  h.seedHistory(seed, fallbackModel);
   return h.getMessages();
 };
 
@@ -104,4 +104,18 @@ test("无结构化信息仍走 🛠 文本兜底；user 行保持字符串 conte
   assert.equal(out[2].content[0].text, "正文", "tool 无名视为无效结构化 → 退回文本");
   assert.equal(out[3].content[0].text, "混排");
   assert.deepEqual({ model: out[3].model, provider: out[3].provider }, { model: "Qwen3.8-Flash", provider: "qoder" });
+});
+
+test("replay rows without a model fall back to the native transcript's model (badge shows the model name, not the provider id)", () => {
+  // The session store keeps only a session-level meta.model — per-row assistant rows
+  // carry no model; without the fallback getModelDisplayName degrades to the provider
+  // name ("aiti-qoder-agent").
+  const out = rows([
+    { role: "user", text: "continue" },
+    { role: "assistant", text: "body" },
+    { role: "assistant", text: "carries its own model", model: "QFmodel" },
+  ], "dfmodel");
+  assert.equal(out[1].model, "dfmodel");
+  assert.equal(out[1].provider, "aiti-qoder-agent", "provider default behavior unchanged");
+  assert.equal(out[2].model, "QFmodel", "in-row model wins over the fallback");
 });
