@@ -890,6 +890,15 @@ test("idle re-pin never yanks a history reader back to the tail", () => {
   );
   // The streaming follow path already had the guard — keep it pinned by assertion.
   assert.match(source, /if \(userScrolledAwayRef\.current\) return;/);
+  // The agentRunning running edge must NOT clear the walked-away state any more:
+  // a spurious flip (reconcile adoption / SSE resume / another client starting a
+  // run) used to re-arm follow here, and the next idle re-pin yanked a history
+  // reader to the tail. Assert the edge effect mentions promptAnchor only.
+  const edgeSource = source.slice(
+    source.indexOf("if (!agentRunning) setPromptAnchorActive(false);"),
+    source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
+  );
+  assert.ok(!/setUserScrolledAway/.test(edgeSource), "running edge must not touch userScrolledAway");
   // The composer-growth re-pin in ChatWindow (error banner / queue banner resizing
   // the composer while the view is tail-pinned) must respect the same walked-away
   // state, and must read the ref (stable identity) rather than the reactive

@@ -5874,11 +5874,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   useEffect(() => {
     if (!agentRunning) setPromptAnchorActive(false);
-    // A new run re-arms auto-follow: whatever the user did while reading the
-    // previous answer, a fresh prompt starts following from the current
-    // position (send paths also scroll to the tail / user message).
-    else setUserScrolledAway(false);
-  }, [agentRunning, setUserScrolledAway]);
+    // NOTE: deliberately NO re-arm of the walked-away state on the running edge.
+    // A spurious running flip (reconcile adoption, SSE resume, another client/
+    // tab starting a run in this session) silently cleared userScrolledAway here,
+    // and the next idle re-pin yanked a history reader back to the tail
+    // ("occasionally pulled to the bottom while reading"). Real sends re-arm
+    // via pendingScrollToUserRef → scrollUserMsgToTop — a sent message always
+    // lands near the tail, so the completion re-arm stays intact for senders.
+  }, [agentRunning]);
 
   useLayoutEffect(() => {
     if (messages.length > 0) {
