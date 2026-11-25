@@ -12,12 +12,14 @@ export interface ModelSelectorOption {
   providerName?: string;
   modelId: string;
   name: string;
-  /** Current availability (probed by the model-check extension / observed at runtime): ok/rl(429)/err/unprobed — display-only hint */
-  status?: "ok" | "rl" | "err" | "unprobed";
+  /** Current availability (probed by the model-check extension / observed at runtime): ok/rl(429)/err/unprobed, plus "disabled" from ext catalogs (server marked it unavailable — quota/plan state). Display-only, except disabled which blocks selection. */
+  status?: "ok" | "rl" | "err" | "unprobed" | "disabled";
   /** This provider is rate-limited as a whole (all its models currently 429) — group-header hint, no auto-disable */
   providerRL?: boolean;
   /** Right-aligned dim row text override (ext-agent catalogs, e.g. qoder billing "0.5x"); absent → provider id. */
   hint?: string;
+  /** Locale-keyed pill tag from ext catalog metadata ("New" / "Free" / off-peak promo); rendered by the active locale. */
+  badge?: { en: string; zh: string };
 }
 
 export interface ModelSelectorGroup {
@@ -466,8 +468,16 @@ export function ModelSelector({
     setHighlightIndex((current) => {
       const max = navRows.length - 1;
       if (max < 0) return -1;
-      if (current < 0) return delta > 0 ? 0 : max;
-      return Math.max(0, Math.min(max, current + delta));
+      // Disabled rows stay visible but are not activatable — arrow navigation walks past them
+      // (no wrap; the array bounds are the stops). All-disabled list → highlight stays put.
+      const eligible = (idx: number) => {
+        const row = navRows[idx];
+        return row.kind === "clear" || row.option.status !== "disabled";
+      };
+      let next = current < 0 ? (delta > 0 ? 0 : max) : current + delta;
+      next = Math.max(0, Math.min(max, next));
+      while (next >= 0 && next <= max && !eligible(next)) next += delta > 0 ? 1 : -1;
+      return next >= 0 && next <= max ? next : current;
     });
   };
 
@@ -553,6 +563,7 @@ export function ModelSelector({
 
   const choose = (option: ModelSelectorOption) => {
     if (refreshing) return; // no selection while refreshing (the button layer is also disabled; this guards keyboard/double-click)
+    if (option.status === "disabled") return; // server-disabled ext model: greyed row, Enter/keyboard/aria-disabled button all land here — selection would be rejected by the backend
     const active = option.modelId === value?.modelId && option.provider === value?.provider;
     rememberRecentModel(option.provider, option.modelId);
     setOpen(false);
@@ -855,6 +866,7 @@ export function ModelSelector({
                       // provider-only fallback keeps cross-provider same-named recents identifiable.
                       hint={recentRowHint(option)}
                       status={option.status}
+                      badge={option.badge}
                       disabled={refreshing}
                       gutter={Boolean(onSetDefault)}
                       star={starFor(option)}
@@ -889,6 +901,7 @@ export function ModelSelector({
                       label={option.name}
                       hint={option.hint ?? option.provider}
                       status={option.status}
+                      badge={option.badge}
                       disabled={refreshing}
                       gutter={Boolean(onSetDefault)}
                       // The default is saved only from the scope: PUT /api/models/default refuses others.
@@ -917,8 +930,8 @@ export function ModelSelector({
 }
 
 /** Option row (exported solely for unit-test render assertions): name + provider suffix + availability status; the same information on desktop and small screens. */
-export function ModelOptionButton({ active, label, hint, status, disabled = false, star, gutter = Boolean(star), highlighted = false, id, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; /** Keyboard-navigation highlight from the filter input (ArrowUp/ArrowDown); visually the same as hover. */ highlighted?: boolean; /** DOM id of the option button (combobox aria-activedescendant target). */ id?: string; onClick: () => void }) {
-  const { t } = useI18n();
+export function ModelOptionButton({ active, label, hint, status, disabled = false, badge, star, gutter = Boolean(star), highlighted = false, id, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Locale-keyed pill tag from ext catalog metadata ("New"/"Free"/off-peak promo); rendered in the active locale. */ badge?: ModelSelectorOption["badge"]; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; /** Keyboard-navigation highlight from the filter input (ArrowUp/ArrowDown); visually the same as hover. */ highlighted?: boolean; /** DOM id of the option button (combobox aria-activedescendant target). */ id?: string; onClick: () => void }) {
+  const { t, locale } = useI18n();
   const isMobile = useIsMobile();
   const rowRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
@@ -929,7 +942,12 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
   }, [highlighted]);
   const canSave = Boolean(star && !star.isDefault);
   const showSave = canSave && (hovered || focused || isMobile);
-  const statusMark = status === "rl"
+  // Server-disabled ext model (quota/plan state): greyed, not activatable (choose() guards too), pill explains why it is shown.
+  const isDisabledModel = status === "disabled";
+  const badgeText = badge ? (locale.toLowerCase().startsWith("zh") ? badge.zh : badge.en) : "";
+  const statusMark = isDisabledModel
+    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.disabledTitle")}>{t("modelSel.disabledBadge")}</span>
+    : status === "rl"
     ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.rlTitle")}>429</span>
     : status === "err"
       ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#dc2626", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.1)" }} title={t("modelSel.errTitle")}>{t("modelSel.errBadge")}</span>
@@ -950,9 +968,10 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
       id={id}
       role="option"
       aria-selected={active}
-      disabled={disabled || undefined}
+      disabled={disabled || isDisabledModel || undefined}
+      title={isDisabledModel ? t("modelSel.disabledTitle") : undefined}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : hovered || highlighted ? "var(--bg-hover)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : hovered || highlighted ? "var(--bg-hover)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled || isDisabledModel ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: (disabled || isDisabledModel) && !active ? 0.55 : undefined }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -960,6 +979,10 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
         : <span style={{ width: 10, flexShrink: 0 }} />}
       <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {badgeText ? (
+        // Catalog metadata pill ("New"/"Free"/off-peak promo) — green tint like the official CLI's badges.
+        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#15803d", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(34,197,94,.5)", background: "rgba(34,197,94,.12)" }}>{badgeText}</span>
+      ) : null}
       {statusMark}
       {hint && hint !== label ? (
         // Small screens no longer hide the provider suffix (2026-09-13): the same information on

@@ -309,6 +309,10 @@ export type HandleModelOption = {
   label?: string;
   /** Short alias (e.g. "sonnet" → full id) for quick /model switching. */
   alias?: string;
+  /** Server marked the model unavailable (quota/plan state); rendered greyed, not selectable. */
+  disabled?: boolean;
+  /** Locale-keyed pill tag from catalog metadata ("New" / "Free" / off-peak promo); host localizes. */
+  badge?: { en: string; zh: string };
 };
 
 /** Account-level quota bucket (main allowance / add-on packs / org packs etc.). */

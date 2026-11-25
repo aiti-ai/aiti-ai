@@ -173,7 +173,7 @@ interface Props {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string; providerName?: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean; hint?: string }[];
+  modelList?: { id: string; name: string; provider: string; providerName?: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean; hint?: string; disabled?: boolean; badge?: { en: string; zh: string } }[];
   modelError?: string | null;
   /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
   missingCwd?: string | null;
@@ -3863,7 +3863,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}), ...(m.hint ? { hint: m.hint } : {}) }));
+      return modelList.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name, status: m.disabled ? "disabled" : m.avail, ...(m.providerRL ? { providerRL: true } : {}), ...(m.hint ? { hint: m.hint } : {}), ...(m.badge ? { badge: m.badge } : {}) }));
     }
     return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
       provider: model?.provider ?? "unknown",
