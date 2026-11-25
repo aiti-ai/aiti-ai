@@ -136,6 +136,24 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     "  try{parent.postMessage({type:'"+PREVIEW_MSG.select+"',docRel:DOC_REL,text:txt.trim(),",
     "    top:r.top,left:r.left,bottom:r.bottom,width:r.width,height:r.height},'*');}catch(err){}",
     "},true);",
+    // 4.5) Selection report (cross-origin popover): mouseup + non-collapsed selection → text +
+    //      selection rect (this viewport's coords); the parent translates and calls the msg-smart
+    //      engine (card renders in the parent document, overlaying the iframe). Posts directly,
+    //      bypassing send() so error-report quota (CAP) is not consumed.
+    "document.addEventListener('mouseup',function(e){",
+    "  var t=e.target;",
+    "  if(t&&t.nodeType===3)t=t.parentElement;",
+    "  if(t&&t.closest&&t.closest('[data-aiti-popover]'))return;",
+    "  var sel=window.getSelection();",
+    "  if(!sel||sel.isCollapsed||sel.rangeCount===0)return;",
+    "  var txt=sel.toString();",
+    "  if(!txt||!txt.trim())return;",
+    "  var r=null;",
+    "  try{r=sel.getRangeAt(0).getBoundingClientRect();}catch(err){return;}",
+    "  if(!r||(!r.width&&!r.height))return;",
+    "  try{parent.postMessage({type:'"+PREVIEW_MSG.select+"',docRel:DOC_REL,text:txt.trim(),",
+    "    top:r.top,left:r.left,bottom:r.bottom,width:r.width,height:r.height},'*');}catch(err){}",
+    "},true);",
     // 5) 装载完成上报（DOM 就绪即报，不等图片加载；带标题供父页面包屑）
     "function ready(){send('"+PREVIEW_MSG.ready+"',{title:short(document&&document.title)});}",
     "if(document.readyState==='complete'||document.readyState==='interactive'){ready();}",
