@@ -1285,7 +1285,9 @@ export function buildExtContextSnapshot(
   if (!contextUsage) return null;
   return {
     percent: contextUsage.percent ?? null,
-    contextWindow: contextUsage.contextWindow ?? null,
+    // 0 = window unknown (ratio-only backends, e.g. qoder): expose null so the
+    // meter renders its "unknown window" tooltip instead of "window 0".
+    contextWindow: contextUsage.contextWindow > 0 ? contextUsage.contextWindow : null,
     tokens: contextUsage.tokens ?? null,
     urgency,
   };

@@ -34,7 +34,10 @@ test("compact tier (rowCompact = viewport compact OR narrow chat column) collaps
   // The whole density row (in/out/cache/cost/context) is gated behind !rowCompact…
   assert.match(statsSource, /!isMobile && !rowCompact && \(/);
   // …and the context value is the bare percentage, never the "X% / window" form.
-  assert.match(statsSource, /ctxStr = pct !== null \? `\$\{pct\.toFixed\(0\)\}%` : "\?%";/);
+  // A known percent needs no window (external backends can report the ratio only),
+  // so the percent branch comes first; "?%" is the window-known-percent-unknown case.
+  assert.match(statsSource, /if \(contextUsage && contextUsage\.percent !== null\) \{\s*ctxStr = `\$\{contextUsage\.percent\.toFixed\(0\)\}%`;/);
+  assert.match(statsSource, /else if \(contextUsage\?\.contextWindow\) \{\s*ctxStr = "\?%";/);
   assert.doesNotMatch(statsSource, /`\$\{pct\.toFixed\(0\)\}% \/ \$\{fmt\(contextUsage\.contextWindow\)\}`/);
   // The percentage itself MUST be rendered on the desktop compact tier. This was
   // once missing (the only render sites were the !rowCompact groups flow and the

@@ -731,6 +731,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           totalMessages: totals?.turns ?? 0,
           tokens,
           cost: totals?.costUsd ?? 0,
+          ...(typeof totals?.credits === "number" ? { credits: totals.credits } : {}),
           ...(cu ? { contextUsage: cu } : {}),
         };
       }

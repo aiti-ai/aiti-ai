@@ -317,6 +317,7 @@ export const zhCNLocale: LocalePlugin = {
     "session.cacheRead": "缓存读取",
     "session.cacheWrite": "缓存写入",
     "session.cost": "费用",
+    "session.credits": "消耗积分",
     "session.context": "上下文",
     "session.cacheHitRate": "平均缓存命中率",
     "session.copy": "复制{value}",

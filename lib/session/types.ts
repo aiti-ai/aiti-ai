@@ -590,6 +590,8 @@ export interface SessionHandle {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
     costUsd?: number;
+    /** Credits consumed by the session (backends billed in credits, e.g. qoder). */
+    credits?: number;
     turns?: number;
   } | undefined;
   /** Models selectable on this backend. @capability listModels */

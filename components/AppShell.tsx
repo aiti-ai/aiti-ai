@@ -5185,15 +5185,18 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
 
             // Single source of truth for the urgency color scale: lib/context-urgency.ts
             // (the top bar is the scale baseline; the critical tier gets the breathe animation)
-            const ctxUrg = contextUrgency(contextUsage?.contextWindow ? contextUsage.percent : null);
+            // percent alone is displayable: external backends can report the ratio without
+            // publishing the window size (qoder's context_usage_ratio).
+            const ctxUrg = contextUrgency(contextUsage?.percent ?? null);
             const ctxColor = ctxUrg.color;
             const ctxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
             // Displayed form is the bare percentage (the window size lives in the
             // tooltip); the raw `X% / window` form was retired with the density tier.
             let ctxStr: string | null = null;
-            if (contextUsage?.contextWindow) {
-              const pct = contextUsage.percent;
-              ctxStr = pct !== null ? `${pct.toFixed(0)}%` : "?%";
+            if (contextUsage && contextUsage.percent !== null) {
+              ctxStr = `${contextUsage.percent.toFixed(0)}%`;
+            } else if (contextUsage?.contextWindow) {
+              ctxStr = "?%";
             }
 
             // Tooltip layout: one line per topic (browsers render \n in title as
@@ -5213,6 +5216,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
               tooltipLines.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+            } else if (contextUsage && contextUsage.percent !== null) {
+              tooltipLines.push(`context: ${contextUsage.percent.toFixed(1)}%`);
             }
             const baseTooltip = tooltipLines.join("\n");
             // Inline-slot contributors (e.g. the sysmon chips' CPU/memory line). Read
@@ -5676,7 +5681,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     // label sits AFTER it, so the numeric column stays right-aligned across all
                     // rows. Same tri-state matrix as the composer/dialog buttons (i18n reuse,
                     // zero new strings).
-                    const ctxUrg = contextUrgency(ctx?.contextWindow ? ctx.percent : null);
+                    const ctxUrg = contextUrgency(ctx?.percent ?? null);
                     const compactBusyColor = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : ctxUrg.color;
                     const compactTitle = compactControls?.isCompacting
                       ? translate("chat.stopCompaction")
@@ -5745,16 +5750,21 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     ) : null;
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
-                       ...(ctx?.contextWindow ? [[translate("session.context"), (
+                       // Credits consumed (backends billed in credits, e.g. qoder): a real,
+                       // per-turn figure even when the backend reports no token counts.
+                       ...(typeof sessionStats.credits === "number" && sessionStats.credits > 0
+                         ? [[translate("session.credits"), sessionStats.credits.toFixed(2)]]
+                         : []),
+                       ...(ctx && (ctx.percent !== null || ctx.contextWindow > 0) ? [[translate("session.context"), (
                          <span key="session-context" style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                            <span style={{
                              color: ctxUrg.color,
                              fontVariantNumeric: "tabular-nums",
                              animation: ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
                            }}>{ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"}</span>
-                           <span>/ {formatCompact(ctx.contextWindow)}</span>
+                           {ctx.contextWindow > 0 && <span>/ {formatCompact(ctx.contextWindow)}</span>}
                          </span>
-                       ), compactBtn]] : []),
+                       ), ctx.contextWindow > 0 ? compactBtn : null]] : []),
                        // Cache hit rate = cache reads / (input + cache writes + cache reads) — the denominator covers all input-class tokens.
                        ...(sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0 && sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input > 0
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
