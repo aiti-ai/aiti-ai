@@ -22,6 +22,10 @@ export default defineConfig({
   esbuild: {
     jsx: "automatic",
     jsxImportSource: "react",
+    // Production lib bundle: never let the JSX runtime follow the build shell's NODE_ENV.
+    // Vite infers jsxDev from NODE_ENV; a build from a dev-instance shell inherits
+    // NODE_ENV=development -> jsxDEV(), but jsx-runtime.ts only exports jsx/jsxs/Fragment.
+    jsxDev: false,
   },
   // 真 React 的 CJS 产物引用 process.env.NODE_ENV——浏览器无 process，需 define 替换
   define: {
