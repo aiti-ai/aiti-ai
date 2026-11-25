@@ -52,9 +52,9 @@ function register(ctx: Record<string, any>): void {
         limits: [
           "复杂排版（文本框 / 艺术字 / SmartArt / 脚注尾注）导出可能近似",
           "打开时重新序列化整个文档：与原 Word 排版细节可能有差异（保真档请用 OnlyOffice）",
-          "首次加载需拉取 ~2.5MB（gzip）引擎",
+          "首次打开需拉取 ~27MB（gzip ~10MB）引擎，仅 .docx 场景触发",
         ],
-        vendor: "SuperDoc 2.12 (AGPL-3.0，隔离于本扩展) + ProseMirror (MIT)",
+        vendor: "SuperDoc 2.34 (AGPL-3.0，隔离于本扩展) + ProseMirror (MIT)",
         license: "AGPL-3.0",
       },
       render: (host: any, c: any) => renderSuperdocView(host, c),

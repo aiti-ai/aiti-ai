@@ -16,7 +16,7 @@ import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
  */
 type SuperdocVendor = typeof import("./superdoc-vendor");
 
-/** sd.export() 的 exportType（2.12 只收短名 "docx"，不是 MIME 常量） */
+/** sd.export() exportType — 2.34 rejects a bare string and only accepts the ["docx"] array (not a MIME constant) */
 const EXPORT_TYPE_DOCX = ["docx"];
 
 /** 引擎样式文件（vite lib 产物 css 资产，与入口同目录 dist/） */

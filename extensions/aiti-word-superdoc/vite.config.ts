@@ -1,17 +1,40 @@
 /**
- * aiti-word-superdoc client 构建配置（Vite lib mode）。
+ * aiti-word-superdoc client build (Vite lib mode).
  *
- * entry（薄壳）→ client/aiti-word-superdoc-client.mjs；
- * SuperDoc + vue + yjs 等 npm 全家 → 动态 import chunk（打开 .docx 才拉取）。
- * SuperDoc dist 把 vue/yjs external（裸说明符），必须走打包内联——Univer 同款结论：
- * node_modules 全部收进单一 chunk，防 rollup 碎片化复制模块实例。
+ * entry (thin shell) → client/aiti-word-superdoc-client.mjs;
+ * SuperDoc + vue + yjs and friends → dynamically imported chunks, fetched only
+ * when a .docx is actually opened.
+ *
+ * SuperDoc's dist keeps vue/yjs as bare specifiers, so they have to be inlined
+ * here. node_modules is grouped **by package** rather than into one catch-all
+ * chunk: after superdoc 2.34 grew its DOCX engine, a single chunk reached
+ * 26.6MB, which (a) breaks hosts with a per-file upload cap (EdgeOne Makers
+ * free plan rejects anything over 25MB) and (b) dragged optional surfaces such
+ * as pdfjs into the same file. Per-package grouping keeps every module in
+ * exactly one chunk (still one instance per module) while the largest file
+ * stays around 21.9MB (@superdoc/docx-engine).
  */
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
+/**
+ * Owning npm package of a module id — used as the chunk key. Returning the same
+ * name for every module of a package never duplicates a module; it only decides
+ * which chunk file it lands in.
+ */
+function packageOf(id: string): string | null {
+  const at = id.lastIndexOf("node_modules/");
+  if (at < 0) return null;
+  const rest = id.slice(at + "node_modules/".length);
+  const parts = rest.split("/");
+  return rest.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+}
+
 export default defineConfig({
-  // 相对 base：worker entry（new Worker(new URL(...))）必须相对 chunk 自身解析——
-  // 扩展资产挂在 /{basePath}/api/extensions/<id>/assets/ 下，绝对 /assets/ 会打到页面根
+  // Relative base: the worker entry (new Worker(new URL(...))) must resolve
+  // relative to the chunk itself — extension assets live under
+  // /{basePath}/api/extensions/<id>/assets/, so an absolute /assets/ would hit
+  // the page root instead.
   base: "./",
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
@@ -30,15 +53,24 @@ export default defineConfig({
     rollupOptions: {
       external: [],
       output: {
-        chunkFileNames: "aiti-word-superdoc-chunk-[hash].mjs",
+        // [name] keeps the package visible in the file name (engine/vue/pdfjs…)
+        chunkFileNames: "aiti-word-superdoc-[name]-[hash].mjs",
         assetFileNames: "aiti-word-superdoc-[name][extname]",
-        // hex hash：默认 hash 字符集含「-」（如 chunk-C-XYOkSV），匹配不上宿主 HASHED_ASSET_RE
-        // （/-[A-Za-z0-9_]{8}\.\w+$/，pi-web app/api/extensions/[...path]/route.ts）→ 13.8MB 引擎
-        // chunk 进不了 immutable 缓存、每次开页都要 ETag 往返（开页方案 §2.2-5）
+        // hex hash: the default charset includes "-" (e.g. chunk-C-XYOkSV) and
+        // does not match the host's HASHED_ASSET_RE (/-[A-Za-z0-9_]{8}\.\w+$/,
+        // pi-web app/api/extensions/[...path]/route.ts) → those chunks miss
+        // immutable caching and re-validate on every page open.
         hashCharacters: "hex",
         manualChunks(id) {
-          if (id.includes("node_modules")) return "aiti-word-superdoc-vendor";
-          return undefined;
+          const pkg = packageOf(id);
+          if (!pkg) return undefined;
+          if (pkg.startsWith("pdfjs-dist")) return "pdfjs";
+          if (pkg.startsWith("@superdoc/")) return "engine";
+          if (pkg === "superdoc") return "superdoc";
+          if (pkg === "vue" || pkg.startsWith("@vue/")) return "vue";
+          if (pkg === "yjs" || pkg === "lib0" || pkg.startsWith("y-")) return "yjs";
+          if (pkg === "konva") return "konva";
+          return "vendor";
         },
       },
     },
