@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/ext-shared",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "type": "module",
   "description": "pi-web 扩展共享层（_shared 原地 package 化）——exports 子路径逐文件暴露",
   "exports": {

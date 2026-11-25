@@ -247,6 +247,18 @@ test("withLastUsedFirst: 静态目录按 id 命中前移（保留原条目），
   assert.deepEqual(withLastUsedFirst(models, null).map((m) => m.id), ["a", "glm-4.7", "b"]);
 });
 
+test("withLastUsedFirst: a disabled last-used hit is not promoted; the first enabled row tops the list (the default must be selectable)", () => {
+  const models = [
+    { id: "a", provider: "agent" },
+    { id: "last", provider: "agent", label: "last used", disabled: true },
+    { id: "b", provider: "agent", label: "tier B" },
+    { id: "c", provider: "agent", disabled: true },
+  ];
+  assert.deepEqual(withLastUsedFirst(models, "last").map((m) => m.id), ["a", "last", "b", "c"], "disabled last-used stays in place; catalog's first enabled row a tops");
+  assert.deepEqual(withLastUsedFirst([{ id: "x", disabled: true }, { id: "y" }], "x").map((m) => m.id), ["y", "x"], "first enabled row tops (incl. last-used being the first row itself)");
+  assert.deepEqual(withLastUsedFirst([{ id: "x", disabled: true }, { id: "z", disabled: true }], "x").map((m) => m.id), ["x", "z"], "all disabled → original order (selector shows the disabled mark)");
+});
+
 test("pruneExpiredStates: 超期文件被清、保留文件不动、目录级节流", async () => {
   const { utimesSync } = await import("node:fs");
   const key = "gc-test";
