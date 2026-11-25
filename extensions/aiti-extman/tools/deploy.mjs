@@ -39,7 +39,8 @@ const targets = [
 const homepage = 'https://aiti.pw/extensions/aiti-extman.html';
 
 for (const extDir of targets) {
-  mkdirSync(resolve(extDir, 'dist'), { recursive: true });
+  // client/ is populated by the bundle copy below; a deploy dir may be an old layout (dist/ only) — create both
+  for (const sub of ['dist', 'client']) mkdirSync(resolve(extDir, sub), { recursive: true });
   for (const f of ['index.ts', 'icon.svg', 'installer.ts', 'publisher.ts', 'shared-deps.ts', 'protocol-screen.mjs', 'pinyin-index.mjs', 'updates-merge.ts']) copyFileSync(resolve(root, f), resolve(extDir, f));
   // 协议版本 canonical（_shared/ext-protocol.mjs）→ 部署目录同名拷贝（index.ts 以 ./ext-protocol.mjs 相对导入）
   copyFileSync(resolve(root, '../_shared/ext-protocol.mjs'), resolve(extDir, 'ext-protocol.mjs'));

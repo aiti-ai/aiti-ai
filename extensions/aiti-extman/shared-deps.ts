@@ -150,12 +150,14 @@ export interface ReconcileResult {
   ok: boolean;
   reason: string;
   root: string;
-  /** 本次对齐到的依赖并集。 */
+  /** Dependency union aligned to this round (including post-fallback pinned versions). */
   deps: Record<string, string>;
   /** 并集相比根 package.json 现值是否有变化（有变化才重写 deps 字段；npm install 始终跑，satisfied 时秒级空转）。 */
   changed: boolean;
   output?: string;
   error?: string;
+  /** Specs the registry cannot satisfy (pinned to the installed version or dropped); keyed by package name, value = reason. */
+  skipped?: Record<string, string>;
 }
 
 let lastResult: ReconcileResult | null = null;
@@ -174,21 +176,63 @@ async function doReconcile(reason: string): Promise<ReconcileResult> {
   const { deps } = collectDeps();
   const pkg = readJson(pkgPath) ?? { ...SKELETON };
   const prev = (pkg.dependencies ?? {}) as Record<string, string>;
-  const changed = JSON.stringify(prev) !== JSON.stringify(deps);
-  const result: ReconcileResult = { ok: false, reason, root, deps, changed };
+  const result: ReconcileResult = { ok: false, reason, root, deps, changed: JSON.stringify(prev) !== JSON.stringify(deps) };
+  // npm install always runs: with unchanged deps it aligns node_modules with the lockfile
+  // (self-heal after a manual wipe / a previous failure); with changed deps it installs
+  // the additions and prunes packages that left the union.
+  //
+  // One unresolvable spec (e.g. a range pushed ahead of its publish) fails the whole
+  // install — and since it is already written into the skeleton package.json, every
+  // later reconcile (self-heal included) fails again: one bad version string permanently
+  // breaks all shared deps. Fallback: peel the offending packages out of the npm error,
+  // pin the ones with an installed version to that exact version (runtime imports keep
+  // working; the range resolves once published and the next reconcile upgrades), drop
+  // the ones without, then retry the install.
+  const effective: Record<string, string> = { ...deps };
+  const skipped: Record<string, string> = {};
   try {
-    if (changed) {
-      pkg.dependencies = deps;
+    for (let round = 0; ; round++) {
+      pkg.dependencies = effective;
       writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+      try {
+        const { stdout, stderr } = await runNpm(
+          ["install", "--prefix", root, "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
+          root,
+        );
+        result.ok = true;
+        result.output = (stderr || stdout || "").split("\n").filter(Boolean).slice(-6).join("\n");
+        break;
+      } catch (e) {
+        const err = e as { stderr?: string; stdout?: string; message?: string };
+        const text = [err.stderr, err.stdout, err.message].filter(Boolean).join("\n");
+        const offenders = unresolvableSpecs(text, Object.keys(effective));
+        if (offenders.length === 0 || round >= 4) {
+          result.error = text.split("\n").filter(Boolean).slice(-8).join("\n");
+          break;
+        }
+        for (const name of offenders) {
+          // Escape hatch: a pin that npm itself still rejects (exact specs of never-published
+          // versions hit the registry even when node_modules holds a copy) must not loop forever
+          // — give up on the shared-root entry for this name; vendored copies under
+          // extensions/node_modules keep such packages resolvable without npm.
+          const cur = effective[name];
+          const alreadyPinned = cur !== deps[name] && /^\d+\.\d+\.\d+$/.test(cur);
+          const pinned = alreadyPinned ? null : installedVersion(root, name);
+          if (pinned) {
+            effective[name] = pinned;
+            skipped[name] = `${deps[name]}: no registry version satisfies it; pinned to installed ${pinned}`;
+          } else {
+            delete effective[name];
+            skipped[name] = alreadyPinned
+              ? `${deps[name]}: pinned ${cur} still unresolvable on registry; dropped from shared root`
+              : `${deps[name]}: no registry version satisfies it and nothing installed; dropped from shared root`;
+          }
+        }
+      }
     }
-    // npm install 始终执行：deps 未变时对齐 node_modules 与 lockfile（手动删库/上次失败自愈）；
-    // deps 变化时安装新增 + 裁剪并集里消失的包。
-    const { stdout, stderr } = await runNpm(
-      ["install", "--prefix", root, "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
-      root,
-    );
-    result.ok = true;
-    result.output = (stderr || stdout || "").split("\n").filter(Boolean).slice(-6).join("\n");
+    result.deps = effective;
+    result.changed = JSON.stringify(prev) !== JSON.stringify(effective);
+    if (Object.keys(skipped).length > 0) result.skipped = skipped;
   } catch (e) {
     const err = e as { stderr?: string; stdout?: string; message?: string };
     result.error = (err.stderr || err.stdout || err.message || String(e))
@@ -199,6 +243,39 @@ async function doReconcile(reason: string): Promise<ReconcileResult> {
   }
   lastResult = result;
   return result;
+}
+
+/**
+ * Package names npm could not resolve (ETARGET "No matching version found for name@spec",
+ * E404 "name is not in the npm registry", or the %2f-encoded scope name in a 404 GET
+ * line). Only names present in the candidate union are returned, so unrelated errors
+ * never cause collateral damage.
+ */
+function unresolvableSpecs(text: string, candidates: string[]): string[] {
+  const stripSpec = (raw: string) => {
+    const i = raw.lastIndexOf("@");
+    return i > 0 ? raw.slice(0, i) : raw;
+  };
+  const hits = new Set<string>();
+  const add = (raw: string) => {
+    const name = stripSpec(raw.replace(/%2f/gi, "/").replace(/\?.*$/, "")).trim();
+    if (candidates.includes(name)) hits.add(name);
+  };
+  for (const m of text.matchAll(/No matching version found for (\S+)/g)) add(m[1]);
+  for (const m of text.matchAll(/["']([^"']+)["'] is not in the npm registry/g)) add(m[1]);
+  for (const m of text.matchAll(/404[^\n]*?GET \S*?((?:@[^\s/]+%2[fF])?[^\s/?]+)/gi)) add(m[1]);
+  return [...hits];
+}
+
+/** Installed version of a package in the shared root (reads the package's own package.json; null when never installed). */
+function installedVersion(root: string, name: string): string | null {
+  try {
+    const p = join(root, "node_modules", ...name.split("/"), "package.json");
+    const v = (JSON.parse(readFileSync(p, "utf8")) as { version?: string }).version;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── 状态视图（status 注解用） ──
