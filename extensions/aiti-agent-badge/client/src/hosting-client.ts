@@ -53,6 +53,38 @@ export type SwitchResult = {
   info: HostingInfo;
 };
 
+/** Normalized account quota from a backend's get_usage capability (e.g. qoder credits + buckets). */
+export type BackendUsage = {
+  provider?: string;
+  plan?: string;
+  buckets?: Array<{ name: string; total?: number; used?: number; remaining?: number; usedPercent?: number }>;
+  credits?: { remaining?: number; used?: number; usedPercent?: number; unit?: string; expiresAt?: number };
+  quotaExceeded?: boolean;
+};
+
+/**
+ * Account quota for a backend session via its get_usage capability.
+ * Transport = the chat's own POST /api/agent/[id]: it resolves every hosting mode (server-registry
+ * handles AND detached wrappers via detached-attach). The bare /api/session-backends handle
+ * registry only covers the former — a wrapper-hosted session 404s there and the row would hide.
+ * Returns null when unsupported (501 → hide the row) or the fetch fails (caller keeps its last value).
+ */
+export async function fetchBackendUsage(sessionId: string): Promise<BackendUsage | null> {
+  try {
+    const res = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sessionId)}`), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "get_usage" }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const d = await res.json().catch(() => null) as { success?: boolean; data?: { usage?: BackendUsage | null } } | null;
+    return d?.data?.usage ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type HostingState = {
   info: HostingInfo | null;
   loading: boolean;
