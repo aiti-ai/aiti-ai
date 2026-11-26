@@ -627,3 +627,41 @@ test("attach 预热：get_state 回显 model + pending>0 时 hydrate 远端队�
   assert.deepEqual(handle.queueManage && (await handle.queueManage({ action: "list" })).followUp, ["q1"], "镜像被 hydrate 回填");
   assert.deepEqual(handle.getModel(), { id: "m1", provider: "p1" }, "首个 state 读取即可拿到启动模型");
 });
+
+test("handle 级：getSessionStats 转发 pi 线命令 get_session_stats（全量统计一次拿全）", async () => {
+  const { createHandleForTest, PI_SPEC } = await import("./pi-handle.ts");
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "tstats", child);
+  const p = h.getSessionStats();
+  await later(20);
+  const frame = child.frames().find((f) => f.type === "get_session_stats");
+  assert.ok(frame, "应向子进程发 get_session_stats");
+  feedResponse(h, frame.id, {
+    sessionFile: "/home/x/.pi/sessions/s1.jsonl",
+    sessionId: "s1",
+    userMessages: 1,
+    assistantMessages: 102,
+    toolCalls: 101,
+    toolResults: 101,
+    totalMessages: 205,
+    tokens: { input: 158987, output: 43167, cacheRead: 8808320, cacheWrite: 0, total: 9010474 },
+    cost: 0.07617321,
+  });
+  const st = await p;
+  assert.equal(st?.sessionFile, "/home/x/.pi/sessions/s1.jsonl", "sessionFile 透传（面板不再 In-memory）");
+  assert.equal(st?.totalMessages, 205);
+  assert.equal(st?.tokens.total, 9010474);
+  assert.ok(Math.abs((st?.cost ?? 0) - 0.07617321) < 1e-9);
+});
+
+test("handle 级：getSessionStats 线命令失败 → undefined（fail-soft，宿主回退 totals 路径）", async () => {
+  const { createHandleForTest, PI_SPEC } = await import("./pi-handle.ts");
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "tstats2", child);
+  const p = h.getSessionStats();
+  await later(20);
+  const frame = child.frames().find((f) => f.type === "get_session_stats");
+  assert.ok(frame);
+  feed(h, { id: frame.id, type: "response", command: "get_session_stats", success: false, error: "boom" });
+  assert.equal(await p, undefined, "错误帧 → undefined 而非抛出");
+});

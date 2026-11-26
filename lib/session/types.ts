@@ -579,10 +579,35 @@ export interface SessionHandle {
   /** Usage/cost snapshot of the most recent turn; credits-billed account backends (e.g. qoder) query an API and may return a Promise. @capability getUsage */
   getUsage?(): UsageReport | undefined | Promise<UsageReport | undefined>;
   /**
+   * Full session statistics from the backend's own runtime: per-role message counts,
+   * tokens, cost, and the session file path. Preferred over getUsageTotals (which
+   * cannot express per-role counts or a file path, so the stats panel stayed all
+   * zeros / "In-memory" for disk-persisted external sessions). pi's RPC wire protocol
+   * carries get_session_stats (session.getSessionStats()), so spawn handles forward
+   * it directly. Shape mirrors pi's SessionStats with every field optional so a
+   * partial backend degrades field-by-field; the adapter folds in getContextUsage()
+   * and a computed tokens.total when absent. When unimplemented (or the read
+   * fails) the adapter falls back to getUsageTotals + zeros (behavior unchanged).
+   */
+  getSessionStats?(): Promise<{
+    sessionFile?: string;
+    sessionId?: string;
+    userMessages?: number;
+    assistantMessages?: number;
+    toolCalls?: number;
+    toolResults?: number;
+    totalMessages?: number;
+    tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+    cost?: number;
+    credits?: number;
+    contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null };
+  } | undefined>;
+  /**
    * Session-cumulative usage (accumulated per turn while the handle's process is
    * alive; reset on process restart, not a persistent metric). The data source that
    * turns get_session_stats from hardcoded all-zeros into real totals for external
-   * backends. When unimplemented the stats panel stays all zeros (behavior unchanged).
+   * backends. Superseded by getSessionStats when the backend implements it. When
+   * unimplemented the stats panel stays all zeros (behavior unchanged).
    */
   getUsageTotals?(): {
     inputTokens?: number;
