@@ -106,6 +106,31 @@ function collectTags() {
 
 async function main() {
   const args = process.argv.slice(2);
+  // This is the only entry that creates and pushes the release tag, so an unrecognised flag
+  // (historically `--help` was silently ignored and the run went on to tag) must abort here.
+  const KNOWN_FLAGS = new Set(["--dry-run", "--suggest", "--force", "--skip-notes", "--skip-external"]);
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(`release-tag — validate the fork version and create the annotated tag v<version>
+
+Usage:
+  node scripts/release-tag.mjs                 validate + create the annotated tag
+  node scripts/release-tag.mjs --dry-run       validate and print only, write nothing
+  node scripts/release-tag.mjs --suggest       print the next -aiti.N number for this base
+  node scripts/release-tag.mjs --force         allow a dirty worktree (default: refuse)
+  node scripts/release-tag.mjs --skip-notes    waive the release-notes guard (hotfix; warned)
+  node scripts/release-tag.mjs --skip-external waive the external-registry floor check
+  -h, --help                                   show this help and exit
+
+Guards (all must pass): version is X.Y.Z-aiti.N, tag is new locally and on origin, worktree is
+clean, version > every existing tag, external dependency floors resolve, releases/<tag>.md exists.`);
+    return;
+  }
+  for (const a of args) {
+    if (KNOWN_FLAGS.has(a)) continue;
+    console.error(`[release-tag] unknown argument: ${a}\n`);
+    console.error("Run with --help to list the supported flags.");
+    process.exit(2);
+  }
   const dryRun = args.includes("--dry-run");
   const suggest = args.includes("--suggest");
   const force = args.includes("--force");

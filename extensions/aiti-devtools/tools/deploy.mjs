@@ -31,6 +31,45 @@ const copyIfPresent = (src, dst, note) => {
   console.log('[deploy] ⚠ 源缺失，跳过 ' + note + '（发布仓 core 镜像不含 pair 三件 → pair 功能降级）');
 };
 
+// Deploy targets: dev instance (PI_WEB_DEV_DIST=1, extension root ~/.pi/web-dev) and prod (~/.pi/web).
+// Flags are validated before anything is built or copied: this script writes into BOTH trees, so an
+// unrecognised argument (historically `--help` silently fell through to a full deploy) must abort.
+const rawArgs = process.argv.slice(2);
+const USAGE = `deploy aiti-devtools (inject assets + extension sources) into the pi-web trees
+
+Usage:
+  node extensions/aiti-devtools/tools/deploy.mjs [--prod | --dev]
+
+Options:
+  --prod   Prod tree only (~/.pi/web/extensions)
+  --dev    Dev tree only  (~/.pi/web-dev/extensions)
+  (none)   Both trees
+  -h, --help  Show this help and exit
+
+Notes:
+  - Run from anywhere; the repo root is derived from this file.
+  - Live instances pick the new build up via POST /api/extensions/reload (or refresh the page
+    for the injected browser assets).
+  - During a batch, scripts/deploy-all.mjs sets PI_WEB_DEFER_RELOAD=1 and reloads once at the end.
+`;
+if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
+for (const a of rawArgs) {
+  if (a === '--prod' || a === '--dev') continue;
+  console.error(`[deploy] unknown argument: ${a}\n`);
+  console.error(USAGE);
+  process.exit(2);
+}
+const wantProd = rawArgs.includes('--prod');
+const wantDev = rawArgs.includes('--dev');
+if (wantProd && wantDev) {
+  console.error('[deploy] --prod and --dev are mutually exclusive (pass one, or neither for both)\n');
+  process.exit(2);
+}
+const only = wantProd ? 'prod' : wantDev ? 'dev' : 'both';
+
 // client TS 残留检查（.mjs 里是合法 JS 语法检查不报、运行时必炸；FAIL 即部署失败）
 {
   const { checkClientDir } = await import("../../_shared/check-client.mjs");
@@ -43,8 +82,6 @@ const injectDist = resolve(injectRoot, 'dist');
 const coreSrc = resolve(root, 'packages/aiti-devtools-core/src');
 // Extension sources live under extensions/ in this repo (older layout nested them under pi-web-ext/).
 const extSrc = existsSync(resolve(root, 'extensions/aiti-devtools')) ? resolve(root, 'extensions/aiti-devtools') : resolve(root, 'pi-web-ext/aiti-devtools');
-// 部署目标：dev 实例（PI_WEB_DEV_DIST=1，扩展根 ~/.pi/web-dev）与生产（~/.pi/web）
-const only = process.argv[2] === '--prod' ? 'prod' : process.argv[2] === '--dev' ? 'dev' : 'both';
 const TARGETS = [
   ...(only !== 'dev' ? [{ name: 'prod', extRepo: resolve(homedir(), '.pi', 'web', 'extensions'), commit: true }] : []),
   ...(only !== 'prod' ? [{ name: 'dev', extRepo: resolve(homedir(), '.pi', 'web-dev', 'extensions'), commit: false }] : []),
