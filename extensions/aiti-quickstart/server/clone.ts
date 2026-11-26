@@ -237,6 +237,7 @@ export async function handleClone(body: Record<string, unknown> | null, ctx: Ext
   const dir = expandHomePath(typeof body?.dir === "string" ? body.dir.trim() : "");
   const branch = typeof body?.branch === "string" ? body.branch.trim() : "";
   const depth = typeof body?.depth === "number" && body.depth > 0 ? Math.floor(body.depth) : 0;
+  const submodules = body?.submodules === true;
 
   if (!url || isUnsafeGitArg(url)) return json({ ok: false, error: "缺少或非法的仓库地址" }, 400);
   if (branch && isUnsafeGitArg(branch)) return json({ ok: false, error: "非法的分支名" }, 400);
@@ -275,10 +276,11 @@ export async function handleClone(body: Record<string, unknown> | null, ctx: Ext
   const args: string[] = ["clone", "--progress"];
   if (depth > 0) args.push("--depth", String(depth));
   if (branch) args.push("--branch", branch);
+  if (submodules) args.push("--recurse-submodules");
   args.push(url, stage);
 
   publish?.(topic, { phase: "cloning", message: `${url} → ${finalPath}` });
-  const r = await spawnStream(git, args, { timeoutMs: 600_000 }, (line) => {
+  const r = await spawnStream(git, args, { timeoutMs: submodules ? 900_000 : 600_000 }, (line) => {
     const frame = parseCloneProgress(line);
     if (frame) publish?.(topic, frame);
   });
