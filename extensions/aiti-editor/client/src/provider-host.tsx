@@ -15,6 +15,7 @@ import { editorBase, ensureEditorTicket, extSvc, t } from "./host-shim.ts";
 import { isDarkTheme } from "./lib";
 import { hasCapability, capabilityBadge, type EditorCapability, type ProviderLike } from "./arbiter";
 import { FileToolbar, type MenuAction } from "./file-toolbar";
+import { loadMonaco } from "./monaco-setup";
 
 type Disposable = { dispose(): void };
 
@@ -93,6 +94,8 @@ export function ThirdPartyProviderHost(props: {
   const makeHost = useCallback(() => {
     const w = we();
     return {
+      /** Load the Monaco instance (CodeHub read-only provider uses it for remote copies). */
+      loadMonaco: () => loadMonaco(),
       /** 编辑器视图注册保存处理器（host.save 已封装管线；菜单「保存/另存为」经此触发） */
       registerSaveHandler(fn: (mode: "save" | "saveAs") => Promise<void>) {
         saveHandlerRef.current = fn;
