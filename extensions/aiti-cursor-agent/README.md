@@ -1,6 +1,8 @@
 # @aiti-ai/aiti-cursor-agent
 
 > Drives Cursor Agent CLI sessions (agentKey: cursor) — stream-json print mode + --resume multi-turn; Cursor IDE sessions parsed read-only
+>
+> **Legacy backend.** `cursor-agent acp` (registered by `aiti-acp-agent`, higher resolution priority) is the primary Cursor backend: one persistent RPC process, native image blocks, tool/permission frames. This print-mode backend remains for chat-store sessions ACP cannot load and for the account-quota API.
 
 English · [简体中文](./README.zh-CN.md)
 
