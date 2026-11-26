@@ -24,7 +24,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { homedir } from "node:os";
@@ -59,6 +59,16 @@ import {
   describeSteerGate, parseSteerProbeBook, steerEvidenceStale, steerProbePassed, steerProbePath, withSteerGate,
   type SteerProbeBook,
 } from "./steer-gate.ts";
+// Compact capability gate (same evidence discipline; probe = tools/compact-probe-acp.mjs)
+import {
+  compactEvidenceStale, compactProbePassed, compactProbePath, describeCompactGate,
+  parseCompactProbeBook, withCompactGate, type CompactProbeBook,
+} from "./compact-gate.ts";
+// Native transcript: context_usage_ratio fallback + compaction-boundary facts
+import {
+  NATIVE_USAGE_SYNC_READ_MAX, NATIVE_USAGE_TAIL_BYTES, readTailText, resolveNativeSessionFile,
+  sessionCompactBoundaries,
+} from "./native-transcript.ts";
 
 let hostSvc: any = null; // DI 方案 P1：startup 捕获 ctx.services（session-manager.sessions 消费）
 /** 受控登录 API（startup 里挂载；/login/* 命中返回 Response，其余 null 放行）。 */
@@ -98,9 +108,35 @@ export function loadSteerProbeBook(stateDir: string): SteerProbeBook {
   return book;
 }
 
-/** 某个 CLI 二进制的实际能力表（基表 + 探针门控的 steer；只认 ACP 驱动证据）。 */
+/**
+ * Compact probe ledger (`<stateDir>/compact-probe.json`, written by
+ * `node tools/compact-probe-acp.mjs --record`). Empty = no evidence = `compact`
+ * stays false for every CLI (fail-closed, see compact-gate.ts).
+ */
+let compactProbeBook: CompactProbeBook = {};
+
+/** Swap the ledger in (startup read and unit-test injection both use this). */
+export function applyCompactProbeBook(book: CompactProbeBook): void {
+  compactProbeBook = book;
+}
+
+/** Read the compact ledger once at startup (broken/missing file -> empty book). */
+export function loadCompactProbeBook(stateDir: string): CompactProbeBook {
+  let text: string | null = null;
+  try {
+    text = readFileSync(compactProbePath(stateDir), "utf8");
+  } catch {
+    text = null; // never probed = normal state
+  }
+  const book = parseCompactProbeBook(text);
+  applyCompactProbeBook(book);
+  return book;
+}
+
+/** Actual capability table of one CLI binary (base table + probe-gated steer / compact; ACP evidence only). */
 function qoderCapabilitiesFor(cliPath: string | null | undefined): SessionCapabilitiesLike {
-  return withSteerGate(QODER_CAPABILITIES, steerProbePassed(steerProbeBook, cliPath, "acp"));
+  const gated = withSteerGate(QODER_CAPABILITIES, steerProbePassed(steerProbeBook, cliPath, "acp"));
+  return withCompactGate(gated, compactProbePassed(compactProbeBook, cliPath));
 }
 
 /**
@@ -443,42 +479,7 @@ export function qoderContextWindow(modelId?: string): number | undefined {
  * converted to a percentage, credits only summed.
  */
 type NativeSessionUsage = { percent?: number; credits?: number; model?: string };
-const NATIVE_USAGE_SYNC_READ_MAX = 8 * 1024 * 1024; // sync-read cap (engineering red line: no sync reads over 8MB)
-const NATIVE_USAGE_TAIL_BYTES = 2 * 1024 * 1024;
-const nativeSessionPathCache = new Map<string, string>();
 const nativeUsageCache = new Map<string, { key: string; usage: NativeSessionUsage }>();
-
-/** Transcript path: the projects dir shards by cwd, and shard-name casing/escaping varies
- * across versions (both d-- and D-- seen) → scan the directories. */
-function resolveNativeSessionFile(nativeSid: string): string | undefined {
-  const cached = nativeSessionPathCache.get(nativeSid);
-  if (cached && existsSync(cached)) return cached;
-  for (const home of [".qoder-cn", ".qoder"]) {
-    const projects = join(homedir(), home, "projects");
-    let dirs: string[];
-    try { dirs = readdirSync(projects); } catch { continue; }
-    for (const dir of dirs) {
-      const fp = join(projects, dir, `${nativeSid}.jsonl`);
-      if (existsSync(fp)) {
-        nativeSessionPathCache.set(nativeSid, fp);
-        return fp;
-      }
-    }
-  }
-  return undefined;
-}
-
-function readTailText(fp: string, size: number, bytes: number): string {
-  const fd = openSync(fp, "r");
-  try {
-    const start = Math.max(0, size - bytes);
-    const buf = Buffer.alloc(size - start);
-    readSync(fd, buf, 0, buf.length, start);
-    return buf.toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
-}
 
 function scanNativeUsage(text: string, usage: { percent?: number; credits?: number; model?: string }): void {
   for (const line of text.split("\n")) {
@@ -522,8 +523,12 @@ function readNativeSessionUsage(nativeSid: string): NativeSessionUsage | undefin
   }
 }
 
+/** The CLI's answer when `/compact` is only available in its interactive TUI (see compact-gate.ts). */
+const COMPACT_REFUSAL = /requires interactive UI|not available in ACP/i;
+
 /**
- * 基能力表（**不是**最终值：`steer` 由探针门控逐 CLI 覆盖，见 qoderCapabilitiesFor）。
+ * Base capability table (NOT the final value: `steer`/`compact` are overridden per CLI by
+ * the probe gates, see qoderCapabilitiesFor).
  */
 const QODER_CAPABILITIES: SessionCapabilitiesLike = {
   // ACP 驱动（2026-11-13 重写）：运行中注入 = 在途 session/prompt 旁再发一条
@@ -544,6 +549,13 @@ const QODER_CAPABILITIES: SessionCapabilitiesLike = {
   setThinkingLevel: false,
   fork: false,
   renameSession: false,
+  // Compact: ACP exposes no session/compact — the only channel is the CLI's own
+  // `/compact` slash command sent as a session/prompt. That is a runtime fact per
+  // binary: qoderclicn 1.1.87 runs it and writes compact_boundary(trigger:"manual"),
+  // qodercli 1.1.83 answers "Command /compact requires interactive UI and is not
+  // available in ACP." So the bit is evidence-gated (compact-gate.ts,
+  // tools/compact-probe-acp.mjs --record); no evidence = no button. The CLI's own
+  // auto-compaction is unaffected either way.
   compact: false,
   executeBash: false,
   listTools: true,
@@ -908,6 +920,15 @@ export class QoderHandle {
    */
   private commands: Array<{ name: string; description?: string; source: string }> = [];
   private permissionMode: string | undefined;
+  /**
+   * Assistant text collector for the compact turn only (`compact()` fills it, the
+   * stream handler appends). The CLI answers `/compact` either with a compaction
+   * (no text at all) or with a refusal sentence — the latter must become an error,
+   * not a silent success.
+   */
+  private compactTurnText: string | null = null;
+  /** One-shot log: the CLI advertises `compact` while no probe evidence exists yet. */
+  private compactHintLogged = false;
 
   private resetStream(): void {
     this.thinkingAcc = null;
@@ -956,7 +977,8 @@ export class QoderHandle {
     // ACP 驱动：steer = 在途 session/prompt 旁再发一条（CLI 自报 promptQueueing）。
     // 能力位与行为同一把门：只有 ACP 探针 pass 才给共享层挂 steer 钩子。
     const steerOn = steerProbePassed(steerProbeBook, cliPath, "acp");
-    this.capabilities = withSteerGate(QODER_CAPABILITIES, steerOn);
+    const compactOn = compactProbePassed(compactProbeBook, cliPath);
+    this.capabilities = withCompactGate(withSteerGate(QODER_CAPABILITIES, steerOn), compactOn);
     this.queueSupport = createBackendQueueSupport({
       isRunning: () => this.running || !this.aliveFlag,
       alive: () => this.aliveFlag,
@@ -1093,6 +1115,7 @@ export class QoderHandle {
       if (kind === "agent_message_chunk") {
         // 不在这里置 running：回合由 sendPromptTurn 置真、响应收口；超时后 CLI 仍会
         // 推迟到 chunk，置真会让已放弃的回合永远「运行中」（无后续帧可收口）。
+        if (this.compactTurnText !== null) this.compactTurnText += text;
         this.appendChunk("text", text);
       } else {
         this.appendChunk("thinking", text);
@@ -1152,6 +1175,15 @@ export class QoderHandle {
           source: "skill",
         }];
       });
+      // Evidence only, never a gate: the catalogue is the CLI's own claim. Opening the
+      // capability still needs tools/compact-probe-acp.mjs (compact-gate.ts).
+      if (!this.capabilities.compact && !this.compactHintLogged && this.commands.some((c) => c.name === "compact")) {
+        this.compactHintLogged = true;
+        console.log(
+          `[aiti-qoder-agent] ${this.variant} CLI 自报 compact 斜杠命令，但探针账本无证据 → 手动压缩保持关闭` +
+          "（可跑 node tools/compact-probe-acp.mjs --record 取证）",
+        );
+      }
       return;
     }
     if (kind === "usage_update") {
@@ -1554,6 +1586,10 @@ export class QoderHandle {
       const cliVersion = String((init?.agentInfo as Record<string, unknown> | undefined)?.version ?? "");
       const stale = this.capabilities.steer && cliVersion ? steerEvidenceStale(steerProbeBook, this.cliPath, cliVersion) : null;
       if (stale) console.warn(`[aiti-qoder-agent] ${stale}`);
+      const staleCompact = this.capabilities.compact && cliVersion
+        ? compactEvidenceStale(compactProbeBook, this.cliPath, cliVersion)
+        : null;
+      if (staleCompact) console.warn(`[aiti-qoder-agent] ${staleCompact}`);
       this.acp.notify("initialized", {});
       const { agentKey } = qoderVariant(this.variant);
       if (opts.sessionId) {
@@ -1738,9 +1774,9 @@ export class QoderHandle {
       historyEntry: unknown;
     },
     timeoutMs: number = QoderHandle.PROMPT_TIMEOUT_MS,
-  ): Promise<void> {
+  ): Promise<Record<string, unknown> | null> {
     const sid = realSidOf(this.id);
-    if (!sid || !this.acp) return;
+    if (!sid || !this.acp) return null;
     this.promptsInFlight += 1;
     this.running = true;
     let result: Record<string, unknown> | null = null;
@@ -1757,6 +1793,9 @@ export class QoderHandle {
       failure = e instanceof Error ? e.message : String(e);
     }
     this.settlePromptTurn(kind, result, failure, steer);
+    // Settled result is handed back to the caller that needs the reply (compact);
+    // a transport failure is reported as the absence of a result.
+    return failure ? null : result;
   }
 
   private settlePromptTurn(
@@ -2177,6 +2216,54 @@ export class QoderHandle {
   }
 
   /**
+   * @capability compact (probe-gated, see compact-gate.ts).
+   *
+   * ACP has no `session/compact`: the only channel is the CLI's own `/compact` slash
+   * command, sent as an ordinary session/prompt. Two outcomes must be told apart:
+   *   - the CLI runs it → one `system/compact_boundary` record lands in the native
+   *     transcript (trigger:"manual", with preTokens/postTokens) and no assistant
+   *     text comes back → report those numbers so the host banner shows real savings;
+   *   - the CLI refuses it with its interactive-only sentence → throw with the CLI's
+   *     own words; a silent success would tell the user their context was compacted
+   *     when nothing happened.
+   * The gate is closed unless tools/compact-probe-acp.mjs proved this exact binary,
+   * so a direct RPC caller gets a fail-loud answer.
+   */
+  async compact(customInstructions?: string): Promise<unknown> {
+    if (!this.capabilities.compact) {
+      throw new Error(
+        `Capability "compact" is not enabled for CLI "${this.cliPath || "?"}"：` +
+        "ACP 手动压缩面未通过探针（node tools/compact-probe-acp.mjs --record）",
+      );
+    }
+    await this.waitSessionReady();
+    if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) throw new Error("[aiti-qoder-agent] session not ready");
+    const extra = customInstructions?.trim();
+    const text = extra ? `/compact ${extra}` : "/compact";
+    const startedAt = Date.now();
+    this.compactTurnText = "";
+    let result: Record<string, unknown> | null = null;
+    try {
+      result = await this.sendPromptTurn([{ type: "text", text }], "primary");
+      const reply = (this.compactTurnText ?? "").trim();
+      this.compactTurnText = null;
+      if (COMPACT_REFUSAL.test(reply)) throw new Error(reply);
+      if (!result) throw new Error("[aiti-qoder-agent] /compact 未收到应答（传输中断或超时）");
+      // Real numbers only: the boundary this call just produced, never a guess.
+      const boundary = sessionCompactBoundaries(sid).at(-1);
+      const fresh = boundary?.timestamp ? Date.parse(boundary.timestamp) >= startedAt - 10_000 : Boolean(boundary);
+      if (fresh && typeof boundary?.preTokens === "number" && typeof boundary.postTokens === "number") {
+        return { tokensBefore: boundary.preTokens, estimatedTokensAfter: boundary.postTokens };
+      }
+      return result;
+    } finally {
+      this.compactTurnText = null;
+    }
+  }
+
+  /**
    * @capability queueManage —— queue keeper 队列操作原语转发共享层。
    * followUp 组全 CRUD；steer 组只读（注入后条目在 CLI 自己的消息队列里，共享层对
    * kind==="steer" 的写操作给出说明性报错——真撤回见 control_request/cancel_async_message，
@@ -2429,7 +2516,7 @@ function scanQoderBackends(
     if (bin) {
       installedVariants.add(v.variant);
       registered.push(`${key}(${bin})`);
-      console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin, "acp")}`);
+      console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin, "acp")} · ${describeCompactGate(compactProbeBook, bin)}`);
     } else {
       unavailable.push(key); // PATH 与安装位均无 → 条目常驻但灰显（装机后 rescan 自动点亮）
     }
@@ -2523,6 +2610,9 @@ export default {
       // steer 探针账本（<stateDir>/steer-probe.json，tools/steer-probe-acp.mjs --record 写入）：
       // 必须在注册会话后端之前读入——能力表与 steer 钩子都在句柄创建时同步判定。
       loadSteerProbeBook(queueStateDir);
+      // Compact probe ledger (<stateDir>/compact-probe.json, tools/compact-probe-acp.mjs --record):
+      // same reason — capability tables are decided synchronously when a handle is created.
+      loadCompactProbeBook(queueStateDir);
       ctx.services?.provide?.("aiti-qoder-agent.sessionDormantState", readTaskSnapshot);
       // 受控登录（工具条 🔑）：spawn `login` + NO_BROWSER=true；variant 可由 body 指定，
       // 缺省 cn 优先（本机双 CLI 装机时与 credits 面板一致）、未装才落 intl

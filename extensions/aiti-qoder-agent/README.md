@@ -21,6 +21,7 @@ A dedicated session backend for the Qoder CLI (multi-agent frontend / All Sessio
 | `listModels` | Model catalog — infer gateway `/api/v2/model/list?Encode=1` (WASM-signed request) |
 | `taskList` | Read-only mirror of the TodoWrite work plan (derived from tool events via the shared layer `@aiti-ai/ext-shared/task-list`; disk snapshot fallback for cold sessions) |
 | `queueManage` | Run queueing (`@aiti-ai/ext-shared/backend-queue` file sidecar + automatic next round after settle) |
+| `compact` | Manual context compaction: sends the CLI's own `/compact` as an ordinary `session/prompt` (ACP has no `session/compact`). Evidence-gated per CLI binary (`tools/compact-probe-acp.mjs --record`) — support differs between CLI builds; the reported numbers come from the native transcript's `compact_boundary`. The CLI's own auto-compaction is independent of this capability |
 | `respondInteraction` | `control_request/can_use_tool` interaction chain (shared-layer ledger): authorization cards / AskUser cards / plan-approval cards by tool kind; replies go back as `control_response`; pending items persist to the sidecar and are re-delivered on `subscribe` |
 | Plan mode | `setPermissionMode("plan")` via `control_request/set_permission_mode`; enter/exit reported by CLI `system/plan_mode_changed` frames, `getPermissionMode()` reflects it. Bypass mode only affects tool authorization — plan/AskUser/ExitPlanMode still ask |
 | `getAllTools` / `getCommands` / `getPermissionMode` | Capability snapshots — carried for free in the CC-family `system/init` frame |

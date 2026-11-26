@@ -21,6 +21,7 @@ Qoder CLI 专属会话后端（多 agent 前端 / All Sessions 接入）。qoder
 | `listModels` | 模型目录——infer 网关 `/api/v2/model/list?Encode=1`（WASM 签名请求） |
 | `taskList` | TodoWrite 工作计划只读镜像（共享层 `@aiti-ai/ext-shared/task-list` 从工具事件派生；冷会话读磁盘快照） |
 | `queueManage` | 运行中排队（`@aiti-ai/ext-shared/backend-queue` 文件 sidecar + settle 后自动续轮） |
+| `compact` | 手动上下文压缩：把 CLI 自己的 `/compact` 当普通 `session/prompt` 发（ACP 无 `session/compact`）；能力位按二进制探针门控（`tools/compact-probe-acp.mjs --record`，不同版本 CLI 认/拒不一）；数字取自 native transcript 的 `compact_boundary`。CLI 自带自动压缩不受此能力位影响 |
 | `respondInteraction` | `control_request/can_use_tool` 交互链（共享层账本）：按工具名派生 kind → 授权卡 / AskUser 卡 / 方案审批卡，应答回 `control_response`；未决项落 sidecar 并经 `subscribe` 时定向补发（重建/刷新不丢卡） |
 | plan 模式 | `setPermissionMode("plan")` 走 `control_request/set_permission_mode`；进/出 plan 由 CLI `system/plan_mode_changed` 帧回报，`getPermissionMode()` 据此返回 `"plan"`。bypass 只放行工具授权，plan/AskUser/ExitPlanMode 仍会问 |
 | `getAllTools` / `getCommands` / `getPermissionMode` | 能力面快照——CC 族 `system/init` 帧免费携带 |
