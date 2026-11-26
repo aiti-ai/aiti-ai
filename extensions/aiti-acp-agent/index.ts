@@ -122,6 +122,11 @@ export const ACP_AGENTS: Array<{
   bin: string;
   args: string[];
   agentKey?: string;
+  /** Registry resolution priority vs other providers of the same agentKey (higher wins).
+   *  Used where an agent has a legacy non-ACP backend too: ACP is the persistent RPC one. */
+  priority?: number;
+  /** Backend-picker display position (lower = earlier; default 1000). */
+  order?: number;
   resolve?: () => { bin: string; args: string[] } | null;
 }> = [
   // Claude Code ACP：@agentclientprotocol/claude-agent-acp（0.100.0 全握手实证
@@ -165,7 +170,14 @@ export const ACP_AGENTS: Array<{
   // （2026.10.22 裸握手实证 initialize 通：loadSession:true、image=true；未登录时
   // session/new 报 Authentication required——需先 `cursor-agent login` 浏览器 OAuth，
   // 与 qwen 同款装机才接 + 用户自登录模式）。
-  { name: "cursor", bin: "cursor-agent", args: ["acp"], agentKey: "cursor" },
+  // Cursor CLI: `cursor-agent acp` is a native ACP server (measured end-to-end 2026-11-26:
+  // initialize loadSession:true / promptCapabilities.image:true / sessionCapabilities.list,
+  // session/new returns the parameterized model catalog, and a base64 image block reaches
+  // the model). priority 20 beats the legacy print backend's 10, so new/takeover cursor
+  // sessions default to the persistent RPC process (print re-pays a ~5-8s warm-up every
+  // turn); a chat-mode id that ACP cannot load falls back to print — openExternalSession
+  // walks the candidate list on failure.
+  { name: "cursor", bin: "cursor-agent", args: ["acp"], agentKey: "cursor", priority: 20, order: 900 },
   // ── 以下 13 家对齐 agent-shell（xenodium/agent-shell，Emacs ACP 客户端）2026-11-08 全量清单 ──
   // Antigravity（Google）：`agy acp`（登录 `agy acp --login`）。antigravity.google
   { name: "antigravity", bin: "agy", args: ["acp"], agentKey: "antigravity" },
@@ -1507,6 +1519,9 @@ function scanAcpBackends(
       agentKey: agent.agentKey,
       // claude-code 保持 Backend 下拉第一位（方案 aiti-pi-family-multi-fork-rpc-plan §3.2）
       ...(agent.name === "claude-code" ? { order: 10 } : {}),
+      // Same-agent precedence (cursor: ACP beats the legacy print backend) + picker position.
+      ...(agent.priority !== undefined ? { priority: agent.priority } : {}),
+      ...(agent.order !== undefined ? { order: agent.order } : {}),
       maxCapabilities: ACP_CAPABILITIES,
       // Availability snapshot: false = CLI missing → dropdown entry greyed out;
       // refreshed on rescan. installHint comes from the agent catalog.

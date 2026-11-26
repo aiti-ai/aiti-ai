@@ -5,10 +5,14 @@
  * cursor-agent / cursor-agent-writer → cursor）。pi-web 会话宇宙里的 Cursor
  * 子代理：落盘、Fleet 面板、前端打开 attach 全套复用。
  *
- * CLI 形态（cursor 3.17 实测 --help）：
+ * CLI surface (probed on cursor 3.17 --help, re-checked on 3.29):
  *   cursor agent -p <prompt> --output-format stream-json [--stream-partial-output]
- *                [--resume <chatId>] [--model <m>] [--mode plan|ask]
- *   - 一次进程 = 一轮（print 模式）；多轮会话靠 --resume <chatId> 重新 spawn。
+ *                [--resume <chatId>] [--model <m>] [--mode plan|ask] [--image <path>]…
+ *   - one process per turn (print mode); multi-turn resumes via `--resume <chatId>`.
+ *   - `--image <path>` is a hidden option (absent from --help; probed 2026-11-26 on
+ *     2026.11.17 and re-probed on 2026.11.22: repeatable, the file is read and validated
+ *     as jpeg/png/gif/webp — anything else errors out; a real 1-color PNG round-trip
+ *     answered correctly), so pasted images land in a temp file and travel by path.
  *   - stream-json 行格式官方文档缺位：解析器宽松自适应（实测 3.17：init/user/
  *     thinking/assistant 增量词帧/完整帧/result；文本帧一律当增量累积，result
  *     帧唯一收尾；未识别行忽略）。
@@ -18,11 +22,21 @@
  * 能力面（fail-loud）：prompt/abort/getMessages ✅；steer（CLI 无交互通道）/
  * fork/rename/compact/respondPermission ❌。权限：print 模式无审批流，工具
  * 访问由用户 cursor 配置决定（需要收紧时调用方经 extraArgs 传 --mode plan）。
+ *
+ * ⚠ Legacy backend (2026-11-26): `cursor-agent acp` is the primary Cursor backend —
+ * aiti-acp-agent registers it with priority 20 (above this provider's 10), so new and
+ * takeover cursor sessions get the persistent RPC process (print mode re-pays a ~5-8s
+ * workspace warm-up on EVERY turn, measured). This backend stays for two reasons: old
+ * chat-store sessions ACP cannot load (`session/load` → not found) fall back here via
+ * openExternalSession, and it owns the account-quota API (`/login/quota`) the agent
+ * manager aggregates. Images here travel as `--image <path>` files; only the live
+ * session mirrors them (the chat store keeps text).
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { fetchCursorQuota, readCursorToken } from "./cursor-quota.ts";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
@@ -901,7 +915,7 @@ export default {
       const cursorReady = cursorBin.includes("/") || Boolean(whichBin(cursorBin));
       const cursorProvider = {
         type: "cursor-agent",
-        label: "Cursor Agent CLI",
+        label: "Cursor Agent CLI (legacy)",
         agentKey: "cursor",
         priority: 10,
         // The core may host this backend's process in a detachable wrapper (an

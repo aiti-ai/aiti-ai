@@ -1,6 +1,8 @@
 # @aiti-ai/aiti-cursor-agent
 
 > 驱动 Cursor Agent CLI 会话（agentKey: cursor）——stream-json print 模式 + --resume 多轮；Cursor IDE 会话只读解析
+>
+> **兼容后端。** 主后端是 `cursor-agent acp`（由 `aiti-acp-agent` 注册，解析优先级更高）：常驻 RPC 进程、原生图片块、工具/授权帧。本 print 模式后端保留给 ACP 载入不了的 chat-store 会话，并负责账号额度 API。
 
 [English](./README.md) · 简体中文
 

@@ -235,3 +235,94 @@ test("hasConversation:false 与空目录不入列；adapter probe/list/parse 走
     assert.equal(parsed.meta.lastMessage, "a");
   } finally { rmSync(root, { recursive: true, force: true }); delete process.env.CURSOR_CONFIG_DIR; }
 });
+
+// ── ACP sessions (`cursor-agent acp`) ───────────────────────────────────────
+
+/** ACP meta.json shape (written by the ACP server): no hasConversation/timestamps. */
+function writeAcpSummary(dir, { cwd, title }) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "meta.json"), JSON.stringify({ schemaVersion: 1, cwd, ...(title ? { title } : {}) }));
+}
+
+test("ACP 根：acp-sessions 会话入列；空会话（无 store.db / 0 字节）跳过", () => {
+  const root = makeRoot();
+  try {
+    const real = uuid();
+    const realDir = join(root, "acp-sessions", real);
+    buildStoreDb(realDir, { sid: real, name: "ACP Turn", createdAt: 2_000, cwd: "/proj", turns: [
+      { user: "hello from acp", userTs: 2_100, steps: [{ kind: "assistant", text: "acp reply" }] },
+    ] });
+    writeAcpSummary(realDir, { cwd: "/proj", title: "ACP Turn" });
+    // abandoned session/new: meta.json only, no store.db
+    writeAcpSummary(join(root, "acp-sessions", uuid()), { cwd: "/proj" });
+    // empty store.db (opened, nothing written)
+    const emptyDir = join(root, "acp-sessions", uuid());
+    writeAcpSummary(emptyDir, { cwd: "/proj" });
+    mkdirSync(emptyDir, { recursive: true });
+    writeFileSync(join(emptyDir, "store.db"), Buffer.alloc(0));
+
+    const all = listCursorCliChats();
+    assert.equal(all.length, 1, "只有真写过内容的 ACP 会话入列");
+    assert.equal(all[0].kind, "acp");
+    const s = readCursorCliChat(real);
+    assert.ok(s, "ACP store decoded with the same reader");
+    assert.equal(s.messages.length, 2);
+    assert.equal(s.messages[0].text, "hello from acp");
+    assert.match(s.messages[1].text, /acp reply$/, "assistant step decoded from the same blob graph");
+    assert.equal(s.name, "ACP Turn");
+    assert.equal(s.cwd, "/proj");
+  } finally { rmSync(root, { recursive: true, force: true }); delete process.env.CURSOR_CONFIG_DIR; }
+});
+
+test("双写去重：ACP 副本优先于 chats 的续写截断副本（后者更新也不换）", () => {
+  const root = makeRoot();
+  try {
+    // ACP copy: the full conversation (3 turns), older.
+    const acpDir = join(root, "acp-sessions", SID);
+    buildStoreDb(acpDir, { sid: SID, name: "Full ACP", createdAt: 1_000, cwd: "/p", turns: [
+      { user: "t1", userTs: 1_100, steps: [{ kind: "assistant", text: "a1" }] },
+      { user: "t2", userTs: 1_200, steps: [{ kind: "assistant", text: "a2" }] },
+      { user: "t3", userTs: 1_300, steps: [{ kind: "assistant", text: "a3" }] },
+    ] });
+    writeAcpSummary(acpDir, { cwd: "/p", title: "Full ACP" });
+    // chats copy: what `cursor agent --resume <acp-sid>` leaves behind — continuation only, newer.
+    const chatDir = join(root, "chats", "ws", SID);
+    buildStoreDb(chatDir, { sid: SID, name: "New Agent", createdAt: 9_000, cwd: "/p", turns: [
+      { user: "t4 (resumed via print)", userTs: 9_100, steps: [{ kind: "assistant", text: "a4" }] },
+    ] });
+    writeSummary(chatDir, { sid: SID, createdAt: 9_000, updatedAt: 9_900, cwd: "/p" });
+
+    const all = listCursorCliChats();
+    assert.equal(all.length, 1, "同 sid 只出一条");
+    assert.equal(all[0].kind, "acp", "ACP 副本优先（全量），即便 chats 副本更新");
+    const s = readCursorCliChat(SID);
+    assert.equal(s.messages.length, 6, "读到的是全量三轮，而不是截断的一轮");
+    assert.equal(s.messages.at(-1).text.includes("a3"), true);
+  } finally { rmSync(root, { recursive: true, force: true }); delete process.env.CURSOR_CONFIG_DIR; }
+});
+
+test("ACP-only 用户：adapter roots/probe/list/parse 都覆盖 acp-sessions", () => {
+  const root = makeRoot();
+  try {
+    const sid = uuid();
+    const dir = join(root, "acp-sessions", sid);
+    buildStoreDb(dir, { sid, name: "ACP Only", createdAt: 3_000, cwd: "/only", turns: [
+      { user: "q", userTs: 3_100, steps: [{ kind: "assistant", text: "a" }] },
+    ] });
+    writeAcpSummary(dir, { cwd: "/only", title: "ACP Only" });
+    const adapter = createCursorCliAdapter();
+    assert.deepEqual(adapter.roots().length, 1, "acp-sessions 一个根（chats 不存在）");
+    assert.match(adapter.roots()[0], /acp-sessions$/);
+    const probe = adapter.probe();
+    assert.equal(probe.ok, true);
+    assert.equal(probe.count, 1);
+    const list = adapter.list();
+    assert.equal(list.length, 1);
+    const parsed = adapter.parse(list[0]);
+    assert.equal(parsed.meta.id, sid);
+    assert.equal(parsed.meta.cwd, "/only");
+    assert.equal(parsed.messages.length, 2);
+    assert.equal(parsed.messages[0].text, "q");
+    assert.equal(parsed.messages[1].role, "assistant");
+  } finally { rmSync(root, { recursive: true, force: true }); delete process.env.CURSOR_CONFIG_DIR; }
+});

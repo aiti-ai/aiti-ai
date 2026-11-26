@@ -13,7 +13,7 @@ import { dirname } from "node:path";
 import type { AgentAdapter, ExtSessionRef, ExtSourceProbe } from "./types.ts";
 import { statFreshList } from "./fresh.ts";
 import type { IndexedMessage } from "../session-file.ts";
-import { cursorCliChatsRoot, listCursorCliChats, readCursorCliChat } from "@aiti-ai/ext-shared/cursor-cli-store";
+import { cursorCliAcpSessionsRoot, cursorCliChatsRoot, listCursorCliChats, readCursorCliChat } from "@aiti-ai/ext-shared/cursor-cli-store";
 import { artifactPrimitives, artifactCapabilities } from "./archive-artifact.ts";
 
 export function createCursorCliAdapter(): AgentAdapter {
@@ -21,8 +21,9 @@ export function createCursorCliAdapter(): AgentAdapter {
     id: "cursor",
     label: "Cursor CLI",
     roots() {
-      const r = cursorCliChatsRoot();
-      return existsSync(r) ? [r] : [];
+      // Chat mode and the ACP server keep separate roots (`chats/<ws>/<sid>` vs
+      // `acp-sessions/<sid>`); both are this adapter's sources.
+      return [cursorCliChatsRoot(), cursorCliAcpSessionsRoot()].filter((r) => existsSync(r));
     },
 
     probe(): ExtSourceProbe {
@@ -34,7 +35,8 @@ export function createCursorCliAdapter(): AgentAdapter {
           try { watermarkMs = Math.max(watermarkMs, statSync(f).mtimeMs); } catch { /* absent */ }
         }
       }
-      return { ok: count > 0 || existsSync(cursorCliChatsRoot()), count, watermarkMs };
+      const present = existsSync(cursorCliChatsRoot()) || existsSync(cursorCliAcpSessionsRoot());
+      return { ok: count > 0 || present, count, watermarkMs };
     },
 
     listFresh() { return statFreshList(this.list()); },

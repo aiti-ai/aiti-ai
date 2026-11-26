@@ -48,7 +48,28 @@ export function cursorCliChatsRoot(): string {
   return join(cursorCliConfigRoot(), "chats");
 }
 
-export interface CursorCliChatRef { sid: string; dir: string; db: string; summary: string }
+/**
+ * ACP-hosted sessions (`cursor-agent acp`): one directory per session and the same
+ * store.db layout (blobs sha256-addressed + meta key '0' hex JSON), only without the
+ * `<workspaceKey>` level that chat-mode writes. Written by the ACP server alone.
+ *
+ * The two stores are disjoint namespaces for loading (ACP `session/load` rejects a
+ * chat-mode id with "Session not found"), but not for resuming: `cursor agent
+ * --resume <acp-sid>` accepts an ACP id and writes a *continuation-only* copy under
+ * chats/ — see the dedupe rule in listCursorCliChats().
+ */
+export function cursorCliAcpSessionsRoot(): string {
+  return join(cursorCliConfigRoot(), "acp-sessions");
+}
+
+export interface CursorCliChatRef {
+  sid: string;
+  dir: string;
+  db: string;
+  summary: string;
+  /** Which root this copy came from; absent on refs built before ACP support. */
+  kind?: "chats" | "acp";
+}
 
 /** 单个 chat 目录的更新时间（meta.updatedAtMs 优先，兑底 store.db mtime）。 */
 function chatUpdatedAtMs({ db, summary }: CursorCliChatRef): number {
@@ -60,17 +81,33 @@ function chatUpdatedAtMs({ db, summary }: CursorCliChatRef): number {
 }
 
 /**
- * 枚举 CLI 会话目录（跳过 meta.json 明确 hasConversation:false 的）。
+ * Enumerate CLI sessions across both roots (chat mode and ACP), skipping entries that
+ * meta.json marks `hasConversation:false`.
  *
- * 注意：`--resume <chatId>` 在不同 cwd 下会把同 chatId 分叉到新 workspaceKey
- * 目录（CLI 按工作区隔离历史）——同 sid 多目录时只保留最近更新的那个。
+ * Note: `--resume <chatId>` forks the same chat under a new workspaceKey when the cwd
+ * differs (the CLI isolates history per workspace) — one ref per sid, newest wins.
+ *
+ * The ACP copy wins over the chats copy (measured 2026-11-26): `cursor agent --resume
+ * <acp-sid>` accepts an ACP session id and writes a copy under chats/ that holds ONLY
+ * the continued turns, so newest-first would silently halve the history. The reverse
+ * does not happen (ACP rejects a chat-mode id: session/load → not found), so "prefer
+ * ACP when present" is monotonic and safe.
  */
 export function listCursorCliChats(): CursorCliChatRef[] {
-  const root = cursorCliChatsRoot();
-  if (!existsSync(root)) return [];
   const bySid = new Map<string, CursorCliChatRef>();
+  const better = (a: CursorCliChatRef, b: CursorCliChatRef): boolean => {
+    if (a.kind === "acp" && b.kind !== "acp") return true;
+    if (a.kind !== "acp" && b.kind === "acp") return false;
+    return chatUpdatedAtMs(a) >= chatUpdatedAtMs(b);
+  };
+  const add = (ref: CursorCliChatRef): void => {
+    const prev = bySid.get(ref.sid);
+    if (!prev || better(ref, prev)) bySid.set(ref.sid, ref);
+  };
+
+  const root = cursorCliChatsRoot();
   let ws: string[] = [];
-  try { ws = readdirSync(root); } catch { return []; }
+  try { ws = readdirSync(root); } catch { ws = []; }
   for (const w of ws) {
     const wd = join(root, w);
     try { if (!statSync(wd).isDirectory()) continue; } catch { continue; }
@@ -88,11 +125,26 @@ export function listCursorCliChats(): CursorCliChatRef[] {
           if (d.hasConversation === false) continue;
         } catch { /* corrupt meta — 仍列出，parse 兑底 */ }
       }
-      const ref: CursorCliChatRef = { sid, dir, db, summary };
-      const prev = bySid.get(sid);
-      if (!prev || chatUpdatedAtMs(ref) >= chatUpdatedAtMs(prev)) bySid.set(sid, ref);
+      add({ sid, dir, db, summary, kind: "chats" });
     }
   }
+
+  // ACP sessions: one directory per session, no workspaceKey level. A session gets its
+  // store.db only once a turn writes something — an abandoned handshake / session/new
+  // leaves just meta.json behind, which is exactly what the size check drops.
+  const acpRoot = cursorCliAcpSessionsRoot();
+  let acpDirs: string[] = [];
+  try { acpDirs = readdirSync(acpRoot); } catch { acpDirs = []; }
+  for (const sid of acpDirs) {
+    const dir = join(acpRoot, sid);
+    try { if (!statSync(dir).isDirectory()) continue; } catch { continue; }
+    const db = join(dir, "store.db");
+    let size = 0;
+    try { size = statSync(db).size; } catch { continue; }
+    if (size === 0) continue;
+    add({ sid, dir, db, summary: join(dir, "meta.json"), kind: "acp" });
+  }
+
   return [...bySid.values()];
 }
 
