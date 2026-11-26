@@ -21,7 +21,7 @@ import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePat
 import { SettingsSectionIcon } from "./SettingsSectionIcon.tsx";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots.tsx";
-import { ProviderUsagePanel } from "./ProviderUsagePanel.tsx";
+import type { BackendUsageSnapshot } from "@/lib/ext/types";
 import { decorateTitle, openFullHistory } from "@/lib/demo-seam";
 /** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
  *  has a taker) this component is not rendered at all and the chunk never loads, keeping
@@ -916,6 +916,16 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Current display model — fed by ChatWindow, consumed by the session-info
   // "remaining quota" block to pin the current provider on top.
   const [currentModelInfo, setCurrentModelInfo] = useState<{ provider: string; modelId: string } | null>(null);
+
+  // Backend (external agent) usage — fed by ChatWindow's get_usage seam; consumed by the
+  // stats-row quota chip (sessionStatsInline) and the session-info account-quota details
+  // (sessionInfoPanel). Scoped by session id so a switch never shows the previous
+  // session's snapshot.
+  const [backendUsageInfo, setBackendUsageInfo] = useState<{ sessionId: string; usage: BackendUsageSnapshot; backendSource?: string } | null>(null);
+  const handleBackendUsageChange = useCallback((info: { sessionId: string; usage: BackendUsageSnapshot; backendSource?: string } | null) => {
+    setBackendUsageInfo(info);
+  }, []);
+  const activeBackendUsage = selectedSession && backendUsageInfo?.sessionId === selectedSession.id ? backendUsageInfo : null;
 
   // Single active panel — only one dropdown open at a time
   const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "language" | "theme" | "debug" | null>(null);
@@ -5172,7 +5182,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           </div>
           )}
           {/* Session stats — right-aligned in top bar */}
-          {showChat && (sessionStats || contextUsage) && (() => {
+          {showChat && (sessionStats || contextUsage || activeBackendUsage) && (() => {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
             // Container-width compact tier (statsRowCompact, see the ResizeObserver
@@ -5236,6 +5246,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               (tokens && (tokens.input > 0 || tokens.output > 0 || tokens.cacheRead > 0 || tokens.cacheWrite > 0))
               || costStr
               || ctxStr
+              || activeBackendUsage?.usage.credits
+              || activeBackendUsage?.usage.quotaExceeded
             );
 
             return (
@@ -5356,12 +5368,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   );
                 })()}
                 {/* sessionStatsInline extension point: inline trailing indicators at the tail of
-                    the stats row (e.g. the sysmon extension's CPU/memory chips). Items must render
-                    inline content only — no block elements or nested interactive elements (this is
-                    a <button>; clicks bubble and open the session panel, which is expected). extra
-                    carries tier flags only (slot-extra data red line); narrow tiers return null so
+                    the stats row (e.g. the sysmon extension's CPU/memory chips, the
+                    provider-usage extension's quota chip). Items must render inline
+                    content only — no block elements or nested interactive elements (this is
+                    a <button>; clicks bubble and open the session panel, which is expected).
+                    extra carries tier flags + the active session's backend usage *data*
+                    (display decisions stay in the extension); narrow tiers return null so
                     the row width stays with the context percentage. Zero items → zero render. */}
-                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact: rowCompact }} />
+                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact: rowCompact, backendUsage: activeBackendUsage?.usage ?? null, backendSource: activeBackendUsage?.backendSource }} />
               </button>
             );
           })()}
@@ -5937,7 +5951,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                       items are rendered by extensions themselves — the AI-usage
                       extension (report entry button) / the AI-input extension (other
                       auxiliary AI usage stat rows) */}
-                  <ProviderUsagePanel currentProviderId={currentModelInfo?.provider ?? null} />
+                  {/* sessionInfoPanel extension point: the session-info popover's account
+                      quota block (aiti-provider-usage). Items are extensions' own panels;
+                      extra carries the active backend usage snapshot + current provider. */}
+                  <ExtSlot name="sessionInfoPanel" extra={{ currentProviderId: currentModelInfo?.provider ?? null, backendUsage: activeBackendUsage?.usage ?? null, backendSource: activeBackendUsage?.backendSource, sessionId: selectedSession?.id ?? null }} />
                   <ExtSlot name="sessionStats" extra={{ locale, sessionId: selectedSession?.id ?? null }} />
                 </div>
               )}
@@ -6150,6 +6167,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               onSessionStatsRefresherRegister={handleSessionStatsRefresherRegister}
               onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
+              onBackendUsageChange={handleBackendUsageChange}
               onDisplayModelChange={setCurrentModelInfo}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}

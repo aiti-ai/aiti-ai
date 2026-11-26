@@ -43,10 +43,11 @@ const VALID_SLOTS = new Set([
   "sidebarExplorerDock", "rightFileDock", "sidebarTasks", "composerAffix",
   "modelInfoLead", "compactLead", "sessionRequestCard", "newSessionSelectors",
   "newSessionPreparers", "newSessionWidgets", "newSessionWorkspacePicker",
-  "noWorkspaceGuide",  // v3 新增：fresh 首屏整页引导替换槽（AppShell 消费；aiti-quickstart 首用）
-  // 跨 bundle 生态槽：宿主 ExtSlotName 类型联合未收录（types 缺口，运行时字符串键注册表不受影响），
-  // 消费方 = aiti-model-wizard 的会话信息聚合（getExtUiItems 跨 bundle 读）。见 aiti-provider-usage。
+  // sessionInfoPanel (2026-11-26): session-info popover "remaining quota" block; now a
+  // first-class host slot (types.ts + registry.ts) rendered by AppShell's ExtSlot —
+  // first user = aiti-provider-usage panel (+ its account-quota details)
   "sessionInfoPanel",
+  "noWorkspaceGuide",  // v3 新增：fresh 首屏整页引导替换槽（AppShell 消费；aiti-quickstart 首用）
 ]);
 
 function listExts() {

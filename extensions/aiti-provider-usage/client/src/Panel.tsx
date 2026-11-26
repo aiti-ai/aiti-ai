@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, t } from "./host-shim";
+import { bucketLabel, fmtLastTurn, type BackendUsage } from "./StatsChip";
 import {
   ProviderUsageReportView,
   formatBucket,
@@ -26,7 +27,12 @@ const STORAGE_KEY = "pi-web:provider-usage:overview";
 type OverviewEntry = { providerId: string; providerName: string; kind: string; status: string; report?: UsageReport; message?: string };
 type Overview = { capturedAt: number; providers: OverviewEntry[] };
 
-export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: string | null }) {
+export function ProviderUsagePanel({ currentProviderId, backendUsage, backendSource, sessionId }: {
+  currentProviderId?: string | null;
+  backendUsage?: BackendUsage | null;
+  backendSource?: string;
+  sessionId?: string | null;
+}) {
   const [overview, setOverview] = useState<Overview | null>(null);
   // Start as querying so the section shows a loading placeholder before the
   // first fetch resolves (instead of rendering nothing until data arrives).
@@ -113,9 +119,90 @@ export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: 
           {querying ? t("providerUsage.loading") : t("providerUsage.notQueried")}
         </div>
       )}
+
+      {/* Active backend session's own account quota (get_usage snapshot, e.g.
+          qoder credits + 基础/扩展/组织 buckets) — shown above/below the provider
+          list as its own block; renders nothing for backends without usage data. */}
+      <AccountQuotaSection usage={backendUsage ?? null} backendSource={backendSource} sessionId={sessionId} />
     </section>
   );
 }
+
+/** 当前会话账号配额明细：总剩余 / 已用条形 + 各配额桶 + 套餐/到期/来源 + 上一轮用量。 */
+export function AccountQuotaSection({ usage, backendSource, sessionId }: {
+  usage: BackendUsage | null;
+  backendSource?: string;
+  sessionId?: string | null;
+}) {
+  if (!usage) return null;
+  const credits = usage.credits;
+  const buckets = usage.buckets ?? [];
+  if (!credits && !usage.quotaExceeded && buckets.length === 0) return null;
+
+  const exhausted = Boolean(usage.quotaExceeded && (credits?.remaining == null || credits.remaining <= 0));
+  const usedPct = credits?.usedPercent;
+  // The bar shows what is LEFT (same remaining-first language as provider rows).
+  const remainingPct = usedPct != null ? Math.min(100, Math.max(0, 100 - usedPct)) : undefined;
+  const totalColor = exhausted ? "var(--danger, #ef4444)" : usedPct != null && usedPct >= 70 ? "var(--warn, #d97706)" : "var(--text)";
+  const source = backendSource ?? usage.provider;
+  const lastTurn = fmtLastTurn(usage);
+
+  const meta: string[] = [];
+  if (usage.plan) meta.push(`${t("providerUsage.plan")} ${usage.plan}`);
+  if (credits?.expiresAt) meta.push(`${t("providerUsage.expires")} ${new Date(credits.expiresAt).toLocaleDateString()}`);
+  if (source) meta.push(`${t("providerUsage.source")} ${source}`);
+
+  return (
+    <div data-account-quota style={{ display: "flex", flexDirection: "column", gap: 7, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)" }} title={sessionId ?? undefined}>
+        {t("providerUsage.account")}
+      </span>
+
+      {(credits || usage.quotaExceeded) && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(64px, auto) minmax(70px, 110px) minmax(0, 1fr)", columnGap: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--text)" }}>{t("providerUsage.remaining")}</span>
+          {remainingPct !== undefined ? (
+            <span style={{ display: "block", height: 5, borderRadius: 3, background: "var(--bg-panel)", overflow: "hidden" }}>
+              <span style={{ display: "block", height: "100%", width: `${remainingPct}%`, borderRadius: 3, background: totalColor, transition: "width 0.4s ease" }} />
+            </span>
+          ) : <span />}
+          <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: totalColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {exhausted
+              ? t("providerUsage.quotaExceeded")
+              : `${credits?.remaining != null ? credits.remaining : "?"}${credits?.unit ? ` ${credits.unit}` : ""}${usedPct != null ? ` · ${usedPct}% ${t("providerUsage.used")}` : ""}`}
+          </span>
+        </div>
+      )}
+
+      {buckets.map((b) => {
+        const ratio = b.remaining != null && b.total != null && b.total > 0 ? Math.min(100, Math.max(0, (b.remaining / b.total) * 100)) : undefined;
+        const pct = b.usedPercent ?? (b.used != null && b.total != null && b.total > 0 ? Math.round((b.used / b.total) * 100) : undefined);
+        const color = pct != null && pct >= 90 ? "var(--danger, #ef4444)" : pct != null && pct >= 70 ? "var(--warn, #d97706)" : "var(--text-muted)";
+        return (
+          <div key={b.name} style={{ display: "grid", gridTemplateColumns: "minmax(64px, auto) minmax(70px, 110px) minmax(0, 1fr)", columnGap: 10, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--text)" }}>{bucketLabel(b.name)}</span>
+            {ratio !== undefined ? (
+              <span style={{ display: "block", height: 5, borderRadius: 3, background: "var(--bg-panel)", overflow: "hidden" }}>
+                <span style={{ display: "block", height: "100%", width: `${ratio}%`, borderRadius: 3, background: severityColor(b.remaining, b.total), transition: "width 0.4s ease" }} />
+              </span>
+            ) : <span />}
+            <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {b.remaining ?? 0}/{b.total ?? "?"}{pct != null ? ` · ${pct}%` : ""}
+            </span>
+          </div>
+        );
+      })}
+
+      {(meta.length > 0 || lastTurn) && (
+        <span style={{ fontSize: 10.5, color: "var(--text-dim)", display: "flex", flexWrap: "wrap", gap: "2px 12px" }}>
+          {meta.length > 0 && <span>{meta.join(" · ")}</span>}
+          {lastTurn && <span style={{ fontFamily: "var(--font-mono)" }}>{t("providerUsage.lastTurn")} {lastTurn}</span>}
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: boolean }) {
   const report = entry.report!;

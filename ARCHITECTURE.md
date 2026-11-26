@@ -127,11 +127,10 @@ the contract test `extensions/_shared/ext-entry-contracts.test.mjs` pins the mir
 fails on typos (a typo = a dead entry point). Major slots:
 
 - **Toolbar / top bar**: `toolbar`, `sessionTopbar`, `topbarMobileLeading`, `sidebarFooter`
-- **Sessions**: `sidebarProjects`, `sessionRowActions`, `sessionRowLeading`, `sessionRowMeta`, `workspacePickerActions`
+- **Sessions**: `sidebarProjects`, `sessionRowActions`, `sessionRowLeading`, `sessionRowMeta`, `workspacePickerActions`, `sessionStats`, `sessionStatsInline`, `sessionInfoPanel`
 - **Composer area**: `chatInputTop`, `chatOverlay`, `composerTools`, `composerAffix`, `userMessageActions`, `assistantMessageActions`, `assistantMessageFooter`, `compactLead`, `modelInfoLead`, `queuePanel`
 - **Docks & dialogs**: `dialogs`, `pages`, `rightFileDock`, `sidebarExplorerDock`, `sidebarTasks`, `terminalDock`
-- **Takeovers**: `fileViewer`, `pathPicker`, `modelSelector`, `modelSelectorFooter`, `settingsModels`, `settingsAgents`, `settingsAgentsFeature`, `noWorkspaceGuide`, `newSessionWidgets`, `newSessionSelectors`, `newSessionWorkspacePicker`, `newSessionPreparers`, `newSessionBackendOptions`, `newSessionContextTrailing`, `sessionRequestCard`, `sessionStats`, `recoveryDialog`, `sidebarContent`
-- **Extensions' own slots** (consumed cross-bundle): `sessionInfoPanel`, …
+- **Takeovers**: `fileViewer`, `pathPicker`, `modelSelector`, `modelSelectorFooter`, `settingsModels`, `settingsAgents`, `settingsAgentsFeature`, `noWorkspaceGuide`, `newSessionWidgets`, `newSessionSelectors`, `newSessionWorkspacePicker`, `newSessionPreparers`, `newSessionBackendOptions`, `newSessionContextTrailing`, `sessionRequestCard`, `recoveryDialog`, `sidebarContent`
 
 Items carry `meta: { label, icon, onClick }` (declarative — the host renders the button)
 or `render` (self-drawn), optional `feature: "<featureId>"` gating, and `static: true`

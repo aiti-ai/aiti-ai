@@ -9,7 +9,7 @@ import test from "node:test";
 // (2026-08-26 c3db1c1 dropped data-chat-msg-role, and the nav's ▲▼ prev/next user-input
 // targeting silently died — see the merge-notes doc, item ⑨). This file watches the contract
 // wiring: any item lost in a merge turns red immediately.
-const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+const source = (await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 
 test("message wrapper div carries the data-chat-msg-role contract", () => {
   // ⑨ Root cause: the scroll-nav extension's ▲prev/▼next user-input targeting relies on
@@ -54,7 +54,7 @@ test("chatOverlay slot stays wired for the nav toolbar extension", () => {
   // when they fall outside the render window (same source as ChatMinimap's onRevealHistory,
   // a one-shot setVisibleCount(messages.length*2)).
   assert.match(source, /<ExtSlot\n\s+name="chatOverlay"/);
-  assert.match(source, /extra=\{\{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap,[\s\S]*?backendSource \}\}/); // P3 de-coring: usage-badge data is passed through with the slot (display belongs to the provider-usage extension)
+  assert.match(source, /extra=\{\{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap \}\}/); // usage data no longer rides chatOverlay: it goes through onBackendUsageChange to the stats-row chip / session-info quota block (provider-usage extension)
 });
 
 test("chatOverlay slot keeps passing currentSession for the anchor banner", () => {

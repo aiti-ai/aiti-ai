@@ -536,6 +536,7 @@ export type ExtSlotName =
                      //   selecting runs meta.onClick, e.g. the ACP agent management entry — no more buttons rendered outside the
                      //   picker. Declarative static items are materialized by the host forwarder before the callback fires)
   | "sessionStats"   // Extension entry rows inside the session-stats dropdown (the usage-report extension: report entry; the token-usage extension: other auxiliary AI usage stat rows)
+  | "sessionInfoPanel" // "Remaining quota" section of the session-info popover (the provider-usage extension; the core renders the slot where its own panel used to be — empty slot = section hidden, e.g. feature off)
   | "composerTools"  // Control row under the input box (compact/stop/import-queue on the same row; the git-trace extension: timeline main entry, etc.)
   | "queuePanel"    // Queue panel slot (de-fork P3: the queue-manager extension takes over the full queue UI;
                     //   without takeover the core renders a fallback banner — see the queue-cluster extension plan)
@@ -922,12 +923,45 @@ export interface AssistantMessageFooterSlotProps {
   writtenFiles?: string[];
 }
 
-/** sessionStatsInline slot extra — render-state data only (host tier flags; the extension decides whether to render). */
+/**
+ * Latest-run usage of an external backend session (core get_usage protocol; e.g. qoder credits).
+ * Pure data: the slot owner decides how to display it. Absent/null = no backend usage (native
+ * pi session, backend without the getUsage capability, or a fresh empty session).
+ */
+export interface BackendUsageSnapshot {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  credits?: { remaining?: number; used?: number; usedPercent?: number; unit?: string; expiresAt?: number };
+  quotaExceeded?: boolean;
+  buckets?: Array<{ name: string; remaining?: number; total?: number; used?: number; usedPercent?: number }>;
+  /** Backend-reported plan label (e.g. qoder plan tier); optional. */
+  plan?: string;
+  /** Backend id that produced the snapshot (e.g. "qoder-cn"); optional. */
+  provider?: string;
+}
+
+/** sessionStatsInline slot extra — render state (host tier flags + the active session's backend usage data). */
 export interface SessionStatsInlineSlotProps {
   /** Host mobile tier (<641px): the stats row collapses to the battery-style context chip — extensions should render nothing. */
   isMobile?: boolean;
   /** Host compact tier (641–959px): row width is reserved for the context percentage — extensions should render nothing. */
   isCompact?: boolean;
+  /** Latest-run backend usage of the active session (null/absent = nothing to show). */
+  backendUsage?: BackendUsageSnapshot | null;
+  /** Backend source of the active session (e.g. "qoder"); absent for native pi sessions. */
+  backendSource?: string;
+}
+
+/** sessionInfoPanel slot extra — the session-info popover's "remaining quota" section. */
+export interface SessionInfoPanelSlotProps {
+  /** Model provider of the current session (the provider-usage panel pins it on top). */
+  currentProviderId?: string | null;
+  /** Latest-run backend usage (same source as the stats-row chip); absent/null = account-quota block hidden. */
+  backendUsage?: BackendUsageSnapshot | null;
+  /** Backend source of the active session (e.g. "qoder"); absent for native pi sessions. */
+  backendSource?: string;
+  sessionId?: string | null;
 }
 
 export interface ExtSlotContractMap {
@@ -972,6 +1006,8 @@ export interface ExtSlotContractMap {
   newSessionWidgets: { props: NewSessionWidgetSlotProps };
   /** Inline trailing indicators inside the session-info stats button (aiti-sysmon CPU/memory chips). */
   sessionStatsInline: { props: SessionStatsInlineSlotProps };
+  /** "Remaining quota" section of the session-info popover (the provider-usage extension's panel + account-quota details). */
+  sessionInfoPanel: { props: SessionInfoPanelSlotProps };
   /** End of the assistant message content area (the git-trace extension: change-file lines captured by trace;
    *  git-trace message-files extension plan §3.2). */
   assistantMessageFooter: { props: AssistantMessageFooterSlotProps };
@@ -1094,10 +1130,12 @@ export interface ExtUiDefinition {
   topbarMobileLeading?: ExtUiItem[];
   /** Inline trailing indicators inside the session-info stats button (tail of the tokens/cost/context row; e.g. the sysmon extension's CPU/memory chips).
    *  Contract: inline content only — no block elements or nested interactive elements (renders inside a <button>; clicks bubble and open the
-   *  session panel, which is expected). extra = SessionStatsInlineSlotProps (pure render-state tier flags, extension decides whether to render).
+   *  session panel, which is expected). extra = SessionStatsInlineSlotProps (tier flags + backend usage data; extension decides whether to render).
    *  Declarers must load immediately (clientImmediately !== false): the slot mounts on first paint and the host auto-materializes only
    *  immediate extensions on always-mounted slots (components/ext-client-loader.ts pendingForSlotAuto) — a lazy declarer would never render. */
   sessionStatsInline?: ExtUiItem[];
+  /** "Remaining quota" section of the session-info popover (provider-usage extension: provider balances + account-quota details; empty slot = section hidden). */
+  sessionInfoPanel?: ExtUiItem[];
   sessionRowActions?: ExtUiItem[];
   /** Per-session-row meta (second line · end of spinner/message count; e.g. the plan-tracking extension's plan binding badge + front-matter tags). */
   sessionRowMeta?: ExtUiItem[];

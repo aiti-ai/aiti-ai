@@ -149,17 +149,30 @@ const GUARDS = [
     ],
   },
   {
-    name: "ChatWindow: session request card seam + usage badge pass-through + queue recovery dialog + queue export (high-risk auto-merge zone)",
+    name: "ChatWindow: session request card seam + backend usage seam + queue recovery dialog + queue export (high-risk auto-merge zone)",
     file: "./ChatWindow.tsx",
     must: [
       /<SessionRequestCardHost/,                                     // session request card seam (guard 2026-09-16: card UI moved to an extension; the seam + fallback must stay in core)
-      /backendUsage: isEmptyNew \? null : backendUsage/,             // usage badge passed through to chatOverlay (display owned by the provider-usage extension)
+      /onBackendUsageChange\(\{ sessionId: session\.id, usage: backendUsage, backendSource \}\)/, // backend usage seam → AppShell → stats-row quota chip + session-info quota block (display owned by the provider-usage extension; the old chatOverlay badge pass-through was retired)
       /name="recoveryDialog"/,                                       // queue recovery dialog slot (UI owned by the aiti-recovery extension; core keeps the render condition)
       /onExportQueue\?\./,                                           // queue export to AppShell
       /scrollToBottom/,                                              // our scroll pin-to-bottom (coexists with upstream scrollToMessage)
       /scrollToMessage/,                                             // upstream search jump (union sample for merges)
       /newSessionBackendOptions/,                                    // multi-backend management entry slot (extension items inside the Backend dropdown)
       /sessionBackend/,                                              // multi-backend session state
+    ],
+  },
+  {
+    name: "Session stats row: backend usage seam + quota chip slot + session-info quota slot (display owned by the provider-usage extension)",
+    file: "./AppShell.tsx",
+    must: [
+      /const activeBackendUsage = selectedSession && backendUsageInfo\?\.sessionId === selectedSession\.id \? backendUsageInfo : null;/, // session-scoped snapshot (no stale usage after a switch)
+      /<ExtSlot name="sessionStatsInline" extra=\{\{ isMobile, isCompact: rowCompact, backendUsage: activeBackendUsage\?\.usage \?\? null, backendSource: activeBackendUsage\?\.backendSource \}\} \/>/,
+      /<ExtSlot name="sessionInfoPanel" extra=\{\{ currentProviderId/,
+      /onBackendUsageChange=\{handleBackendUsageChange\}/,
+    ],
+    not: [
+      /<ProviderUsagePanel/,                                         // core panel retired: the popover quota block is extension-owned (the feature switch hides it)
     ],
   },
   {
