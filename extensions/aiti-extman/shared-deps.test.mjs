@@ -14,7 +14,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,12 +25,13 @@ const repoRoot = join(here, "..", "..");
 
 const dir = mkdtempSync(join(tmpdir(), "extman-shared-deps-"));
 const bundle = join(dir, "shared-deps.mjs");
+writeFileSync(join(dir, "package.json"), '{"type":"module"}\n'); // else the stub reads as CJS in ESM
 writeFileSync(join(dir, "installer.js"), "export const runNpm = async () => { throw new Error('not used in tests'); };\n");
 await runEsbuild(join(repoRoot, "node_modules", "esbuild", "bin", "esbuild"), [
   join(here, "shared-deps.ts"), "--bundle", "--format=esm", "--platform=node",
   "--external:./installer.js", `--outfile=${bundle}`, "--log-level=error",
 ]);
-const { mergeSpecs, collectDeps } = await import(pathToFileURL(bundle).href);
+const { mergeSpecs, collectDeps, pruneShadowedSharedPackage } = await import(pathToFileURL(bundle).href);
 
 test.after(() => { rmSync(dir, { recursive: true, force: true }); });
 
@@ -74,4 +75,32 @@ test("collectDeps: 多扩展冲突声明合并成一条能升级的区间（真�
   assert.equal(deps["@aiti-ai/ext-shared"], "^0.1.5", "取交集 → npm 必须升到 0.1.5+");
   assert.equal(deps.react, "18.3.1");
   assert.equal(deps["some-pkg"], ">=2.0.0", "复杂 spec 原样保留");
+});
+
+test("pruneShadowedSharedPackage: 删掉每扩展自带的 @aiti-ai/ext-shared 影子副本，其他本地依赖不动", () => {
+  const exts = mkdtempSync(join(tmpdir(), "extman-shadow-"));
+  const prev = process.env.PI_WEB_EXTENSIONS_DIR;
+  process.env.PI_WEB_EXTENSIONS_DIR = exts;
+  try {
+    const withCopy = join(exts, "ext-a", "node_modules", "@aiti-ai", "ext-shared");
+    mkdirSync(withCopy, { recursive: true });
+    writeFileSync(join(withCopy, "package.json"), '{"version":"0.1.13"}');
+    // Another local dep in the same tree must survive.
+    const keep = join(exts, "ext-a", "node_modules", "left-pad");
+    mkdirSync(keep, { recursive: true });
+    writeFileSync(join(keep, "package.json"), '{"version":"1.0.0"}');
+    // A second extension with its own stale copy.
+    mkdirSync(join(exts, "ext-b", "node_modules", "@aiti-ai", "ext-shared"), { recursive: true });
+    // An extension without any node_modules.
+    mkdirSync(join(exts, "ext-c"), { recursive: true });
+
+    const pruned = pruneShadowedSharedPackage();
+    assert.deepEqual(pruned.sort(), ["ext-a", "ext-b"]);
+    assert.equal(existsSync(join(withCopy, "package.json")), false, "影子副本已删");
+    assert.equal(existsSync(join(keep, "package.json")), true, "同层其他依赖不动");
+    assert.deepEqual(pruneShadowedSharedPackage(), [], "幂等：第二轮无事可做");
+  } finally {
+    if (prev === undefined) delete process.env.PI_WEB_EXTENSIONS_DIR; else process.env.PI_WEB_EXTENSIONS_DIR = prev;
+    rmSync(exts, { recursive: true, force: true });
+  }
 });

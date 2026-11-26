@@ -14,7 +14,7 @@
  * （与 pi 同理由）。reconcile 只由 install/remove/ops reconcile-deps / deploy 通知触发，
  * 无任何定时轮询；模块内 Promise 队列串行（跨进程唯一的写入方就是本模块）。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { runNpm } from "./installer.js";
@@ -158,6 +158,8 @@ export interface ReconcileResult {
   error?: string;
   /** Specs the registry cannot satisfy (pinned to the installed version or dropped); keyed by package name, value = reason. */
   skipped?: Record<string, string>;
+  /** Extension dirs whose stale per-extension copy of the shared package was removed. */
+  pruned?: string[];
 }
 
 let lastResult: ReconcileResult | null = null;
@@ -242,7 +244,40 @@ async function doReconcile(reason: string): Promise<ReconcileResult> {
       .join("\n");
   }
   lastResult = result;
+  if (result.ok) {
+    const pruned = pruneShadowedSharedPackage();
+    if (pruned.length) {
+      result.pruned = pruned;
+      console.log(`[extman] removed stale per-extension @aiti-ai/ext-shared copies: ${pruned.join(", ")}`);
+    }
+  }
   return result;
+}
+
+/**
+ * Drop per-extension copies of the shared package itself.
+ *
+ * Node resolves `<ext>/node_modules/@aiti-ai/ext-shared` before `<webRoot>/node_modules`,
+ * so a copy left behind by the old per-extension install path (pre-2026-09 deploys wrote
+ * `npm i --prefix <ext>`) silently shadows every shared-layer update: the shared root is
+ * freshly installed while the runtime keeps loading the stale copy — a shared-layer fix
+ * then looks deployed and simply never runs. The shared root is the only writer, so such
+ * copies are stale by definition. Only this package is pruned; other local deps stay.
+ */
+export function pruneShadowedSharedPackage(): string[] {
+  const root = extensionsRoot();
+  let names: string[] = [];
+  try { names = readdirSync(root); } catch { return []; }
+  const pruned: string[] = [];
+  for (const name of names) {
+    const copy = join(root, name, "node_modules", "@aiti-ai", "ext-shared");
+    if (!existsSync(copy)) continue;
+    try {
+      rmSync(copy, { recursive: true, force: true });
+      pruned.push(name);
+    } catch { /* locked / read-only: retry next reconcile */ }
+  }
+  return pruned;
 }
 
 /**
