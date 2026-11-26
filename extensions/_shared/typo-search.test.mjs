@@ -47,6 +47,9 @@ test("typoMatch: 不该命中的（防噪音）", () => {
   // 精确子串命中由调用方 includes 层负责，typoMatch 本身不含 includes 语义
   assert.equal(typoMatch("aiti-service-tunnels", HAY), false);
   assert.equal(typoMatch("draft-keeper", HAY), false); // 别的扩展名不该命中
+  // Query longer than the candidate token is not the dropped-character direction: no relaxation.
+  assert.equal(typoMatch("服务端口", "系统状态（服务器 CPU/内存）"), false);
+  assert.equal(typoMatch("servcee", "service"), false); // same length + 2 edits: relaxation needs a longer token
 });
 
 test("typoMatch: 边界（空/非字符串）", () => {
