@@ -71,7 +71,9 @@
     ".next-probe/types/**/*.ts",
     ".next-probe/dev/types/**/*.ts",
     ".next-capture/types/**/*.ts",
-    ".next-capture/dev/types/**/*.ts"
+    ".next-capture/dev/types/**/*.ts",
+    ".next-prodcheck/types/**/*.ts",
+    ".next-prodcheck/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
