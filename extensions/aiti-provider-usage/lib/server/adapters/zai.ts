@@ -7,6 +7,14 @@ import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageQueryConte
 // api.z.ai expects the raw key in Authorization (no Bearer prefix).
 
 const UNIT_NAMES: Record<number, string> = { 2: "m", 3: "h", 4: "d", 5: "mo", 6: "w" };
+const UNIT_MINUTES: Record<number, number> = { 2: 1, 3: 60, 4: 1440, 5: 43_200, 6: 10_080 };
+
+/** Exact window length in minutes from the structured unit+number fields. */
+function windowMinutes(row: Record<string, unknown>): number | undefined {
+  const unitMinutes = UNIT_MINUTES[number(row.unit) ?? -1];
+  const count = number(row.number);
+  return unitMinutes !== undefined && count !== undefined && count > 0 ? unitMinutes * count : undefined;
+}
 
 function windowLabel(limit: Record<string, unknown>): string {
   const count = number(limit.number);
@@ -25,6 +33,7 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
     const row = record(rowValue);
     if (!row) continue;
     const label = windowLabel(row);
+    const minutes = windowMinutes(row);
     const resetsAt = number(row.nextResetTime) !== undefined ? Math.floor(number(row.nextResetTime)! / 1_000) : undefined;
     const limit = number(row.usage);
     const used = number(row.currentValue);
@@ -40,6 +49,7 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
         unit: "count",
         status: remaining !== undefined && remaining <= 0 ? "exhausted" : "ok",
         ...(resetsAt ? { resetsAt } : {}),
+        ...(minutes ? { windowMinutes: minutes } : {}),
       });
       const details = Array.isArray(row.usageDetails) ? row.usageDetails : [];
       for (const detailValue of details) {
@@ -62,6 +72,7 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
       unit: "percent",
       status: usedPercent >= 100 ? "exhausted" : "ok",
       ...(resetsAt ? { resetsAt } : {}),
+      ...(minutes ? { windowMinutes: minutes } : {}),
     });
   }
   if (!buckets.length) throw new Error("Z.AI returned no quota data.");

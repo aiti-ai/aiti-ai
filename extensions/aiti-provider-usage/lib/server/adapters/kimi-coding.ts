@@ -1,5 +1,5 @@
 import { registerJsonAdapter } from "../declarative.ts";
-import { nonnegative, number, record } from "../helpers.ts";
+import { nonnegative, number, record, windowMinutesFromLabel } from "../helpers.ts";
 import type { UsageBucket, UsageReport } from "../types.ts";
 
 // Kimi Coding plan: usage windows (5h/daily/weekly) + booster wallet.
@@ -27,6 +27,7 @@ registerJsonAdapter({
         const used = nonnegative(window.used_percent ?? window.percent_used ?? window.usage_percent);
         const remaining = nonnegative(window.remaining_percent ?? window.percent_remaining);
         const resetsAt = number(window.reset_at ?? window.reset_time) !== undefined ? Math.floor(number(window.reset_at ?? window.reset_time)! / 1000) : undefined;
+        const windowMinutes = windowMinutesFromLabel(key);
         if (used === undefined && remaining === undefined) continue;
         buckets.push({
           id: `window-${key}`,
@@ -36,6 +37,7 @@ registerJsonAdapter({
           limit: 100,
           unit: "percent",
           ...(resetsAt ? { resetsAt } : {}),
+          ...(windowMinutes ? { windowMinutes } : {}),
         });
       }
     }

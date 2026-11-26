@@ -1,5 +1,5 @@
 import { registerJsonAdapter } from "../declarative.ts";
-import { clamp, epochSeconds, nonnegative, record } from "../helpers.ts";
+import { clamp, epochSeconds, nonnegative, record, windowMinutesFromLabel } from "../helpers.ts";
 import type { UsageBucket, UsageBucketState, UsageReport } from "../types.ts";
 
 // OpenCode Go plan windows (rolling/weekly/monthly): {status, percent, resetsAt}.
@@ -35,6 +35,9 @@ function normalizeOpenCode(payload: Record<string, unknown>, ctx: { providerId: 
     const limit = nonnegative(row.limit ?? row.total);
     const remaining = nonnegative(row.remaining);
     const resetsAt = epochSeconds(row.resetsAt ?? row.resets_at ?? row.reset_at);
+    // "weekly"/"monthly" map to fixed lengths; "rolling" stays unknown (no
+    // window length in the payload) and simply renders without a time ratio.
+    const windowMinutes = windowMinutesFromLabel(key);
     const rawStatus = typeof row.status === "string" ? row.status : undefined;
     let status: UsageBucketState = "ok";
     if (rawStatus === "rate-limited") status = "rate-limited";
@@ -49,6 +52,7 @@ function normalizeOpenCode(payload: Record<string, unknown>, ctx: { providerId: 
         unit: "count",
         status,
         ...(resetsAt ? { resetsAt } : {}),
+        ...(windowMinutes ? { windowMinutes } : {}),
       });
       continue;
     }
@@ -62,6 +66,7 @@ function normalizeOpenCode(payload: Record<string, unknown>, ctx: { providerId: 
       unit: "percent",
       status,
       ...(resetsAt ? { resetsAt } : {}),
+      ...(windowMinutes ? { windowMinutes } : {}),
     });
   }
   if (!buckets.length) throw new Error("OpenCode Go returned no usage data.");
