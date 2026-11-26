@@ -57,6 +57,9 @@ export const dirPickerRef = createLazyModule(() => import("./sidebar/directory-p
 export interface SidebarDockProps {
   cwd?: string;
   homeDir?: string;
+  /** Host URL-restore target (?session=): a persisted session, so list absence means
+   *  index lag — never a not-yet-saved draft row. */
+  initialSessionId?: string | null;
   sessions?: SessionInfo[];
   loading?: boolean;
   error?: string | null;
@@ -380,10 +383,15 @@ export function SidebarList(props: SidebarDockProps) {
   // 注意排除 archived 桶：归档残留选中态（宿主 onSessionDeleted 收尾前）不能误记成草稿。
   useEffect(() => {
     if (!selectedSession?.id || !selectedSession.cwd) return;
+    // The URL-restore target (?session=) is a persisted session: its absence from the
+    // list only means the index lags, so it is not a draft. Provisional ids
+    // (agent:new-…) are not on disk yet and still count as drafts.
+    if (props.initialSessionId && selectedSession.id === props.initialSessionId
+      && !selectedSession.id.includes(":new-")) return;
     if ((store.sessions ?? []).some((x) => x.id === selectedSession.id)) return;
     if ((store.archived ?? []).some((x) => x.id === selectedSession.id)) return;
     noteDraftSession(selectedSession);
-  }, [selectedSession, store.sessions, store.archived]);
+  }, [selectedSession, store.sessions, store.archived, props.initialSessionId]);
   // 选中 id 被宿主规范化迁移（new-*/别名 → 真实复合 id，同会话）：旧 id 的草稿行
   // 已被列表行取代，移除防双行（普通切换会话不触发此事件，草稿保留语义不变）。
   useEffect(() => {
