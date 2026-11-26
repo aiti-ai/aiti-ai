@@ -5,6 +5,7 @@
 - **现状**：spawn `qodercli/qoderclicn --acp`（JSON-RPC over stdio，传输层 `qoder-acp.ts`）。控制面：`session/prompt`（回合）、`session/cancel`（停止，秒回 `stopReason:cancelled`）、`session/set_model`（运行时切模型）、`session/set_mode`（权限档；`yolo`↔bypassPermissions 映射；**plan 档 ACP 面无**→返 false）。事件面：`session/update`（agent_message/thought_chunk 双气泡、tool_call/tool_call_update 卡（真名在 `_meta.qoder.toolName`）、plan→taskList、available_commands_update→斜杠面板、usage_update→contextUsage）、`session/request_permission`→interaction 账本（应答 accept→allow 选项 / decline→deny 选项）。
 - **接管既有会话**：`session/load`（不再 `--resume`/seedHistory——CLI 回放更权威，双喂会重复）；stream-json 时代的老会话也能 load（CLI 会话存储共享，2026-11-13 探针验证）。
 - **steer（运行中注入）**：ACP 注入面 = 主轮 `session/prompt` 在途时**再发一条 `session/prompt`**（CLI initialize 自报 `agentCapabilities._meta.qoder.promptQueueing`；入队默认 `priority:"next"`，AgentLoop 工具间隙吸收）。能力位仍按 steer-gate 纪律实跑取证后才开；未开门前运行中输入一律本地 followUp 队列。
+- **compact（手动上下文压缩）**：ACP 无 `session/compact`——唯一通道是把 CLI 自己的 `/compact` 当普通 `session/prompt` 发（qoderclicn 1.1.87 认并落 `compact_boundary`，qodercli 1.1.83 回「requires interactive UI ... not available in ACP」）。能力位同 steer 走探针账本（`tools/compact-probe-acp.mjs --record`），详见下面「compact 能力门控」节。
 - **credits**：session/prompt 响应无 credits 字段（只有 usage tokens）→ 面板额度继续走 REST（WASM client），不变。
 - 探针工具（tools/steer-probe-acp.mjs 为 ACP 现行版；tools/steer-probe.mjs 为 stream-json 旧版）保留；版本敏感行为重验时先跑探针再点亮能力。
 
@@ -53,10 +54,22 @@
 - 探针 Windows 兼容：动态 import 必须走 `pathToFileURL().href`（裸 `D:\` 路径不是合法 ESM specifier）；Node 原生类型剥离不给 node_modules 下的 `.ts` 用——源码仓跑探针需把 `extensions/aiti-qoder-agent/node_modules/@aiti-ai/ext-shared` junction 到**源码** `_shared`（realpath 不含 node_modules 段即可剥离），部署共享根的拷贝不行。
 - 协议取证细节 → `docs/aiti-qoder-steer-injection-plan.md`（stream-json 时代判据，ACP 版判据见 `tools/steer-probe-acp.mjs` 头注释）。
 
+## compact（手动上下文压缩）能力门控（2026-11-26 加）
+- **为什么以前没有**：ACP 没有 `session/compact` 方法。唯一通道是把 CLI 自己的 `/compact` 斜杠命令当 `session/prompt` 发下去——这是**逐二进制的运行时事实**，不能靠读二进制字符串下结论：
+  - `qoderclicn`（CN）1.1.87：**认**。会话里已有一条模型回合后发 `/compact` → 21s 回落一条 `system/compact_boundary`（`trigger:"manual"`, `preTokens:22349 → postTokens:468`），ACP 侧无任何回复文本。
+  - `qodercli`（intl）1.1.83：**不认**，1.7s 内回 `Command /compact requires interactive UI and is not available in ACP.`（无模型调用）。
+  - 两版 `available_commands_update` 都是 26 条且**不含** compact；`session/new` 的 `configOptions` 只有 `mode`/`model`，没有 autoCompact 开关。
+- **门控**：与 steer 同一套证据纪律（`probe-book.ts` 通用账本核心 + `compact-gate.ts` 门面）。只有 `<stateDir>/compact-probe.json` 里**本 CLI 二进制 realpath 键**记着 `verdict:"pass"` **且 `driver:"acp"`**，`capabilities.compact` 才为 true、宿主压缩按钮才出现。**compact 与 steer 两个账本文件互不继承**（不同探针、不同判据）。
+- **开门**：`node tools/compact-probe-acp.mjs --record`（流程：initialize → session/new → 空会话先发 `/compact`（不认的 CLI 在此 2s 内拒绝，零 credits）→ 只在不被拒时才跑一条 `Reply with exactly: OK` 预热回合 → 再发 `/compact`，等 transcript 出现 `compact_boundary`；判据 C0 命令是否被广告 / C1 未被 ACP 拒绝 / C2 CLI 侧压缩实证）→ reload 扩展 → **新开会话**。
+- **执行实现**（`index.ts`）：`compact(customInstructions?)` → `/compact[ 额外指令]` 当普通 `session_prompt` 发（`sendPromptTurn(..., "primary")`）；回复含拒绝文案 → **原话抛错**（绝不静默成功）；真压缩 → 数字取本次 `compact_boundary` 的 `preTokens/postTokens` 返回（宿主横幅显示真实节省），旧 boundary 不复用（`timestamp` 早于本次调用即丢弃）。
+- **CLI 自动压缩不受门控影响**：本机真会话 transcript 里 `trigger:"auto"` 的 boundary 一直在（~168k → ~4k），手动压缩只是“不用等它自己压”。
+- 当前账实（本机 2026-11-26）：`qoderclicn 1.1.87 → compact=on`（探针 pass + 宿主现网实测 `{tokensBefore:22329, estimatedTokensAfter:673}`）；`qodercli 1.1.83 → compact=off`（探针 fail 留痕）。升级 CLI 后重跑探针即可（pass 覆盖 fail）。
+
 ## 红线
 - 禁轮询（setInterval 拉取）；需要等待用事件/回调/SSE（桥的 SSE、aiti-event-bus topics）
 - 禁重启生产服务（pi-web 3002 等 restart 须用户明确同意）
 - 禁手改 dist/ 与运行时平铺文件；跨扩展通信走 ctx.services（禁 globalThis.__ext 直穿）
+- 禁手改探针账本伪造 pass（`steer-probe.json` / `compact-probe.json`）：能力位只认探针实跑证据
 - 服务端：SQLite 一律 WAL + 分批小事务（批间 setImmediate 让步）；禁 execFileSync 调 >1s 外部程序；>8MB 文件禁同步读
 
 ## 账号档 / 额度对接
