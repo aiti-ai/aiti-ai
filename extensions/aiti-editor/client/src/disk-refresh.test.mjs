@@ -5,9 +5,11 @@
  * Run: node --experimental-strip-types --test pi-web-ext/aiti-editor/client/src/disk-refresh.test.mjs
  */
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame } = await import("./disk-refresh.ts");
+const { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust } = await import("./disk-refresh.ts");
+const editorAppSrc = await readFile(new URL("./editor-app.tsx", import.meta.url), "utf8");
 
 // ── sameDiskSig（保存回环抑制）──
 test("sameDiskSig: identical sigs match", () => {
@@ -66,4 +68,40 @@ test("sigOfFrame: malformed frames → null", () => {
   assert.equal(sigOfFrame({ mtimeMs: NaN, size: 1 }), null);
   assert.equal(sigOfFrame({ mtimeMs: 1, size: -1 }), null);
   assert.equal(sigOfFrame({ mtimeMs: "123", size: 1 }), null);
+});
+
+// ── mediaUrlWithBust (cache-bust fingerprint for binary previews) ──
+test("mediaUrlWithBust: query-less ticketed URL gets ?v= (never &v=)", () => {
+  // Ticketed media URLs carry no query of their own; `&v=` would become part of the
+  // endpoint path (…/file&v=1 → 404) and spin the viewer's ticket-recovery retry.
+  assert.equal(mediaUrlWithBust("/api/extensions/aiti-editor/t/abc/file", 1), "/api/extensions/aiti-editor/t/abc/file?v=1");
+  assert.ok(!mediaUrlWithBust("/api/extensions/aiti-editor/t/abc/file", 1).includes("/file&"));
+});
+
+test("mediaUrlWithBust: plain URL without query/bust unchanged", () => {
+  assert.equal(mediaUrlWithBust("/api/extensions/aiti-editor/t/abc/file", 0), "/api/extensions/aiti-editor/t/abc/file");
+  assert.equal(mediaUrlWithBust("", 5), "");
+});
+
+test("mediaUrlWithBust: URL that already has a query uses &", () => {
+  assert.equal(mediaUrlWithBust("https://x/y?type=read", 7), "https://x/y?type=read&v=7");
+});
+
+// ── source contracts: binary preview url + bounded recovery (regression pins) ──
+test("editor-app builds the binary media src through mediaUrlWithBust", () => {
+  // Regression: a bare `fileUrl + "&v=" + bust` appended onto the query-less
+  // ticketed URL (…/file&v=1) → 404 on every disk-change frame.
+  assert.ok(editorAppSrc.includes("mediaUrlWithBust(fileUrl, mediaBust)"));
+  assert.ok(!editorAppSrc.includes('+ "&v=" +'));
+});
+
+test("recoverMedia only resets its retry budget outside the ticket re-issue path", () => {
+  // The ticket promise must NOT clear mediaErrRef (a persistently failing URL would
+  // then retry forever); the budget resets on a successful load and on Reload.
+  const recoverBlock = editorAppSrc.slice(editorAppSrc.indexOf("const recoverMedia = () =>"));
+  const body = recoverBlock.slice(0, recoverBlock.indexOf("return true;"));
+  assert.ok(body.includes("mediaErrRef.current += 1"));
+  assert.ok(!body.includes("mediaErrRef.current = 0"));
+  assert.ok(editorAppSrc.includes("onSrcLoaded={() => { mediaErrRef.current = 0; }}"));
+  assert.ok(editorAppSrc.includes("if (fileType !== \"text\") { mediaErrRef.current = 0; setMediaBust"));
 });

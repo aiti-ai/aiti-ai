@@ -51,6 +51,19 @@ export function throttleOk(lastReloadAt: number, now: number, minIntervalMs = 10
 }
 
 /**
+ * Cache-busted media URL for a binary preview (image / video / audio / pdf).
+ *
+ * The bust rides as a QUERY parameter: ticketed media URLs carry no query string of
+ * their own (`…/t/<ticket>/file`), so a bare `&v=` would glue onto the endpoint path
+ * (`…/file&v=1` → 404). That 404 used to feed the viewer's ticket-recovery retry,
+ * which re-issues a ticket on every error → an endless reload loop in the preview.
+ */
+export function mediaUrlWithBust(base: string, bust: number): string {
+  if (!base || !(bust > 0)) return base;
+  return base + (base.includes("?") ? "&" : "?") + "v=" + bust;
+}
+
+/**
  * Parse an ed-watch frame into a DiskSig. Returns null for malformed frames
  * (missing/NaN fields) and for "gone" frames — the caller handles gone separately.
  */
