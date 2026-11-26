@@ -1,19 +1,23 @@
 /**
- * git-toolbar · aiti-folder 的 git 工具面（git-ops 共享引擎方案 M3，docs/aiti-git-ops-shared-plan.md §4）。
+ * git-toolbar · aiti-folder's git surface (git-ops shared engine, docs/aiti-git-ops-shared-plan.md §4).
  *
- * - useFolderGit(root)：引擎在位探测 + refs（分支/ahead-behind/脏文件）+ 订阅
- *   `aiti-git-ops:changed:*` topic（aiti-event-bus subscribe-topics 服务，帧带 repo 过滤）→
- *   引擎写操作后本目录树徽标/工具条即时刷新（零轮询）。
- * - GitBar：变更区段上方单行工具条——⎇ 分支（共享 BranchPanel）· ↑ahead ↓behind（SyncBar
- *   确认流）· ✎ 手动提交（勾选文件→stage→commit）。引擎缺席/非 git 目录整条隐藏（软依赖降级）。
- * - 全部 git 调用直指引擎 REST `/api/extensions/aiti-git-ops/git/*`（端点即引擎，folder 零服务端新增）。
+ * - useFolderGit(root): engine availability probe + refs (branch / ahead-behind / dirty files) +
+ *   subscription to the `aiti-git-ops:changed:*` topic (aiti-event-bus subscribe-topics service,
+ *   frames carry a repo filter) → the folder tree's badge and this toolbar refresh as soon as the
+ *   engine finishes a write (no polling).
+ * - GitBar: one line above the changes section — ⎇ branch (shared BranchPanel) · ↑ahead ↓behind
+ *   (SyncBar confirm flow) · ✎ manual commit (pick files → stage → commit). The whole bar hides
+ *   when the engine is absent or the folder is not a git repo (soft dependency, degrades).
+ * - Every git call goes straight to the engine REST `/api/extensions/aiti-git-ops/git/*`
+ *   (the endpoint is the engine, so folder adds no server route).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, extSvc, openFile } from "./host-shim";
 import { ct } from "./comp-i18n";
 import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
-// ⚠ api 实例只在 hook 内创建（勿提模块级：folder-browser → git-toolbar 循环依赖下
-// 模块级 const 会踩 TDZ「Cannot access before initialization」，2026-11-24 实测）。
+// ⚠ Create the api instance inside the hook only (never at module level: under the
+// folder-browser → git-toolbar cycle a module-level const hits the TDZ "Cannot access before
+// initialization", measured 2026-11-24).
 import { BranchPanel, BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
 import { CommitPlanDialog } from "./git-plan";
 
@@ -26,15 +30,16 @@ export interface FolderGitRefs {
 }
 
 export interface FolderGit {
-  /** null=探测中；false=引擎缺席或非 git 目录（工具条隐藏）；true=可用 */
+  /** null = probing; false = engine absent or not a git repo (the bar hides); true = available */
   avail: boolean | null;
   refs: FolderGitRefs | null;
-  /** 引擎写操作/topic 到达后的本地刷新序号（追加进 /api/git/status effect 依赖） */
+  /** Local refresh counter after an engine write / topic frame (appended to the /api/git/status
+   *  effect deps) */
   statusBump: number;
   refresh: () => void;
-  /** 行级单文件操作（git-ops M4 补：双列态行钮）；返回 HTTP status */
+  /** Per-file row action (git-ops M4: the two-column row buttons); returns the HTTP status */
   op: (kind: "stage" | "unstage" | "discard", path: string) => Promise<number>;
-  /** 批量（桶头「暂存全部 / 取消暂存全部」）：一次引擎调用，完成后自动重探 + statusBump */
+  /** Batch (bucket header "stage all / unstage all"): one engine call, then re-probe + statusBump */
   opPaths: (kind: "stage" | "unstage" | "discard", paths: string[]) => Promise<number>;
 }
 
@@ -42,7 +47,8 @@ export function useFolderGit(root: string): FolderGit {
   const [avail, setAvail] = useState<boolean | null>(null);
   const [refs, setRefs] = useState<FolderGitRefs | null>(null);
   const [statusBump, setStatusBump] = useState(0);
-  // ⚠ memo：api 不稳定会让探测 effect 每渲染重跑 → 请求风暴（session-manager M2 实测教训）
+  // ⚠ memo: an unstable api re-runs the probe effect on every render → request storm (measured
+  // in session-manager M2)
   const api = useMemo(() => createGitOpsApi({ apiUrl }), []);
 
   const probe = useCallback(async (cwd: string) => {
@@ -57,7 +63,8 @@ export function useFolderGit(root: string): FolderGit {
         dirtyFiles: r.data.dirtyFiles ?? [],
       });
     } else {
-      // 404=引擎缺席/禁用；400=非 git 目录——同样整条降级隐藏（git-ops 方案 §4 ④）
+      // 404 = engine absent/disabled; 400 = not a git repo — both hide the whole bar
+      // (git-ops plan §4 ④)
       setAvail(false);
       setRefs(null);
     }
@@ -71,8 +78,9 @@ export function useFolderGit(root: string): FolderGit {
     return () => { cancelled = true; };
   }, [root, probe]);
 
-  // topic 订阅（帧形如 { type: "aiti-git-ops:changed:<hash>", kind, summary, repo }）：
-  // repo 命中当前目录才刷新；服务缺席（event-bus 未启用）→ 不订阅，靠打开/操作后刷新。
+  // Topic subscription (frames look like { type: "aiti-git-ops:changed:<hash>", kind, summary,
+  // repo }): refresh only when repo covers this folder. The service is absent when the event bus
+  // is off → no subscription; the bar then refreshes on mount and after each action.
   useEffect(() => {
     const svc = extSvc<((h: (f: any) => void, types: string[]) => { off: () => void }) | undefined>("aiti-event-bus.subscribe-topics");
     if (!svc) return;
@@ -111,13 +119,14 @@ export function useFolderGit(root: string): FolderGit {
   return { avail, refs, statusBump, refresh, op, opPaths, ignoreAdd };
 }
 
-/* ── GitBar：变更区段上方单行工具条 ── */
+/* ── GitBar: the single-line toolbar above the changes section ── */
 
 export function GitBar(p: {
   root: string;
   git: FolderGit;
   onChanged?: () => void;
-  /** 变更区段开合（dock 头的变更开关在部分形态不可达——GitBar 提供保底入口） */
+  /** Changes-section toggle (the dock header's switch is unreachable in some layouts — GitBar
+   *  offers a guaranteed entry point) */
   changesOpen?: boolean;
   onToggleChanges?: () => void;
 }) {
@@ -153,7 +162,7 @@ export function GitBar(p: {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 10px 3px", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
-      {/* ⎇ 分支 chip（共享 BranchPanel） */}
+      {/* ⎇ branch chip (shared BranchPanel) */}
       <span
         data-folder-git-chip="1"
         title={ct("git.branchPanelTitle")}
@@ -173,7 +182,7 @@ export function GitBar(p: {
         </svg>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{git.refs.current}</span>
       </span>
-      {/* SyncBar：↑ahead ↓behind */}
+      {/* SyncBar: ↑ahead ↓behind */}
       {ab && ab[0] > 0 ? (
         <button type="button" disabled={syncBusy} title={ct("git.pushTitle")} onClick={() => { if (window.confirm(ct("git.pushConfirm", { count: ab[0] }))) void runSync("push"); }}
           style={syncBtnStyle()}>{ab[0]}<MiArrowUpSmall /></button>
@@ -184,12 +193,12 @@ export function GitBar(p: {
       ) : null}
       {ab && ab[0] === 0 && ab[1] === 0 ? <span style={{ color: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}>✓</span> : null}
       <span style={{ flex: 1 }} />
-      {/* 分组提交（M4：启发式 + 引擎逐笔执行断点/回滚） */}
+      {/* Grouped commit (M4: heuristic plan + engine per-commit checkpoints/rollback) */}
       <button type="button" title={ct("git.planTitle")} onClick={() => { git.refresh(); setPlanOpen(true); }}
         style={{ display: "inline-flex", alignItems: "center", gap: 3, border: "none", background: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 11, padding: "2px 4px", borderRadius: 4 }}>
         {ct("git.planShort")}
       </button>
-      {/* 变更区段开关（保底入口） */}
+      {/* Changes-section toggle (guaranteed entry point) */}
       {p.onToggleChanges ? (
         <button type="button" title={ct("git.changesToggle")} aria-pressed={p.changesOpen}
           onClick={p.onToggleChanges}
@@ -198,7 +207,8 @@ export function GitBar(p: {
           ☰
         </button>
       ) : null}
-      {/* 手动提交：先重探 refs（用户/agent 可能在挂载后改过文件），再开弹窗——列表不陈旧 */}
+      {/* Manual commit: re-probe refs first (a user or agent may have touched files after mount),
+          then open the dialog — the file list is never stale */}
       <button type="button" title={ct("git.commitTitle")} onClick={() => { git.refresh(); setCommitOpen(true); }}
         style={{ display: "inline-flex", alignItems: "center", gap: 3, border: "none", background: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 11, padding: "2px 4px", borderRadius: 4 }}>
         {ct("git.commitShort")}
@@ -210,7 +220,7 @@ export function GitBar(p: {
         </span>
       ) : null}
 
-      {/* 共享 BranchPanel（folder 无 worktree 面 → 面板自动隐藏该分区） */}
+      {/* Shared BranchPanel (folder has no worktree surface → the panel hides that section) */}
       <BranchPanel
         apiUrl={apiUrl}
         cwd={root}
@@ -224,7 +234,7 @@ export function GitBar(p: {
         onChanged={() => { git.refresh(); p.onChanged?.(); }}
       />
 
-      {/* 手动提交弹窗（勾选文件 → stage → commit；原 folder 案 §5.4 手动路径） */}
+      {/* Manual commit dialog (pick files → stage → commit; the folder plan §5.4 manual path) */}
       {commitOpen ? (
         <CommitDialog
           root={root}
@@ -253,7 +263,7 @@ function MiArrowDownSmall() {
   return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 13 12 18 17 13" /><line x1="12" y1="18" x2="12" y2="4" /></svg>;
 }
 
-/* ── 手动提交弹窗 ── */
+/* ── manual commit dialog ── */
 
 export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: string }[]; onClose: () => void; onDone: () => void; initialMessage?: string }) {
   const api = useMemo(() => createGitOpsApi({ apiUrl }), []);
@@ -263,7 +273,8 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // AI 生成提交信息（docs/aiti-folder-commit-ai-message-plan.md）：服务可用性探测 + 生成状态
+  // AI commit message (docs/aiti-folder-commit-ai-message-plan.md): availability probe +
+  // generation state
   const [aiAvail, setAiAvail] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   // Single delayed flag (no polling): once a generation passes ~25s the button says so,
@@ -290,7 +301,8 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
     if (message.trim() && !window.confirm(ct("git.aiMessageOverwrite"))) return;
     setAiBusy(true); setError(null);
     try {
-      // basePath 从 apiUrl 推导（host-shim 前缀 /dev 等）；origin 本页已知（同 CommitPlanDialog.aiRefine）
+      // basePath is derived from apiUrl (the host-shim may prefix /dev etc.); origin is this
+      // page's own (same as CommitPlanDialog.aiRefine)
       const p1 = apiUrl("/api/agent/new");
       const basePath = p1.slice(0, Math.max(0, p1.indexOf("/api/")));
       const r = await fetch(apiUrl("/api/extensions/aiti-folder/git-commit-ai-message"), {
@@ -308,7 +320,7 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
     if (busy || (!message.trim() && !amend)) return;
     setBusy(true); setError(null);
     try {
-      // 勾选且未在暂存区的 → add；取消勾选但已在暂存区的 → restore --staged
+      // Checked but not yet staged → add; unchecked but already staged → restore --staged
       const toStage = [...checked].filter((f) => !staged0.has(f));
       const toUnstage = [...staged0].filter((f) => !checked.has(f));
       if (toStage.length > 0) {
