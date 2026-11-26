@@ -21,6 +21,8 @@
     "./dedupe-fetch": "./dedupe-fetch.ts",
     "./deploy-commit": "./deploy-commit.mjs",
     "./dev-pack": "./dev-pack.mjs",
+    "./directory-picker": "./directory-picker.tsx",
+    "./directory-picker-dom": "./directory-picker-dom.ts",
     "./dock-icons": "./dock-icons.ts",
     "./esbuild-bin": "./esbuild-bin.ts",
     "./exec-async": "./exec-async.ts",

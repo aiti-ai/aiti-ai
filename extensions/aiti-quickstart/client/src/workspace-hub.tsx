@@ -5,9 +5,9 @@
  * 四入口：Git 克隆（本扩展 server API：表单 → POST workspace/clone → event-bus
  * topic 进度帧 → 成功落欢迎页）/ 上传压缩包（session-manager uploadWorkspace
  * 服务复用——开关提为模块级 store，本扩展零重实现）/ 本地目录 / 新建空目录
- * (local / new and the clone tab's target dir: aiti-folder DirectoryBrowser picker, portaled to
- * body so the float panel's transform/overflow cannot clip it; typing an absolute path by hand
- * stays available as the fallback path).
+ * (local / new and the clone tab's target dir: the shared DirectoryPicker dialog, which portals
+ * itself to body so the float panel's transform/overflow cannot clip it; typing an absolute path
+ * by hand stays available as the fallback path).
  *
  * 「最近」区：GET workspace/history（记录 + ~/workspace 扫描合并——覆盖既往
  * zip 上传无历史的工作区），chip 点击 → pi-web.newSession.setCwd 落欢迎页。
@@ -17,9 +17,9 @@
  * 打开通道：window 事件 `aiti-quickstart:open-hub`（openWorkspaceHub 派发；
  * entry.tsx 同时注册跨扩展服务 `aiti-quickstart.open`）。
  */
-import { useState, useEffect, useRef, t, extSvc, createPortal, apiUrl } from "./host-shim";
+import { useState, useEffect, useRef, t, extSvc, createPortal, apiUrl, getTopicItems, ensureMaterialized } from "./host-shim";
 import { parseGitUrl } from "./quickstart-logic";
-import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
+import { DirectoryPicker } from "./directory-picker";
 
 /* ── 服务面（全部软依赖，缺席降级） ── */
 
@@ -109,18 +109,9 @@ function FolderGlyph() {
   );
 }
 
-/** DirectoryBrowser mounted on document.body: the Hub panel is a float target (transform + overflow
- *  hidden), and a fixed-position child would be clipped/offset by it. The wrapper sits above
- *  aiti-float's front counter (3001+): the float panel would otherwise cover the picker's own
- *  static z-index 400 overlay. */
-function DirectoryPick(props: { initialPath?: string; onSelect: (p: string) => void; onCancel: () => void }): unknown {
-  return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 2147483600 }}>
-      <DirectoryBrowser initialPath={props.initialPath} onSelect={props.onSelect} onCancel={props.onCancel} />
-    </div>,
-    document.body,
-  );
-}
+/* Directory picker: the shared dialog (extensions/_shared/directory-picker) portals itself to
+ * document.body with a top-of-stack overlay, so the Hub panel's transform/overflow cannot
+ * clip or offset it (no wrapper needed here). */
 
 /* ── Hub 主组件 ── */
 
@@ -285,7 +276,7 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
         </div>
       </div>
       {browseOpen ? (
-        <DirectoryPick
+        <DirectoryPicker
           initialPath={browseStart}
           onSelect={(p) => { setDir(p); setBrowseOpen(false); }}
           onCancel={() => setBrowseOpen(false)}
@@ -324,7 +315,7 @@ function UploadTab(props: { onEnter: (root: string, source: "local") => void }) 
   );
 }
 
-/* ── 本地目录 / 新建空目录 tab（DirectoryBrowser 软依赖 + 宿主 API 降级） ── */
+/* ── Local directory / new empty folder tabs (shared DirectoryPicker + host API fallback) ── */
 
 function LocalTab(props: { onEnter: (root: string, source: "local") => void }) {
   const [path, setPath] = useState("");
@@ -357,7 +348,7 @@ function LocalTab(props: { onEnter: (root: string, source: "local") => void }) {
         </div>
       </div>
       {browseOpen ? (
-        <DirectoryPick
+        <DirectoryPicker
           initialPath={browseStart}
           onSelect={(p) => { setPath(p); setBrowseOpen(false); }}
           onCancel={() => setBrowseOpen(false)}

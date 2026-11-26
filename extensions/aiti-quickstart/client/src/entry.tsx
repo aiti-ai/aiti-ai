@@ -11,9 +11,6 @@
  *     `aiti-quickstart.open`（跨扩展开 Hub）。
  */
 import { __setCtx, regSvc, t } from "./host-shim";
-// Build-time inlined aiti-folder DirectoryBrowser brings its own host-shim copy; register() hands
-// it the same ctx so it can resolve apiUrl/t from this extension's runtime (session-manager precedent).
-import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/host-shim";
 import { QuickstartFiller, WorkspacePickerAcquireEntry, FreshGuidePage, openQuickstart, renderWidget, ExamplesSettings } from "./quickstart";
 import { WorkspaceHubRoot } from "./workspace-hub";
 import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./quickstart-logic";
@@ -21,7 +18,6 @@ import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./
 export default function register(ctx: Record<string, unknown>): () => void {
   // 必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
-  setAitiFolderCtx(ctx);
 
   // 欢迎页 widget：meta 与 manifest 静态条目同源（WIDGET_METAS），注册后同 id 接管。
   // settings 契约（宿主 ⚙ 面板 ✎ 按钮，方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md

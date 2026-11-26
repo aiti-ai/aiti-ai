@@ -11,11 +11,11 @@ import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlock
 import type { DockMenuItem } from "../../../_shared/ext-float-dock";
 import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, invalidateEntries, groupContentMatches, type SearchTreeNode } from "./lib";
 import { watchDir } from "./folder-watch";
-import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
+import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, MiFolderOpen, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
 import { EXT_LANG, LANG_COLOR } from "./lib";
 import { FolderSwitcher } from "./folder-switcher";
 import { isFolderPinned, toggleFolderPin, folderItemKey, removeFolderInstance } from "./folder-dock";
-import { DirectoryBrowser } from "./directory-browser";
+import { DirectoryPicker } from "./directory-picker";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
@@ -342,7 +342,7 @@ function TransferDialog(props: { path: string; cwd: string; root: string; mode?:
           </div>
         </div>
       </div>
-      {pickCustom ? <DirectoryBrowser initialPath={ws} onSelect={(p)=>{ setPickCustom(false); switchWs(p); }} onCancel={()=>setPickCustom(false)} /> : null}
+      {pickCustom ? <DirectoryPicker initialPath={ws} onSelect={(p)=>{ setPickCustom(false); switchWs(p); }} onCancel={()=>setPickCustom(false)} /> : null}
     </div>
   );
 }

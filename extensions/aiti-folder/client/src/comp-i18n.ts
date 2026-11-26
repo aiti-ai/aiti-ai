@@ -1,7 +1,7 @@
 /**
  * comp-i18n · 跨扩展复用组件自带多语。
  *
- * 背景：aiti-folder 的可复用组件（WorkspaceDropdown / DirectoryBrowser / FolderSwitcher）
+ * Why: aiti-folder's reusable components (WorkspaceDropdown / DirectoryPicker / FolderSwitcher)
  * 会被其他扩展构建期内联（session-manager、aiti-git-review 等）。运行时宿主 t() 委托的是
  * 调用方扩展的 i18n 字典——那里没有本扩展的 key，界面会原样显示 key 字符串。
  *
@@ -19,7 +19,28 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "files.parentDir": "Parent directory",
     "files.selectFolder": "Select this folder",
     "i18n.close": "Close",
+    "i18n.cancel": "Cancel",
+    "i18n.checking": "Checking…",
     "sidebar.customPath": "Custom path…",
+    // Shared directory picker (extensions/_shared/directory-picker.tsx)
+    "directoryPicker.selectDirectory": "Select directory",
+    "directoryPicker.goToParent": "Go to parent directory",
+    "directoryPicker.directoryPath": "Directory path",
+    "directoryPicker.editPath": "Edit path",
+    "directoryPicker.pathEditHint": "Click or type to edit the path (Alt+D / Ctrl+L)",
+    "directoryPicker.copyPath": "Copy path",
+    "directoryPicker.copied": "Path copied",
+    "directoryPicker.pathPlaceholder": "/path/to/project or ~/project",
+    "directoryPicker.loadingDirectories": "Loading directories…",
+    "directoryPicker.noDrives": "No drives found",
+    "directoryPicker.noSubdirectories": "No subdirectories",
+    "directoryPicker.selectCurrentDirectory": "Select current directory",
+    "directoryPicker.selectThisFolder": "Select this folder",
+    "directoryPicker.newFolder": "New folder",
+    "directoryPicker.newFolderIn": "Create a new folder in {path}",
+    "directoryPicker.folderName": "Folder name",
+    "directoryPicker.create": "Create",
+    "directoryPicker.creating": "Creating…",
     "files.openFolder": "Open Folder",
     "sidebar.filterProjects": "Filter projects…",
     "sidebar.noMatchingProjects": "No matching projects",
@@ -81,7 +102,28 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "files.parentDir": "上级目录",
     "files.selectFolder": "选择此文件夹",
     "i18n.close": "关闭",
+    "i18n.cancel": "取消",
+    "i18n.checking": "检查中…",
     "sidebar.customPath": "自定义路径…",
+    // Shared directory picker (extensions/_shared/directory-picker.tsx)
+    "directoryPicker.selectDirectory": "选择目录",
+    "directoryPicker.goToParent": "转到上级目录",
+    "directoryPicker.directoryPath": "目录路径",
+    "directoryPicker.editPath": "编辑路径",
+    "directoryPicker.pathEditHint": "点击或直接键入以编辑路径（Alt+D / Ctrl+L）",
+    "directoryPicker.copyPath": "复制路径",
+    "directoryPicker.copied": "已复制路径",
+    "directoryPicker.pathPlaceholder": "/路径/到/项目 或 ~/项目",
+    "directoryPicker.loadingDirectories": "正在加载目录…",
+    "directoryPicker.noDrives": "未找到盘符",
+    "directoryPicker.noSubdirectories": "没有子目录",
+    "directoryPicker.selectCurrentDirectory": "选择当前目录",
+    "directoryPicker.selectThisFolder": "选择此文件夹",
+    "directoryPicker.newFolder": "新建文件夹",
+    "directoryPicker.newFolderIn": "在 {path} 新建文件夹",
+    "directoryPicker.folderName": "文件夹名",
+    "directoryPicker.create": "创建",
+    "directoryPicker.creating": "创建中…",
     "files.openFolder": "打开文件夹",
     "sidebar.filterProjects": "筛选项目…",
     "sidebar.noMatchingProjects": "没有匹配的项目",

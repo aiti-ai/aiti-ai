@@ -127,6 +127,8 @@ export const MiCopy = mkMenuIcon(() => <><rect x="9" y="9" width="13" height="13
 export const MiCopyTo = mkMenuIcon(() => <><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /><line x1="12" y1="15.5" x2="18.5" y2="15.5" /><polyline points="16 13 18.5 15.5 16 18" /></>);
 export const MiArrowUp = mkMenuIcon(() => <><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>);
 export const MiFolder = mkMenuIcon(() => <><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></>);
+// Open in the OS file manager (lucide folder-open: the folder itself leaves pi-web)
+export const MiFolderOpen = mkMenuIcon(() => <><path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" /></>);
 export const MiChevronL = mkMenuIcon(() => <><polyline points="15 18 9 12 15 6" /></>);
 export const MiChevronR = mkMenuIcon(() => <><polyline points="9 18 15 12 9 6" /></>);
 export const MiFileText = mkMenuIcon(() => <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></>);

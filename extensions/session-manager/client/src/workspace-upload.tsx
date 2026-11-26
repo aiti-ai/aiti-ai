@@ -3,7 +3,7 @@
  * （方案 docs/session-manager-workspace-upload-plan.md §6）
  *
  * 流程：选压缩包（accept 按 capabilities：rar/7z 系统无工具则剔除并提示）→
- * 选目标父目录（DirectoryBrowser，默认 ~/workspace）→ XHR 流式上传（进度条）→
+ * Pick the target parent directory (shared DirectoryPicker, defaults to ~/workspace) → XHR streaming upload (progress) →
  * 服务端解压（单根检测 + 永不覆盖顺延）→ 成功后 onSelect(root) 自动切换 + toast。
  *
  * UI 范式同 workspace-manage：createPortal overlay（躲 AnimatedDropdown transform
@@ -14,7 +14,7 @@ import { createPortal } from "react-dom";
 import { t, apiUrl } from "./host-shim";
 import { ghostBtn } from "./helpers";
 import { showToast } from "./toast";
-import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
+import { DirectoryPicker } from "./sidebar/directory-picker";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 
 /** accept 基础集（zip/tar 三平台保证）；rar/7z 按 capabilities 追加。 */
@@ -220,7 +220,7 @@ export function UploadDialog(props: UploadWorkspaceProps) {
       </div>
 
       {browseOpen && (
-        <DirectoryBrowser
+        <DirectoryPicker
           initialPath={dir || undefined}
           onSelect={(p) => { setBrowseOpen(false); setDir(p); }}
           onCancel={() => setBrowseOpen(false)}
