@@ -21,7 +21,7 @@
 (function (global) {
   'use strict';
 
-  var CHUNK = 1024 * 1024; // 上传分块 1MB（服务端上限 2MB；≤1MB 不触 nginx client_max_body_size 常见默认）
+  var CHUNK = 1024 * 1024; // upload chunk 1MB (server cap 2MB; staying <=1MB avoids common nginx client_max_body_size defaults)
   var localeHookInstalled = false;
   var localeRerender = null;
   // i18n for kind/"self" labels: browser language binary split (zh prefix → Chinese) — consumed by
@@ -136,7 +136,7 @@
     var myName = opts.name || null;
     var started = false;
     var disposed = false;
-    var devices = [];      // 统一设备视图（page/agent/pair）
+    var devices = [];      // unified device view (page/agent/pair)
     var history = [];      // chat stream (live + local echo)
     // Page identity (exposed by bridge-client): pair downlink rides aiConns (pageId channel); uplink REST is endorsed by the page identity
     function identity() {
@@ -160,7 +160,7 @@
     function inferBase() {
       var path = String(global.location && global.location.pathname || '');
       // pi-web embedded bridge: workbench served by the extension -> bridge endpoint prefix <basePath>/api/extensions/aiti-devtools/mcp
-      // （extId 即 aiti-devtools；slice 保住 /dev 等 basePath 前缀）
+      // (extId here is aiti-devtools; the slice keeps a /dev-style basePath prefix)
       var i = path.indexOf('/api/extensions/aiti-devtools/');
       if (i >= 0) return global.location.origin + path.slice(0, i) + '/api/extensions/aiti-devtools/mcp';
       return global.location.origin + (path.indexOf('/aiti/') === 0 ? '/aiti' : '');
@@ -178,9 +178,10 @@
     }
     loadName();
 
-    /** 手机/新设备入口链接（QR 内容 + 复制链接同源）。
-     *  pi-web 内嵌桥（base 相对，可带 basePath）→ 完整工作台 URL + ?pair=1 深链：打开 AI 窗口
-     *  即自动弹出设备互连面板，与桌面「先开 pi-web → 点设备互连」同体验（aiti-pair 客户端消费该参数）；
+    /** Phone / new-device entry link (the QR payload and the copy-link share this one source).
+     *  pi-web embedded bridge (relative base, may carry a basePath) → full workbench URL + ?pair=1 deep link:
+     *  opening the AI window pops the pairing panel automatically, same experience as desktop
+     *  "open pi-web → click device pairing" (the aiti-pair client consumes the param).
      *  Non-embedded base (standalone bridge/cockpit) has no workbench to point at -> callers hide the phone entry via piWebBase. */
     var piWebBase = /\/api\/extensions\/aiti-devtools\//.test(base); // only pi-web embedded bridges (workbench deep link) show the phone entry (pair.html retired)
     function pairPageUrl() {
@@ -292,7 +293,7 @@
       if (m && m.type === 'event' && m.event === 'pair_devices') scheduleDeviceRefresh(120);
     }
     global.addEventListener(BRIDGE_EVENT, onBridgeEvent);
-    // ---- 发送 ----
+    // ---- Sending ----
     function sendText(to, text, opts) {
       var idt = identity();
       if (!idt) return Promise.reject(new Error(T.notReady));
@@ -333,7 +334,7 @@
 
     function sendFile(to, file, onProgress) {
       var idt = identity();
-      if (!idt) return Promise.reject(new Error(pick('页面身份未就绪', 'Page identity not ready')));
+      if (!idt) return Promise.reject(new Error(pick('页面身份未就绪', 'Page identity not ready'))); // user-visible: localized via pick()
       var mime = file.type || 'application/octet-stream';
       return http('/bridge/pair/file/init', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), to: to || 'all', name: file.name, size: file.size, mime: mime }).then(function (r) {
         if (!r || !r.ok) throw new Error((r && r.error) || T.initFail);
@@ -448,15 +449,15 @@
   }
 
   // ================= widget UI (mount; shared by cockpit / pi-web ext) =================
-  // 主题自适配：mount 时从宿主 documentElement 读 CSS 变量（pi-web --text/--bg-panel/--accent、
-  // cockpit --text/--panel name match; built-in light fallback when no host vars).
+  // Theme adaptation: on mount the widget reads CSS variables off the host documentElement
+  // (pi-web --text/--bg-panel/--accent, cockpit --text/--panel name match; built-in light fallback when no host vars).
   var WIDGET_CSS = [
     '.apair{position:relative;width:100%;display:flex;flex-direction:column;height:100%;min-height:0;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ap-fg);background:var(--ap-panel)}',
     '.apair *,.apair *::before,.apair *::after{box-sizing:border-box}',
     '.apair ::-webkit-scrollbar{width:8px;height:8px}',
     '.apair ::-webkit-scrollbar-thumb{background:var(--ap-line);border-radius:4px}',
     '.apair ::-webkit-scrollbar-thumb:hover{background:var(--ap-dim)}',
-    // ---- 头部：状态点 + 本端名（ghost 输入）+ 设备数 ----
+    // ---- Header: status dot + local device name (ghost input) + device count ----
     '.apair-head{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--ap-line);flex-shrink:0}',
     '.apair-dot{width:8px;height:8px;border-radius:50%;background:#10b981;flex-shrink:0;box-shadow:0 0 0 3px rgba(16,185,129,.16)}',
     '.apair-dot.mid{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.16);animation:ap-pulse 1.2s ease-in-out infinite}',
@@ -473,7 +474,7 @@
     '.apair-hbtn:hover{color:var(--ap-fg);border-color:var(--ap-line)}',
     '.apair-hbtn.on{color:var(--ap-accent);border-color:var(--ap-accent)}',
     '.apair-hbtn.hact{font-size:11px}',
-    // ---- 侧栏设备列表 ----
+    // ---- Sidebar device list ----
     '.apair-body{display:flex;flex:1;min-height:0}',
     '.apair-side{width:176px;flex-shrink:0;border-right:1px solid var(--ap-line);overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:2px;background:var(--ap-page)}',
     '.apair-sidehd{display:none;align-items:center;gap:4px;font-size:10px;color:var(--ap-dim);padding:2px 4px 6px 8px;text-transform:uppercase;letter-spacing:.06em}',
@@ -506,7 +507,7 @@
     '.apair-drow .k{flex-shrink:0;width:82px;color:var(--ap-dim)}',
     '.apair-drow .v{flex:1;min-width:0;word-break:break-all;color:var(--ap-fg)}',
     '.apair-dbadge{display:inline-block;background:var(--ap-accent-soft);color:var(--ap-accent);border-radius:6px;padding:0 6px;font-size:10px;font-weight:600;margin-left:6px;vertical-align:1px}',
-    // ---- 消息区：气泡 + 时间戳 ----
+    // ---- Message area: bubbles + timestamps ----
     '.apair-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--ap-page)}',
     '.apair-msgs{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:8px;min-height:0}',
     '.apair-msg{max-width:78%;display:flex;flex-direction:column;gap:3px;animation:ap-in .18s ease-out}',
@@ -517,7 +518,7 @@
     '.apair-msg:not(.mine) .apair-bub{border-bottom-left-radius:4px}',
     '.apair-who{font-size:10px;color:var(--ap-dim);padding:0 4px}',
     '.apair-meta{font-size:9px;color:var(--ap-dim);padding:0 4px}',
-    // ---- 文件卡 ----
+    // ---- File card ----
     '.apair-file{display:flex;align-items:center;gap:9px;min-width:190px}',
     '.apair-file .fic{width:32px;height:32px;border-radius:8px;background:var(--ap-surface);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}',
     '.apair-msg.mine .apair-file .fic{background:rgba(255,255,255,.2)}',
@@ -527,16 +528,16 @@
     '.apair-msg.mine .apair-file .fs{color:inherit;opacity:.7}',
     '.apair-file .fb{flex-shrink:0;border:1px solid var(--ap-line);border-radius:7px;padding:4px 10px;font-size:11px;color:var(--ap-accent);cursor:pointer;text-decoration:none;background:var(--ap-panel)}',
     '.apair-file .fb:hover{border-color:var(--ap-accent)}',
-    // ---- 空态 ----
+    // ---- Empty state ----
     '.apair-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--ap-dim);font-size:12px;padding:26px 16px;text-align:center}',
     '.apair-empty .big{font-size:30px;opacity:.55}',
-    // ---- 进度条 ----
+    // ---- Progress bar ----
     '.apair-prog{display:none;align-items:center;gap:9px;padding:7px 12px;font-size:11px;color:var(--ap-muted);border-top:1px solid var(--ap-line);flex-shrink:0;background:var(--ap-panel)}',
     '.apair-prog.show{display:flex}',
     '.apair-prog .t{max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.apair-prog .bar{flex:1;height:4px;border-radius:2px;background:var(--ap-surface);overflow:hidden}',
     '.apair-prog .bar i{display:block;height:100%;background:var(--ap-accent);border-radius:2px;transition:width .15s}',
-    // ---- 输入区 ----
+    // ---- Composer ----
     '.apair-comp{display:flex;flex-direction:column;gap:6px;padding:10px;border-top:1px solid var(--ap-line);flex-shrink:0;background:var(--ap-panel)}',
     '.apair-comp textarea{width:100%;resize:none;background:var(--ap-page);border:1px solid var(--ap-line);border-radius:10px;color:var(--ap-fg);padding:8px 10px;font:inherit;min-height:52px;max-height:110px;transition:border-color .12s,box-shadow .12s;box-sizing:border-box;display:block}',
     '.apair-comp-btns{display:flex;gap:8px;justify-content:flex-end;align-items:center}',
@@ -546,9 +547,9 @@
     '.apair-btn.primary{background:var(--ap-accent);color:var(--ap-accent-c);border-color:transparent}',
     '.apair-btn.primary:hover{border-color:transparent;filter:brightness(1.08)}',
     '.apair-btn:disabled{opacity:.5;cursor:default}',
-    // ---- 小屏（≤640）：抽屉式设备列表 + 头部紧凑 + 防横向溢出 ----
+    // ---- Small screens (<=640): drawer device list + compact header + no horizontal overflow ----
     '.apair-hbtn.side-tgl{display:none}',
-    // ---- 大屏：侧栏加宽 + 气泡收窄 + 留白升级（配 aiti-pair 面板 720/900 响应式默认尺寸） ----
+    // ---- Large screens: wider sidebar + narrower bubbles + more breathing room (matches the panel's 720/900 responsive default sizes) ----
     '@media (min-width:1024px){.apair-side{width:212px}.apair-msg{max-width:74%}.apair-msgs{padding:16px 14px}.apair-head{padding:10px 14px}}',
     '@media (min-width:1536px){.apair-side{width:244px}.apair-msgs{padding:18px 16px}.apair-empty .big{font-size:36px}}',
     '@media (max-width:640px){',
@@ -566,11 +567,11 @@
     '  .apair-comp{gap:6px;padding:8px}',
     '  .apair-comp textarea{min-width:0}',
     '  .apair-msg{max-width:88%}',
-    '  .apair-side svg{max-width:100%;height:auto !important}', // 空态内嵌 QR(inline 160px)收缩进抽屉
+    '  .apair-side svg{max-width:100%;height:auto !important}', // the empty-state inline QR (160px) must shrink inside the drawer
     '}',
   ].join('\n');
 
-  /** 从宿主 documentElement 收集主题变量（缺省浅色兜底）；挂到 widget 根上局部生效 */
+  /** Collect theme variables from the host documentElement (light fallback); applied locally on the widget root. */
   function themeVars() {
     var cs = getComputedStyle(document.documentElement);
     function pick(names, fb) {
@@ -653,7 +654,7 @@
     var progBar = progEl.querySelector('.bar i');
     var ta = el.querySelector('textarea');
     var fileInput = el.querySelector('input[type=file]');
-    var target = 'all'; // 发送目标：设备 id 或 'all'
+    var target = 'all'; // send target: a device id or 'all'
     // Selected-target persistence (keyed by page instanceId so phone/desktop never leak into each
     // other): restored after refresh/remount, never falls back to all
     var TARGET_KEY = '__aiti_pair_target:' + (opts.base || '');
@@ -694,12 +695,12 @@
         d = base ? all.filter(function (x) { return x.kind === 'page' && x.instanceId && x.instanceId === base; })[0] : null;
       }
       if (!d) return String(id || '').slice(0, 12);
-      // 同名歧义时占位符也带 id 尾标（与列表消歧一致）
+      // Same-name ambiguity: the placeholder also carries the id tail (consistent with the list rows)
       var same = all.filter(function (x) { return x.name === d.name; }).length;
       return d.name + (same > 1 ? ' ·' + idTail(d) : '');
     }
 
-    // 离线显示偏好（默认只显在线；持久化 localStorage）
+    // Offline display preference (online only by default; persisted in localStorage)
     var showOffline = false;
     try { showOffline = global.localStorage.getItem('__aiti_pair_showOffline') === '1'; } catch (e) {}
     function setShowOffline(v) {
@@ -708,7 +709,7 @@
       renderDevices();
     }
 
-    /** 当前工作台会话 id（URL ?session= 随会话切换由 AppShell 维护）——用于给「自己」的 agent 打标 */
+    /** Current workbench session id (URL ?session=, maintained by AppShell on session switch) — used to tag "your own" agent */
     function currentSessionId() {
       try { return new URLSearchParams(global.location.search).get('session') || ''; } catch (e) { return ''; }
     }
@@ -825,13 +826,14 @@
         return d.kind === 'page' && (d.id === selfPageId || (d.instanceId && d.instanceId === myIid));
       }
       /** This workbench session's agent (id/name carries the URL session) — only used as a FALLBACK:
-       *  when the page row itself is listed, marking the agent too produced two rows labelled 自己. */
+       *  when the page row itself is listed, marking the agent too produced two rows labelled "self". */
       function isSelfAgent(d) {
         return !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
       }
       var hasSelfPageRow = all.some(isSelfPage);
       function isSelfRow(d) { return isSelfPage(d) || (!hasSelfPageRow && isSelfAgent(d)); }
-      // 默认只显在线；"显示离线"开启才列出。选中的目标即使离线/被过滤也保持可见（发送目标上下文不丢）
+      // Online only by default; "show offline" lists everything. A selected target stays visible even when
+      // offline/filtered (the send-target context must not be lost)
       var list = showOffline ? all : all.filter(function (d) { return d.online !== false || d.id === target; });
       // This device is pinned to the top of the device block: with the old pure name sort it landed at the
       // bottom ("Windows · Edge" after "Linux · Chrome") and scrolled out of the narrow dock. Everything
@@ -856,9 +858,10 @@
       if (!list.length) {
         rows.push({ key: 'empty', html: '<div style="font-size:11px;color:var(--ap-dim);padding:8px 4px;text-align:center;line-height:1.6">' + T.noDevices + '</div>' });
       } else {
-        // 同名消歧：同默认名的设备（多标签/多来源/同 CLI 多会话）追加 id 尾标区分，
-        // 否则列表看起来全是重复项（name 相同时 cwd 副标题窄屏又看不见）。
-        // The self row is excluded from the count: it already carries the 自己 badge, and an id tail on your
+        // Same-name disambiguation: devices sharing the default name (tabs / sources / CLI sessions) get an
+        // id tail, otherwise the list looks like duplicates (when names match, the cwd subtitle is hidden on
+        // narrow screens anyway).
+        // The self row is excluded from the count: it already carries the "self" badge, and an id tail on your
         // own row ("Windows · Edge ·8f3a") only looked like a duplicate device.
         var nameCount = {};
         list.forEach(function (d) { if (!isSelfRow(d)) nameCount[d.name] = (nameCount[d.name] || 0) + 1; });
@@ -866,7 +869,7 @@
           var on = d.online !== false;
           var isSelf = isSelfRow(d);
           // Self row: device label + kind are noise for the operator ("Edge · Windows · 1536x864 · page" says
-          // nothing about yourself) — keep the editable device name and the 自己 badge only.
+          // nothing about yourself) — keep the editable device name and the "self" badge only.
           var info = isSelf ? '' : (d.deviceLabel || d.cwd || '');
           var dup = !isSelf && nameCount[d.name] > 1;
           var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(idTail(d)) + '</span>' : '');
@@ -877,7 +880,7 @@
             + '</span>'
             + '<button class="apair-devinfo" data-info="' + esc(d.id) + '" title="' + T.detailTitle + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>'
             + '<span class="dot' + (!on ? ' off' : '') + '"></span>'
-            // 自己 occupies the kind slot: "page" tells the operator nothing about their own device
+            // The self row occupies the kind slot: "page" tells the operator nothing about their own device
             + '<span class="kd' + (isSelf ? ' self' : '') + '">' + esc(isSelf ? pick('自己', 'self') : kindLabel(d.kind)) + '</span></div>' });
         });
       }
@@ -909,12 +912,13 @@
       if (infoBtn) { toggleDeviceDetail(infoBtn.getAttribute('data-info')); return; } // detail button: never changes the send target
       var row = e.target.closest && e.target.closest('.apair-dev');
       if (!row) return;
-      // QR 占位行不是发送目标——误点会把 target 静默改成 __qr__（消息从此发丢）
+      // The QR placeholder row is not a send target — a mis-click would silently set target=__qr__ and
+      // every message from then on would be lost
       if (row.getAttribute('data-id') === '__qr__') return;
       target = row.getAttribute('data-id');
       saveTargetSelection();
       renderDevices();
-      // 小屏抽屉：选中设备即收起（mobileMq 与 CSS 媒体块同阈值；非小屏 no-op）
+      // Small-screen drawer: picking a device collapses it (mobileMq uses the same threshold as the CSS block; no-op on desktop)
       if (mobileMq && mobileMq.matches) root.classList.remove('side-open');
     });
 
@@ -1084,7 +1088,7 @@
       return sameDay ? T.today + hm : (d.getMonth() + 1 + (isZh() ? '月' : '/')) + d.getDate() + T.dateDay + ' ' + hm;
     }
 
-    /** 📱 扫码面板：二维码 + URL + 复制（QR 内容 = 工作台深链 / pair 入口；大屏 QR 放大） */
+    /** 📱 Phone entry: QR + URL + copy (the QR payload is the workbench deep link; larger QR on big screens) */
     /** phone entry (B8): prefers the opts.openOnPhone hook (service-tunnels Open-on-Phone QR with params);
      *  fallback = link + copy panel (no QR image — no vendored QR generation anymore). */
     function toggleQrPanel() {
@@ -1147,7 +1151,7 @@
       var text = ta.value.trim();
       if (!text) return;
       ta.value = '';
-      // 防御：QR 占位 id 混进 target 时回退群发（正常流已在点击侧排除）
+      // Defensive: a QR placeholder id leaking into target falls back to broadcast (the click path already excludes it)
       var to = target === '__qr__' ? 'all' : target;
       p.sendText(to, text).then(function (r) {
         if (!r) { progEl.classList.add('show'); progT.textContent = T.sendFailNet; progBar.style.width = '0%'; return; }
@@ -1190,7 +1194,7 @@
     // Small-screen drawer: tapping the backdrop (blank area) collapses it — no need to pick a device just to go back
     var sideMask = el.querySelector('.apair-side-mask');
     if (sideMask) sideMask.addEventListener('click', function () { root.classList.remove('side-open'); });
-    // 小屏抽屉：选中设备即收起（matchMedia 与 CSS 媒体块同阈值）
+    // Small-screen drawer: picking a device collapses it (matchMedia threshold matches the CSS block)
     var mobileMq = global.matchMedia ? global.matchMedia('(max-width:640px)') : null;
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
@@ -1223,11 +1227,11 @@
       }
     });
 
-    // 浏览器通知：标签页不在前台 + 有新消息 → Notification API（首次触发权限请求）
+    // Browser notifications: tab not in the foreground + new message → Notification API (first hit asks permission)
     var notifRequested = false;
     p.on('message', function (m) {
       if (m.mine) return;
-      if (document.hasFocus && document.hasFocus()) return; // 前台不通知
+      if (document.hasFocus && document.hasFocus()) return; // no notification while the tab is in the foreground
       try {
         if (!notifRequested && typeof global.Notification !== 'undefined' && global.Notification.permission === 'default') {
           notifRequested = true;
@@ -1255,7 +1259,7 @@
     if (opts.name) nameInput.value = opts.name;
     p.on('devices', function () { if (!nameInput.value) nameInput.value = p.getName() || ''; });
     renderDevices();
-    renderMsgs(); // 初始空态（history 事件仅在首条消息时触发）
+    renderMsgs(); // initial empty state (the history event only fires on the first message)
     localeRerender = function () { if (!root.isConnected) return; renderDevices(); renderMsgs(); };
     if (!localeHookInstalled && global.addEventListener) {
       localeHookInstalled = true;

@@ -1,7 +1,7 @@
 /**
- * aiti-pair client —— 设备互连面板（零构建，ctx.h hyperscript）
+ * aiti-pair client — device interconnect panel (zero-build, ctx.h hyperscript).
  *
- * Structure (same two-face shape as doc-center; aiti-float present state machine as the single source):
+ * Structure (same two-face shape as doc-center; the aiti-float present state machine is the single source):
  *   - toolbar button (lucide message-circle line icon) → present("open") dialog
  *   - dialogs floating face (rendered in the floating state): data-ext-float contract + key/dock
  *     declarations; the dock entry is injected by aiti-float into the "position" menu (never
@@ -9,13 +9,16 @@
  *   - rightFileDock right-panel face (rendered in the docked:right-panel state): DockBody tab
  *     contract markers (data-ext-item etc. — orchestrator dependencies) + mini header ⇱
  *     "back to float" → present("float")
- *   - both faces share one widget instance (switching face = remount; SSE reconnects on the same
- *     peerId seamlessly); in the closed state both faces collapse + the instance stops (saves
- *     SSE); the unread red dot lives in the toolbar badge.
+ *   - both faces share ONE widget instance + ONE DOM subtree (see "Widget singleton" below): a face
+ *     switch re-parents the node, it never remounts, so SSE identity, history, draft and focus
+ *     survive. Closing the panel only unmounts the host: the instance keeps listening. The unread
+ *     red dot lives in the toolbar badge.
  *   - widget = dynamically loads the aiti-devtools extension's pair-client.js (soft dependency;
- *     show onboarding guidance when absent), AitiPair.mount(host, { base: embedded bridge MCP endpoint }).
+ *     shows onboarding guidance when absent), AitiPair.mount(host, { base: embedded bridge MCP endpoint }).
  *
- * 协议唯一来源：packages/aiti-devtools-core/src/pair-client.js（本文件零协议实现）。
+ * All panel chrome strings go through ctx.t() (ui.i18n in index.ts); the widget keeps its own
+ * bilingual table (T_ZH/T_EN in pair-client.js). This file contains zero protocol implementation —
+ * the single protocol source is packages/aiti-devtools-core/src/pair-client.js.
  */
 // aiti-float present state machine (zero-build direct API read; always "floating" = plain-dialog fallback when the float enhancement is not installed)
 const PAIR_KEY = "aiti-pair:pair";
@@ -101,13 +104,18 @@ export default function register(ctx) {
   const { h, useState, useEffect, useCallback, apiUrl } = ctx;
   // i18n: host ctx.t with bare-key fallback (index.ts ui.i18n entries)
   const t = (k) => (typeof ctx.t === "function" ? ctx.t(k) : k);
+  // Only used for the HTML-string fallback bar; i18n text is host-provided but escape anyway.
+  const escapeHtml = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   installGlobalPairMsgListener(); // C1: closed-state unread badge channel (before any mount)
   warmPairLib(); // preload the widget bundle so opening the panel never flashes a loading shell
 
-  /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
-     一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可）。
-     兜底：移动端无会话时 shell 不挂 dialogs 槽（面板组件不渲染）——800ms 内没看到 .apair 就用独立
-     全屏浮层直挂 widget（自带关闭；点遮罩同关），保证扫码场景必达。 */
+  /* ── Deep link: ?pair=1 pops this panel when the workbench opens (the QR / copy-link points at the
+     workbench URL, same experience as desktop "open pi-web → click device pairing"). ──
+     Consumed once: the param is stripped after opening (a refresh does not re-pop; the pairing state
+     lives in localStorage, reopening goes through the toolbar entry).
+     Fallback: on mobile without a session the shell does not mount the dialogs slot (the panel
+     component never renders) — if no .apair shows up within 800ms, mount the widget in a standalone
+     full-screen overlay (with its own close; backdrop click closes too) so the QR flow always lands. */
   try {
     const u = new URL(globalThis.location.href);
     if (u.searchParams.get("pair") === "1") {
@@ -128,12 +136,12 @@ export default function register(ctx) {
           box.style.cssText = `position:relative;width:min(${sz.w}px,94vw);height:min(${sz.h}px,86vh);border-radius:12px;overflow:hidden;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,0.35)`;
           const bar = document.createElement("div");
           bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0";
-          bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>'
-            + '<button title="停靠到右侧" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 6px">⇱</button>';
+          bar.innerHTML = '<span style="flex:1">' + escapeHtml(t("it.pair.dialogTitle")) + '</span>'
+            + '<button title="' + escapeHtml(t("it.pair.dockRight")) + '" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 6px">⇱</button>';
           bar.querySelector('button').onclick = () => { presentPair(PAIR_DOCK_ZONE); host.remove(); };
           const closeBtn = document.createElement("button");
           closeBtn.textContent = "✕";
-          closeBtn.setAttribute("aria-label", "关闭");
+          closeBtn.setAttribute("aria-label", t("it.pair.close"));
           closeBtn.style.cssText = "background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px";
           closeBtn.onclick = () => { presentPair("close"); host.remove(); };
           bar.appendChild(closeBtn);
@@ -154,7 +162,7 @@ export default function register(ctx) {
 
   const ASSET_BASE = "/api/extensions/aiti-devtools";
   const LIB_URL = () => apiUrl(ASSET_BASE + "/pair-client.js");
-  const BRIDGE_BASE = () => apiUrl(ASSET_BASE + "/mcp"); // 内嵌桥端点（bridge-client 同款）
+  const BRIDGE_BASE = () => apiUrl(ASSET_BASE + "/mcp"); // embedded bridge endpoint (same as bridge-client)
 
   function loadPairLib() {
     if (globalThis.AitiPair) return Promise.resolve(globalThis.AitiPair);
@@ -162,8 +170,8 @@ export default function register(ctx) {
     libPromise = new Promise((resolve, reject) => {
       const s = document.createElement("script");
       s.src = LIB_URL(); // asset endpoint negotiation cache (ETag/304): assets invalidate automatically on update; unchanged returns 304 instantly
-      s.onload = () => (globalThis.AitiPair ? resolve(globalThis.AitiPair) : reject(new Error("pair-client.js 加载后未暴露 AitiPair")));
-      s.onerror = () => { libPromise = null; reject(new Error("pair-client.js 加载失败（aiti-devtools 扩展未部署？）")); }; // a failed load stays retryable
+      s.onload = () => (globalThis.AitiPair ? resolve(globalThis.AitiPair) : reject(new Error(t("it.pair.loadNotExposed"))));
+      s.onerror = () => { libPromise = null; reject(new Error(t("it.pair.loadFailed"))); }; // a failed load stays retryable
       document.head.appendChild(s);
     });
     return libPromise;
@@ -237,12 +245,12 @@ export default function register(ctx) {
       openOnPhone: (url) => {
         const lookup = () => (typeof ctx.getExtService === "function" ? ctx.getExtService("service-tunnels.mobile") : null);
         const direct = lookup();
-        if (typeof direct === "function") { direct({ url, title: "设备互连 · 手机接入" }); return Promise.resolve(); }
-        if (typeof ctx.ensureMaterialized !== "function") return Promise.reject(new Error("openOnPhone 服务未就绪"));
+        if (typeof direct === "function") { direct({ url, title: t("it.pair.phoneTitle") }); return Promise.resolve(); }
+        if (typeof ctx.ensureMaterialized !== "function") return Promise.reject(new Error("openOnPhone service not ready"));
         return Promise.resolve(ctx.ensureMaterialized("service-tunnels")).then(() => {
           const svc = lookup();
-          if (typeof svc !== "function") throw new Error("openOnPhone 服务未就绪（物化后仍缺席——service-tunnels 未部署/停用？）");
-          svc({ url, title: "设备互连 · 手机接入" });
+          if (typeof svc !== "function") throw new Error("openOnPhone service not ready (still absent after materialize — service-tunnels not deployed/disabled?)");
+          svc({ url, title: t("it.pair.phoneTitle") });
         });
       },
     };
@@ -299,9 +307,9 @@ export default function register(ctx) {
       onClick: () => presentPair("close"),
     },
       h("div", {
-        "data-ext-float": "1",      // aiti-float 接管：拖拽/缩放/持久化/置前
+        "data-ext-float": "1",      // aiti-float takes over: drag / resize / persistence / raise
         "data-ext-float-key": PAIR_KEY, // state-machine key (read by the ✕ interceptor / dock preference / position menu)
-        "data-ext-float-full": "1", // 小屏（≤640px）铺满视口
+        "data-ext-float-full": "1", // small screens (<=640px): fill the viewport
         "data-ext-float-dock": "right-panel",
         "data-ext-float-dock-default": "right-panel",
         "data-ext-float-w": String(sz.w),
@@ -319,11 +327,11 @@ export default function register(ctx) {
             borderBottom: "1px solid var(--border)", flexShrink: 0, cursor: "grab",
           },
         },
-          h("h3", { style: { margin: 0, fontSize: 13, fontWeight: 600, flex: 1 } }, "✉ 设备互连"),
+          h("h3", { style: { margin: 0, fontSize: 13, fontWeight: 600, flex: 1 } }, t("it.pair.dialogTitle")),
           // the dock entry is auto-injected by aiti-float into the "position" menu per the data-ext-float-dock declaration (never hand-written — avoids a double ⇱)
-          h("span", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 400 } }, "连同一桥即互发"),
+          h("span", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 400 } }, t("it.pair.dialogSubtitle")),
           h("button", {
-            onClick: () => presentPair("close"), "aria-label": "关闭",
+            onClick: () => presentPair("close"), "aria-label": t("it.pair.close"),
             style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, padding: "2px 6px" },
           }, "✕"),
         ),
@@ -337,9 +345,9 @@ export default function register(ctx) {
     );
   }
 
-/* ── 面板尺寸（响应式）：大屏给对话更多空间 ──
-   ≥1536px 900×740 · ≥1024px 720×680 · 其余 460×560（aiti-float 持久化优先——
-   拖/缩过的用户保留自调尺寸，双击标题复位到这组新默认） */
+/* ── Panel size (responsive): bigger screens give the conversation more room ──
+   >=1536px 900×740 · >=1024px 720×680 · otherwise 460×560 (aiti-float persistence wins —
+   a manually dragged/resized panel keeps its size; double-clicking the title resets to these defaults) */
 function pairWindowSize() {
   const mq = (q) => { try { return globalThis.matchMedia(q).matches; } catch { return false; } };
   if (mq("(min-width:1536px)")) return { w: 900, h: 740 };
@@ -347,7 +355,7 @@ function pairWindowSize() {
   return { w: 460, h: 560 };
 }
 
-  /* ── toolbar 按钮（lucide message-circle，36×36 同系统内建） ── */
+  /* ── Toolbar button (lucide message-circle, 36x36 like the built-in entries) ── */
   function PairToolbarButton() {
     const [n, setN] = useState(unread);
     useEffect(() => {
@@ -383,7 +391,8 @@ function pairWindowSize() {
   }
 
   /* ── Right-panel dock face (rightFileDock slot; rendered in the docked:right-panel state) — same as doc-center ──
-     根节点带 DockBody（chrome:"tab"）契约标注；无自绘头行（页签控件在宿主 TabBar）。 */
+     The root carries the DockBody (chrome:"tab") contract markers; no self-drawn header row (the tab
+     controls live in the host TabBar). */
   function DockPair() {
     const state = usePresentPair();
     // Stable ref callback (idempotent): the host re-renders whenever the shell does (an agent
