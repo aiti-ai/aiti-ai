@@ -37,6 +37,10 @@ export interface AppDescriptor {
   /** 声明式图标（ExtUiItemIcon 三形态：{svg} / emoji 字符串 / "icons/*.svg" 相对路径）。 */
   icon?: string | { svg: string };
   keywords: string[];
+  /** Cross-locale search spellings: every declared locale's label / feature label / extension display
+   *  name (the Chinese spelling stays searchable while the UI runs in English). Display always uses
+   *  `label`; these strings only widen the matchApp hay. */
+  aliases?: string[];
   /** Pinyin index (from the extman server /status enrichment: "full-pinyin concatenated + initials"; used as search hay). */
   pinyin?: string;
   run: () => void;
@@ -194,10 +198,10 @@ export function pinnedRowsNeeded(pinnedCount: number, contentWidth: number): num
  *  + concatenated looseness (qNorm strips spaces, fuwu suidao→fuwusuidao) + typo tolerance (typo-search OSA adaptive threshold).
  *  hay: label + extId + bilingual display names (central table en+zh, so Chinese words work in en mode too) + extName + keywords + pinyin
  *  (pinyin from the extman server /status enrichment, full-pinyin concatenated + initials). */
-export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[]; pinyin?: string }, query: string): boolean {
+export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[]; pinyin?: string; aliases?: string[] }, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? []), app.pinyin ?? ""].join("\n").toLowerCase();
+  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? []), ...(app.aliases ?? []), app.pinyin ?? ""].join("\n").toLowerCase();
   const qNorm = q.replace(/\s+/g, "");
   return q.split(/\s+/).every((tok) => hay.includes(tok))
     || (!!qNorm && hay.includes(qNorm))
@@ -305,6 +309,68 @@ export function translateExtItemText(extId: string | undefined, text: string | u
   return i18nTableFor(ui18n, locale)[key] ?? key;
 }
 
+/* ── Cross-locale search aliases ──
+ * The UI renders one locale, but a user may type the other language (en UI, Chinese query — and the
+ * reverse). Collect every declared spelling of the pieces that name a card, so matchApp covers all of
+ * them. Display never uses these; they only widen the search hay. */
+
+/** All `i18n:`-keyed spellings across the extension's tables (current-locale text included first). */
+function i18nTextVariants(
+  extId: string | undefined,
+  text: string | undefined,
+  ui18n: Record<string, Record<string, string>> | undefined | null,
+  locale: string,
+): string[] {
+  if (!text) return [];
+  const out = new Set<string>();
+  const primary = translateExtItemText(extId, text, ui18n, locale);
+  if (primary) out.add(primary);
+  if (extId && ui18n && text.startsWith("i18n:")) {
+    const key = text.slice("i18n:".length);
+    for (const tbl of Object.values(ui18n)) {
+      const v = tbl?.[key];
+      if (typeof v === "string" && v) out.add(v);
+    }
+  }
+  return [...out];
+}
+
+/** Feature label spellings: `feat.<id>` / `i18n:<key>` across every table, plus the raw manifest text. */
+function featureLabelVariants(
+  ext: { ui?: { i18n?: Record<string, Record<string, string>> } | null } | undefined | null,
+  f: { id: string; label?: unknown },
+  locale: string,
+): string[] {
+  const out = new Set<string>();
+  const primary = featureLabelFor(ext, f, locale);
+  if (primary) out.add(primary);
+  const raw = f.label != null ? String(f.label) : "";
+  const rawKey = raw.startsWith("i18n:") ? raw.slice("i18n:".length) : "";
+  for (const tbl of Object.values(ext?.ui?.i18n ?? {})) {
+    const v = tbl?.["feat." + f.id] ?? (rawKey ? tbl?.[rawKey] : undefined);
+    if (typeof v === "string" && v) out.add(v);
+  }
+  if (raw && !rawKey) out.add(raw);
+  return [...out];
+}
+
+/** Extension display-name spellings: current locale + raw manifest name + every `ext.displayName` entry. */
+function extNameVariants(
+  ext: { id: string; name?: string | null; ui?: { i18n?: Record<string, Record<string, string>> } | null } | undefined | null,
+  locale: string,
+): string[] {
+  if (!ext) return [];
+  const out = new Set<string>();
+  const primary = extNameFor(ext, locale);
+  if (primary) out.add(primary);
+  if (ext.name) out.add(ext.name);
+  for (const tbl of Object.values(ext.ui?.i18n ?? {})) {
+    const v = tbl?.["ext.displayName"];
+    if (typeof v === "string" && v) out.add(v);
+  }
+  return [...out];
+}
+
 /* ── 卡片组装（依赖注入形态，便于单测）── */
 
 /** 组装输入：消费方（app-center.tsx hooks）从插槽/manifest 取数后传入；runs 是闭包。 */
@@ -365,6 +431,9 @@ export function buildApps(input: {
       extDescription: extDescriptionFor(ext, locale) || undefined,
       pinyin: input.pinyinMap?.[extId],
       extIcon: ext?.icon ?? undefined,
+      // Icon stays item-declared here; the extension-level manifest icon is applied as a late fallback
+      // after the same-label dedupe below (so a panel card can still inherit a more specific icon from
+      // the toolbar card it displaced, instead of being pre-filled with the generic ext icon).
       icon: it.meta?.icon as AppDescriptor["icon"],
       // Search vocabulary, most specific first: item-declared keywords → extension-declared keywords
       // (manifest pass-through) → the legacy override table (existing extensions only; new ones must
@@ -374,6 +443,12 @@ export function buildApps(input: {
         ...keywordList(it.meta?.keywords),
         ...(Array.isArray(ext?.keywords) ? keywordList(ext.keywords) : keywordList(APP_OVERRIDES[extId]?.keywords)),
       ],
+      // Cross-locale hay: label/title spellings from every declared table + all ext display names.
+      aliases: [...new Set([
+        ...i18nTextVariants(extId, it.meta?.label, ui18n, locale),
+        ...i18nTextVariants(extId, it.meta?.title, ui18n, locale),
+        ...extNameVariants(ext, locale),
+      ])],
       run: isPanel
         ? () => input.openPanel(fullId)
         : () => { try { it.meta!.onClick!(undefined); } catch { /* ignore */ } },
@@ -402,6 +477,8 @@ export function buildApps(input: {
         // Same precedence as item cards: extension keywords (self-declared) first, legacy table as fallback;
         // the feature id itself stays searchable (it is the toggle's stable identifier).
         keywords: [...(Array.isArray(ext.keywords) ? keywordList(ext.keywords) : keywordList(APP_OVERRIDES[ext.id]?.keywords)), f.id],
+        // Cross-locale hay: feature label spellings from every table + all ext display names.
+        aliases: [...new Set([...featureLabelVariants(ext, f, locale), ...extNameVariants(ext, locale)])],
         on: input.featureState[`${ext.id}:${f.id}`] ?? f.enabled !== false,
         run: () => { /* toggle run 在 UI 层接线（异步 + 事件回灌） */ },
       });
@@ -410,6 +487,8 @@ export function buildApps(input: {
   // 同扩展同名去重（跨 kind）：toolbar/sidebarFooter 动作卡与 rightFileDock 面板卡描述同一
   // 功能时（如 调度/显示环境/文档/邮件/扩展/服务端口 双卡），保留面板卡（present 状态机语义
   // 最全：浮动/停靠/关闭 + 位置持久化），面板缺席时保留原动作卡。首个出现位次保留。
+  // The dropped card's declared icon is inherited by the winning card (panel items often declare none,
+  // while the deduped toolbar item carries a specific icon).
   const rank = (k: AppKind) => (k === "panel" ? 0 : k === "toggle" ? 1 : 2);
   const best = new Map<string, AppDescriptor>();
   const order: string[] = [];
@@ -417,9 +496,21 @@ export function buildApps(input: {
     const key = `${a.kind === "toggle" ? "t" : "e"}\n${a.extId}\n${a.label}`;
     const prev = best.get(key);
     if (!prev) { best.set(key, a); order.push(key); continue; }
-    if (rank(a.kind) < rank(prev.kind)) best.set(key, a);
+    const keep = rank(a.kind) < rank(prev.kind) ? a : prev;
+    const drop = keep === a ? prev : a;
+    best.set(key, {
+      ...keep,
+      icon: keep.icon ?? drop.icon,
+      // Both cards describe the same entry: keep the union so search covers every spelling either declared.
+      aliases: [...new Set([...(keep.aliases ?? []), ...(drop.aliases ?? [])])],
+    });
   }
-  return order.map((k) => best.get(k)!);
+  // Late icon fallback (after dedupe, so inherited item icons win): extension-level manifest icon,
+  // then nothing (consumers render their own letter/blank fallback).
+  return order.map((k) => {
+    const a = best.get(k)!;
+    return a.icon ? a : { ...a, icon: a.extIcon };
+  });
 }
 
 /** extman ops set-feature（boolean）；成功后按 extman 同款 detail 广播 → 宿主 feature store 原地 patch（插槽条目即时显隐）。 */
