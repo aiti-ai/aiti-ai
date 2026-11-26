@@ -17,6 +17,10 @@
  *     between two separators never leaves a run of dividers on screen. The raw
  *     stored order still keeps both separators, so the original layout returns
  *     when the button comes back.
+ *
+ * The customize panel edits this order with drag reordering (gesture in
+ * `hooks/useListReorder.ts`, drop math in `lib/reorder-drag.ts`); a completed
+ * drop writes the array this module normalizes.
  */
 
 export const TOPBAR_ORDER_KEY = "pi-topbar-order";

@@ -149,6 +149,8 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { acquireOverlayBack } from "@/lib/overlay-back";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
+import { useListReorder } from "@/hooks/useListReorder";
+import { moveWithin } from "@/lib/reorder-drag";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getDraftApi } from "@/lib/composer/draft-api";
@@ -3505,6 +3507,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const moreBtnRef = useRef<HTMLButtonElement>(null);
   const itemsRowRef = useRef<HTMLDivElement>(null);
   const measureStripRef = useRef<HTMLDivElement>(null);
+  // Customize panel's scroll box: the drag reorder measures rows inside it
+  const customizePanelRef = useRef<HTMLDivElement>(null);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [moreRect, setMoreRect] = useState<{ top: number; right: number; topbarBottom: number; maxHeight: number } | null>(null);
   const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
@@ -3785,7 +3789,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     const order = layout.order;
     // Insert before the last button: appending at the end would be deleted by the
     // trailing-separator normalization; inserting between buttons makes it visible
-    // immediately and survive (the user can then move it into place with ↑/↓)
+    // immediately and survive (the user can then drag it into place, or move it
+    // with ↑/↓ on its grip)
     let lastButtonIdx = -1;
     for (let i = order.length - 1; i >= 0; i--) {
       if (order[i] !== SEPARATOR) { lastButtonIdx = i; break; }
@@ -3825,6 +3830,29 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setActiveTopPanel(null);
     setMoreOpen((v) => !v);
   }, []);
+  // Drag-to-reorder for the customize panel: the hook reports a completed drop
+  // (from → to), this maps it onto the persisted order. A divider dropped at the
+  // very first/last slot would be normalized away (leading/trailing separators
+  // never persist), so it lands just inside the outermost buttons instead.
+  const applyCustomizeMove = useCallback((from: number, to: number) => {
+    const next = moveWithin(layout.order, from, to);
+    if (next[to] === SEPARATOR) {
+      if (to === 0 && next.length > 1) {
+        next.splice(0, 1);
+        next.splice(1, 0, SEPARATOR);
+      } else if (to === next.length - 1 && next.length > 1) {
+        next.splice(to, 1);
+        next.splice(next.length - 1, 0, SEPARATOR);
+      }
+    }
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const customizeReorder = useListReorder({
+    count: layout.order.length,
+    scrollRef: customizePanelRef,
+    onCommit: applyCustomizeMove,
+    enabled: customizeOpen,
+  });
 
   // ---- Top-bar button rendering (two shells: inline / ⋯ menu) ----
   const topbarMenuRowStyle: React.CSSProperties = {
@@ -4440,10 +4468,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       default: return extLabel(id);
     }
   };
-  const panelArrowBtnStyle: React.CSSProperties = {
+  const panelGripStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
-    width: 22, height: 16, padding: 0, border: "none", background: "none",
-    color: "var(--text-muted)", cursor: "pointer", borderRadius: 4,
+    width: 18, height: 24, padding: 0, border: "none", background: "none",
+    color: "var(--text-dim)", cursor: "grab", borderRadius: 4, flexShrink: 0,
   };
   const panelSmallBtnStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -4455,30 +4483,43 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     padding: "8px 14px", background: "none", border: "none",
     color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
   };
-  const panelMoveButtons = (idx: number, total: number): React.ReactNode => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-      <button
-        type="button"
-        onClick={() => moveItem(idx, -1)}
-        disabled={idx === 0}
-        title={translate("topbar.moveUp")}
-        aria-label={translate("topbar.moveUp")}
-        style={panelArrowBtnStyle}
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 6.5 5 3.5 8 6.5" /></svg>
-      </button>
-      <button
-        type="button"
-        onClick={() => moveItem(idx, 1)}
-        disabled={idx === total - 1}
-        title={translate("topbar.moveDown")}
-        aria-label={translate("topbar.moveDown")}
-        style={panelArrowBtnStyle}
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 3.5 5 6.5 8 3.5" /></svg>
-      </button>
-    </div>
+  // Focus follows a keyboard move: the button that moved keeps the caret, so
+  // repeated ↑/↓ keep working (separator rows are keyed by index and would
+  // otherwise lose their grip).
+  const focusGrip = (index: number): void => {
+    requestAnimationFrame(() => {
+      const grips = customizePanelRef.current?.querySelectorAll<HTMLElement>("[data-list-reorder-grip]");
+      grips?.[index]?.focus();
+    });
+  };
+  // Drag handle: rows are dragged as a whole (pointer events, long press on
+  // touch); the handle is the visual affordance and the keyboard entry point —
+  // ArrowUp/ArrowDown on it move the row, so reordering needs no pixel aiming.
+  const panelDragHandle = (item: TopbarOrderItem, idx: number): React.ReactNode => (
+    <button
+      type="button"
+      data-list-reorder-grip
+      data-topbar-customize-grip
+      title={translate("topbar.dragHint")}
+      aria-label={`${translate("topbar.dragHint")}: ${item === SEPARATOR ? translate("topbar.divider") : topbarItemLabel(item)}`}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowUp") { event.preventDefault(); moveItem(idx, -1); focusGrip(idx - 1); }
+        else if (event.key === "ArrowDown") { event.preventDefault(); moveItem(idx, 1); focusGrip(idx + 1); }
+      }}
+      style={panelGripStyle}
+    >
+      <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">
+        <circle cx="3" cy="3" r="1.2" /><circle cx="7" cy="3" r="1.2" />
+        <circle cx="3" cy="7" r="1.2" /><circle cx="7" cy="7" r="1.2" />
+        <circle cx="3" cy="11" r="1.2" /><circle cx="7" cy="11" r="1.2" />
+      </svg>
+    </button>
   );
+  // The dragged row stays in place but steps back; the drop line shows the target.
+  const customizeDragRowStyle = (idx: number): React.CSSProperties =>
+    customizeReorder.view?.from === idx
+      ? { opacity: 0.45, background: "var(--bg-hover)", borderRadius: 6 }
+      : {};
 
   // ── Left-panel bottom row (models/skills/settings + sidebarFooter extension point):
   //    fallback state renders directly; takeover state goes through the
@@ -6013,20 +6054,37 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           </>
         )}
 
-        {/* Customize order/hide/separator panel */}
+        {/* Customize order/hide/separator panel. Rows are drag-reorderable:
+            hooks/useListReorder.ts owns the gesture (mouse/pen after 4px, touch by
+            long press, auto-scroll near the edges), lib/reorder-drag.ts the math.
+            The grip is the affordance and the keyboard path (ArrowUp/ArrowDown). */}
         {customizeOpen && moreRect && (
           <>
             <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={closePopovers} />
             <div
-              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: moreRect.maxHeight, overflowY: "auto", overscrollBehavior: "contain", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
+              ref={customizePanelRef}
+              onPointerDownCapture={customizeReorder.onPointerDownCapture}
+              onClickCapture={customizeReorder.onClickCapture}
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: moreRect.maxHeight, overflowY: "auto", overscrollBehavior: "contain", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 0 }}
             >
-              <div style={{ padding: "8px 14px 6px", fontSize: 11, fontWeight: 700, color: "var(--text)", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
-                {translate("topbar.customize")}
+              {/* Positioned wrapper: the drop line is drawn in content coordinates
+                  (it scrolls with the rows); padding moves here from the panel so
+                  the line's coordinate space starts at the content top. */}
+              <div style={{ position: "relative", padding: "6px 0" }}>
+              <div style={{ padding: "8px 14px 6px", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>{translate("topbar.customize")}</div>
+                <div style={{ marginTop: 2, fontSize: 10.5, lineHeight: 1.4, color: "var(--text-dim)" }}>{translate("topbar.dragHint")}</div>
               </div>
               {layout.order.map((item, idx) =>
                 item === SEPARATOR ? (
-                  <div key={`sep:${idx}`} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px" }}>
-                    {panelMoveButtons(idx, layout.order.length)}
+                  <div
+                    key={`sep:${idx}`}
+                    data-topbar-customize-row
+                    ref={customizeReorder.rowRef(idx)}
+                    onPointerDown={(event) => customizeReorder.onPointerDown(idx, event)}
+                    style={{ display: "flex", alignItems: "center", gap: 2, padding: "2px 8px 2px 2px", cursor: "grab", ...customizeDragRowStyle(idx) }}
+                  >
+                    {panelDragHandle(item, idx)}
                     <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 12, minWidth: 0 }}>
                       <div style={{ width: 14, borderTop: "1px solid var(--border)", flexShrink: 0 }} />
                       <span>{translate("topbar.divider")}</span>
@@ -6049,8 +6107,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     const extId = colonIdx > 0 ? item.slice(0, colonIdx) : null;
                     const extMeta = extId ? extMetas[extId] : null;
                     return (
-                      <div key={item} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px", opacity: hidden ? 0.55 : 1 }}>
-                        {panelMoveButtons(idx, layout.order.length)}
+                      <div
+                        key={item}
+                        data-topbar-customize-row
+                        ref={customizeReorder.rowRef(idx)}
+                        onPointerDown={(event) => customizeReorder.onPointerDown(idx, event)}
+                        style={{ display: "flex", alignItems: "center", gap: 2, padding: "2px 8px 2px 2px", cursor: "grab", opacity: hidden ? 0.55 : 1, ...customizeDragRowStyle(idx) }}
+                      >
+                        {panelDragHandle(item, idx)}
                         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text)", minWidth: 0 }}>
                           {/* Real icon preview for the item (reuses inline rendering;
                               inert blocks focus/click/screen readers) */}
@@ -6112,6 +6176,15 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
                 {translate("topbar.reset")}
               </button>
+              </div>
+              {/* Drop line: the slot the dragged row lands in (content coordinates) */}
+              {customizeReorder.view && (
+                <div
+                  data-topbar-drop-line
+                  aria-hidden="true"
+                  style={{ position: "absolute", left: 10, right: 10, top: Math.round(customizeReorder.view.lineY) - 1, height: 2, borderRadius: 1, background: "var(--accent)", pointerEvents: "none" }}
+                />
+              )}
               </div>
             </div>
           </>

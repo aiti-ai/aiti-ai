@@ -25,6 +25,7 @@ export const enLocale: LocalePlugin = {
     "topbar.divider": "Divider",
     "topbar.addDivider": "Add divider",
     "topbar.removeDivider": "Remove divider",
+    "topbar.dragHint": "Drag a row to reorder; ArrowUp/ArrowDown on its handle also move it",
     "topbar.fromExtension": "From extension",
 
     "nsw.recentTitle": "Recent sessions",

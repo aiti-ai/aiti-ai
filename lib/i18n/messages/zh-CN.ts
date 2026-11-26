@@ -25,6 +25,7 @@ export const zhCNLocale: LocalePlugin = {
     "topbar.divider": "间隔",
     "topbar.addDivider": "添加间隔",
     "topbar.removeDivider": "移除间隔",
+    "topbar.dragHint": "拖动整行调整顺序；聚焦左侧手柄后还可用 ↑/↓ 键移动",
     "topbar.fromExtension": "来自扩展",
 
     "nsw.recentTitle": "最近会话",
