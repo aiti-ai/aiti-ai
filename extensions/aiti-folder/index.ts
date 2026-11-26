@@ -22,6 +22,7 @@ import { renameSync, rmSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSy
 import { groupHeuristic, loadPlan, savePlan, newPlan, learn } from "./server/git-plan";
 import { folderWatchApi } from "./server/watch";
 import { contentSearchApi } from "./server/search";
+import { launchFileManager } from "./server/open-in-file-manager";
 import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -230,6 +231,7 @@ export default {
         "files.menuGit": "Git",
         "files.openParentDir": "打开上级目录",
         "files.openTerminal": "打开终端",
+        "files.openInFileManager": "在系统文件管理器中打开",
         "files.pin": "钉住",
         "files.unpin": "取消钉住",
         "files.pinDone": "已钉住（不受批量关闭影响）",
@@ -366,6 +368,7 @@ export default {
         "files.menuGit": "Git",
         "files.openParentDir": "Open parent folder",
         "files.openTerminal": "Open in Terminal",
+        "files.openInFileManager": "Open in File Manager",
         "files.pin": "Pin",
         "files.unpin": "Unpin",
         "files.pinDone": "Pinned (protected from batch close)",
@@ -521,6 +524,27 @@ export default {
           return json({ ok: true });
         } catch (e) {
           return json({ ok: false, error: "打开终端失败: " + String((e as Error)?.message || e) }, 500);
+        }
+      }
+      // POST /open-in-file-manager { path } → reveal in the OS file manager (a directory opens
+      // itself; an entry opens its folder selected). The server raises the window — the browser
+      // has no API for it — with the same detached spawn as /open-terminal. The host's
+      // /api/open-in-explorer is not reused: it gates on a loopback Host, so every request
+      // arriving through the reverse proxy answers 403 "remote".
+      if (route === "open-in-file-manager" && req.method === "POST") {
+        const body = await req.json().catch(() => null);
+        const path = typeof body?.path === "string" ? body.path : "";
+        if (!path || !isAbsolute(path)) return json({ ok: false, error: "需要绝对路径" }, 400);
+        const abs = normalize(path);
+        if (!(await isWritableTarget(abs, ctx))) return json({ ok: false, error: "路径不在可写范围" }, 403);
+        if (!existsSync(abs)) return json({ ok: false, error: "路径不存在" }, 404);
+        let isDir = false;
+        try { isDir = statSync(abs).isDirectory(); } catch { return json({ ok: false, error: "路径不可读" }, 403); }
+        try {
+          await launchFileManager(abs, isDir);
+          return json({ ok: true });
+        } catch (e) {
+          return json({ ok: false, error: "打开文件管理器失败: " + String((e as Error)?.message || e) }, 500);
         }
       }
       // POST /create-folder { dir, name } → 新建文件夹（已存在 409）
