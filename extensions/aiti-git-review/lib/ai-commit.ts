@@ -20,6 +20,10 @@ export const COMMIT_LIMITS = {
   maxAgentsFiles: 5,
   /** 单份 AGENTS.md 上限（字节） */
   maxAgentsBytes: 64 * 1024,
+  /** AGENTS.md prompt budget after excerpting (bytes). A 30KB style guide costs
+   *  the run 30-60s of prefill for a one-line commit message: keep only the
+   *  paragraphs that can affect language/style (see excerptAgentsMd). */
+  maxAgentsExcerptBytes: 6 * 1024,
   /** 最近提交风格样例条数 */
   maxSubjects: 8,
   /** 单条历史 subject 字符上限 */
@@ -70,6 +74,69 @@ function clipUtf8(s: string, maxBytes: number): { text: string; truncated: boole
     else hi = mid - 1;
   }
   return { text: s.slice(0, lo), truncated: true };
+}
+
+/** Paragraphs of AGENTS.md worth shipping to the model: language / commit / style rules.
+ *  Strong markers weigh more than a bare "commit" mention, which nearly every
+ *  section has somewhere in its prose. */
+const AGENTS_STRONG = ["commit message", "提交信息", "语言纪律", "提交规范", "commit 规范", "conventional", "changelog", "english", "英文"];
+const AGENTS_WEAK = ["提交", "commit", "语言", "中文", "规范", "约定", "convention", "style", "风格"];
+
+/** Relevance of one section: keyword hits, damped by length (background prose scores low). */
+function scoreAgentsBlock(body: string): number {
+  const lower = body.toLowerCase();
+  let strong = 0;
+  let weak = 0;
+  for (const k of AGENTS_STRONG) if (lower.includes(k)) strong++;
+  for (const k of AGENTS_WEAK) if (lower.includes(k)) weak++;
+  const hits = strong * 3 + weak;
+  if (hits === 0) return 0;
+  const kb = Math.max(0.5, enc.encode(body).length / 1024);
+  return hits / Math.sqrt(kb);
+}
+
+/**
+ * Excerpt a long AGENTS.md: keep only the sections that mention commit/language/style
+ * topics - highest relevance first, trimmed to maxBytes - and cap the result. Falls back
+ * to a head truncation when nothing matches, so the prompt always carries some guidance.
+ * Short documents pass through untouched (same text as before the optimization).
+ */
+export function excerptAgentsMd(
+  content: string,
+  maxBytes = COMMIT_LIMITS.maxAgentsExcerptBytes,
+): { text: string; excerpted: boolean } {
+  const src = String(content ?? "").replace(/\r\n/g, "\n").trim();
+  if (!src) return { text: "", excerpted: false };
+  if (enc.encode(src).length <= maxBytes) return { text: src, excerpted: false };
+
+  // Prefer markdown sections (heading + body): a heading such as "## Commit rules" carries
+  // the topic while the rules that matter sit in its body, so they must be kept together.
+  const sections = src.split(/(?=^#{1,6} )/m).map((s) => s.trim()).filter(Boolean);
+  const blocks = sections.length > 1 ? sections : src.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const ranked = blocks
+    .map((body, index) => ({ body, index, score: scoreAgentsBlock(body) }))
+    .filter((b) => b.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+
+  const picked: { body: string; index: number }[] = [];
+  let used = 0;
+  for (const b of ranked) {
+    const room = maxBytes - used;
+    if (room <= 0) break;
+    const clip = clipUtf8(b.body, room);
+    if (!clip.text) continue;
+    picked.push({ body: clip.text, index: b.index });
+    used += enc.encode(clip.text).length + 1;
+  }
+  // Too little matched: a style guide that hides its commit rules in prose stays useful via its head.
+  if (used < Math.min(256, Math.floor(maxBytes / 4))) {
+    return { text: clipUtf8(src, maxBytes).text, excerpted: true };
+  }
+  picked.sort((a, b) => a.index - b.index); // restore document order
+  return {
+    text: picked.map((p) => p.body).join("\n\n") + "\n…（长文档已节选：仅保留与提交/语言/风格相关的段落）",
+    excerpted: true,
+  };
 }
 
 /** 路径清洗：去换行/控制字符（防 prompt 结构注入），保留正常路径字符 */
@@ -137,7 +204,8 @@ export function sanitizeCommitInput(input: CommitPromptInput, limits = COMMIT_LI
   }));
   const agentsMds = (input.agentsMds ?? []).slice(0, limits.maxAgentsFiles).map((a) => {
     const c = clipUtf8(String(a.content ?? ""), limits.maxAgentsBytes);
-    return { path: sanitizePath(a.path), content: c.text + (c.truncated ? "\n…（已截断）" : "") };
+    const ex = excerptAgentsMd(c.text, limits.maxAgentsExcerptBytes ?? COMMIT_LIMITS.maxAgentsExcerptBytes);
+    return { path: sanitizePath(a.path), content: ex.text + (c.truncated ? "\n…（已截断）" : "") };
   });
   const recentSubjects = (input.recentSubjects ?? [])
     .slice(0, limits.maxSubjects)
