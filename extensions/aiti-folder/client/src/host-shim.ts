@@ -136,3 +136,9 @@ export function getFeatures(): Record<string, boolean | string> {
   const fn = _ctx?.getFeatures as (() => Record<string, boolean | string>) | undefined;
   return typeof fn === "function" ? (fn() || {}) : {};
 }
+
+/** createPortal(children, container) — delegate to the host's React portal. */
+export function createPortal(children: unknown, container: Element | DocumentFragment): unknown {
+  const fn = (_ctx as any)?.createPortal as ((c: unknown, el: Element | DocumentFragment) => unknown) | undefined;
+  return typeof fn === "function" ? fn(children, container) : children;
+}

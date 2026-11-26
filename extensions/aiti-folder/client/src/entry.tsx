@@ -17,6 +17,8 @@ import { __setCtx, extSvc, t } from "./host-shim";
 import { registerAction } from "./folder-actions";
 import { FolderSwitcher } from "./folder-switcher";
 import { syncFolderDockFaces, INSTANCES_EVENT, openFolderDocked } from "./folder-dock";
+import { CommitHost, openCommit } from "./commit-service";
+import { PickHost, pickDirectory } from "./pick-service";
 
 // [懒加载 v2 D3 拆包] FolderBrowser（目录树/预览，~113K 大头）按需 import()：
 // 薄入口（本文件 + pathPicker + registerAction 开放点）随启动物化即时可用；
@@ -111,6 +113,14 @@ export default function register(ctx: Record<string, unknown>) {
     ),
     meta: { label: "i18n:it.folder-picker.label", title: "aiti-folder: directory switcher (no cwd change)" },
   }]);
+
+  // Cross-extension services (DI): commit dialog prefill + directory picker (consumed by aiti-codehub etc.)
+  ctx.registerItems?.("dialogs", [
+    { id: "commit-host", render: () => <CommitHost /> },
+    { id: "pick-host", render: () => <PickHost /> },
+  ]);
+  try { (ctx as any).registerExtService?.("aiti-folder.commit", { open: openCommit }); } catch { /* old host */ }
+  try { (ctx as any).registerExtService?.("aiti-folder.pick", { directory: pickDirectory }); } catch { /* old host */ }
 
   // 多实例 dock faces（v2）：左栏栈/浮窗/右栏三面按清单动态注册；instances 变化
   // （项目切换自动加 / ＋ 选择器 / 钉住 / FIFO 挤出）→ 事件驱动重注册（零轮询）。

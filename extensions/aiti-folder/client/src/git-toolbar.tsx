@@ -255,17 +255,26 @@ function MiArrowDownSmall() {
 
 /* ── 手动提交弹窗 ── */
 
-function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: string }[]; onClose: () => void; onDone: () => void }) {
+export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: string }[]; onClose: () => void; onDone: () => void; initialMessage?: string }) {
   const api = useMemo(() => createGitOpsApi({ apiUrl }), []);
   const staged0 = useMemo(() => new Set(p.dirtyFiles.filter((f) => f.xy[0] !== " " && f.xy[0] !== "?").map((f) => f.path)), [p.dirtyFiles]);
   const [checked, setChecked] = useState<Set<string>>(staged0);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(p.initialMessage || "");
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // AI 生成提交信息（docs/aiti-folder-commit-ai-message-plan.md）：服务可用性探测 + 生成状态
   const [aiAvail, setAiAvail] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  // Single delayed flag (no polling): once a generation passes ~25s the button says so,
+  // so a slow run reads as "still working" instead of a stuck button.
+  const [aiSlow, setAiSlow] = useState(false);
+
+  useEffect(() => {
+    if (!aiBusy) { setAiSlow(false); return; }
+    const t = setTimeout(() => setAiSlow(true), 25_000);
+    return () => clearTimeout(t);
+  }, [aiBusy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -371,7 +380,7 @@ function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: string 
               <button type="button" disabled={aiBusy || checked.size === 0} onClick={() => void genMessage()} title={ct("git.aiMessageTitle")}
                 style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: aiBusy || checked.size === 0 ? "not-allowed" : "pointer",
                   background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)", opacity: aiBusy || checked.size === 0 ? 0.6 : 1 }}>
-                {aiBusy ? ct("git.aiMessageBusy") : ct("git.aiMessage")}
+                {aiBusy ? (aiSlow ? ct("git.aiMessageBusyLong") : ct("git.aiMessageBusy")) : ct("git.aiMessage")}
               </button>
             ) : null}
           </div>
