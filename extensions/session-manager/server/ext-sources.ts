@@ -20,6 +20,10 @@ export interface SourceState {
   active: boolean;
   /** Max artifact mtime at last full sync (ms). */
   watermarkMs?: number;
+  /** Artifact count at last sync (probe.count). A change means sessions were
+   *  added/removed — the one signal that survives a hot artifact keeping
+   *  watermarkMs moving (see isStale). */
+  count?: number;
   lastSyncAt?: string;
 }
 
@@ -185,7 +189,7 @@ export function loadSourceStates(configDir: string): Map<string, SourceState> {
   const raw = settingsOf(configDir).extSources as Record<string, SourceState> | undefined;
   const map = new Map<string, SourceState>();
   for (const [k, v] of Object.entries(raw ?? {})) {
-    if (v && typeof v === "object") map.set(k, { active: !!v.active, watermarkMs: v.watermarkMs, lastSyncAt: v.lastSyncAt });
+    if (v && typeof v === "object") map.set(k, { active: !!v.active, watermarkMs: v.watermarkMs, count: typeof v.count === "number" ? v.count : undefined, lastSyncAt: v.lastSyncAt });
   }
   return map;
 }
@@ -199,12 +203,18 @@ export function saveSourceStates(configDir: string, states: Map<string, SourceSt
 
 /** stale 判定（静置期门控）。持续写入中的热工件（Trae 打开时不停写 db、codex
  *  活跃会话持续追加 rollout）会让 mtime 水位永远前移——同步永远追不上、徽标永不
- *  消失。只有最新工件已静置 QUIET 才算真有更新；写完静置后必触发一次，同步收敛。 */
+ *  消失。只有最新工件已静置 QUIET 才算真有更新；写完静置后必触发一次，同步收敛。
+ *
+ *  例外：工件数量变化（新增/删除会话）。一个长跑会话持续写入时整源都不「静置」，
+ *  新落盘会话的 ext 行会被上面的门控饿死（2026-11-26 实测：qodercn 并行跑多个
+ *  会话，6 个新会话在列表里一直缺席，切项目再切回也不出现）。数量变化与热写入
+ *  无关，立即补同步；热文件的重解析由 syncExt 的 QUIET_MS 逐文件挡掉。 */
 const STALE_QUIET_MS = 120_000;
 
-function isStale(now: number, probe: ExtSourceProbe, st: SourceState): boolean {
-  return probe.ok
-    && probe.watermarkMs > (st.watermarkMs ?? 0) + 1000
+export function isStale(now: number, probe: ExtSourceProbe, st: SourceState): boolean {
+  if (!probe.ok) return false;
+  if (probe.count !== st.count) return true; // 旧状态无 count → 触发一次补同步建立基线
+  return probe.watermarkMs > (st.watermarkMs ?? 0) + 1000
     && now - probe.watermarkMs > STALE_QUIET_MS;
 }
 
@@ -259,7 +269,7 @@ export async function activateSource(
   }
   const probe = await r.probes.get(agent) ?? await a.probe();
   r.probes.set(agent, probe);
-  const st: SourceState = { active: true, watermarkMs: probe.watermarkMs, lastSyncAt: new Date().toISOString() };
+  const st: SourceState = { active: true, watermarkMs: probe.watermarkMs, count: probe.count, lastSyncAt: new Date().toISOString() };
   r.states.set(agent, st);
   persistStates(configDir, r);
   return { ok: true, indexed };
@@ -288,7 +298,7 @@ export async function syncSource(
   }
   const probe = await a.probe();
   r.probes.set(agent, probe);
-  r.states.set(agent, { ...st, watermarkMs: probe.watermarkMs, lastSyncAt: new Date().toISOString() });
+  r.states.set(agent, { ...st, watermarkMs: probe.watermarkMs, count: probe.count, lastSyncAt: new Date().toISOString() });
   persistStates(configDir, r);
   return { ok: true, indexed };
 }

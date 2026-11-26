@@ -433,6 +433,12 @@ function openSessionIndexInner(dbPath: string): SessionIndex {
       // Phase 1 (sync): stat-compare to find changed refs — no parsing yet.
       const changed: Array<{ ref: ExtSessionRef; mtimeMs: number; size: number }> = [];
       const virtualSids = new Set<string>();
+      // 已索引过的热文件静默期（与 sync() 同款纪律）：运行中会话持续追加时每轮
+      // 重解析（DELETE 全部消息+FTS → 逐条重插）会白烧 worker；静置后才收敛。
+      // 首次见到（无水位行，或行被误删待自愈）的文件立即索引——新会话不受延迟。
+      // 计数补同步（ext-sources.isStale）因此可以无视热写入随时触发，只付 stat 成本。
+      const QUIET_MS = 60_000;
+      const nowMs = Date.now();
       // 自愈（2026-09-08）：行曾被误删而 files 水印仍在时，unchanged 快捷路径会永久
       // 跳过重建（与 sync() 站位行同款问题）。水印命中但行缺席 → 强制 re-parse。
       const rowExists = db.prepare("SELECT 1 FROM sessions WHERE id = ?");
@@ -459,7 +465,9 @@ function openSessionIndexInner(dbPath: string): SessionIndex {
         livePaths.add(realPath);
         const st = statSync(realPath);
         const row = getFile.get(ref.path) as { mtime_ms: number; size: number } | undefined;
-        if (row && row.mtime_ms === st.mtimeMs && row.size === st.size && rowExists.get(`${agent}:${ref.sid}`)) continue; // unchanged & alive
+        const alive = !!rowExists.get(`${agent}:${ref.sid}`);
+        if (row && row.mtime_ms === st.mtimeMs && row.size === st.size && alive) continue; // unchanged & alive
+        if (row && alive && nowMs - st.mtimeMs < QUIET_MS) continue; // 热文件：本轮跳过，静置后收敛
         changed.push({ ref, mtimeMs: st.mtimeMs, size: st.size });
       }
 

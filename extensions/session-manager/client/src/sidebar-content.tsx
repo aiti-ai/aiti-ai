@@ -541,6 +541,7 @@ export function SidebarContentDock(props: Record<string, any>) {
           ]}>
           <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
             <SidebarList
+              initialSessionId={initialSessionId ?? null}
               cwd={cwdState ?? undefined}
               homeDir={homeDir}
               refreshKey={refreshKey}

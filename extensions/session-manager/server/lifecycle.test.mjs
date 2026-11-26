@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,7 @@ function cfgOf(root) {
 
 const { api } = await import("./api.ts");
 const { runtime } = await import("./runtime.ts");
-const { loadSourceStates } = await import("./ext-sources.ts");
+const { loadSourceStates, isStale } = await import("./ext-sources.ts");
 const { writePiSession, encodeCwd } = await import("../lib/agents/to-pi.ts");
 
 function req(url, method = "GET", body) {
@@ -93,6 +93,77 @@ test("syncExt indexes fixture sessions and scoped GC drops vanished artifacts", 
     rmSync(refs1[0].path);
     await idx.syncExt("fakeag", refs1, (r) => fake.a.parse(r));
     assert.equal(idx.extRows(["fakeag"]).length, 0);
+  } finally {
+    try { runtime(cfgOf(dir)).index.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Regression pin (2026-11-26): a long-running session keeps the source's newest
+ * artifact fresh forever, so the quiet gate alone never marks it stale — new
+ * session files stayed out of the list until every qoder session stopped. A
+ * count change must sync immediately; hot-file reparsing is held back per file
+ * (QUIET_MS in syncExt), not by starving the whole source.
+ */
+test("isStale: artifact count change syncs immediately even while a hot file keeps the watermark fresh", async () => {
+  const now = Date.now();
+  const hot = { ok: true, count: 3, watermarkMs: now - 5_000 };
+  assert.equal(isStale(now, hot, { active: true, count: 3, watermarkMs: now - 600_000 }), false,
+    "no new artifact + hot write → keep waiting for the quiet window");
+  assert.equal(isStale(now, hot, { active: true, count: 2, watermarkMs: now - 600_000 }), true,
+    "new session (count grew) → sync without waiting for quiet");
+  assert.equal(isStale(now, hot, { active: true, watermarkMs: now - 600_000 }), true,
+    "legacy state without count → sync once, recording the baseline");
+  const quiet = { ok: true, count: 3, watermarkMs: now - 200_000 };
+  assert.equal(isStale(now, quiet, { active: true, count: 3, watermarkMs: now - 600_000 }), true,
+    "content change after the quiet window still syncs");
+  assert.equal(isStale(now, { ok: false, count: 0, watermarkMs: 0 }, { active: true, count: 3 }), false,
+    "failed probe never triggers");
+});
+
+test("source state persists the artifact-count baseline", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-cfg-"));
+  try {
+    const c = cfgOf(dir);
+    writeFileSync(join(c, "settings.json"), JSON.stringify({ extSources: { ag: { active: true, watermarkMs: 123, count: 7 } } }));
+    const st = loadSourceStates(c).get("ag");
+    assert.equal(st.active, true);
+    assert.equal(st.watermarkMs, 123);
+    assert.equal(st.count, 7, "count survives the settings round-trip");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("syncExt: new artifact indexes immediately; an already-indexed hot file waits for its quiet window", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-hot-"));
+  try {
+    mkdirSync(join(dir, "root"));
+    const idx = runtime(cfgOf(dir)).index;
+    const fake = makeFakeAdapter(join(dir, "root"));
+    fake.add("hot", [{ message: { role: "user", content: "q1" } }, { message: { role: "assistant", content: "a1" } }]);
+    const refs = fake.a.list();
+    await idx.syncExt("fakeag", refs, (r) => fake.a.parse(r));
+    assert.equal(idx.getSession("fakeag:hot").messageCount, 2);
+
+    // the running session appends (hot) while a brand-new session file lands
+    writeFileSync(refs[0].path,
+      JSON.stringify({ message: { role: "user", content: "q1" } }) + "\n"
+      + JSON.stringify({ message: { role: "assistant", content: "a1" } }) + "\n"
+      + JSON.stringify({ message: { role: "user", content: "q2" } }) + "\n");
+    fake.add("new", [{ message: { role: "user", content: "fresh session" } }]);
+    const r = await idx.syncExt("fakeag", fake.a.list(), (ref) => fake.a.parse(ref));
+    assert.equal(r.indexed, 1, "only the new artifact is parsed");
+    assert.ok(idx.getSession("fakeag:new"), "new session is visible without waiting for quiet");
+    assert.equal(idx.getSession("fakeag:hot").messageCount, 2, "hot file skipped this round");
+
+    // once it goes quiet the next sync converges
+    const old = new Date(Date.now() - 300_000);
+    utimesSync(refs[0].path, old, old);
+    const r2 = await idx.syncExt("fakeag", fake.a.list(), (ref) => fake.a.parse(ref));
+    assert.equal(r2.indexed, 1);
+    assert.equal(idx.getSession("fakeag:hot").messageCount, 3, "quiet file re-indexed");
   } finally {
     try { runtime(cfgOf(dir)).index.close(); } catch {}
     rmSync(dir, { recursive: true, force: true });
