@@ -72,8 +72,10 @@ export function ImageViewer(props: {
   fileSize?: number;
   mtimeMs?: number;
   /** 加载失败回调（票据过期等）——调用方可换票换 src 自愈；返回 truthy 表示已接手，不进失败态 */
-  onSrcError?: () => boolean | void }) {
-  const { src, filePath, displayName, downloadName, fileSize, mtimeMs, onSrcError } = props;
+  onSrcError?: () => boolean | void;
+  /** Load-success callback — the caller resets its recovery counter here (counts consecutive failures only) */
+  onSrcLoaded?: () => void }) {
+  const { src, filePath, displayName, downloadName, fileSize, mtimeMs, onSrcError, onSrcLoaded } = props;
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -154,6 +156,7 @@ export function ImageViewer(props: {
     if (!img) return;
     setDims({ w: img.naturalWidth, h: img.naturalHeight });
     setLoaded(true);
+    try { onSrcLoaded?.(); } catch { /* callback errors must not break rendering */ }
     // 等布局稳定后再算 fit（transform 不影响容器尺寸，同步即可）
     computeFit();
   };

@@ -11,7 +11,7 @@ import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTh
 import { detectLanguage, mdFenceDescriptors } from "./registry";
 import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
-import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, type DiskSig } from "./disk-refresh";
+import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust, type DiskSig } from "./disk-refresh";
 import { normalizeDiffEol, isEolOnlyChange, hunksFromDiffs, pickDiffCounts, detectEolKind, countLines } from "./diff-eol";
 import { deriveGitViewState, pickJumpTarget, outlinePlacement, type GitView } from "./git-view-model";
 import { getPopover, previewClickInfo, registerSelectionContainer, unregisterSelectionContainer, previewSelectionMeta, closePreviewPopover, mdSmartEnabled } from "./md-smart";
@@ -304,14 +304,17 @@ export function EditorApp(props: Record<string, any>) {
   // 路径票据：媒体/下载等同步拼 URL 的场景先换票（路径不进 URL，安全基线）
   const [pathTicket, setPathTicket] = useState<string | null>(null);
   const [watchLive, setWatchLive] = useState(false); // ed-watch 帧订阅中（实时同步徽标）
-  // 媒体加载失败自动恢复：连接池饥饿/瞬时空响应/票据过期（1h 闲置或扩展 reload 失效）时
-  // 强制换新票据重试（上限 3 次，换到新票即复位——成功与否由下一次加载结果判定）
+  // Media load auto-recovery: pool starvation / empty transient response / expired ticket
+  // (1h idle or extension reload) → re-issue the ticket and retry (cap 3). The counter is
+  // reset ONLY by a successful load, never by a fresh ticket: a persistently failing URL
+  // would otherwise retry forever (error → new ticket → new URL → error → the preview
+  // reloads in a tight loop and hammers the ticket endpoint).
   const mediaErrRef = useRef(0);
   const recoverMedia = () => {
     if (mediaErrRef.current >= 3) return false;
     mediaErrRef.current += 1;
     setPathTicket(null);
-    ensureEditorTicket(filePath, undefined, true).then((t) => { mediaErrRef.current = 0; setPathTicket(t); }).catch(() => { /* noop */ });
+    ensureEditorTicket(filePath, undefined, true).then((t) => { setPathTicket(t); }).catch(() => { /* noop */ });
     return true; // 已接手自愈，调用方不进失败态
   };
   useEffect(() => {
@@ -332,6 +335,7 @@ export function EditorApp(props: Record<string, any>) {
   useEffect(() => {
     setMediaBust(0);
     setMediaDuration(null);
+    mediaErrRef.current = 0; // new file → fresh recovery budget (count is per-file consecutive failures)
     diskSigRef.current = null;
     lastDiskReloadRef.current = 0;
     if (props.watchEnabled === false) return;
@@ -412,7 +416,7 @@ export function EditorApp(props: Record<string, any>) {
   // ⋯菜单「重新加载」：clean 直接重读磁盘；dirty 不丢编辑 → 拉真实磁盘签名后弹
   // 「磁盘已修改」条（三路合并/加载磁盘版/保留当前）；二进制 → bust 强制重载。
   const doReload = useCallback(() => {
-    if (fileType !== "text") { setMediaBust((v: number) => v + 1); if (fileType === "archive") { archiveTickRef.current += 1; setArchiveTick(archiveTickRef.current); } return; }
+    if (fileType !== "text") { mediaErrRef.current = 0; setMediaBust((v: number) => v + 1); if (fileType === "archive") { archiveTickRef.current += 1; setArchiveTick(archiveTickRef.current); } return; }
     if (dirty) {
       api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json())
         .then((m) => setExtChange({ diskMtimeMs: (m && m.ok && typeof m.mtimeMs === "number") ? m.mtimeMs : Date.now(), diskSize: (m && m.ok && typeof m.size === "number") ? m.size : 0 }))
@@ -2355,7 +2359,7 @@ useEffect(() => {
   // ── 二进制可渲染（压缩包）：内部文件列表 ──
   if (isBinaryView) {
     const fileUrl = pathTicket ? editorBase() + "/t/" + pathTicket + "/file" : "";
-    const mediaSrc = fileUrl && mediaBust > 0 ? fileUrl + "&v=" + mediaBust : fileUrl;
+    const mediaSrc = mediaUrlWithBust(fileUrl, mediaBust);
     const typeLabel = ({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || t("文件");
     let body: any;
     if (fileType === "archive") {
@@ -2421,7 +2425,7 @@ useEffect(() => {
           {renderBinaryBar(typeLabel)}
           <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
             {mediaSrc
-              ? <ImageViewer src={mediaSrc} filePath={filePath} fileSize={meta ? meta.size : undefined} mtimeMs={meta ? meta.mtimeMs : undefined} onSrcError={recoverMedia} />
+              ? <ImageViewer src={mediaSrc} filePath={filePath} fileSize={meta ? meta.size : undefined} mtimeMs={meta ? meta.mtimeMs : undefined} onSrcError={recoverMedia} onSrcLoaded={() => { mediaErrRef.current = 0; }} />
               : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim,#888)", fontSize: 13 }}>{t("正在加载…")}</div>}
             {hasNav && (
               <>
