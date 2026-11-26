@@ -38,7 +38,7 @@ test("reports platforms without a file manager", () => {
 test("translates WSL paths to their Windows spelling", () => {
   assert.equal(windowsPathForWsl("/mnt/c/dev", "Ubuntu"), "C:\\dev");
   assert.equal(windowsPathForWsl("/mnt/d/", "Ubuntu"), "D:\\");
-  assert.equal(windowsPathForWsl("/home/wind/work", "Ubuntu"), "\\\\wsl$\\Ubuntu\\home\\wind\\work");
+  assert.equal(windowsPathForWsl("/home/alice/work", "Ubuntu"), "\\\\wsl$\\Ubuntu\\home\\alice\\work");
   assert.equal(windowsPathForWsl("/", "Ubuntu"), "\\\\wsl$\\Ubuntu\\");
 });
 
