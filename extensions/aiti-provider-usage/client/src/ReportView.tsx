@@ -9,6 +9,7 @@
 
 import { t } from "./host-shim";
 import { cycleTimeSuffix } from "./quota-time";
+import { TapFullText } from "./full-text-tip";
 import type { UsageBucket, UsageMetric, UsageReport } from "../../lib/server/types";
 
 export type { UsageBucket, UsageMetric, UsageReport } from "../../lib/server/types";
@@ -75,9 +76,7 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
                     <span style={{ display: "block", height: "100%", width: `${ratio}%`, borderRadius: 3, background: color, transition: "width 0.4s ease" }} />
                   </span>
                 ) : <span />}
-                <span style={{ fontSize: 12, color, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {formatBucket(bucket, t)}
-                </span>
+                <TapFullText text={formatBucket(bucket, t)} style={{ fontSize: 12, color, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} />
               </div>
             );
           })}

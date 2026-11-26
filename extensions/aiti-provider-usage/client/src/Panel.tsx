@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, t } from "./host-shim";
 import { bucketLabel, fmtLastTurn, type BackendUsage } from "./StatsChip";
+import { TapFullText } from "./full-text-tip";
 import {
   ProviderUsageReportView,
   formatBucket,
@@ -166,11 +167,10 @@ export function AccountQuotaSection({ usage, backendSource, sessionId }: {
               <span style={{ display: "block", height: "100%", width: `${remainingPct}%`, borderRadius: 3, background: totalColor, transition: "width 0.4s ease" }} />
             </span>
           ) : <span />}
-          <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: totalColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {exhausted
-              ? t("providerUsage.quotaExceeded")
-              : `${credits?.remaining != null ? credits.remaining : "?"}${credits?.unit ? ` ${credits.unit}` : ""}${usedPct != null ? ` · ${usedPct}% ${t("providerUsage.used")}` : ""}`}
-          </span>
+          <TapFullText
+            text={exhausted ? t("providerUsage.quotaExceeded") : `${credits?.remaining != null ? credits.remaining : "?"}${credits?.unit ? ` ${credits.unit}` : ""}${usedPct != null ? ` · ${usedPct}% ${t("providerUsage.used")}` : ""}`}
+            style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: totalColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          />
         </div>
       )}
 
@@ -186,9 +186,10 @@ export function AccountQuotaSection({ usage, backendSource, sessionId }: {
                 <span style={{ display: "block", height: "100%", width: `${ratio}%`, borderRadius: 3, background: severityColor(b.remaining, b.total), transition: "width 0.4s ease" }} />
               </span>
             ) : <span />}
-            <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {b.remaining ?? 0}/{b.total ?? "?"}{pct != null ? ` · ${pct}%` : ""}
-            </span>
+            <TapFullText
+              text={`${b.remaining ?? 0}/${b.total ?? "?"}${pct != null ? ` · ${pct}%` : ""}`}
+              style={{ fontSize: 12, fontFamily: "var(--font-mono)", color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            />
           </div>
         );
       })}
@@ -222,9 +223,12 @@ function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: bo
           {alarming && <ExhaustedBadge label={t("providerUsage.exhausted")} />}
           {isCurrent && <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("providerUsage.currentSession")}</span>}
         </span>
-        <span style={{ color: alarming ? "var(--danger, #ef4444)" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {worst ? `${worst.label} ${formatBucket(worst, t)}` : fallbackMetric ? formatMetric(fallbackMetric) : ""}
-        </span>
+        {worst || fallbackMetric ? (
+          <TapFullText
+            text={worst ? `${worst.label} ${formatBucket(worst, t)}` : formatMetric(fallbackMetric!)}
+            style={{ color: alarming ? "var(--danger, #ef4444)" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          />
+        ) : <span />}
       </summary>
       <div style={{ paddingLeft: 14, paddingTop: 6 }}>
         <ProviderUsageReportView report={report} />
