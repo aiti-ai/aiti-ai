@@ -53,6 +53,21 @@ export function epochSeconds(value: unknown): number | undefined {
   return Math.floor(numeric >= 1e12 ? numeric / 1_000 : numeric);
 }
 
+/** Approximate window length in minutes from a period label ("5h", "1w",
+ *  "1mo", "daily", "weekly", "monthly"). Month is normalized to 30 days.
+ *  undefined when the label carries no usable period (e.g. "rolling"). */
+export function windowMinutesFromLabel(label: string | undefined): number | undefined {
+  if (!label) return undefined;
+  const trimmed = label.trim().toLowerCase();
+  const match = /^(\d+)\s*(m|h|d|w|mo)$/.exec(trimmed);
+  if (match) {
+    const unitMinutes: Record<string, number> = { m: 1, h: 60, d: 1440, w: 10_080, mo: 43_200 };
+    return unitMinutes[match[2]] * Number(match[1]);
+  }
+  const words: Record<string, number> = { daily: 1440, weekly: 10_080, monthly: 43_200 };
+  return words[trimmed];
+}
+
 export function windowLabel(seconds: number | undefined): string {
   if (!seconds || seconds <= 0) return "Limit";
   const minutes = Math.ceil(seconds / 60);

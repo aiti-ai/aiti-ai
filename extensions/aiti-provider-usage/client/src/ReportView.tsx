@@ -8,6 +8,7 @@
 //   useI18n → host-shim t；类型自 ./types 自持。）
 
 import { t } from "./host-shim";
+import { cycleTimeSuffix } from "./quota-time";
 import type { UsageBucket, UsageMetric, UsageReport } from "../../lib/server/types";
 
 export type { UsageBucket, UsageMetric, UsageReport } from "../../lib/server/types";
@@ -112,7 +113,7 @@ function bucketStateText(bucket: UsageBucket, tr: Translate): string {
 
 export function formatBucket(bucket: UsageBucket, tr: Translate): string {
   const state = bucketStateText(bucket, tr);
-  const reset = bucket.resetsAt ? ` · ${formatReset(bucket.resetsAt)}` : "";
+  const reset = bucket.resetsAt ? ` · ${formatReset(bucket.resetsAt)}${cycleTimeSuffix(bucket)}` : "";
   if (bucket.unit === "percent" && bucket.remaining !== undefined) {
     return `${Math.round(bucket.remaining)}%${state}${reset}`;
   }
@@ -144,9 +145,12 @@ function formatAmount(value: number | undefined): string {
   return value === undefined ? "-" : Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
-/** < 6h → HH:MM:SS countdown (session windows); otherwise a local date/time.
- *  The countdown is computed at render time and advances with host re-renders
- *  (no timer — repo no-polling rule); a long-idle panel can show a stale value. */
+/** < 6h → HH:MM:SS countdown (session windows); otherwise a local date/time,
+ *  followed by the window's remaining-time ratio, e.g. ` (time:63%)`, so the
+ *  quota percentage can be read against how much of the cycle is left.
+ *  The countdown and ratio are computed at render time and advance with host
+ *  re-renders (no timer — repo no-polling rule); a long-idle panel can show a
+ *  stale value. */
 export function formatReset(seconds: number): string {
   const target = seconds * 1_000;
   const delta = target - Date.now();

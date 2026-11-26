@@ -105,9 +105,11 @@ test("zai normalizes coding-plan windows and per-model usage details", async () 
   assert.equal(report.providerId, "zai-coding-cn");
   assert.equal(report.buckets[0].unit, "percent");
   assert.equal(report.buckets[0].remaining, 100);
+  assert.equal(report.buckets[0].windowMinutes, 300);
   assert.equal(report.buckets[1].unit, "count");
   assert.equal(report.buckets[1].remaining, 3322);
   assert.equal(report.buckets[1].resetsAt, 1_789_454_630);
+  assert.equal(report.buckets[1].windowMinutes, 43_200);
   assert.deepEqual(report.metrics.map((metric) => metric.label), ["search-prime", "web-reader"]);
   assert.ok(report.notes[0].includes("max"));
 });
@@ -129,6 +131,7 @@ test("zai marks a used-up window as exhausted with a blocking note", async () =>
   const weekly = report.buckets.find((bucket) => bucket.label === "1w");
   assert.equal(weekly.status, "exhausted");
   assert.equal(weekly.remaining, 0);
+  assert.equal(weekly.windowMinutes, 10_080);
   assert.equal(report.exhausted, true);
   assert.ok(report.notes.some((note) => note.includes("blocks requests")));
 });
@@ -173,8 +176,11 @@ test("opencode-go normalizes percent/status/resetsAt windows and flags exhaustio
   assert.equal(report.buckets.length, 3);
   assert.equal(report.buckets[1].remaining, 88);
   assert.equal(report.buckets[1].resetsAt, Math.floor(Date.parse("2026-09-14T00:00:00.433Z") / 1000));
+  assert.equal(report.buckets[0].windowMinutes, undefined);
+  assert.equal(report.buckets[1].windowMinutes, 10_080);
   assert.equal(report.buckets[2].status, "rate-limited");
   assert.equal(report.buckets[2].remaining, 0);
+  assert.equal(report.buckets[2].windowMinutes, 43_200);
   assert.equal(report.exhausted, true);
 });
 
@@ -270,6 +276,8 @@ test("kimi-coding tolerates window maps and booster wallet", async () => {
     booster_wallet: { balance: "12.5" },
   }, { providerId: "kimi-coding", auth: {} });
   assert.equal(report.buckets.length, 2);
+  assert.equal(report.buckets[0].windowMinutes, undefined);
+  assert.equal(report.buckets[1].windowMinutes, 10_080);
   assert.equal(report.metrics.find((metric) => metric.id === "booster").value, "12.5");
 });
 
@@ -391,4 +399,22 @@ test("pooled queries merge per-key reports and note failed keys", async () => {
   assert.deepEqual(single.buckets.map((bucket) => bucket.label), ["Rolling"]);
   // Every key failing surfaces the upstream error.
   await assert.rejects(queryUsageTargets(adapter, [{ name: "bad", auth: { apiKey: "sk-bad" } }]), /403/);
+});
+
+test("cycleTimeLeftPct/cycleTimeSuffix derive the window's remaining-time ratio", async () => {
+  const { cycleTimeLeftPct, cycleTimeSuffix } = await import("../../client/src/quota-time.ts");
+  const resetsAt = 3_000_000_000;
+  // 1w window reset 1.5 days from now → 1.5/7 of the week's time still left.
+  const weekly = { resetsAt, windowMinutes: 10_080 };
+  const now = resetsAt * 1000 - 1.5 * 86_400_000;
+  const pct = cycleTimeLeftPct(weekly, now);
+  assert.ok(Math.abs(pct - 100 * (1.5 * 1440) / 10_080) < 1e-9, `got ${pct}`);
+  assert.equal(cycleTimeSuffix(weekly, now), " (time:21%)");
+  // Clamped: already-reached reset → 0, window not yet started → 100.
+  assert.equal(cycleTimeLeftPct(weekly, resetsAt * 1000 + 1000), 0);
+  assert.equal(cycleTimeLeftPct(weekly, resetsAt * 1000 - 10_080 * 60_000), 100);
+  // Unknown window length (rolling windows) renders no suffix.
+  assert.equal(cycleTimeLeftPct({ resetsAt }, now), undefined);
+  assert.equal(cycleTimeSuffix({ resetsAt }, now), "");
+  assert.equal(cycleTimeSuffix({ resetsAt, windowMinutes: 0 }, now), "");
 });
