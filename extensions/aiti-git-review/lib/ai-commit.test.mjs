@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assembleDiffText, buildCommitPrompt, parseCommitText, sanitizeCommitInput, sanitizePath, splitDiffOutput } from "./ai-commit.ts";
+import { assembleDiffText, buildCommitPrompt, excerptAgentsMd, parseCommitText, sanitizeCommitInput, sanitizePath, splitDiffOutput } from "./ai-commit.ts";
 
 const baseInput = () => ({
   cwd: "/repo",
@@ -80,6 +80,45 @@ test("sanitize：文件数/字段截断，路径清洗换行", () => {
   assert.ok(!s.files[0].path.includes("\n"));
   assert.equal(s.recentSubjects[0], "a b");
   assert.equal(sanitizePath("x\r\ny"), "x  y");
+});
+
+test("agents 节选：短文档原样通过", () => {
+  const doc = "# 规范\n\n提交信息用英文。";
+  const r = excerptAgentsMd(doc);
+  assert.equal(r.excerpted, false);
+  assert.equal(r.text, doc);
+});
+
+test("agents 节选：长文档只保留提交/语言/风格段落，体积收敛", () => {
+  const noise = (i) => `## 无关小节 ${i}\n\n` + "这一节与提交信息无关，只是冗长的背景说明。".repeat(40);
+  const doc = [
+    "# 项目规范",
+    "## 语言纪律\n\ncommit message 一律英文；代码注释默认英文。",
+    ...Array.from({ length: 12 }, (_, i) => noise(i)),
+    "## 提交规范\n\n首行是祈使句，说明做了什么；正文写清原因。",
+  ].join("\n\n");
+  assert.ok(new TextEncoder().encode(doc).length > 6 * 1024);
+  const r = excerptAgentsMd(doc);
+  assert.equal(r.excerpted, true);
+  assert.ok(r.text.includes("commit message 一律英文"));
+  assert.ok(r.text.includes("首行是祈使句"));
+  assert.ok(!r.text.includes("无关小节 3"));
+  assert.ok(new TextEncoder().encode(r.text).length <= 6 * 1024 + 128);
+});
+
+test("agents 节选：无命中时回退为开头截断", () => {
+  const doc = "Lorem ipsum dolor sit amet.\n\n".repeat(1200); // no keywords, > 6KB
+  const r = excerptAgentsMd(doc);
+  assert.equal(r.excerpted, true);
+  assert.ok(r.text.startsWith("Lorem ipsum"));
+  assert.ok(new TextEncoder().encode(r.text).length <= 6 * 1024);
+});
+
+test("sanitize：长 AGENTS.md 被节选后再入 prompt", () => {
+  const agentsMds = [{ path: "/repo/AGENTS.md", content: "## 提交规范\n\n提交前跑门禁。" + "\n\n" + "无关段落内容。".repeat(2000) }];
+  const s = sanitizeCommitInput({ cwd: "/repo", files: [], agentsMds, recentSubjects: [] });
+  assert.ok(s.agentsMds[0].content.includes("提交前跑门禁"));
+  assert.ok(new TextEncoder().encode(s.agentsMds[0].content).length <= 6 * 1024 + 128);
 });
 
 test("parse：裸文本直通", () => {

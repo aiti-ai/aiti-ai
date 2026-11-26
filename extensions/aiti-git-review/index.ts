@@ -561,7 +561,23 @@ const REFINE_TIMEOUT_MS = 180_000;
 
 /** spawn 一个 prompt 会话并等待 `onAgentSettled` 送达最终回答（单 deadline 超时；事件驱动，非轮询）。
  *  通道由 AI 精修（groupReview）与 AI 生成提交信息（commitMessage）共用——等待表按 sessionId 区分。 */
-async function spawnPromptAndWait(opts: { origin: string; basePath: string; cwd: string; message: string; timeoutMsg: string }): Promise<string> {
+// Chat-only session (`toolNames: []`): these callers only relay a prompt and read one answer,
+// so the tool registry, extension binding (codemode / MCP / project extensions) and the system
+// prompt are pure overhead here. Measured on a 30KB AGENTS.md repo: a full session takes 60-100s
+// per generation (the oversized system prompt even triggered context compaction), chat-only takes
+// seconds. The prompt therefore carries every instruction it needs itself.
+//
+// `thinkingLevel` lets a caller dial thinking down: a commit subject is a single-shot
+// summarisation task, and the session default (max) spent 60-100s of reasoning per generation
+// that a tool-free one-liner does not need.
+async function spawnPromptAndWait(opts: {
+  origin: string;
+  basePath: string;
+  cwd: string;
+  message: string;
+  timeoutMsg: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+}): Promise<string> {
   const origin = String(opts.origin || "").replace(/\/$/, "");
   const basePath = String(opts.basePath || "");
   if (!origin || !opts.cwd) throw new Error("origin/cwd required");
@@ -572,7 +588,13 @@ async function spawnPromptAndWait(opts: { origin: string; basePath: string; cwd:
     fetch(origin + basePath + "/api/agent/new", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd: opts.cwd, type: "prompt", message: opts.message }),
+      body: JSON.stringify({
+        cwd: opts.cwd,
+        type: "prompt",
+        message: opts.message,
+        toolNames: [],
+        ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+      }),
     }).then(async (resp) => {
       const data = await resp.json().catch(() => null);
       const sid = String(data && (data.sessionId || (data.session && data.session.id)) || "");
@@ -865,7 +887,10 @@ export default {
             const prompt = buildCommitPrompt(sanitizeCommitInput(ctxInput));
             const text = await spawnPromptAndWait({
               origin: opts.origin, basePath: opts.basePath, cwd: ctxInput.cwd, message: prompt,
-              timeoutMsg: "AI 生成提交信息超时（180s）——AI 会话仍保留，可稍后查看其回答",
+              timeoutMsg: "AI 生成提交信息超时（180s）——可能是模型服务暂时不可用；AI 会话仍保留，可点开查看具体错误",
+              // A commit subject is a one-line summarisation: thinking at the session
+              // default (max) doubled latency (measured 103s vs 50s) with no better output.
+              thinkingLevel: "off",
             });
             const message = parseCommitText(text);
             if (!message) throw new Error("AI 回答为空或未通过提交信息格式清理——请重试");
