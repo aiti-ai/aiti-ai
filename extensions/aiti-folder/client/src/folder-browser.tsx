@@ -410,7 +410,7 @@ export async function openTerminal(p: string, name?: string): Promise<string | n
 // entry selected (Windows /select, · macOS -R; Linux has no select verb) ──
 // Only the server can raise that window (the browser has no such API), so this calls the
 // extension's own endpoint. The host's /api/open-in-explorer is not used on purpose: it decides
-// availability by a loopback Host, so behind nginx (Host stays pi.alot.pw:57442) it answers
+// availability by a loopback Host, so behind a reverse proxy (Host stays the public origin) it answers
 // 403 "remote" — i.e. nothing happens on the usual access path.
 // Returns the error text, or null on success.
 export async function openInFileManager(p: string): Promise<string | null> {
