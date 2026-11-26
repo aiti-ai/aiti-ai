@@ -406,6 +406,23 @@ export async function openTerminal(p: string, name?: string): Promise<string | n
     return e && e.message ? e.message : String(e);
   }
 }
+// ── Open in the OS file manager: a directory opens itself; an entry opens its folder with the
+// entry selected (Windows /select, · macOS -R; Linux has no select verb) ──
+// Only the server can raise that window (the browser has no such API), so this calls the
+// extension's own endpoint. The host's /api/open-in-explorer is not used on purpose: it decides
+// availability by a loopback Host, so behind nginx (Host stays pi.alot.pw:57442) it answers
+// 403 "remote" — i.e. nothing happens on the usual access path.
+// Returns the error text, or null on success.
+export async function openInFileManager(p: string): Promise<string | null> {
+  try {
+    const r = await fetch(apiUrl("/api/extensions/aiti-folder/open-in-file-manager"), { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({ path: p }) });
+    const d: any = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) return (d && d.error) || "HTTP " + r.status;
+    return null;
+  } catch (e:any) {
+    return e && e.message ? e.message : String(e);
+  }
+}
 function NewWindowIcon() {
   return <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>;
 }
@@ -567,6 +584,7 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
             menuActionRow("row-window", tt("files.menuWindow"), [
               { key:"nw", title: tt("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setOpen(false); openNewWindow("folder", dir); } },
               { key:"ot", title: tt("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setOpen(false); void openTerminal(dir).then(err=>{ if (err) setMsg({ err }); }); } },
+              { key:"fm", title: tt("files.openInFileManager"), icon:<MiFolderOpen/>, onClick: ()=>{ setOpen(false); void openInFileManager(dir).then(err=>{ if (err) setMsg({ err }); }); } },
             ]),
             // ── 路径引用（特色区置顶）──
             menuSep("s-ref"),
@@ -683,6 +701,7 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
             menuActionRow("row-window", tt("files.menuWindow"), [
               { key:"nw", title: tt("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setOpen(false); openNewWindow("file", filePath); } },
               { key:"ot", title: tt("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setOpen(false); void openTerminal(dirOf(filePath), lastSeg(filePath)).then(err=>{ if (err) alert(err); }); } },
+              { key:"fm", title: tt("files.openInFileManager"), icon:<MiFolderOpen/>, onClick: ()=>{ setOpen(false); void openInFileManager(filePath).then(err=>{ if (err) alert(err); }); } },
             ]),
             // ── 路径引用（特色区置顶）──
             menuSep("s-ref"),
@@ -1581,6 +1600,7 @@ export function FolderBrowser(props: any) {
     items.push({ kind: "iconsRow", label: t("files.menuWindow"), items: [
       { key: "nw", icon: <NewWindowIcon/>, label: t("files.openNewWindow"), run: () => openNewWindow("folder", root) },
       { key: "ot", icon: <TerminalIcon/>, label: t("files.openTerminal"), run: () => { void openTerminal(root).then((err) => { if (err) setUploadMsg({ err }); }); } },
+      { key: "fm", icon: <MiFolderOpen/>, label: t("files.openInFileManager"), run: () => { void openInFileManager(root).then((err) => { if (err) setUploadMsg({ err }); }); } },
       // 关闭归位「窗口」排（2026-11-15 用户拍板：区块段末尾不好找）。语义 = removeFolderInstance
       //（关面板并移出清单，刷新不回弹）——与折叠未挂载态的区块段「关闭」同语义，唯一化。
       // 实例路径从 dockItemKey 反解（浏览子目录后 root 已偏离实例路径，不能拿 root 去匹配清单）。
@@ -1711,6 +1731,7 @@ export function FolderBrowser(props: any) {
                   { key:"pin", title: isTabPinned() ? t("files.unpin") : t("files.pin"), icon: isTabPinned() ? <MiPinOff/> : <MiPin/>, onClick: toggleTabPin },
                   { key:"nw", title: t("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setMoreOpen(false); openNewWindow("folder", root); } },
                   { key:"ot", title: t("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setMoreOpen(false); void openTerminal(root).then(err=>{ if (err) setUploadMsg({ err }); }); } },
+                  { key:"fm", title: t("files.openInFileManager"), icon:<MiFolderOpen/>, onClick: ()=>{ setMoreOpen(false); void openInFileManager(root).then(err=>{ if (err) setUploadMsg({ err }); }); } },
                 ]),
                 // ── 路径引用 ──
                 menuSep("s-ref"),
