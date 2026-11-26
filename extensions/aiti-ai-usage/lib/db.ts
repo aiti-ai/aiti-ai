@@ -120,6 +120,7 @@ export function openUsageDb(dbPath: string): UsageDb {
           cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
           reasoning INTEGER DEFAULT 0,
           total_tokens INTEGER DEFAULT 0, cost_total REAL DEFAULT 0,
+          credits REAL DEFAULT 0,
           PRIMARY KEY (day, agent, provider, model)
         );
         CREATE INDEX IF NOT EXISTS idx_daily_model_provider ON daily_model(provider);
@@ -247,12 +248,22 @@ export function openUsageDb(dbPath: string): UsageDb {
               input INTEGER DEFAULT 0, output INTEGER DEFAULT 0,
               cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
               reasoning INTEGER DEFAULT 0,
-              total_tokens INTEGER DEFAULT 0, cost_total REAL DEFAULT 0,
+              total_tokens INTEGER DEFAULT 0, cost_total REAL DEFAULT 0, credits REAL DEFAULT 0,
               PRIMARY KEY (day, agent, provider, model)
             );
             CREATE INDEX IF NOT EXISTS idx_daily_model_provider ON daily_model(provider);
             CREATE INDEX IF NOT EXISTS idx_daily_model_agent ON daily_model(agent);
           `);
+        db.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('daily_rebuild','1')").run();
+      }
+
+      // daily_model.credits (2026-11-26 credits dimension): an old DB gets the
+      // column added and a one-time full rebuild, since daily_model is a
+      // recomputable cache (the raw credits already live in ext_usage).
+      const hasCredits = () => (db.prepare("PRAGMA table_info(daily_model)").all() as Array<{ name: string }>)
+        .some((c) => c.name === "credits");
+      if (!hasCredits()) {
+        db.exec("ALTER TABLE daily_model ADD COLUMN credits REAL DEFAULT 0");
         db.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('daily_rebuild','1')").run();
       }
 

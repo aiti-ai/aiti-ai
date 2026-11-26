@@ -410,17 +410,17 @@ export async function flushDaily(usage: UsageDb): Promise<void> {
   dirtyDays.clear();
   const del1 = usage.db.prepare("DELETE FROM daily_model WHERE day = ?");
   const ins1 = usage.db.prepare(`
-    INSERT INTO daily_model (day, agent, provider, model, msgs, input, output, cache_read, cache_write, reasoning, total_tokens, cost_total)
-    SELECT day, agent, provider, model, SUM(msgs), SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(reasoning), SUM(total_tokens), SUM(cost_total)
+    INSERT INTO daily_model (day, agent, provider, model, msgs, input, output, cache_read, cache_write, reasoning, total_tokens, cost_total, credits)
+    SELECT day, agent, provider, model, SUM(msgs), SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(reasoning), SUM(total_tokens), SUM(cost_total), SUM(credits)
     FROM (
       SELECT day, 'pi' agent, provider, model, COUNT(*) msgs, SUM(input) input, SUM(output) output,
              SUM(cache_read) cache_read, SUM(cache_write) cache_write, SUM(reasoning) reasoning,
-             SUM(total_tokens) total_tokens, SUM(cost_total) cost_total
+             SUM(total_tokens) total_tokens, SUM(cost_total) cost_total, 0 credits
       FROM msg_usage WHERE day = ? GROUP BY provider, model
       UNION ALL
       SELECT day, agent, provider, model, COUNT(*) msgs, SUM(input) input, SUM(output) output,
              SUM(cache_read) cache_read, SUM(cache_write) cache_write, SUM(reasoning) reasoning,
-             SUM(total_tokens) total_tokens, SUM(cost_total) cost_total
+             SUM(total_tokens) total_tokens, SUM(cost_total) cost_total, SUM(credits) credits
       FROM ext_usage WHERE day = ? GROUP BY agent, provider, model
     ) GROUP BY day, agent, provider, model`);
   const del2 = usage.db.prepare("DELETE FROM daily_key WHERE day = ?");

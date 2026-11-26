@@ -77,6 +77,14 @@ function fmtN(n: number | null | undefined): string {
 function fmtCost(n: number | null | undefined): string {
   return fmtUsdCny(n, 2);
 }
+/** Billing credits (Qoder-family accounts): a unit of its own, never money. */
+function fmtCredits(n: number | null | undefined): string {
+  const v = Number(n ?? 0);
+  if (!Number.isFinite(v) || v === 0) return "0";
+  const abs = Math.abs(v);
+  const s = abs < 1 ? v.toFixed(3) : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `◈ ${s}`;
+}
 function fmtTime(ts: number | null | undefined): string {
   if (!ts) return "—";
   const d = new Date(ts);
@@ -571,6 +579,9 @@ function OverviewTab({ range, custom, trendView, onTrendViewChange, filters }: {
               <div style={kpiLabel}>{labels[k]}</div>
               <div style={kpiValue}>{fmtN(w.tokens)}</div>
               <div style={kpiLabel} title={fxNote() ? `${caliberSession}（${fxNote()}）` : caliberSession}>{fmtCost(w.cost)} · {fmtN(w.msgs)} {t("au.msgs")}</div>
+              {Number(w.credits) > 0 && (
+                <div style={kpiLabel} title={t("au.credits.note")}>{fmtCredits(w.credits)} {t("au.credits")}</div>
+              )}
               <div style={kpiLabel} title={t("au.input.note")}>{fmtN(w.userMsgs)} {t("au.input.short")}{Number(w.userQuoted) > 0 ? ` · ${fmtN(w.userQuoted)} ${t("au.input.quotedShort")}` : ""}</div>
               <div style={kpiLabel} title={t("au.caliber.proxy")}>{fmtN(w.reqs)} {t("au.requests")}{Number(w.err429) > 0 ? ` · ${fmtN(w.err429)} ${t("au.rateLimit")}` : ""}</div>
             </div>
@@ -594,6 +605,9 @@ function OverviewTab({ range, custom, trendView, onTrendViewChange, filters }: {
               <span style={{ color: "var(--text-dim)" }}>{fmtN(m.msgs)} msgs</span>
               <span style={{ width: 70, textAlign: "right" }}>{fmtN(m.tokens)}</span>
               <span style={{ width: 64, textAlign: "right" }}>{fmtCost(m.cost)}</span>
+              {Number(m.credits) > 0 && (
+                <span style={{ width: 76, textAlign: "right", color: "var(--text-dim)" }} title={t("au.credits.note")}>{fmtCredits(m.credits)}</span>
+              )}
             </div>
           ))}
       </div>
@@ -757,6 +771,7 @@ function ModelsTab({ range, custom, filters }: { range: RangeKey; custom: Custom
           <th style={{ ...th, textAlign: "right" }}>output</th>
           <th style={{ ...th, textAlign: "right" }}>cacheRead</th>
           <th style={{ ...th, textAlign: "right" }}>{t("au.tokens")}</th>
+          <th style={{ ...th, textAlign: "right" }} title={t("au.credits.note")}>{t("au.credits")}</th>
           <th
             style={{ ...th, textAlign: "right", cursor: "pointer" }}
             onClick={() => setRatioMode((m) => (m === "compare" ? "share" : "compare"))}
@@ -771,7 +786,7 @@ function ModelsTab({ range, custom, filters }: { range: RangeKey; custom: Custom
           <th style={{ ...th, textAlign: "right" }}>{t("au.cost")}</th>
         </tr></thead>
         <tbody>
-          {rows.length === 0 && <tr><td colSpan={10} style={{ ...td, textAlign: "center", color: "var(--text-dim)" }}>{t("au.empty")}</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={11} style={{ ...td, textAlign: "center", color: "var(--text-dim)" }}>{t("au.empty")}</td></tr>}
           {dedupeBy(rows, (r: any) => `${r.agent}/${r.provider}/${r.model}`).map((r: any) => (
             <tr key={`${r.agent}/${r.provider}/${r.model}`}>
               <td style={{ ...td, color: "var(--text-dim)" }}>{r.agent}</td>
@@ -785,6 +800,7 @@ function ModelsTab({ range, custom, filters }: { range: RangeKey; custom: Custom
               <td style={{ ...td, textAlign: "right" }}>{fmtN(r.output)}</td>
               <td style={{ ...td, textAlign: "right" }}>{fmtN(r.cacheRead)}</td>
               <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>{fmtN(r.totalTokens)}</td>
+              <td style={{ ...td, textAlign: "right", color: Number(r.credits) > 0 ? undefined : "var(--text-dim)" }}>{Number(r.credits) > 0 ? fmtCredits(r.credits) : "—"}</td>
               <td style={{ ...td, width: 140 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
@@ -874,7 +890,7 @@ const natCmp = (dim: string) => (a: string, b: string) => {
 };
 const metricVal = (row: any, metric: string): number => Number(row?.[metric] ?? 0);
 function fmtMetric(v: number, metric: string): string {
-  return metric === "cost" ? fmtCost(v) : fmtN(v);
+  return metric === "cost" ? fmtCost(v) : metric === "credits" ? fmtCredits(v) : fmtN(v);
 }
 type MatrixRow = Record<string, any>;
 
@@ -1263,7 +1279,7 @@ function exportCsv(rows: MatrixRow[], dims: string[], metrics: string[], label: 
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-const SESSION_METRICS = ["tokens", "cost", "msgs", "input", "output", "cacheRead"];
+const SESSION_METRICS = ["tokens", "cost", "credits", "msgs", "input", "output", "cacheRead"];
 const PROXY_METRICS = ["reqs", "err429", "ok", "tokens", "input", "output"];
 
 function PivotTab({ range, custom, filters }: { range: RangeKey; custom: CustomRange; filters: Filters }) {
@@ -1281,6 +1297,7 @@ function PivotTab({ range, custom, filters }: { range: RangeKey; custom: CustomR
     u.set("dims", dims.join(","));
     if (filters.provider) u.set("provider", filters.provider);
     if (filters.model) u.set("model", filters.model);
+    if (filters.agent) u.set("agent", filters.agent);
     return u.toString();
   }, [spanQ, dims, filters]);
   const { data, err } = useFetch<any>(spanQ === null ? null : `/matrix?${qs}`, [qs]);
@@ -1747,6 +1764,7 @@ function TrendTab({ range, custom, filters }: { range: RangeKey; custom: CustomR
     u.set("metric", effMetric);
     if (filters.provider) u.set("provider", filters.provider);
     if (filters.model) u.set("model", filters.model);
+    if (filters.agent) u.set("agent", filters.agent);
     return u.toString();
   }, [spanQ, dim, values, effMetric, filters]);
   const { data, err } = useFetch<any>(spanQ === null ? null : `/trend?${qs}`, [qs]);
@@ -1758,6 +1776,7 @@ function TrendTab({ range, custom, filters }: { range: RangeKey; custom: CustomR
     const src = facets ?? {};
     if (dim === "provider") return src.providers ?? [];
     if (dim === "model") return src.modelCombos ?? [];
+    if (dim === "agent") return src.agents ?? [];
     if (dim === "workspace") return [...(src.workspaces ?? []), UNKNOWN_WS];
     return src.keys ?? [];
   }, [facets, dim]);
