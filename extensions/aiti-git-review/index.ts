@@ -561,7 +561,7 @@ const refinePending = new Map<string, RefinePending>(); // sessionId → 等待�
 // Deadline of the synchronous wait. A provider that fails and retries can take longer than this;
 // the session keeps running server-side, so the caller gets its id back and pulls the answer later
 // (see lateStore/commitMessagePull) instead of losing the work.
-const REFINE_TIMEOUT_MS = Math.max(3_000, Number(process.env.AITI_GIT_REVIEW_AI_TIMEOUT_MS) || 3_000);
+const REFINE_TIMEOUT_MS = Math.max(5_000, Number(process.env.AITI_GIT_REVIEW_AI_TIMEOUT_MS) || 180_000);
 
 // Timed-out runs stay pullable: `lateStore` remembers the session ids, `lateWaiters` holds pulls
 // that are waiting on them. Both are keyed by session id and fed by onAgentSettled (event-driven,
