@@ -1276,6 +1276,13 @@ export function initSuggest(apiUrl: (p: string) => string) {
       return span;
     } catch (e) { return null; }
   }
+  /** Blank icon slot (no icon declared) — keeps the 16px gutter so row labels stay aligned. */
+  function sugAppIconPlaceholder() {
+    const span = document.createElement("span");
+    span.setAttribute("aria-hidden", "true");
+    span.style.cssText = "flex-shrink:0;display:inline-block;width:16px;height:16px;";
+    return span;
+  }
   // 应用命令候选行（桌面弹窗）：徽标「应用」+ 图标 + label + 次级（来源扩展 · 分类）+ toggle 尾态；
   // 点击 = 直接执行（真实动作不填入）
   function sugAppRow(it, i) {
@@ -1290,7 +1297,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     badge.style.cssText = "flex-shrink:0;font-size:11px;color:var(--text-dim,#9ca3af);border:1px solid var(--border,#e0e0e0);border-radius:999px;padding:1px 7px;white-space:nowrap;";
     row.appendChild(badge);
     const icon = sugAppIcon(h);
-    if (icon) row.appendChild(icon);
+    row.appendChild(icon || sugAppIconPlaceholder());
     const main = document.createElement("span");
     main.textContent = h.label || it.name || "";
     main.title = t("suggest.appRunTitle");
