@@ -810,11 +810,15 @@ export class AgentSessionWrapper {
         // and the text shown so far is what the agent actually said. Settled
         // fires only after the whole loop (retries included), so a pending
         // retry never races this check.
-        const failed = this.lastRunOutcome()?.status === "failed";
+        const outcome = this.lastRunOutcome();
+        const failed = outcome?.status === "failed";
         const text = produced && !failed ? this.inner.getLastAssistantText() ?? "" : "";
-        if (text) {
-          try { getExtRegistry().dispatchAgentSettled(this.sessionId, text); } catch (e) { console.error("[pi-web] agent_settled dispatch failed:", e instanceof Error ? e.message : e); }
-        }
+        try {
+          if (text) getExtRegistry().dispatchAgentSettled(this.sessionId, text);
+          // A failed run produced no answer, but extensions parked on this session (e.g. a pull
+          // after a deadline) must learn about it instead of waiting out their own timeout.
+          else if (failed) getExtRegistry().dispatchAgentSettled(this.sessionId, "", outcome?.error || "run failed without an answer");
+        } catch (e) { console.error("[pi-web] agent_settled dispatch failed:", e instanceof Error ? e.message : e); }
       }
       if (event.type === "compaction_end") {
         // Prompts submitted while compaction was running were queued as

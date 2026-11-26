@@ -896,6 +896,8 @@ export default {
       if (route === "git-commit-ai-message" && req.method === "POST") {
         // AI 生成提交信息：中继 git-review aiReview.commitMessage（服务端只读收集 AGENTS.md + diff 上下文）；
         // 服务缺席 503（client 按钮隐藏）、服务抛错 502（错误透传 UI）。
+        // A run that outlived its deadline answers `pending: true` + sessionId (HTTP 200) instead of
+        // 502: the session keeps running, and the client pulls the answer via git-commit-ai-pull.
         const body = await req.json().catch(() => ({}));
         const svc = hostSvc?.get?.("aiti-git-review.aiReview") as
           | { commitMessage?: (o: Record<string, unknown>) => Promise<{ message?: string }> }
@@ -908,8 +910,34 @@ export default {
             cwd: String(body?.cwd || ""),
             files: Array.isArray(body?.files) ? body.files.map((f: unknown) => String(f)) : [],
             amend: !!body?.amend,
+            // Caller UI locale: picks the instruction language of the prompt (zh → Chinese).
+            locale: String(body?.locale || ""),
           });
           return json({ ok: true, message: String(result?.message || "") });
+        } catch (e) {
+          const err = e as { message?: string; sessionId?: string; pending?: boolean };
+          const msg = err instanceof Error ? err.message : String(e);
+          if (err?.sessionId) return json({ ok: false, pending: true, sessionId: err.sessionId, error: msg });
+          return json({ ok: false, error: msg }, 502);
+        }
+      }
+      if (route === "git-commit-ai-pull" && req.method === "POST") {
+        // Continue a timed-out generation: one long request parks until the session settles
+        // (event-driven; the client issues no timers), or answers pending again.
+        const body = await req.json().catch(() => ({}));
+        const svc = hostSvc?.get?.("aiti-git-review.aiReview") as
+          | { commitMessagePull?: (o: Record<string, unknown>) => Promise<{ message?: string | null; pending?: boolean }> }
+          | undefined;
+        if (typeof svc?.commitMessagePull !== "function") return json({ ok: false, error: "aiti-git-review.aiReview.commitMessagePull 不可用" }, 503);
+        try {
+          const r = await svc.commitMessagePull({
+            sessionId: String(body?.sessionId || ""),
+            waitMs: body?.waitMs,
+          });
+          const message = r?.message ? String(r.message) : "";
+          const error = (r as { error?: string } | undefined)?.error;
+          if (message) return json({ ok: true, pending: false, message });
+          return json({ ok: true, pending: !!r?.pending, message: "", ...(error ? { error: String(error) } : {}) });
         } catch (e) {
           return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502);
         }

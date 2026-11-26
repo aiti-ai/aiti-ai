@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assembleDiffText, buildCommitPrompt, excerptAgentsMd, parseCommitText, sanitizeCommitInput, sanitizePath, splitDiffOutput } from "./ai-commit.ts";
+import { assembleDiffText, buildCommitPrompt, excerptAgentsMd, parseCommitText, resolveCommitPromptLang, sanitizeCommitInput, sanitizePath, splitDiffOutput } from "./ai-commit.ts";
 
 const baseInput = () => ({
   cwd: "/repo",
@@ -14,8 +14,8 @@ const baseInput = () => ({
   recentSubjects: ["feat(a): 一", "fix(b): 二"],
 });
 
-test("prompt：含契约要素与上下文块", () => {
-  const p = buildCommitPrompt(baseInput());
+test("prompt：含契约要素与上下文块（中文模板）", () => {
+  const p = buildCommitPrompt(baseInput(), "zh");
   assert.ok(p.includes("只输出提交信息本身"));
   assert.ok(p.includes("【项目规范 AGENTS.md】"));
   assert.ok(p.includes("提交用中文"));
@@ -26,10 +26,57 @@ test("prompt：含契约要素与上下文块", () => {
   assert.ok(!p.includes("amend")); // 非 amend 不带原提交信息块
 });
 
-test("prompt：amend 附原提交信息", () => {
-  const p = buildCommitPrompt({ ...baseInput(), amendOriginal: "feat(x): 旧" });
+test("prompt：amend 附原提交信息（中文模板）", () => {
+  const p = buildCommitPrompt({ ...baseInput(), amendOriginal: "feat(x): 旧" }, "zh");
   assert.ok(p.includes("修正上一笔提交"));
   assert.ok(p.includes("feat(x): 旧"));
+});
+
+test("prompt：英文模板（默认）承载同一契约", () => {
+  const p = buildCommitPrompt(baseInput());
+  assert.ok(p.includes("Output the commit message only"));
+  assert.ok(p.includes("no Markdown fences"));
+  assert.ok(p.includes("[Project rules (AGENTS.md)]"));
+  assert.ok(p.includes("提交用中文")); // data block content is language-agnostic
+  assert.ok(p.includes("[Recent commits (style reference)]"));
+  assert.ok(p.includes("- feat(a): 一"));
+  assert.ok(p.includes("[Diff of the changes to commit]"));
+  assert.ok(p.includes("diff --git a/a.ts"));
+  assert.ok(!p.includes("【项目规范"));
+  assert.ok(!p.includes("请直接输出提交信息"));
+});
+
+test("prompt：英文模板的 amend 块与截断标注", () => {
+  const p = buildCommitPrompt({ ...baseInput(), amendOriginal: "feat(x): old" });
+  assert.ok(p.includes("[This commit amends the previous one]"));
+  assert.ok(p.includes("feat(x): old"));
+  const big = { ...baseInput(), files: [{ path: "a.ts", status: "M ", diff: "x".repeat(1024) }] };
+  assert.ok(buildCommitPrompt(big, "en").includes("truncated to the size budget") === false); // within budget
+});
+
+test("prompt 语言：显式 locale 优先，其次项目规范，最后文档自身语言", () => {
+  assert.equal(resolveCommitPromptLang("zh-CN"), "zh");
+  assert.equal(resolveCommitPromptLang("zh-TW"), "zh");
+  assert.equal(resolveCommitPromptLang("en-US"), "en");
+  assert.equal(resolveCommitPromptLang("ja"), "en");
+  assert.equal(resolveCommitPromptLang(""), resolveCommitPromptLang(undefined));
+  assert.equal(resolveCommitPromptLang(undefined, []), "en");
+  assert.equal(
+    resolveCommitPromptLang(undefined, [{ content: "# Rules\n\nCommit messages are English-only across repos." }]),
+    "en",
+  );
+  assert.equal(
+    resolveCommitPromptLang(undefined, [{ content: "# 规范\n\n提交信息用中文，首行祈使句。" }]),
+    "zh",
+  );
+  // A Chinese guide that demands English commits still gets English instructions.
+  assert.equal(
+    resolveCommitPromptLang(undefined, [{ content: "# 规范\n\n提交信息一律英文（English only）。" }]),
+    "en",
+  );
+  // No explicit rule → follow the guide's own language.
+  assert.equal(resolveCommitPromptLang(undefined, [{ content: "# 项目规范\n\n运行 npm test 前先跑门禁检查。" }]), "zh");
+  assert.equal(resolveCommitPromptLang(undefined, [{ content: "# Project rules\n\nRun npm test before pushing." }]), "en");
 });
 
 test("diff 组装：新文件渲染伪 diff", () => {

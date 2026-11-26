@@ -20,6 +20,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { findSubcommand, withRepoOpts, normalizeSource } from "./lib/git-args.mjs";
 // @ts-ignore
 import { parseLedger, groupRevisions } from "./lib/trace-ledger.mjs";
+import { createLateResultStore } from "./lib/late-result.ts";
 
 let configDir = "";
 
@@ -557,7 +558,21 @@ interface RefinePending {
   timer: ReturnType<typeof setTimeout>;
 }
 const refinePending = new Map<string, RefinePending>(); // sessionId → 等待者（onAgentSettled 送达）
-const REFINE_TIMEOUT_MS = 180_000;
+// Deadline of the synchronous wait. A provider that fails and retries can take longer than this;
+// the session keeps running server-side, so the caller gets its id back and pulls the answer later
+// (see lateStore/commitMessagePull) instead of losing the work.
+const REFINE_TIMEOUT_MS = Math.max(3_000, Number(process.env.AITI_GIT_REVIEW_AI_TIMEOUT_MS) || 3_000);
+
+// Timed-out runs stay pullable: `lateStore` remembers the session ids, `lateWaiters` holds pulls
+// that are waiting on them. Both are keyed by session id and fed by onAgentSettled (event-driven,
+// no polling).
+const lateStore = createLateResultStore();
+const lateWaiters = new Map<string, { resolve: (text: string | null) => void; timer: ReturnType<typeof setTimeout> }>();
+
+/** Errors that carry a still-running session id, so the HTTP layer can answer "pending + pull". */
+function pendingError(message: string, sessionId: string): Error & { sessionId?: string; pending?: true } {
+  return Object.assign(new Error(message), { sessionId, pending: true as const });
+}
 
 /** spawn 一个 prompt 会话并等待 `onAgentSettled` 送达最终回答（单 deadline 超时；事件驱动，非轮询）。
  *  通道由 AI 精修（groupReview）与 AI 生成提交信息（commitMessage）共用——等待表按 sessionId 区分。 */
@@ -582,8 +597,13 @@ async function spawnPromptAndWait(opts: {
   const basePath = String(opts.basePath || "");
   if (!origin || !opts.cwd) throw new Error("origin/cwd required");
   return new Promise<string>((resolve, reject) => {
-    // 单个 deadline 定时器：超时放弃等待（会话不强行杀，留在会话列表供查看）
-    const timer = setTimeout(() => reject(new Error(opts.timeoutMsg)), REFINE_TIMEOUT_MS);
+    let sid = "";
+    // Single deadline timer: stop waiting, keep the session alive and make its answer pullable.
+    const timer = setTimeout(() => {
+      refinePending.delete(sid);
+      if (sid) lateStore.track(sid);
+      reject(sid ? pendingError(opts.timeoutMsg, sid) : new Error(opts.timeoutMsg));
+    }, REFINE_TIMEOUT_MS);
     timer.unref?.();
     fetch(origin + basePath + "/api/agent/new", {
       method: "POST",
@@ -597,7 +617,7 @@ async function spawnPromptAndWait(opts: {
       }),
     }).then(async (resp) => {
       const data = await resp.json().catch(() => null);
-      const sid = String(data && (data.sessionId || (data.session && data.session.id)) || "");
+      sid = String(data && (data.sessionId || (data.session && data.session.id)) || "");
       if (!sid) { clearTimeout(timer); reject(new Error("agent/new 未返回 sessionId")); return; }
       refinePending.set(sid, { resolve, reject, timer });
     }).catch((e) => { clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))); });
@@ -881,10 +901,13 @@ export default {
           /** AI 生成提交信息（folder CommitDialog，docs/aiti-folder-commit-ai-message-plan.md）：
            *  服务端只读收集 AGENTS.md + 勾选文件 diff + 最近提交风格 → spawn prompt 会话等待回答 →
            *  parseCommitText 清理后返回 { message }；folder 只做 UI 与中继。 */
-          commitMessage: async (opts: { origin: string; basePath: string; cwd: string; files: string[]; amend?: boolean }) => {
-            const { buildCommitPrompt, parseCommitText, sanitizeCommitInput } = await import("./lib/ai-commit");
+          commitMessage: async (opts: { origin: string; basePath: string; cwd: string; files: string[]; amend?: boolean; locale?: string }) => {
+            const { buildCommitPrompt, parseCommitText, sanitizeCommitInput, resolveCommitPromptLang } = await import("./lib/ai-commit");
             const ctxInput = await collectCommitContext({ cwd: opts.cwd, files: opts.files, amend: opts.amend });
-            const prompt = buildCommitPrompt(sanitizeCommitInput(ctxInput));
+            const input = sanitizeCommitInput(ctxInput);
+            // Template language only (zh caller → zh instructions); the generated message keeps
+            // following the project's own language rule, which the prompt states separately.
+            const prompt = buildCommitPrompt(input, resolveCommitPromptLang(opts.locale, input.agentsMds));
             const text = await spawnPromptAndWait({
               origin: opts.origin, basePath: opts.basePath, cwd: ctxInput.cwd, message: prompt,
               timeoutMsg: "AI 生成提交信息超时（180s）——可能是模型服务暂时不可用；AI 会话仍保留，可点开查看具体错误",
@@ -895,6 +918,33 @@ export default {
             const message = parseCommitText(text);
             if (!message) throw new Error("AI 回答为空或未通过提交信息格式清理——请重试");
             return { message };
+          },
+          /** Pull the answer of a commit-message run that outlived its deadline.
+           *  The caller passes the session id it received with the `pending` error; this waits
+           *  (one long request, no client polling) until the session settles or `waitMs` elapses. */
+          commitMessagePull: async (opts: { sessionId?: string; waitMs?: number }) => {
+            const { parseCommitText } = await import("./lib/ai-commit");
+            const sid = String(opts?.sessionId || "");
+            if (!sid) throw new Error("sessionId required");
+            const cached = lateStore.get(sid);
+            if (cached != null) {
+              const message = parseCommitText(cached);
+              return message ? { message, pending: false } : { message: null, pending: false, error: "AI 回答为空或未通过提交信息格式清理" };
+            }
+            const lateError = lateStore.errorOf(sid);
+            if (lateError) return { message: null, pending: false, error: lateError };
+            const waitMs = Math.min(REFINE_TIMEOUT_MS, Math.max(5_000, Number(opts?.waitMs) || REFINE_TIMEOUT_MS));
+            // A second pull for the same session replaces the first: the older request answers
+            // "pending" instead of parking a duplicate waiter (bounded memory, no double delivery).
+            const prev = lateWaiters.get(sid);
+            if (prev) { lateWaiters.delete(sid); clearTimeout(prev.timer); prev.resolve(null); }
+            const text = await new Promise<string | null>((resolve) => {
+              const timer = setTimeout(() => { lateWaiters.delete(sid); resolve(null); }, waitMs);
+              timer.unref?.();
+              lateWaiters.set(sid, { resolve, timer });
+            });
+            if (text == null) return { message: null, pending: true };
+            return { message: parseCommitText(text), pending: false };
           },
         });
         console.log("[aiti-git-review] services 已注册：aiti-git-review.aiReview（groupReview + commitMessage）");
@@ -1336,13 +1386,33 @@ export default {
     agent: {
       /** AI 分组精修等待兑现（git-ops M4 补遗）：宿主在会话 settle 时直送最终回答文本——
        *  事件驱动（非轮询）；未命中等待请求即静默返回。幂等：重复 settle 只兑现一次（已删表项）。 */
-      onAgentSettled(info: { sessionId: string; text: string }) {
+      onAgentSettled(info: { sessionId: string; text: string; error?: string }) {
         const sid = String((info && info.sessionId) || "");
+        if (!sid) return;
+        const text = String((info && info.text) || "");
+        const error = info && info.error ? String(info.error) : "";
+        // 1) a synchronous waiter (still inside its deadline) takes the answer (or the failure);
         const w = refinePending.get(sid);
-        if (!w) return;
-        refinePending.delete(sid);
-        clearTimeout(w.timer);
-        w.resolve(String((info && info.text) || ""));
+        if (w) {
+          refinePending.delete(sid);
+          clearTimeout(w.timer);
+          if (!text && error) w.reject(new Error(error));
+          else w.resolve(text);
+          return;
+        }
+        // 2) a pull waiting on a timed-out run: hand it over immediately (error → no answer);
+        const lw = lateWaiters.get(sid);
+        if (lw) {
+          lateWaiters.delete(sid);
+          clearTimeout(lw.timer);
+          if (!text && error) lateStore.fail(sid, error);
+          else lateStore.settle(sid, text);
+          lw.resolve(text ? text : null);
+          return;
+        }
+        // 3) nobody is waiting: cache it for later pulls (no-op unless track() saw this id).
+        if (!text && error) lateStore.fail(sid, error);
+        else lateStore.settle(sid, text);
       },
 
       agentTools(info: { sessionId?: string; cwd?: string }) {
