@@ -429,8 +429,10 @@ export interface ExtAgentHooks {
    *  a fork swapping the wrapper or idle GC reclamation also triggers it; use reason to tell
    *  them apart. Callbacks must be idempotent. */
   onAgentSessionEnd?(info: { sessionId: string; reason?: ExtAgentEndReason }): void;
-  /** An agent turn finished (agent_settled) — e.g. forward the final answer back to the bridge or echo it in the UI. */
-  onAgentSettled?(info: { sessionId: string; text: string }): void;
+  /** An agent turn finished (agent_settled) — e.g. forward the final answer back to the bridge or echo it in the UI.
+   *  `error` is set (with an empty `text`) when the run failed without producing an answer, e.g. every
+   *  provider retry exhausted; callers waiting on the session should stop waiting instead of timing out. */
+  onAgentSettled?(info: { sessionId: string; text: string; error?: string }): void;
 }
 
 /** Static metadata for UI items; the actual React components come from the client bundle. */

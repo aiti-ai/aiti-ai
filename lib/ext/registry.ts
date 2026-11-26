@@ -1482,10 +1482,10 @@ export class ExtRegistryImpl {
     this.releaseAgentSessionSubs(sessionId);
   }
 
-  /** agent_settled callback (final answer text). */
-  dispatchAgentSettled(sessionId: string, text: string): void {
+  /** agent_settled callback (final answer text; `error` when the run failed without one). */
+  dispatchAgentSettled(sessionId: string, text: string, error?: string): void {
     for (const ext of this.extensions.values()) {
-      try { this.agentHooks(ext)?.onAgentSettled?.({ sessionId, text }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSettled failed:`, e instanceof Error ? e.message : e); }
+      try { this.agentHooks(ext)?.onAgentSettled?.({ sessionId, text, ...(error ? { error } : {}) }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSettled failed:`, e instanceof Error ? e.message : e); }
     }
   }
 

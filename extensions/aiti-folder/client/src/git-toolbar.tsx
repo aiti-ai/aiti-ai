@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, extSvc, openFile } from "./host-shim";
-import { ct } from "./comp-i18n";
+import { ct, currentLocale } from "./comp-i18n";
 import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
 // ⚠ Create the api instance inside the hook only (never at module level: under the
 // folder-browser → git-toolbar cycle a module-level const hits the TDZ "Cannot access before
@@ -280,6 +280,9 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
   // Single delayed flag (no polling): once a generation passes ~25s the button says so,
   // so a slow run reads as "still working" instead of a stuck button.
   const [aiSlow, setAiSlow] = useState(false);
+  // The server answered "past the deadline, still running": keep the busy state and pull the
+  // same session instead of dropping the work.
+  const [aiPending, setAiPending] = useState(false);
 
   useEffect(() => {
     if (!aiBusy) { setAiSlow(false); return; }
@@ -299,7 +302,7 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
   const genMessage = useCallback(async () => {
     if (aiBusy || checked.size === 0) return;
     if (message.trim() && !window.confirm(ct("git.aiMessageOverwrite"))) return;
-    setAiBusy(true); setError(null);
+    setAiBusy(true); setAiPending(false); setError(null);
     try {
       // basePath is derived from apiUrl (the host-shim may prefix /dev etc.); origin is this
       // page's own (same as CommitPlanDialog.aiRefine)
@@ -307,12 +310,32 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
       const basePath = p1.slice(0, Math.max(0, p1.indexOf("/api/")));
       const r = await fetch(apiUrl("/api/extensions/aiti-folder/git-commit-ai-message"), {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cwd: p.root, origin: location.origin, basePath, files: [...checked], amend }),
+        // locale: the prompt template follows the caller's UI language (zh → Chinese
+        // instructions). The generated message still follows the project's own language rule.
+        body: JSON.stringify({ cwd: p.root, origin: location.origin, basePath, files: [...checked], amend, locale: currentLocale() }),
       }).then((x) => x.json()).catch(() => null);
-      if (!r?.ok) { setError(r?.error || ct("i18n.networkError")); return; }
-      setMessage(String(r.message || ""));
+      if (r?.ok) { setMessage(String(r.message || "")); return; }
+      const pendingId = r?.pending && r?.sessionId ? String(r.sessionId) : "";
+      if (pendingId) {
+        // The session keeps generating server-side: keep pulling it. Each pull is one long
+        // request parked on the settle event — no timers, no polling.
+        setAiPending(true);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const pr = await fetch(apiUrl("/api/extensions/aiti-folder/git-commit-ai-pull"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sessionId: pendingId, waitMs: 180_000 }),
+          }).then((x) => x.json()).catch(() => null);
+          if (pr?.ok && pr.message) { setMessage(String(pr.message)); return; }
+          if (!pr?.ok) break;
+          if (!pr.pending) { setError(pr.error || ct("git.aiMessageEmpty")); return; } // settled without a usable answer
+        }
+        setError(ct("git.aiMessageStillPending"));
+        return;
+      }
+      setError(r?.error || ct("i18n.networkError"));
     } finally {
       setAiBusy(false);
+      setAiPending(false);
     }
   }, [aiBusy, checked, message, amend, p.root]);
 
@@ -398,7 +421,9 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
               <button type="button" disabled={aiBusy || checked.size === 0} onClick={() => void genMessage()} title={ct("git.aiMessageTitle")}
                 style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: aiBusy || checked.size === 0 ? "not-allowed" : "pointer",
                   background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)", opacity: aiBusy || checked.size === 0 ? 0.6 : 1 }}>
-                {aiBusy ? (aiSlow ? ct("git.aiMessageBusyLong") : ct("git.aiMessageBusy")) : ct("git.aiMessage")}
+                {aiBusy
+                  ? (aiPending ? ct("git.aiMessagePending") : aiSlow ? ct("git.aiMessageBusyLong") : ct("git.aiMessageBusy"))
+                  : ct("git.aiMessage")}
               </button>
             ) : null}
           </div>

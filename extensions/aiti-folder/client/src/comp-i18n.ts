@@ -82,6 +82,9 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.aiMessage": "Generate",
     "git.aiMessageBusy": "Generating… (usually under a minute)",
     "git.aiMessageBusyLong": "Still generating… (large changes take longer)",
+    "git.aiMessagePending": "Still waiting… (the session keeps running in the background)",
+    "git.aiMessageStillPending": "The session is still generating in the background — open the dialog again and press Generate to pick the result up.",
+    "git.aiMessageEmpty": "The AI answered, but the text could not be cleaned into a commit message — please retry.",
     "git.aiMessageOverwrite": "Message already has content. Overwrite with the generated commit message?",
     "git.aiMessageTitle": "Generate a commit message with AI (reads AGENTS.md and the diff of selected files)",
     "git.stagedBucket": "Staged",
@@ -166,6 +169,9 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.aiMessage": "生成",
     "git.aiMessageBusy": "生成中…（通常 1 分钟内）",
     "git.aiMessageBusyLong": "仍在生成…（改动较大时需要更久）",
+    "git.aiMessagePending": "仍在等待…（会话在后台继续生成）",
+    "git.aiMessageStillPending": "会话仍在后台生成——稍后重新打开本弹窗、再点一次生成即可取回结果。",
+    "git.aiMessageEmpty": "AI 已作答，但无法整理成提交信息——请重试。",
     "git.aiMessageOverwrite": "输入框已有内容，生成结果将覆盖，是否继续？",
     "git.aiMessageTitle": "AI 生成提交信息（读取 AGENTS.md 与所选文件的 diff）",
     "git.stagedBucket": "已暂存",
@@ -182,8 +188,10 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
   },
 };
 
-/** 当前语言（pi-web 注入 __PI_LOCALE__；兜底 <html lang>；zh 系归一为 zh-CN） */
-function currentLocale(): string {
+/** Current locale (pi-web injects __PI_LOCALE__; falls back to <html lang>; zh* normalised to zh-CN).
+ *  Exported for callers that must tell the server which language to prompt in
+ *  (e.g. the AI commit-message template). */
+export function currentLocale(): string {
   const raw = (window as any).__PI_LOCALE__ || document.documentElement.lang || "en";
   const l = String(raw);
   if (l.startsWith("zh")) return "zh-CN";
