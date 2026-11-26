@@ -52,10 +52,8 @@ function setUnread(n) {
 }
 function bumpUnread() { setUnread(unread + 1); }
 
-// C1: the closed-state unread data source = a module-level global aiti-pair-msg listener
-// (singleton, not tied to the mount lifecycle). After the pair-client B5 fix, stopping the
-// instance removes its own listener and there is no more "phantom instance" collecting messages —
-// the badge must own its channel.
+// C1: the closed-state unread data source = a module-level aiti-pair-msg listener
+// (singleton, not tied to the mount lifecycle) — the badge owns its channel.
 let pairMsgListenerInstalled = false;
 function installGlobalPairMsgListener() {
   if (pairMsgListenerInstalled || typeof globalThis.addEventListener !== "function") return;
@@ -67,34 +65,43 @@ function installGlobalPairMsgListener() {
   });
 }
 
-// widget 挂载去重（React 重渲染/StrictMode ref 双触发不重复 mount；AitiPair 实例模块级保活）
-let mounted = null; // { el, instance }
-let mountPromise = null; // 在途挂载（异步加载竞态去重：ref 回调可能并发触发多次）
-let libPromise = null; // single pair-client.js <script>: the warm-up and the first open share one request
-// Whether mounted.el is still attached to the DOM — when the panel closes / the face switches,
-// React unmounts the old host while the module-level mounted still holds the old el; reopening
-// the panel must remount based on isConnected (otherwise the second toolbar click sets ready=true
-// with an empty container → blank panel).
-const mountedLive = () => !!(mounted && mounted.el && mounted.el.isConnected);
+/* ── Widget singleton ───────────────────────────────────────────────────────────────────
+   ONE widget DOM subtree + ONE AitiPair instance live for the whole page session and are
+   *re-parented* between the faces (float dialog ⇄ right-panel dock) and across panel
+   close/reopen.
 
-// The widget's current host face: 'dialog' (float / fallback overlay) | 'dock' (right-panel block) |
-// null (unmounted / collapsed). The face marker only drives the polling fallback; face exclusivity
-// is guaranteed by the present state machine as the single source (floating/docked, never both).
-let face = null;
-function setFace(v) {
-  if (face === v) return; // idempotent short-circuit: no notification on the same value
-  face = v;
-  // Device-list polling fallback follows panel visibility (visible face mounted → on; collapsed → off)
-  if (mounted && mounted.instance && mounted.instance.setPolling) {
-    try { mounted.instance.setPolling(v != null); } catch (e) {}
-  }
+   Why this matters (the panel used to flash on every refresh): the face components re-render
+   whenever the host re-renders (an agent streaming re-renders the shell many times per second)
+   and on every dock/present state change of *any* extension. The previous implementation keyed
+   the widget on the host element — and compared `mounted.el` (an inner wrapper) against the host,
+   so the identity check never matched: every host re-render tore the widget down (`stop()`) and
+   rebuilt it from scratch (`mount()`). That destroyed the device list and chat DOM, replayed the
+   entrance animations (visible flicker), replaced rows between pointerdown/pointerup (clicks
+   swallowed — "hard to select") and dropped the composer's focus.
+
+   Now the widget is built once and a host change is a single `appendChild` (DOM move): no
+   teardown, no re-mount, no animation replay, draft text / focus / scroll / selection survive.
+   `close` no longer stops the instance either — it keeps its SSE + chat history, so reopening the
+   panel shows the conversation that happened meanwhile. */
+let widgetBox = null;   // the node that holds the widget; moved (never rebuilt) between hosts
+let widgetInst = null;  // AitiPair instance (identity, SSE, history) — created once
+let libPromise = null;  // single pair-client.js <script>: warm-up and first open share one request
+let mountPromise = null;// in-flight build (concurrent ensureWidget calls join it)
+
+/** Which face the present state machine says should own the widget right now.
+ *  'dialog' (floating) | 'dock' (docked:right-panel) | null (closed / unknown). */
+function activeFace() {
+  const p = presentOf();
+  if (p === "floating") return "dialog";
+  if (p === "docked:right-panel") return "dock";
+  return null;
 }
 
 export default function register(ctx) {
-  const { h, useState, useEffect, apiUrl } = ctx;
+  const { h, useState, useEffect, useCallback, apiUrl } = ctx;
   // i18n: host ctx.t with bare-key fallback (index.ts ui.i18n entries)
   const t = (k) => (typeof ctx.t === "function" ? ctx.t(k) : k);
-  installGlobalPairMsgListener(); // C1: closed-state unread badge channel (B8 ordering: before any mount)
+  installGlobalPairMsgListener(); // C1: closed-state unread badge channel (before any mount)
   warmPairLib(); // preload the widget bundle so opening the panel never flashes a loading shell
 
   /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
@@ -137,7 +144,9 @@ export default function register(ctx) {
           host.appendChild(box);
           host.addEventListener("click", (e) => { if (e.target === host) { presentPair("close"); host.remove(); } });
           document.body.appendChild(host);
-          ensureWidget(inner, "dialog").catch(() => {});
+          // force: the fallback exists exactly when the shell did not mount a dialog host, so the
+          // face gate must not block it.
+          ensureWidget(inner, "dialog", { force: true }).catch(() => {});
         } catch {}
       }, 800);
     }
@@ -169,49 +178,80 @@ export default function register(ctx) {
     setTimeout(() => { loadPairLib().catch(() => {}); }, 0);
   }
 
-  function ensureWidget(host, faceTag) {
-    // Strict validation: reuse only if mounted, alive, and on the current host (face switch / panel reopen = new host → must remount)
-    if (mounted && mounted.el && mounted.el.isConnected && mounted.el === host) { setFace(faceTag); return Promise.resolve(mounted); }
+  /** Attach the singleton widget to `host` (idempotent). Safe to call on every render.
+   *  `opts.force` bypasses the face gate (deep-link fallback overlay). */
+  function ensureWidget(host, faceTag, opts) {
+    if (!host) return Promise.resolve(widgetInst);
+    // Face gate: during a float ⇄ dock transition both faces can be mounted for a frame. Only the
+    // face the state machine points at may hold the widget, so a stale host can never steal it
+    // (a steal is a re-parent per frame = visible flicker between the two faces).
+    if (!(opts && opts.force)) {
+      const want = activeFace();
+      if (want && faceTag !== want) return Promise.resolve(widgetInst);
+    }
+    if (!widgetBox) {
+      widgetBox = document.createElement("div");
+      widgetBox.style.cssText = "position:absolute;inset:0;display:flex;min-height:0";
+    }
+    if (widgetBox.parentElement !== host) {
+      // Re-parent, preserving focus + caret: moving a focused node blurs it in some browsers.
+      const active = document.activeElement;
+      const keepFocus = active && widgetBox.contains(active) ? active : null;
+      let caret = null;
+      try { if (keepFocus && typeof keepFocus.selectionStart === "number") caret = [keepFocus.selectionStart, keepFocus.selectionEnd]; } catch (e) {}
+      host.replaceChildren(widgetBox); // clears stale children without touching the widget subtree
+      if (keepFocus) {
+        try {
+          keepFocus.focus({ preventScroll: true });
+          if (caret) keepFocus.setSelectionRange(caret[0], caret[1]);
+        } catch (e) {}
+      }
+    }
+    if (widgetInst) return Promise.resolve(widgetInst);
     if (mountPromise) return mountPromise;
-    // 重开面板 = React 重建 host DOM（旧 el 已摘除）→ 先停旧实例再重挂（AitiPair 实例同 peerId 幂等，SSE 重连无感）
-    if (mounted) { try { mounted.instance.stop(); } catch (e) {} mounted = null; }
     mountPromise = loadPairLib().then((AitiPair) => {
-      const el = document.createElement("div");
-      el.style.cssText = "position:absolute;inset:0;display:flex;min-height:0";
-      host.innerHTML = ""; // 防御：同 host 重复挂载时清旧（幂等）
-      host.appendChild(el);
-      const instance = AitiPair.mount(el, {
-        base: BRIDGE_BASE(),
-        // B8: the 📱 phone entry generates the QR with params via the service-tunnels "mobile access"
-        // client service (soft dependency; when absent the widget degrades itself to link + copy).
-        // Service shape: registerExtService("service-tunnels.mobile", openMobileWith({url|query|title}))
-        // — {url} renders the QR for that link directly.
-        // ⚠ service-tunnels is a lazy extension (clientImmediately:false): resident slots like the
-        // toolbar do not materialize it, and the service only registers after its own entry is first
-        // clicked — so here we ensureMaterialized deterministically, then re-fetch (same pattern as
-        // agent-manager → aiti-cmd.open-session), avoiding "never clicked the entry → 📱 forever degraded".
-        openOnPhone: (url) => {
-          const lookup = () => (typeof ctx.getExtService === "function" ? ctx.getExtService("service-tunnels.mobile") : null);
-          const direct = lookup();
-          if (typeof direct === "function") { direct({ url, title: "设备互连 · 手机接入" }); return Promise.resolve(); }
-          if (typeof ctx.ensureMaterialized !== "function") return Promise.reject(new Error("openOnPhone 服务未就绪"));
-          return Promise.resolve(ctx.ensureMaterialized("service-tunnels")).then(() => {
-            const svc = lookup();
-            if (typeof svc !== "function") throw new Error("openOnPhone 服务未就绪（物化后仍缺席——service-tunnels 未部署/停用？）");
-            svc({ url, title: "设备互连 · 手机接入" });
-          });
-        },
-      });
-      mounted = { el, instance };
-      setFace(faceTag);
-      mountPromise = null; // 成功即清：下次面板重开（DOM 已换）必须重新挂载，不能返回旧 promise
-      return mounted;
-    }).catch((e) => { mountPromise = null; throw e; }); // 失败也允许重试
-    setFace(null); // remount means the panel is absent: notify after mountPromise assignment so a re-entering ensureWidget sees the in-flight promise and returns
+      if (!widgetInst) {
+        widgetInst = AitiPair.mount(widgetBox, WIDGET_OPTS());
+        // The refresh cadence is unchanged (widget poll + push + user-visible moments). What
+        // changed is that a refresh whose payload is identical emits nothing and rows only ever
+        // patch by key / class — so a tick is invisible instead of a rebuild.
+      }
+      mountPromise = null;
+      return widgetInst;
+    }).catch((e) => { mountPromise = null; throw e; }); // failed load stays retryable
     return mountPromise;
   }
 
-  // Subscription to present state changes (shared by both faces; stops the instance on closed to save SSE). ⚠ must be called inside the component (React hook rules)
+  /** Widget options (openOnPhone hook etc.) — built once at mount time. */
+  function WIDGET_OPTS() {
+    return {
+      base: BRIDGE_BASE(),
+      // B8: the 📱 phone entry generates the QR with params via the service-tunnels "mobile access"
+      // client service (soft dependency; when absent the widget degrades itself to link + copy).
+      // Service shape: registerExtService("service-tunnels.mobile", openMobileWith({url|query|title}))
+      // — {url} renders the QR for that link directly.
+      // ⚠ service-tunnels is a lazy extension (clientImmediately:false): resident slots like the
+      // toolbar do not materialize it, and the service only registers after its own entry is first
+      // clicked — so here we ensureMaterialized deterministically, then re-fetch (same pattern as
+      // agent-manager → aiti-cmd.open-session), avoiding "never clicked the entry → 📱 forever degraded".
+      openOnPhone: (url) => {
+        const lookup = () => (typeof ctx.getExtService === "function" ? ctx.getExtService("service-tunnels.mobile") : null);
+        const direct = lookup();
+        if (typeof direct === "function") { direct({ url, title: "设备互连 · 手机接入" }); return Promise.resolve(); }
+        if (typeof ctx.ensureMaterialized !== "function") return Promise.reject(new Error("openOnPhone 服务未就绪"));
+        return Promise.resolve(ctx.ensureMaterialized("service-tunnels")).then(() => {
+          const svc = lookup();
+          if (typeof svc !== "function") throw new Error("openOnPhone 服务未就绪（物化后仍缺席——service-tunnels 未部署/停用？）");
+          svc({ url, title: "设备互连 · 手机接入" });
+        });
+      },
+    };
+  }
+
+  // Subscription to present state changes (shared by both faces). The widget instance is NOT
+  // stopped on close: keeping it alive preserves the chat stream, the draft and the scroll
+  // position across close/reopen, and there is no second mount to flash. ⚠ must be called inside
+  // the component (React hook rules).
   function usePresentPair() {
     const [, force] = useState(0);
     useEffect(() => {
@@ -219,10 +259,6 @@ export default function register(ctx) {
       let off;
       const onPresent = (d) => {
         if (d && d.key !== PAIR_KEY) return;
-        if (presentOf() === "closed") {
-          setFace(null);
-          if (mounted) { try { mounted.instance.stop(); } catch (e) {} }
-        }
         l();
       };
       const api = globalThis.__piweFloat;
@@ -241,16 +277,19 @@ export default function register(ctx) {
   function PairDialog() {
     const state = usePresentPair();
     const [err, setErr] = useState("");
-    const [ready, setReady] = useState(false);
-    const open = state === "floating";
-    useEffect(() => {
-      if (!open || ready || mountedLive()) { if (open && mountedLive()) setReady(true); return; }
-      let dead = false;
-      ensureWidget(hostEl(), "dialog").then(() => { if (!dead) setReady(true); }).catch((e) => { if (!dead) setErr(String((e && e.message) || e)); });
-      return () => { dead = true; };
-    }, [open]);
+    // The widget is a page-lifetime singleton: once built it is immediately visible on reopen
+    // (no "empty shell → widget swap" flash).
+    const [ready, setReady] = useState(() => !!widgetInst);
+    // Stable ref callback: React only runs it on mount/unmount, and every call is idempotent
+    // (re-parent when the host changed, otherwise a no-op).
+    const attach = useCallback((el) => {
+      if (!el) return;
+      ensureWidget(el, "dialog").then(() => {
+        if (el.isConnected) { setReady(true); setErr(""); }
+      }).catch((e) => setErr(String((e && e.message) || e)));
+    }, []);
 
-    if (!open) return null;
+    if (state !== "floating") return null;
     const sz = pairWindowSize();
     return h("div", {
       style: {
@@ -289,12 +328,7 @@ export default function register(ctx) {
           }, "✕"),
         ),
         h("div", {
-          ref: (el) => {
-            hostRef = el;
-            if (open && el && !mountedLive() && !mountPromise) {
-              ensureWidget(el, "dialog").then(() => setReady(true)).catch((e) => setErr(String((e && e.message) || e)));
-            } else if (open && mountedLive()) setReady(true);
-          },
+          ref: attach,
           style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: ready ? "block" : "none" },
         }),
         !ready && err && h("div", { style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-muted)", whiteSpace: "pre-wrap" } },
@@ -302,9 +336,6 @@ export default function register(ctx) {
       ),
     );
   }
-
-let hostRef = null;
-const hostEl = () => hostRef;
 
 /* ── 面板尺寸（响应式）：大屏给对话更多空间 ──
    ≥1536px 900×740 · ≥1024px 720×680 · 其余 460×560（aiti-float 持久化优先——
@@ -355,6 +386,10 @@ function pairWindowSize() {
      根节点带 DockBody（chrome:"tab"）契约标注；无自绘头行（页签控件在宿主 TabBar）。 */
   function DockPair() {
     const state = usePresentPair();
+    // Stable ref callback (idempotent): the host re-renders whenever the shell does (an agent
+    // streaming re-renders it many times per second). It must never rebuild or re-mount the widget
+    // — that was the flicker / lost focus / swallowed clicks.
+    const attach = useCallback((el) => { if (el) ensureWidget(el, "dock").catch(() => {}); }, []);
     if (state !== "docked:right-panel") return null; // contract gate: render nothing outside the right-panel docked state
     return h("div", {
       "data-ext-float-dock-body": PAIR_KEY, // DockBody(tab) contract marker: depended on by the orchestrator / ⇱ menu / flash positioning
@@ -365,12 +400,7 @@ function pairWindowSize() {
       style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden", position: "relative" },
     },
       h("div", {
-        ref: (el) => {
-          if (!el) return;
-          hostRef = el;
-          if (mountedLive() && mounted.el === el) return; // already mounted on this host: idempotent skip
-          ensureWidget(el, "dock").catch(() => {});
-        },
+        ref: attach,
         style: { position: "relative", flex: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-panel)" },
       }));
   }

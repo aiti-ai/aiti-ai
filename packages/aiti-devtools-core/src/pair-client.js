@@ -238,18 +238,60 @@
         }).catch(function () {});
     }
 
-    // ---- Device list / inbox (event-driven: pull on ready / peer changes / unfreeze; polling as fallback) ----
+    // ---- Device list / inbox ---------------------------------------------------------
+    // Refresh rules (all three are required for a flicker-free panel):
+    //   1. one request in flight at a time; triggers landing meanwhile are coalesced into one rerun;
+    //   2. an identical payload emits nothing → zero DOM writes on a no-op refresh;
+    //   3. rows are patched by key (see patchKeyed): only rows whose *content* changed are rebuilt,
+    //      and selection/hover only updates the class attribute — never replaces the node. Replacing
+    //      rows mid-refresh is what made the list "hard to select" (a click landing on a row that was
+    //      swapped out between pointerdown and pointerup is dropped) and replayed entry animations.
+    var BRIDGE_EVENT = 'aiti-bridge-event';
+    var devicesSig = '';      // signature of the last applied device view (change detection)
+    var refreshing = null;    // in-flight refresh promise (join)
+    var refreshQueued = false;// a trigger landed while a refresh was in flight → run once more
+    function devicesSignature(list) {
+      var rows = (list || []).map(function (d) {
+        return [d.kind, d.id, d.online === false ? 0 : 1, d.name || '', d.cwd || '', d.deviceLabel || '', (d.device && d.device.deviceType) || ''].join('\u0001');
+      });
+      rows.sort(); // order-insensitive: a bridge-side reorder is not a device change
+      return rows.join('\u0002');
+    }
+    function applyDevices(list) {
+      devices = list;
+      var sig = devicesSignature(list);
+      if (sig === devicesSig) return false; // unchanged → no emit → no DOM work (idle refresh is free)
+      devicesSig = sig;
+      try { global.localStorage.setItem(DEVICES_CACHE_KEY, JSON.stringify({ ts: Date.now(), devices: devices })); } catch (e) {}
+      emit('devices', devices);
+      return true;
+    }
     function refreshDevices() {
-      return fetch(base + '/bridge/pair/devices').then(function (r) { return r.json(); }).then(function (b) {
-        if (b && b.devices) {
-          devices = b.devices;
-          try { global.localStorage.setItem(DEVICES_CACHE_KEY, JSON.stringify({ ts: Date.now(), devices: devices })); } catch (e) {}
-          emit('devices', devices);
-        }
+      if (disposed) return Promise.resolve(devices);
+      if (refreshing) { refreshQueued = true; return refreshing; } // coalesce: one request in flight
+      refreshing = fetch(base + '/bridge/pair/devices', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (b) {
+        if (b && b.devices) applyDevices(b.devices);
         emit('status', { state: 'connected' }); // B4: status dot reflects real bridge reachability (was always green)
         return devices;
-      }).catch(function () { emit('status', { state: 'off' }); return devices; });
+      }).catch(function () { emit('status', { state: 'off' }); return devices; }).then(function (list) {
+        refreshing = null;
+        if (refreshQueued && !disposed) { refreshQueued = false; Promise.resolve().then(function () { refreshDevices(); }); }
+        return list;
+      });
+      return refreshing;
     }
+    // Debounced trigger (a burst of events → one request). Never a repeating timer.
+    var refreshTimer = null;
+    function scheduleDeviceRefresh(delay) {
+      if (disposed || refreshTimer) return;
+      refreshTimer = setTimeout(function () { refreshTimer = null; refreshDevices(); }, typeof delay === 'number' ? delay : 150);
+    }
+    function onBridgeEvent(e) {
+      var m = e && e.detail;
+      // Bridge-side "unified device view changed" push (join / leave / rename / online flip)
+      if (m && m.type === 'event' && m.event === 'pair_devices') scheduleDeviceRefresh(120);
+    }
+    global.addEventListener(BRIDGE_EVENT, onBridgeEvent);
     // ---- 发送 ----
     function sendText(to, text, opts) {
       var idt = identity();
@@ -334,7 +376,10 @@
       emit('history', history);
     }
 
-    // ---- 解冻锚点（手机后台冻结 SSE 被杀 → 回前台重建；照 bridge-client 同款三锚点） ----
+    // ---- Thaw anchors (background-frozen SSE on phones is killed -> rebuild on foreground; the same
+    // ---- anchors as bridge-client, plus window focus) ----
+    // User-visible moments = one coalesced refresh (+ inbox catch-up): visibility / network / focus.
+    // These are extra triggers on top of the interval below, not a replacement for it.
     function armThawHooks() {
       if (typeof document === 'undefined' || !document.addEventListener) return;
       document.addEventListener('visibilitychange', function () {
@@ -342,10 +387,12 @@
       });
       global.addEventListener('pageshow', function (e) { if (e.persisted && started) thaw(); });
       global.addEventListener('online', function () { if (started) thaw(); });
+      global.addEventListener('focus', function () { if (started) scheduleDeviceRefresh(0); });
     }
     function thaw() {
       if (disposed || !started) return;
-      refreshDevices(); // visibility / network recovery → refresh the device list (no dedicated SSE; REST suffices)
+      scheduleDeviceRefresh(0); // recovery moment → catch up (coalesced with any pending push)
+      pullInbox();
     }
     armThawHooks();
 
@@ -375,19 +422,21 @@
       if (started) return Promise.resolve();
       started = true;
       pullInbox(); // first pull (fills messages missed while offline after refresh)
-      setPolling(true); // on by default (headless semantics; pi-web widget toggles via ext client on panel visibility)
+      setPolling(true); // on by default; a no-op tick now costs zero DOM writes (see applyDevices)
       return refreshDevices();
     }
     function stop() {
       disposed = true;
       started = false;
       setPolling(false);
+      if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
       global.removeEventListener('aiti-pair-msg', onPairMsg); // B5: prevents remount listener leak (phantom unread / memory growth)
+      global.removeEventListener(BRIDGE_EVENT, onBridgeEvent);
     }
 
-    // ---- Device list polling fallback (explicit user request; red-line exception approved):
-    // SSE event-driven first; pulls /devices every POLL_MS during reconnect windows / missed events
-    // to stay fresh. Runs only while the panel is visible (wired through setPolling) ----
+    // ---- Polling fallback -----------------------------------------------------------------
+    // Runs only while the panel is visible (wired through setPolling) and is now harmless: a tick
+    // whose payload did not change performs zero DOM writes (see applyDevices).
     var POLL_MS = 5000;
     var pollingTimer = null;
     function setPolling(on) {
@@ -686,7 +735,10 @@
      *  bubble `ap-in` fade made the whole chat flash on each new message), hover/selection/scroll were
      *  reset by any single row change, and an idle refresh that produced a 1-character diff looked like a
      *  flicker. Here each row is keyed: a row whose html is unchanged keeps its DOM node; only changed rows
-     *  are replaced and reordering/insertion is minimal (no-op when the order already matches). */
+     *  are replaced and reordering/insertion is minimal (no-op when the order already matches).
+     *  `cls` is applied through the class attribute instead of the row html, so state that only changes a
+     *  class (selection / offline / self) never replaces the node — critical for clickability: a rebuild
+     *  between pointerdown and pointerup swallows the click. */
     function patchKeyed(container, items) {
       var cache = container.__rowCache || (container.__rowCache = new Map());
       var keep = {};
@@ -699,8 +751,13 @@
           wrap.innerHTML = it.html;
           var nextEl = wrap.firstElementChild;
           if (entry && entry.el && entry.el.parentNode === container) container.replaceChild(nextEl, entry.el);
-          entry = { html: it.html, el: nextEl };
+          entry = { html: it.html, el: nextEl, cls: null };
           cache.set(it.key, entry);
+        }
+        // Class-only updates (selection / online / self) never rebuild the row
+        if (it.cls != null && entry.cls !== it.cls) {
+          entry.el.className = it.cls;
+          entry.cls = it.cls;
         }
         var want = prevEl ? prevEl.nextSibling : container.firstChild;
         if (entry.el !== want) container.insertBefore(entry.el, want); // insertBefore(el, null) = append
@@ -793,7 +850,7 @@
         { id: 'pairs', ic: '📱', nm: T.allPairDevices, tip: T.broadcastPair },
       ];
       groups.forEach(function (g) {
-        rows.push({ key: 'g:' + g.id, html: '<div class="apair-dev' + (target === g.id ? ' sel' : '') + '" data-id="' + g.id + '" title="' + g.tip + '">'
+        rows.push({ key: 'g:' + g.id, cls: 'apair-dev' + (target === g.id ? ' sel' : ''), html: '<div class="apair-dev" data-id="' + g.id + '" title="' + g.tip + '">'
           + '<span class="ic">' + g.ic + '</span><span class="nm">' + g.nm + '</span></div>' });
       });
       if (!list.length) {
@@ -813,7 +870,7 @@
           var info = isSelf ? '' : (d.deviceLabel || d.cwd || '');
           var dup = !isSelf && nameCount[d.name] > 1;
           var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(idTail(d)) + '</span>' : '');
-          rows.push({ key: 'd:' + d.id, html: '<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : T.offlineRow) + '">'
+          rows.push({ key: 'd:' + d.id, cls: 'apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : ''), html: '<div class="apair-dev" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : T.offlineRow) + '">'
             + '<span class="ic">' + pageIcon(d) + '</span>'
             + '<span class="nmc"><span class="nm">' + nm + '</span>'
             + (info ? '<span class="nm-info">' + esc(info.slice(0, 40)) + '</span>' : '')
