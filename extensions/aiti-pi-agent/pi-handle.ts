@@ -573,6 +573,47 @@ export class PiSpawnHandle extends RpcChildHost {
   }
 
   /**
+   * Full stats via pi's own RPC wire command get_session_stats
+   * (session.getSessionStats()): per-role message counts, tokens, cost, and the
+   * session file path in one frame — everything the host adapter's getUsageTotals
+   * fallback cannot express, so the Session Info panel stops showing all zeros /
+   * "In-memory" for sessions that actually persist to disk. Fail-soft: a failed
+   * read resolves undefined and the adapter degrades to the totals/zeros path.
+   */
+  async getSessionStats(): Promise<{
+    sessionFile?: string;
+    sessionId?: string;
+    userMessages?: number;
+    assistantMessages?: number;
+    toolCalls?: number;
+    toolResults?: number;
+    totalMessages?: number;
+    tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+    cost?: number;
+    credits?: number;
+    contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null };
+  } | undefined> {
+    try {
+      // request() already unwraps frame.data; the wire answer mirrors pi's SessionStats.
+      return (await this.request({ type: "get_session_stats" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS })) as {
+        sessionFile?: string;
+        sessionId?: string;
+        userMessages?: number;
+        assistantMessages?: number;
+        toolCalls?: number;
+        toolResults?: number;
+        totalMessages?: number;
+        tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+        cost?: number;
+        credits?: number;
+        contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null };
+      };
+    } catch {
+      return undefined; // process death / RPC failure — never break the stats panel
+    }
+  }
+
+  /**
    * One-shot post-adopt warm-up: ask the child for its state once so a freshly
    * adopted handle answers the first get_state with the real model and queue.
    *

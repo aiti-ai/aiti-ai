@@ -703,6 +703,38 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       }
 
       case "get_session_stats": {
+        // Full-stats backends answer first: pi's RPC wire protocol carries
+        // get_session_stats (session.getSessionStats()) — real per-role counts +
+        // tokens + cost + the session file path in one frame. This is strictly
+        // more than getUsageTotals can express (no counts, no file path, so the
+        // panel used to show all zeros / "In-memory" for disk-persisted spawn
+        // sessions). Read failures fall through to the totals path below
+        // (handles without either stay all zeros — behavior unchanged).
+        try {
+          const full = await h.getSessionStats?.();
+          if (full) {
+            const input = full.tokens?.input ?? 0;
+            const output = full.tokens?.output ?? 0;
+            const cacheRead = full.tokens?.cacheRead ?? 0;
+            const cacheWrite = full.tokens?.cacheWrite ?? 0;
+            const cu = full.contextUsage ?? h.getContextUsage?.();
+            return {
+              sessionFile: full.sessionFile || undefined,
+              sessionId: full.sessionId || h.id,
+              userMessages: full.userMessages ?? 0,
+              assistantMessages: full.assistantMessages ?? 0,
+              toolCalls: full.toolCalls ?? 0,
+              toolResults: full.toolResults ?? 0,
+              totalMessages: full.totalMessages ?? 0,
+              tokens: { input, output, cacheRead, cacheWrite, total: full.tokens?.total ?? (input + output + cacheRead + cacheWrite) },
+              cost: full.cost ?? 0,
+              ...(typeof full.credits === "number" ? { credits: full.credits } : {}),
+              ...(cu ? { contextUsage: cu } : {}),
+            };
+          }
+        } catch {
+          // A failed stats read must never break the panel — degrade to totals/zeros.
+        }
         // Real external-backend figures (previously hardcoded to all zeros):
         // getUsageTotals (accumulated per turn while the handle process lives,
         // reset on restart) + contextUsage (the context % row of the stats
