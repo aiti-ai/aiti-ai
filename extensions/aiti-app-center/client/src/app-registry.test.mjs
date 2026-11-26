@@ -192,6 +192,80 @@ test("buildApps：扩展级 version/description/icon + feature description 透�
   assert.equal(bare2[0].extVersion, undefined);
 });
 
+test("buildApps：卡片图标回退链（条目 icon → 扩展级 icon → 去重落选卡继承）", () => {
+  const icon = { svg: "<circle/>" };
+  const exts = [{
+    id: "ext-i", name: "I", icon: "icons/box.svg",
+    features: [{ id: "f.on", label: "开关", enabled: true }],
+  }];
+  const slotItems = [
+    { slot: "toolbar", id: "ext-i:with", extId: "ext-i", meta: { label: "有图", onClick: () => {}, icon } },
+    { slot: "toolbar", id: "ext-i:without", extId: "ext-i", meta: { label: "无图", onClick: () => {} } },
+  ];
+  const byId = new Map(buildApps({ exts, slotItems, featureState: {}, openPanel: () => {} }).map((a) => [a.id, a]));
+  assert.deepEqual(byId.get("action:ext-i:with").icon, icon);            // item icon wins
+  assert.equal(byId.get("action:ext-i:without").icon, "icons/box.svg");  // falls back to ext icon
+  assert.equal(byId.get("toggle:ext-i:f.on").icon, "icons/box.svg");     // toggle card gets ext icon
+
+  // Same-label dedupe: the panel card wins the slot but inherits the toolbar card's icon.
+  const dedup = buildApps({
+    exts: [{ id: "ext-i", name: "I", icon: "icons/box.svg" }],
+    slotItems: [
+      { slot: "toolbar", id: "ext-i:ports", extId: "ext-i", meta: { label: "端口", onClick: () => {}, icon: "icons/globe.svg" } },
+      { slot: "rightFileDock", id: "ext-i:ports", extId: "ext-i", meta: { title: "端口" } },
+    ],
+    featureState: {}, openPanel: () => {},
+  });
+  assert.equal(dedup.length, 1);
+  assert.equal(dedup[0].kind, "panel"); // panel semantics still win
+  assert.equal(dedup[0].icon, "icons/globe.svg"); // ...and inherit the dropped card's icon
+
+  // A winning card that declares its own icon is never overwritten by the dropped one.
+  const keep = buildApps({
+    exts: [{ id: "ext-i", name: "I", icon: "icons/box.svg" }],
+    slotItems: [
+      { slot: "toolbar", id: "ext-i:mail", extId: "ext-i", meta: { label: "邮件", onClick: () => {}, icon: "icons/old.svg" } },
+      { slot: "rightFileDock", id: "ext-i:mail", extId: "ext-i", meta: { title: "邮件", icon: "icons/new.svg" } },
+    ],
+    featureState: {}, openPanel: () => {},
+  });
+  assert.equal(keep[0].kind, "panel");
+  assert.equal(keep[0].icon, "icons/new.svg");
+});
+
+test("buildApps + matchApp：跨语言搜索（en UI 下中文词也命中 label / toggle / 扩展名）", () => {
+  const exts = [{
+    id: "service-tunnels", name: "服务隧道",
+    ui: { i18n: {
+      en: { "ext.displayName": "Service Tunnels", "st.ports.label": "Service ports" },
+      "zh-CN": { "ext.displayName": "服务隧道", "st.ports.label": "服务端口" },
+    } },
+    features: [{ id: "tunnel.on", label: "i18n:feat.tunnel.on", enabled: true }],
+  }];
+  const slotItems = [{ slot: "toolbar", id: "service-tunnels:ports", extId: "service-tunnels", meta: { label: "i18n:st.ports.label", onClick: () => {} } }];
+  // Same feature label in both tables (separate ext so the toggle card is not deduped away).
+  const ttsExt = {
+    id: "speek", name: "语音朗读",
+    ui: { i18n: {
+      en: { "ext.displayName": "AI Read Aloud", "feat.tts.local": "Local TTS engine" },
+      "zh-CN": { "ext.displayName": "AI 语音朗读", "feat.tts.local": "本地 TTS 引擎" },
+    } },
+    features: [{ id: "tts.local", label: "i18n:feat.tts.local", enabled: false }],
+  };
+  const apps = buildApps({ exts: [...exts, ttsExt], slotItems, featureState: {}, openPanel: () => {}, locale: "en" });
+  const ports = apps.find((a) => a.id === "action:service-tunnels:ports");
+  assert.equal(ports.label, "Service ports");          // display stays single-locale
+  assert.equal(ports.extName, "Service Tunnels");
+  assert.ok(matchApp(ports, "服务端口"));                // zh label spelling
+  assert.ok(matchApp(ports, "service ports"));          // en label spelling
+  assert.ok(matchApp(ports, "服务隧道"));                // zh ext display name
+  assert.ok(matchApp(ports, "service tunnels"));
+  const toggle = apps.find((a) => a.kind === "toggle" && a.extId === "speek");
+  assert.equal(toggle.label, "Local TTS engine");
+  assert.ok(matchApp(toggle, "本地 TTS"));                // zh feature label spelling
+  assert.ok(matchApp(toggle, "语音朗读"));                // zh ext display name
+});
+
 test("splitByKind：应用视图（action/panel/manage）与开关视图（toggle）分置", () => {
   const apps = [
     { id: "action:a", kind: "action" }, { id: "toggle:b", kind: "toggle" },
