@@ -1945,6 +1945,7 @@ export const zhTWLocale: LocalePlugin = {
     "topbar.divider": "間隔",
     "topbar.addDivider": "新增間隔",
     "topbar.removeDivider": "移除間隔",
+    "topbar.dragHint": "拖曳整列調整順序；聚焦左側控把後還可用 ↑/↓ 鍵移動",
     "topbar.fromExtension": "來自擴充功能",
 
     "nsw.recentTitle": "最近會話",
