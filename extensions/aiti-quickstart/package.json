@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-quickstart",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "description": "Blank-state onboarding extension — new-session welcome page widgets (getting-started steps / quick actions / while-it-runs concepts / sample prompts, via the host newSessionWidgets slot, ⚙ customizable) + a left sidebar DockStack fully-collapsed blank guide card (shares the screen with the app center, ✕ dismissible) + a v2 workspace-acquisition Hub (Git clone / upload archive / local directory / create new) + a sidebar \"Quick Start\" static entry (pinnable as a card in the app center; clicking returns to the quickstart welcome page)",
   "displayNameI18n": {
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "b4ec36edd1a2d913",
+  "contentHash": "01ecd19d4284454d",
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.12"
   },

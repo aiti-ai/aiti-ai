@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-testagent-native",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "type": "module",
   "description": "Visual panel for testagent-native (live Windows-native process control) — broker processes/sessions/hooks/event stream; formerly aiti-wintrace (renamed 2026-11-07)",
   "displayNameI18n": {
@@ -18,7 +18,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "a76cf290e3d4d4b3",
+  "contentHash": "71d33b06690f17bd",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

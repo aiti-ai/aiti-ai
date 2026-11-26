@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/ext-shared",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "type": "module",
   "description": "pi-web 扩展共享层（_shared 原地 package 化）——exports 子路径逐文件暴露",
   "exports": {
@@ -56,7 +56,7 @@
   },
   "license": "MIT",
   "aitiExtProtocol": "1.0",
-  "contentHash": "8a6076850c8afa96",
+  "contentHash": "accf40dc12cfc81a",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

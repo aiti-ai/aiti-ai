@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-anchor",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "A persistent banner at the top of the message area — shows \"the user input that generated the content currently at the top of your screen\", following turn segments as you scroll; switchable to first input / latest input / session title",
   "displayNameI18n": {
@@ -22,7 +22,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "acc532240d6ce1af",
+  "contentHash": "f92a0be7d2d8b1c0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

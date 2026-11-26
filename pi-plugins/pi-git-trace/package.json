@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-git-trace",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Out-of-band AI change tracking — repo-root .aiti-trace standalone trace repo (autoInit even without git) + op-numbered before/after dual commits + full file⇄message⇄op lineage + rollback + shadow repo slimming compact",
   "keywords": [
     "pi",
@@ -31,7 +31,7 @@
       "./src/index.ts"
     ]
   },
-  "contentHash": "5160ef38e17df712",
+  "contentHash": "5a689299e9949df7",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

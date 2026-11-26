@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-codex-agent",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "OpenAI Codex CLI driver — exec --json + resume integrated into All Sessions; dual-track auth (auth.json OAuth / openrouter env), live streaming and cold replay render identically-shaped native tool cards",
   "displayNameI18n": {
     "en": "Codex Session Backend"
@@ -26,7 +26,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "f0da0454915c2161",
+  "contentHash": "dff30a2e64fba7a6",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
