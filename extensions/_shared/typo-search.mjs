@@ -70,9 +70,12 @@ export function typoMatch(q, text) {
       if (Math.abs(tok.length - query.length) > 2) continue; // 长度差剪枝（上限 2：为双错漏字放宽保留）
       const d = osaDistance(query, tok);
       if (d <= threshold) return true;
-      // 漏字场景放宽到 2 错（sevic→service 删 r+删尾 e=2、tunel→tunnels=2），
-      // 但要求首字符一致（错字通常不在首位，锚定防误报：zzvic 不命中 service）
-      if (d <= 2 && query[0] === tok[0]) return true;
+      // Missing-character relaxation to 2 edits (sevic→service, tunel→tunnels). The candidate token
+      // must be LONGER than the query (the dropped-character direction) and share the first char
+      // (typos are rarely at the head; zzvic must not hit service). Without the direction check the
+      // rule degrades into "query carries two unrelated extra chars", which made a 4-char CJK query
+      // hit an unrelated 3-char word inside another extension's display name.
+      if (d <= 2 && tok.length > query.length && query[0] === tok[0]) return true;
     }
   }
   return false;
