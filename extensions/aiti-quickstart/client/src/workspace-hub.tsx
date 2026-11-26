@@ -248,7 +248,8 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [dir, setDir] = useState("");
-  const [depth, setDepth] = useState(false);
+  const [depth, setDepth] = useState(true);
+  const [submodules, setSubmodules] = useState(true);
   const [busy, setBusy] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(false);
   const [browseStart, setBrowseStart] = useState<string | undefined>(undefined);
@@ -264,7 +265,7 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
     try {
       const res = await fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/clone"), {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: parsed.ref, branch: parsed.branch ?? (branch.trim() || undefined), dir: dir.trim() || undefined, depth: depth ? 1 : undefined }),
+        body: JSON.stringify({ url: parsed.ref, branch: parsed.branch ?? (branch.trim() || undefined), dir: dir.trim() || undefined, depth: depth ? 1 : undefined, submodules }),
       });
       const d = (await res.json()) as { ok?: boolean; root?: string; url?: string; error?: string; jobId?: string };
       if (!res.ok || !d.ok) { setError(d.error ?? `HTTP ${res.status}`); setBusy(false); setProgress(null); return; }
@@ -310,6 +311,10 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted, #999)", cursor: "pointer" }}>
         <input type="checkbox" checked={depth} onChange={(e: any) => setDepth(e.target.checked)} disabled={busy} />
         {t("qs.hub.clone.depth")}
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted, #999)", cursor: "pointer" }}>
+        <input type="checkbox" checked={submodules} onChange={(e: any) => setSubmodules(e.target.checked)} disabled={busy} />
+        {t("qs.hub.clone.submodules")}
       </label>
       {busy ? <div style={{ fontSize: 11.5, color: "var(--text-dim, #888)" }}>{progress ?? "…"}</div> : null}
       {error ? <div style={errStyle}>{error}</div> : null}
