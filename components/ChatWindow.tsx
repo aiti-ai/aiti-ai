@@ -51,6 +51,7 @@ import type { DebugClientSession } from "@/lib/debug-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
 import type { SettingsSection } from "@/lib/settings-navigation";
+import type { BackendUsageSnapshot } from "@/lib/ext/types";
 import { getHomeDir, subscribeHomeDir } from "@/lib/home-dir";
 import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { claimDoneChime, DONE_CHIME_SAME_EVENT_MS } from "@/lib/done-chime";
@@ -123,6 +124,9 @@ interface Props {
   /** Opens Settings on a section: a bare `/mcp` that pi's built-in MCP extension owns opens Settings › MCP. */
   onOpenSettings?: (section: SettingsSection) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
+  /** Latest-run backend usage of this session (external backends with the getUsage capability).
+   *  AppShell feeds it to the stats-row quota chip and the session-info account-quota details. */
+  onBackendUsageChange?: (info: { sessionId: string; usage: BackendUsageSnapshot; backendSource?: string } | null) => void;
   /** Current display model changed (AppShell's session-info "remaining quota" section pins the current provider by this). */
   onDisplayModelChange?: (model: { provider: string; modelId: string } | null) => void;
   onOpenFile?: (filePath: string, page?: number) => void;
@@ -427,7 +431,7 @@ export interface CompactControls {
  * inputs collapse their full JSON into the details view.
  */
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, panel = false, onSideSession, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onOpenSettings, onContextUsageChange, onDisplayModelChange, onOpenFile, onFilesUploaded, onOpenSubagent, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, initialPromptImages, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, panel = false, onSideSession, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onOpenSettings, onContextUsageChange, onBackendUsageChange, onDisplayModelChange, onOpenFile, onFilesUploaded, onOpenSubagent, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, initialPromptImages, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -1507,6 +1511,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   }, [messages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  // Backend usage seam: the stats-row quota chip and the session-info quota details own
+  // the display (provider-usage extension); the data stays here (get_usage protocol).
+  // A fresh empty session forwards null (same suppression the old floating badge had).
+  useEffect(() => {
+    if (!onBackendUsageChange) return;
+    if (isEmptyNew || !backendUsage || !session?.id) {
+      onBackendUsageChange(null);
+      return;
+    }
+    onBackendUsageChange({ sessionId: session.id, usage: backendUsage, backendSource });
+  }, [backendUsage, backendSource, isEmptyNew, session?.id, onBackendUsageChange]);
+  useEffect(() => () => { onBackendUsageChange?.(null); }, [onBackendUsageChange]);
   // Discover available backends (new-session welcome page only; extension-registered
   // backends appear automatically, and the selector doesn't render when there are none).
   useEffect(() => {
@@ -2284,12 +2300,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         <ExtSlot
           name="chatOverlay"
           currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
-          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap,
-            /* Usage badge seam (P3 de-coring): data stays in core (get_usage protocol),
-               display belongs to the provider-usage extension. isEmptyNew semantics
-               preserved — a fresh empty session forwards null (same condition the old
-               core badge used to render). */
-            backendUsage: isEmptyNew ? null : backendUsage, backendSource }}
+          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap }}
         />
 
         {isMobile || isCompact ? null : (

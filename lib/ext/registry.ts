@@ -71,6 +71,7 @@ const UI_SLOT_KEYS = [
   "sessionRowActions",
   "sessionRowMeta",
   "sessionStatsInline", // inline tail of the session-info stats button (aiti-sysmon top-bar CPU/memory chips)
+  "sessionInfoPanel",   // session-info popover "remaining quota" section (aiti-provider-usage panel + account quota)
   "sidebarProjects", // sidebar "Projects" session list fully taken over (session-manager SidebarClone)
   "dialogs",
   "banners",

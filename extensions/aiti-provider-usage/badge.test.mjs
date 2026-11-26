@@ -1,6 +1,8 @@
 /**
- * aiti-provider-usage chatOverlay 徽标接线测试（P3 去核化）：entry 在 sessionInfoPanel 之外
- * 额外注册 chatOverlay usage-badge item；feature 关停时两处一并 dispose。
+ * aiti-provider-usage 挂载点接线测试（去核化 P3 + 徽标迁移）：
+ * entry 注册 sessionStatsInline 额度 chip（order 20）+ sessionInfoPanel 面板；
+ * 两个 feature 各自独立开关（关 → 对应挂载点 dispose 后不再注册）；
+ * chip 在无数据 / 窄屏时渲染 null，悬停摘要读最后可见快照。
  */
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -34,7 +36,7 @@ function writeStubs(dir) {
   return { reactStub, jsxStub };
 }
 
-test("entry 注册 sessionInfoPanel + chatOverlay usage-badge；关停时一并 dispose", async (t) => {
+test("entry 注册 sessionInfoPanel + sessionStatsInline quota-chip；feature 各自独立开关", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pu-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const { reactStub, jsxStub } = writeStubs(dir);
@@ -49,8 +51,8 @@ test("entry 注册 sessionInfoPanel + chatOverlay usage-badge；关停时一并 
       "--outfile=" + outfile, "--log-level=error"],
   );
 
-  const registered = [];
-  const disposed = [];
+  let registered = [];
+  let disposed = [];
   const makeCtx = (features) => ({
     registerItems: (slot, items) => { registered.push({ slot, items }); return () => {}; },
     disposeItems: (slot, ids) => { disposed.push({ slot, ids }); },
@@ -60,15 +62,54 @@ test("entry 注册 sessionInfoPanel + chatOverlay usage-badge；关停时一并 
 
   const mod = await import(pathToFileURL(outfile).href);
   mod.default(makeCtx({}));
-  const slots = registered.map((r) => r.slot).sort();
-  assert.deepEqual(slots, ["chatOverlay", "sessionInfoPanel"]);
-  const overlay = registered.find((r) => r.slot === "chatOverlay");
-  assert.equal(overlay.items[0].id, "usage-badge");
+  assert.deepEqual(registered.map((r) => r.slot).sort(), ["sessionInfoPanel", "sessionStatsInline"]);
+  assert.equal(registered.find((r) => r.slot === "sessionInfoPanel").items[0].id, "panel");
+  const chipItem = registered.find((r) => r.slot === "sessionStatsInline").items[0];
+  assert.equal(chipItem.id, "quota-chip");
+  // order 20 → after the sysmon chips (order 10) at the stats-row tail
+  assert.equal(chipItem.meta.order, 20);
+  assert.equal(typeof chipItem.meta.tooltip, "function");
 
-  registered.length = 0;
-  disposed.length = 0;
+  // Chip output through the slot render path: render → ChipSlot element → StatsChip element.
+  const renderChip = (extra) => {
+    const slot = chipItem.render(extra);
+    const chip = slot.type(slot.props);
+    return chip.type(chip.props);
+  };
+  assert.equal(renderChip({}), null, "no backend usage → no chip");
+  assert.equal(renderChip({ backendUsage: { inputTokens: 3 } }), null, "usage without credits/quota → no chip");
+  assert.equal(renderChip({ backendUsage: { credits: { remaining: 665 } }, isMobile: true }), null, "mobile → no chip");
+  assert.equal(renderChip({ backendUsage: { credits: { remaining: 665 } }, isCompact: true }), null, "compact → no chip");
+  const chip = renderChip({ backendUsage: { credits: { remaining: 665, usedPercent: 93, unit: "credits" }, buckets: [{ name: "user_quota", remaining: 0, total: 6000 }] } });
+  assert.equal(chip.type, "span");
+  assert.equal(chip.props.children, "◈665", "one remaining-capacity value");
+
+  // The hover summary reads the last visible snapshot (host appends it to the stats tooltip).
+  const tip = chipItem.meta.tooltip();
+  assert.match(tip, /^providerUsage\.chip\.tooltip:/);
+  assert.match(tip, /665 credits \(93%\)/);
+  assert.match(tip, /user_quota 0\/6000/);
+
+  // Exhausted → ⊘
+  const exhausted = renderChip({ backendUsage: { quotaExceeded: true, credits: { remaining: 0 } } });
+  assert.equal(exhausted.props.children, "⊘");
+
+  // Panel-only off: chip stays registered, panel slot disposed.
+  registered = [];
+  disposed = [];
   mod.default(makeCtx({ "providerUsage.enabled": false }));
-  const disposedSlots = disposed.map((d) => d.slot).sort();
-  assert.deepEqual(disposedSlots, ["chatOverlay", "sessionInfoPanel"]);
+  assert.deepEqual(registered.map((r) => r.slot), ["sessionStatsInline"]);
+  assert.deepEqual(disposed.map((d) => d.slot).sort(), ["sessionInfoPanel", "sessionStatsInline"]);
+
+  // Chip-only off: panel stays registered, chip disposed.
+  registered = [];
+  disposed = [];
+  mod.default(makeCtx({ usageChip: false }));
+  assert.deepEqual(registered.map((r) => r.slot), ["sessionInfoPanel"]);
+  assert.deepEqual(disposed.map((d) => d.slot).sort(), ["sessionInfoPanel", "sessionStatsInline"]);
+
+  // Both off: nothing registered.
+  registered = [];
+  mod.default(makeCtx({ "providerUsage.enabled": false, usageChip: false }));
   assert.equal(registered.length, 0);
 });

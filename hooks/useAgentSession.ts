@@ -863,6 +863,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Highest request id whose reply was applied. A reply applies only when it
   // is newer, so a failed newer read never discards an older good one.
   const contextUsageAppliedIdRef = useRef(0);
+  // One-shot backend-usage read per wrapper mount: a page opened after a run never
+  // observes the agent_end get_usage exchange, so the stats-row quota chip and the
+  // session-info account block would stay empty until the next turn. Read once when a
+  // live wrapper reports the getUsage capability (event-driven; no polling).
+  const backendUsageAskedRef = useRef<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
   const [currentModelOverride, setCurrentModelOverride] = useState<{ provider: string; modelId: string } | null>(null);
@@ -1619,6 +1624,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.capabilities !== undefined) setSessionCapabilities(liveState.capabilities);
           if (liveState.backendSource !== undefined) setBackendSource(liveState.backendSource);
           applyLiveUsage(liveState, sid, runId, usageRequestId);
+          if (liveState.capabilities?.getUsage && liveState.backendSource && backendUsageAskedRef.current !== sid) {
+            backendUsageAskedRef.current = sid;
+            void sendAgentCommand(sid, { type: "get_usage" })
+              .then((r) => {
+                const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
+                if (d?.usage && sessionIdRef.current === sid) setBackendUsage(d.usage);
+              })
+              .catch(() => {});
+          }
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);

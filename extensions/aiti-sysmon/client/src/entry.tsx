@@ -93,10 +93,12 @@ export default function register(ctx: Record<string, any>) {
   // manifest static slot; narrow-tier gating + feature toggle live in TopChips).
   // meta.tooltip contributes the system line to the host button's own tooltip
   // (contract in lib/ext-ui-store.ts): ` CPU 8% · MEM 87% · 49.9 / 58.6 GB · swap …`
+  // meta.order 10: pinned ahead of the provider-usage quota chip (order 20) so
+  // the tail reads CPU/MEM first, quota last.
   ctx.registerItems?.("sessionStatsInline", [{
     id: "chips",
     render: TopChips,
-    meta: { label: "i18n:sy.chips.label", tooltip: sysmonTooltipLine },
+    meta: { label: "i18n:sy.chips.label", tooltip: sysmonTooltipLine, order: 10 },
   }]);
 
   try { console.log("[aiti-sysmon] client mounted (sidebar dock panel, auto-docked)"); } catch { /* noop */ }

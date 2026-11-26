@@ -9,7 +9,7 @@ import test from "node:test";
 // "session info" entry; ② compact/mobile tier → show only the context percentage.
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 const statsSource = source.slice(
-  source.indexOf('{showChat && (sessionStats || contextUsage) &&'),
+  source.indexOf('{showChat && (sessionStats || contextUsage || activeBackendUsage) &&'),
   source.indexOf('title={translate("common.more")}'),
 );
 

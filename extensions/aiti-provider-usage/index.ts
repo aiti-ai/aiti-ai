@@ -8,8 +8,11 @@
  * 架构：
  *   - server：适配器注册表（adapters/* 自注册）+ aggregate 总览（TTL 5min、并发 3）
  *     + 单查门面；经宿主 api 分发（/api/extensions/aiti-provider-usage/*，自带门禁）
- *   - client：sessionInfoPanel 插槽渲染「剩余额度」面板（当前会话 provider 置顶展开）；
- *     feature 开关即时回落（关 → 面板消失，上游同形 = 信息面板无余额区）
+ *   - client：sessionStatsInline 插槽 = 会话统计行尾部的账号剩余额度 chip（数值 +
+ *     悬停摘要）；sessionInfoPanel 插槽 = 会话信息面板「剩余额度」区块（provider
+ *     列表 + 当前会话账号配额明细）。各自 feature 开关即时回落
+ *   - 数据：extra.backendUsage = 宿主 get_usage 协议快照（core 上提，扩展只做展示；
+ *     不轮询、不发额外请求）
  *   - 认证零配置：宿主 loader 已把 @earendil-works/* alias 到宿主 node_modules
  *     （同版本同实例），ModelRuntime.getAuth 与 core 同源
  *
@@ -36,9 +39,17 @@ export default {
       placeholder: "会话信息面板余额区块（15+ 家 provider）；关闭后信息面板不显示余额区（上游同形）",
       enabled: true,
     },
+    {
+      id: "usageChip",
+      type: "boolean",
+      label: "工具条额度徽标",
+      placeholder: "会话统计行尾部显示当前会话账号剩余额度（悬停看摘要，点击打开会话信息看明细）",
+      enabled: true,
+    },
   ],
   ui: {
     sessionInfoPanel: [{ id: "panel", label: "剩余额度" }],
+    sessionStatsInline: [{ id: "quota-chip", label: "i18n:providerUsage.chip.label" }],
     // i18n：8 个 fork key 随 UI 外迁（core 已删同名 key，恢复上游 key 集）；另含
     // 上游 Summary 7 key 的自持副本——扩展自包含，不依赖 core 翻译表。
     i18n: {
@@ -56,6 +67,18 @@ export default {
         "providerUsage.refresh": "刷新用量",
         "providerUsage.refreshing": "正在刷新用量",
         "providerUsage.available": "可用",
+        "providerUsage.chip.label": "剩余额度",
+        "providerUsage.chip.tooltip": "额度",
+        "providerUsage.account": "当前会话账号",
+        "providerUsage.remaining": "剩余",
+        "providerUsage.quotaExceeded": "配额耗尽",
+        "providerUsage.plan": "套餐",
+        "providerUsage.expires": "到期",
+        "providerUsage.source": "来源",
+        "providerUsage.lastTurn": "上一轮",
+        "providerUsage.bucket.user_quota": "基础",
+        "providerUsage.bucket.add_on_quota": "扩展",
+        "providerUsage.bucket.org_resource_package": "组织",
       },
       "zh-TW": {
         "providerUsage.remainingQuota": "剩餘額度",
@@ -71,9 +94,22 @@ export default {
         "providerUsage.refresh": "重新整理用量",
         "providerUsage.refreshing": "正在重新整理用量",
         "providerUsage.available": "可用",
+        "providerUsage.chip.label": "剩餘額度",
+        "providerUsage.chip.tooltip": "額度",
+        "providerUsage.account": "當前會話帳號",
+        "providerUsage.remaining": "剩餘",
+        "providerUsage.quotaExceeded": "配額耗盡",
+        "providerUsage.plan": "套餐",
+        "providerUsage.expires": "到期",
+        "providerUsage.source": "來源",
+        "providerUsage.lastTurn": "上一輪",
+        "providerUsage.bucket.user_quota": "基礎",
+        "providerUsage.bucket.add_on_quota": "擴展",
+        "providerUsage.bucket.org_resource_package": "組織",
       },
       en: {
         "feat.providerUsage.enabled": "Remaining quota panel",
+        "feat.usageChip": "Quota chip",
         "feat.panel": "Remaining quota",
         "providerUsage.remainingQuota": "Remaining quota",
         "providerUsage.currentSession": "current session",
@@ -88,6 +124,18 @@ export default {
         "providerUsage.refresh": "Refresh usage",
         "providerUsage.refreshing": "Refreshing usage",
         "providerUsage.available": "Available",
+        "providerUsage.chip.label": "Remaining quota",
+        "providerUsage.chip.tooltip": "quota",
+        "providerUsage.account": "Current session account",
+        "providerUsage.remaining": "Remaining",
+        "providerUsage.quotaExceeded": "Quota exhausted",
+        "providerUsage.plan": "Plan",
+        "providerUsage.expires": "Expires",
+        "providerUsage.source": "Source",
+        "providerUsage.lastTurn": "Last turn",
+        "providerUsage.bucket.user_quota": "Base",
+        "providerUsage.bucket.add_on_quota": "Add-on",
+        "providerUsage.bucket.org_resource_package": "Org",
       },
     },
   },

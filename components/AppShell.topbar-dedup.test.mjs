@@ -13,7 +13,7 @@ test("top-bar session stats keep the inline IIFE as the single render source", (
   // The inline IIFE is the fork's native implementation (the sole render source before the plan-a merge); it must exist
   assert.match(
     source,
-    /\{showChat && \(sessionStats \|\| contextUsage\) && \(\(\) => \{/,
+    /\{showChat && \(sessionStats \|\| contextUsage \|\| activeBackendUsage\) && \(\(\) => \{/,
   );
   // Single render site: the renderSessionStatsButton call must not appear as well
   assert.doesNotMatch(source, /renderSessionStatsButton\(/);
