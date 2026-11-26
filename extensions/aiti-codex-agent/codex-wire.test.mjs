@@ -404,3 +404,28 @@ test("codexContextWindow: gpt-4 族 128K / gpt-5 族与未知 272K", async () =>
   assert.equal(codexContextWindow("gpt-4.1"), 128_000);
   assert.equal(codexContextWindow(undefined), 272_000);
 });
+
+// ============================================================================
+// Image mirroring: the host compares its optimistic bubble with the loaded copy
+// via userMessageKey, which hashes image blocks.
+// ============================================================================
+
+test("镜像带图: prompt(images) → liveHistory 落宿主同形 base64 块（无图仍是字符串）", async () => {
+  const stubDir = join(ROOT, "img-stubs");
+  mkdirSync(stubDir, { recursive: true });
+  const registered = await setup(writeStub(stubDir, "img.cjs", 5));
+  const handle = await registered.createSession({ cwd: ROOT });
+  const users = async () => (await handle.getMessages()).filter((m) => m.role === "user");
+
+  const p = handle.prompt("这张图怎么回事", { images: [{ data: "QUJD", mimeType: "image/png" }] });
+  assert.deepEqual((await users()).at(-1).content, [
+    { type: "text", text: "这张图怎么回事" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+  ], "镜像与宿主乐观气泡同形（否则纯文本版顶替，图消失）");
+  await p;
+
+  const p2 = handle.prompt("纯文字");
+  assert.equal((await users()).at(-1).content, "纯文字", "无图保持老形状（字符串 content）");
+  await p2;
+  await handle.dispose();
+});

@@ -239,3 +239,78 @@ test("dispose releases a wrapper-hosted child instead of killing it", async () =
   assert.equal(child.released, true, "facade child must be released (agent keeps running)");
   assert.equal(child.killed, false, "a wrapper-hosted child must never be SIGTERM'd by dispose");
 });
+
+// ============================================================================
+// Image channel: hidden `--image <path>` (probed 2026-11-26: repeatable, the CLI reads the
+// file and validates the image type) + the host mirror shape (userMessageKey hashes image
+// blocks — a text-only copy replaces the bubble and the picture disappears).
+// ============================================================================
+
+/** Starter that captures argv and hands back a fake child that never really runs. */
+function captureStarter(calls) {
+  return {
+    kind: "direct",
+    async spawn(command, args) {
+      calls.push({ command, args });
+      const { PassThrough } = await import("node:stream");
+      return {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        stdin: { write: () => true, writable: true, on() {} },
+        once() {},
+        kill() {},
+        exitCode: null,
+      };
+    },
+  };
+}
+
+test("图片：prompt(images) → --image 临时文件已写入，镜像落宿主同形 base64 块，收尾删目录", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { h } = await makeHandle();
+  const calls = [];
+  h.starter = captureStarter(calls);
+  h.aliveFlag = true;
+
+  await h.prompt("这张图怎么回事", { images: [{ data: "QUJD", mimeType: "image/png" }] });
+  await tick();
+
+  assert.equal(calls.length, 1, "一轮一次 spawn");
+  const args = calls[0].args;
+  const i = args.indexOf("--image");
+  assert.ok(i > 0, "argv 带 --image（隐藏参数）");
+  const file = args[i + 1];
+  assert.match(file, /cursor-att-[0-9a-f-]+\/att-1\.png$/, "落临时目录、按 mime 取扩展名");
+  assert.equal(readFileSync(file, "utf8"), "ABC", "base64 解码后写入的是原始字节");
+
+  assert.deepEqual(h.history.at(-1).content, [
+    { type: "text", text: "这张图怎么回事" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+  ], "镜像与宿主乐观气泡同形（否则纯文本版顶替，图消失）");
+
+  // A result frame ends the turn → the attachment directory goes away
+  h.consumeLine(JSON.stringify({ type: "result", result: "看到了", is_error: false }));
+  assert.equal(existsSync(file), false, "收尾删临时文件（不留 /tmp 泄漏）");
+});
+
+test("图片：只有图没有文字 → 只带图块；无图保持字符串 content", async () => {
+  const { h } = await makeHandle();
+  const calls = [];
+  h.starter = captureStarter(calls);
+  h.aliveFlag = true;
+  await h.prompt("", { images: [{ data: "QUJD", mimeType: "image/jpeg" }] });
+  await tick();
+  assert.match(calls[0].args[calls[0].args.indexOf("--image") + 1], /att-1\.jpeg$/);
+  assert.deepEqual(h.history.at(-1).content, [
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "QUJD" } },
+  ]);
+
+  const { h: h2 } = await makeHandle();
+  const calls2 = [];
+  h2.starter = captureStarter(calls2);
+  h2.aliveFlag = true;
+  await h2.prompt("纯文字");
+  await tick();
+  assert.equal(calls2[0].args.includes("--image"), false, "无图不传 --image");
+  assert.equal(h2.history.at(-1).content, "纯文字", "老形状不变");
+});

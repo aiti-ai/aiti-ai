@@ -86,6 +86,62 @@ function lineReader(
   };
 }
 
+/**
+ * pi-native user content for the live/prelude mirror (host `UserMessage` shape: text block +
+ * base64 image blocks). Images reach the CLI as content blocks, but the host compares its
+ * optimistic bubble with the loaded copy through `userMessageKey()`, which hashes every image
+ * block — a text-only mirror fails that comparison, so the bubble (with its pictures) is
+ * replaced by a picture-less one and the sent image disappears from the transcript.
+ */
+function userHistoryContent(
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): string | Array<Record<string, unknown>> {
+  if (!images?.length) return text;
+  const content: Array<Record<string, unknown>> = text ? [{ type: "text", text }] : [];
+  for (const img of images) {
+    content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
+  }
+  return content;
+}
+
+/** Per-image inline cap for replayed rows: one full-page screenshot is tens of megabytes of
+ *  base64, and the whole prelude rides every messages request. Larger images are skipped. */
+const PRELUDE_IMAGE_MAX_CHARS = 8 * 1024 * 1024;
+
+/**
+ * User-row content of a jsonl line → pi UserMessage content blocks (text + images).
+ * Image-only prompts keep their picture; a row with neither yields [].
+ */
+function preludeUserBlocks(content: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  const text = content.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("");
+  if (text) out.push({ type: "text", text });
+  for (const b of content) {
+    if (b.type !== "image") continue;
+    const rawSource = b.source;
+    const source = rawSource && typeof rawSource === "object" && !Array.isArray(rawSource)
+      ? rawSource as Record<string, unknown>
+      : null;
+    if (source?.type === "base64" && typeof source.data === "string" && source.data) {
+      if (source.data.length > PRELUDE_IMAGE_MAX_CHARS) continue;
+      const mime = typeof source.media_type === "string" && source.media_type ? source.media_type : "image/png";
+      out.push({ type: "image", source: { type: "base64", media_type: mime, data: source.data } });
+      continue;
+    }
+    if (source?.type === "url" && typeof source.url === "string" && source.url) {
+      out.push({ type: "image", source: { type: "url", url: source.url } });
+      continue;
+    }
+    // Older rows keep pi-ai's flat on-disk form ({data, mimeType}).
+    if (typeof b.data === "string" && b.data && b.data.length <= PRELUDE_IMAGE_MAX_CHARS) {
+      const mime = typeof b.mimeType === "string" && b.mimeType ? b.mimeType : "image/png";
+      out.push({ type: "image", source: { type: "base64", media_type: mime, data: b.data } });
+    }
+  }
+  return out;
+}
+
 /** 工具入参单行摘要（权限/工具卡用；优选 command/path/url 等关键字段，超长截断）。 */
 function summarizeToolInput(input: unknown): string {
   if (input == null) return "";
@@ -726,7 +782,7 @@ export class ClaudeCodeHandle {
     if (!ok) throw new Error("[aiti-claude-code-agent] stdin closed");
     // 写成功后才置 running（加固 A4）：写失败抛错时 running 保持 false，队列不会被永久卡住
     this.running = true;
-    this.liveHistory.push({ role: "user", content: text });
+    this.liveHistory.push({ role: "user", content: userHistoryContent(text, options?.images) });
   }
 
   async abort(): Promise<void> {
@@ -951,8 +1007,8 @@ export class ClaudeCodeHandle {
                     this.prelude.push({ role: "toolResult", toolCallId: String(b.tool_use_id ?? ""), content: [{ type: "text", text }], isError: b.is_error === true, timestamp: ts });
                   }
                 }
-                const userText = (c as Array<Record<string, unknown>>).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("");
-                if (userText) this.prelude.push({ role: "user", content: userText, timestamp: ts });
+                const userBlocks = preludeUserBlocks(c as Array<Record<string, unknown>>);
+                if (userBlocks.length > 0) this.prelude.push({ role: "user", content: userBlocks, timestamp: ts });
               } else if (typeof c === "string" && c.trim()) {
                 this.prelude.push({ role: "user", content: c, timestamp: ts });
               }

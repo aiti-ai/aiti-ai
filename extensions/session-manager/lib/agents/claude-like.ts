@@ -94,6 +94,61 @@ function blockText(content: unknown): { text: string; toolName?: string; tool?: 
   return { text: parts.join("\n"), ...(toolName ? { toolName } : {}), ...(toolCount === 1 && !hasText ? { tool } : {}) };
 }
 
+/** Per-row inline image cap: the parsed rows land in the index/cache, and one full-page
+ *  screenshot is easily tens of megabytes of base64. Oversized inline images are dropped
+ *  (a remote URL stays a URL, so it costs nothing here). */
+const INLINE_IMAGE_MAX_CHARS = 8 * 1024 * 1024;
+
+function imageMimeFromUrl(url: string): string {
+  const m = /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#]|$)/i.exec(url);
+  const ext = (m?.[1] ?? "").toLowerCase();
+  if (!ext) return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "svg") return "image/svg+xml";
+  return `image/${ext}`;
+}
+
+/**
+ * Image blocks on a conversation row → IndexedMessage.images.
+ *
+ * Two shapes occur in this family: the API form (`{type:"image",source:{type:"base64",
+ * media_type,data}}`) and the URL form the CLIs produce after uploading a pasted
+ * screenshot to their own object storage (Qoder → signed, time-limited OSS URLs).
+ * `dataUrl` therefore holds a real `data:` URL when the bytes are inline, else the
+ * remote URL — consumers pick the matching pi image source.
+ */
+function imageAttachments(content: unknown): IndexedMessage["images"] {
+  if (!Array.isArray(content)) return undefined;
+  const out: NonNullable<IndexedMessage["images"]> = [];
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    const blk = b as Record<string, unknown>;
+    if (blk.type !== "image") continue;
+    const rawSource = blk.source;
+    const source = rawSource && typeof rawSource === "object" && !Array.isArray(rawSource)
+      ? rawSource as Record<string, unknown>
+      : null;
+    let dataUrl = "";
+    let mime = "";
+    if (source?.type === "base64" && typeof source.data === "string" && source.data) {
+      if (source.data.length > INLINE_IMAGE_MAX_CHARS) continue;
+      mime = typeof source.media_type === "string" ? source.media_type : "image/png";
+      dataUrl = `data:${mime};base64,${source.data}`;
+    } else if (source?.type === "url" && typeof source.url === "string" && source.url) {
+      mime = typeof source.media_type === "string" ? source.media_type : imageMimeFromUrl(source.url);
+      dataUrl = source.url;
+    } else if (typeof blk.data === "string" && blk.data) {
+      // pi-ai's flat on-disk form ({data, mimeType}) — same bytes, different keys.
+      if (blk.data.length > INLINE_IMAGE_MAX_CHARS) continue;
+      mime = typeof blk.mimeType === "string" ? blk.mimeType : "image/png";
+      dataUrl = `data:${mime};base64,${blk.data}`;
+    }
+    if (!dataUrl) continue;
+    out.push({ mime: mime || "image/png", dataUrl });
+  }
+  return out.length ? out : undefined;
+}
+
 export function createClaudeLikeAdapter(id: string, label: string, homeSubpath: string, projectsDir: string): AgentAdapter {
   const root = () => join(homedir(), homeSubpath, projectsDir);
   return {
@@ -210,15 +265,19 @@ export function createClaudeLikeAdapter(id: string, label: string, homeSubpath: 
         // 会话真实模型：最近一条 assistant 行的 message.model（CC jsonl 实测带，如 "glm-5.2"）
         if (role === "assistant" && typeof e.message.model === "string" && e.message.model) model = e.message.model;
         const { text, toolName, tool } = blockText(e.message.content);
-        if (!text.trim()) continue;
+        // An image-only prompt (pasted screenshot, no caption) is a real row: dropping it on
+        // "no text" took the user's message out of the transcript entirely.
+        const images = imageAttachments(e.message.content);
+        if (!text.trim() && !images?.length) continue;
         messageCount++;
-        if (!firstMessage && role === "user") firstMessage = text.slice(0, 500);
+        if (!firstMessage && role === "user") firstMessage = (text || "[image]").slice(0, 500);
         if (text) lastMessage = text;
         messages.push({
           entryId: `${messageCount}`,
           role,
           ts: e.timestamp ?? null,
           text,
+          ...(images ? { images } : {}),
           ...(toolName ? { toolName } : {}),
           ...(tool ? { tool } : {}),
         });

@@ -124,3 +124,61 @@ test("进程死亡（markDead）：在途轮次收口 error，prompt 上抛供 p
   await assert.rejects(() => p, /dead/);
   assert.equal(settledOf(events).length, 1); // 不双发终态
 });
+
+// ============================================================================
+// Image mirroring: the host compares its optimistic bubble with the loaded copy
+// via userMessageKey, which hashes image blocks.
+// ============================================================================
+
+const IMG = { data: "QUJD", mimeType: "image/png" };
+const MIRRORED = { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } };
+const userEntries = (h) => h.liveHistory.filter((m) => m?.role === "user");
+const notify = (h, update) => h.onLine(JSON.stringify({
+  jsonrpc: "2.0", method: "session/update", params: { sessionId: "s", update },
+}));
+
+test("镜像带图: prompt(images) → 出站 image 块不变，liveHistory 落宿主同形 base64 块", async () => {
+  const { h } = makeHandle();
+  let sent = null;
+  h.rpc = (method, params) => {
+    sent = { method, params };
+    return Promise.resolve({ stopReason: "end_turn" });
+  };
+  await h.prompt("这个按钮错位了", { images: [IMG] });
+  assert.deepEqual(sent.params.prompt, [
+    { type: "image", data: "QUJD", mimeType: "image/png" },
+    { type: "text", text: "这个按钮错位了" },
+  ], "ACP 出站帧形状不变");
+  assert.deepEqual(userEntries(h).at(-1).content, [
+    { type: "text", text: "这个按钮错位了" },
+    MIRRORED,
+  ], "镜像与宿主乐观气泡同形（否则纯文本版顶替，图消失）");
+});
+
+test("镜像只有图没有文字：只留图块；无图保持字符串 content", async () => {
+  const { h } = makeHandle();
+  h.rpc = () => Promise.resolve({ stopReason: "end_turn" });
+  await h.prompt("", { images: [IMG] });
+  assert.deepEqual(userEntries(h).at(-1).content, [MIRRORED]);
+
+  const { h: h2 } = makeHandle();
+  h2.rpc = () => Promise.resolve({ stopReason: "end_turn" });
+  await h2.prompt("纯文字");
+  assert.equal(userEntries(h2).at(-1).content, "纯文字", "老形状不变");
+});
+
+test("session/load 回放：图片 chunk 折进前一条 user 条目，不单独成气泡", () => {
+  const { h } = makeHandle();
+  h.loading = true;
+  notify(h, { sessionUpdate: "user_message_chunk", contentBlock: { type: "text", text: "看这张图" } });
+  notify(h, { sessionUpdate: "user_message_chunk", contentBlock: { type: "image", data: "QUJD", mimeType: "image/png" } });
+  assert.equal(userEntries(h).length, 1, "文字 + 图片是同一轮");
+  assert.deepEqual(userEntries(h)[0].content, [{ type: "text", text: "看这张图" }, MIRRORED]);
+});
+
+test("session/load 回放：没有前置文字块时图片自成一条（不丢）", () => {
+  const { h } = makeHandle();
+  h.loading = true;
+  notify(h, { sessionUpdate: "user_message_chunk", contentBlock: { type: "image", data: "QUJD", mimeType: "image/png" } });
+  assert.deepEqual(userEntries(h).at(-1).content, [MIRRORED]);
+});

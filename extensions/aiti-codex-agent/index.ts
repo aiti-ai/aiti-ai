@@ -149,6 +149,26 @@ function codexToolResultText(item: Record<string, unknown>, isError: boolean): s
 }
 
 /**
+ * pi-native user content for the live mirror (host `UserMessage` shape: text block +
+ * base64 image blocks). The host compares its optimistic bubble with the loaded copy
+ * through `userMessageKey()`, which hashes every image block — a text-only mirror fails
+ * that comparison, so the bubble (with its pictures) is replaced by a picture-less one.
+ * Cold replay has nothing to recover from: codex rollouts record the prompt text only
+ * (the `-i` attachments are files outside the transcript).
+ */
+function userHistoryContent(
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): string | Array<Record<string, unknown>> {
+  if (!images?.length) return text;
+  const content: Array<Record<string, unknown>> = text ? [{ type: "text", text }] : [];
+  for (const img of images) {
+    content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
+  }
+  return content;
+}
+
+/**
  * codex 模型族上下文窗口（getContextUsage 换算用）：GPT-5 系（gpt-5/gpt-5-codex/
  * gpt-5.1…，codex 默认族）272K；GPT-4 系 128K；未知回 272K（当前缺省族，宁近似
  * 不空——tooltip 展示窗口数值可核对）。OpenAI 语义 `input_tokens` 已含
@@ -527,7 +547,7 @@ class CodexHandle {
       return;
     }
     this.running = true;
-    this.liveHistory.push({ role: "user", content: text });
+    this.liveHistory.push({ role: "user", content: userHistoryContent(text, options?.images) });
     // 受理即发：前端 spinner「等待模型」立刻出现（CLI 冷启动可能数秒）。
     // wire 层丢弃 turn_started，前端流式态只认 agent_start/agent_end 对。
     this.emit({ type: "agent_start" });

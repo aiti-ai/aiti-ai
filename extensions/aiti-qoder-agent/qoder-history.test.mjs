@@ -119,3 +119,33 @@ test("replay rows without a model fall back to the native transcript's model (ba
   assert.equal(out[1].provider, "aiti-qoder-agent", "provider default behavior unchanged");
   assert.equal(out[2].model, "QFmodel", "in-row model wins over the fallback");
 });
+
+test("图片行回放：内联 data URL 出 base64 块，远程 URL 出 url 块，纯图行不丢", () => {
+  const signed = "https://qoder-cn-vl-private.example.test/cloud/x/y_1.png?Expires=1792385140&Signature=a%2Fb";
+  const out = rows([
+    { role: "user", text: "这个按钮错位了", images: [{ mime: "image/png", dataUrl: "data:image/png;base64,QUJD" }] },
+    { role: "user", text: "", images: [{ mime: "image/png", dataUrl: signed }] },
+    { role: "assistant", text: "看到了" },
+  ]);
+  assert.deepEqual(out[0], {
+    role: "user",
+    content: [
+      { type: "text", text: "这个按钮错位了" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+    ],
+  });
+  assert.deepEqual(out[1], {
+    role: "user",
+    content: [{ type: "image", source: { type: "url", media_type: "image/png", url: signed } }],
+  }, "空文本 + 图的行仍回放（否则整条用户消息消失）");
+  assert.equal(out[2].content[0].text, "看到了");
+});
+
+test("图片行没有可渲染来源时不产出空块（坏索引直接跳过）", () => {
+  const out = rows([
+    { role: "user", text: "", images: [{ mime: "image/png" }, { dataUrl: "" }, null, "junk"] },
+    { role: "user", text: "只有文字" },
+  ]);
+  assert.equal(out.length, 1, "无文字且无可用图的行走不进回放");
+  assert.equal(out[0].content, "只有文字");
+});

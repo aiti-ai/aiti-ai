@@ -101,6 +101,32 @@ function lineReader(
   };
 }
 
+/**
+ * pi-native user content for the live mirror (host `UserMessage` shape: text block +
+ * base64 image blocks). ACP outbound blocks use `{type:"image", data, mimeType}` instead;
+ * the mirror must use the host shape: it matches its optimistic bubble against the loaded
+ * copy through `userMessageKey()` (which hashes image blocks), so a text-only mirror makes
+ * the picture-less copy win.
+ */
+function userHistoryContent(
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): string | Array<Record<string, unknown>> {
+  if (!images?.length) return text;
+  const content: Array<Record<string, unknown>> = text ? [{ type: "text", text }] : [];
+  for (const img of images) {
+    content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
+  }
+  return content;
+}
+
+/** Replayed user image chunk → pi image block (ACP carries {type:"image", data, mimeType}). */
+function replayImageBlock(block: Record<string, unknown>): Record<string, unknown> | null {
+  if (block.type !== "image" || typeof block.data !== "string" || !block.data) return null;
+  const mimeType = typeof block.mimeType === "string" && block.mimeType ? block.mimeType : "image/png";
+  return { type: "image", source: { type: "base64", media_type: mimeType, data: block.data } };
+}
+
 /** 功能管理（extman）：startup 捕获 ctx.features；热重载后重新捕获。 */
 let hostFeatures: { get?(extId: string, fid: string): unknown } | null = null;
 function featureString(fid: string): string {
@@ -876,7 +902,23 @@ export class AcpHandle {
           // cbc session/load 回放包含用户轮（2.150.0 实测）——采集进历史
           if (this.loading) {
             this.flushReplayAssistant();
-            if (typeof block.text === "string" && block.text) this.liveHistory.push({ role: "user", content: block.text });
+            // One content block per chunk: a prompt that carried a picture arrives as
+            // text chunk(s) plus an image chunk. Fold the image into the user entry right
+            // before it — a separate entry would render as an image-only twin bubble.
+            const image = replayImageBlock(block);
+            if (image) {
+              const last = this.liveHistory[this.liveHistory.length - 1] as { role?: unknown; content?: unknown } | undefined;
+              if (last?.role === "user") {
+                const prior = typeof last.content === "string"
+                  ? (last.content ? [{ type: "text", text: last.content }] : [])
+                  : Array.isArray(last.content) ? last.content : [];
+                last.content = [...prior, image];
+              } else {
+                this.liveHistory.push({ role: "user", content: [image] });
+              }
+            } else if (typeof block.text === "string" && block.text) {
+              this.liveHistory.push({ role: "user", content: block.text });
+            }
           }
         } else if (kind === "agent_thought_chunk") {
           if (!this.loading && typeof block.text === "string") this.emit({ type: "message_update", delta: block.text });
@@ -1126,7 +1168,7 @@ export class AcpHandle {
     this.clearAbortFallback();
     this.running = true;
     this.partialText = "";
-    this.liveHistory.push({ role: "user", content: text });
+    this.liveHistory.push({ role: "user", content: userHistoryContent(text, options?.images) });
     const blocks: Array<Record<string, unknown>> = [];
     for (const img of options?.images ?? []) {
       blocks.push({ type: "image", data: img.data, mimeType: img.mimeType });

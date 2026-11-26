@@ -144,6 +144,25 @@ const CURSOR_CAPABILITIES: SessionCapabilitiesLike = {
   steer: false,
 };
 
+/**
+ * pi-native user content for the live mirror (host `UserMessage` shape: text block +
+ * base64 image blocks). The host matches its optimistic bubble against the loaded copy
+ * through `userMessageKey()`, which hashes every image block — a text-only mirror fails
+ * that comparison, so the bubble (with its pictures) is replaced by a picture-less one.
+ * Cold replay has no image source: the CLI store keeps text turns only.
+ */
+function userHistoryContent(
+  text: string,
+  images?: Array<{ data: string; mimeType: string }>,
+): string | Array<Record<string, unknown>> {
+  if (!images?.length) return text;
+  const content: Array<Record<string, unknown>> = text ? [{ type: "text", text }] : [];
+  for (const img of images) {
+    content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
+  }
+  return content;
+}
+
 // ============================================================================
 // Agent-starter contract (host-injected process strategy)
 // ============================================================================
@@ -222,7 +241,7 @@ class CursorHandle {
   private q = createBackendQueueSupport({
     isRunning: () => this.running,
     alive: () => this.aliveFlag,
-    dispatch: (text) => this.prompt(text),
+    dispatch: (text, images) => this.prompt(text, images?.length ? { images: images as never } : {}),
     onEvent: (ev) => this.emit(ev),
     log: (m) => console.warn(m),
     // 队列崩溃恢复 sidecar（docs/aiti-remote-queue-and-sidecar-plan.md §3）
@@ -339,6 +358,8 @@ class CursorHandle {
   private finishTurn(text: string, error?: string): void {
     if (this.turnEnded) return;
     this.turnEnded = true;
+    // The turn owns its image files: the CLI already read them at startup.
+    this.cleanupAttachments();
     // result 帧即本轮语义结束 —— 立即放行下一轮。print 模式一轮一进程，
     // CLI 进程本身可能因 stdin 管道未关而残活，不能等 exit 才清 running
     // （否则后续 prompt 全部被「上一轮仍在运行」拒绝）；残活进程由下轮
@@ -364,16 +385,44 @@ class CursorHandle {
     });
   }
 
+  /** Temp dirs holding this turn's image attachments (CLI `--image <path>`); removed at
+   *  turn end so nothing leaks in /tmp. */
+  private attachDirs = new Set<string>();
+
+  private cleanupAttachments(): void {
+    for (const dir of this.attachDirs) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
+    }
+    this.attachDirs.clear();
+  }
+
   /** spawn 一轮（print 模式；多轮经 --resume）。 */
-  private async runTurn(text: string): Promise<void> {
+  private async runTurn(text: string, images?: Array<{ data: string; mimeType: string }>): Promise<void> {
     // 上一轮子进程若仍残活（CLI 打完 result 后可能因 stdin 未关而挂着）——
     // 结果已入库（finishTurn 已收尾），直接收割避免进程堆积。
     if (this.child && this.child.exitCode === null && !this.child.killed) {
       try { this.child.kill("SIGTERM"); } catch { /* already gone */ }
     }
+    // Images: the CLI takes file paths (`--image <path>`, hidden from --help but real —
+    // verified 2026-11-26: it reads and validates jpeg/png/gif/webp and errors otherwise),
+    // so base64 payloads land in a per-turn temp dir removed by finishTurn/dispose.
+    const imageAttachArgs: string[] = [];
+    if (images?.length) {
+      const dir = join(tmpdir(), `cursor-att-${randomUUID()}`);
+      try { mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+      this.attachDirs.add(dir);
+      let i = 0;
+      for (const img of images) {
+        const ext = (img.mimeType.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "") || "png";
+        const file = join(dir, `att-${++i}.${ext}`);
+        writeFileSync(file, Buffer.from(img.data, "base64"));
+        imageAttachArgs.push("--image", file);
+      }
+    }
     const args = [
       "agent",
       "-p", text,
+      ...imageAttachArgs,
       "--output-format", "stream-json",
       "--stream-partial-output",
       "--trust", // workspace trust：非交互模式不信任目录会直接失败（cwd 均为用户项目目录）
@@ -478,16 +527,22 @@ class CursorHandle {
 
   // ---- SessionHandle mandatory core ----------------------------------------
 
-  async prompt(text: string, opts?: { streamingBehavior?: string }): Promise<void> {
+  async prompt(text: string, opts?: {
+    images?: Array<{ data: string; mimeType: string }>;
+    streamingBehavior?: string;
+  }): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-cursor-agent] session dead");
     if (this.running) {
       // [共享层 backend-queue] 运行中分流：followUp/缺省一律本地队列（可撤回/排序），
       // settle 后自动续轮；cursor print 模式无实时输入通道，不存在 steer 注入分支。
-      await this.q.routePrompt(text, opts?.streamingBehavior ? { streamingBehavior: opts.streamingBehavior } : undefined);
+      await this.q.routePrompt(text, {
+        ...(opts?.images?.length ? { images: opts.images as never } : {}),
+        ...(opts?.streamingBehavior ? { streamingBehavior: opts.streamingBehavior } : {}),
+      });
       return;
     }
-    this.history.push({ role: "user", content: text });
-    void this.runTurn(text).catch((err) => {
+    this.history.push({ role: "user", content: userHistoryContent(text, opts?.images) });
+    void this.runTurn(text, opts?.images).catch((err) => {
       this.finishTurn(this.lastText, `cursor agent spawn failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
@@ -553,6 +608,7 @@ class CursorHandle {
     if (this.child && this.running) {
       this.child.kill("SIGTERM");
     }
+    this.cleanupAttachments();
     this.child = null;
     this.aliveFlag = false;
     this.q.dispose();
