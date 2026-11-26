@@ -6,7 +6,7 @@
  * 与侧栏/浮窗同款行为：
  *  - 当前选择按钮 + 全宽下拉（CWD 列表 / activity 圆点 / 过滤（>8 项）/ 使用默认目录 /
  *    管理工作区入口（workspacePickerActions slot，可从此打开管理弹窗））
- *  - 自定义路径 → aiti-folder DirectoryBrowser 真目录浏览器（与浮窗面板同款）
+ *  - Custom path → the shared DirectoryPicker dialog (same one as the float panel)
  *  - 隐藏工作区尊重 loadHiddenWorkspaces（与核心隐藏列表契约一致，跨 tab 同步）
  * 数据链与侧栏同构：store.sessions → getRecentProjects / getProjectActivity
  * （unread 无数据源，蓝点只按 running 计——选择器语境下不误导）。
@@ -24,7 +24,7 @@ import {
   type ProjectSelection,
 } from "./sidebar/pure";
 import { SidebarCwdPicker } from "./sidebar/picker";
-import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
+import { DirectoryPicker } from "./sidebar/directory-picker";
 import { useStore } from "./store";
 import { fetchHomeDir } from "./home-dir";
 
@@ -128,7 +128,7 @@ export function MoveCwdPicker(props: { value: string; onChange: (root: string) =
         >✕</button>
       )}
       {customBrowseOpen && (
-        <DirectoryBrowser
+        <DirectoryPicker
           initialPath={value || undefined}
           onSelect={(p) => { setCustomBrowseOpen(false); onChange(p); }}
           onCancel={() => setCustomBrowseOpen(false)}

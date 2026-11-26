@@ -70,7 +70,7 @@ export default defineConfig({
       output: {
         entryFileNames: "[name].mjs",
         // ext-lazy pick pitfall (2026-09-16): when a chunk is both statically imported
-        // (e.g. move-cwd-picker imports directory-browser) and reached by a lazy pick
+        // (e.g. move-cwd-picker imports sidebar/directory-picker) and reached by a lazy pick
         // string (sidebar-dock's dirPickerRef), rollup's default minifyInternalExports
         // renames the chunk's exports to A/C/D… — static reference sites are rewritten in
         // pairs (safe), but mod["DirectoryPicker"] lookups always miss → LazyMount renders

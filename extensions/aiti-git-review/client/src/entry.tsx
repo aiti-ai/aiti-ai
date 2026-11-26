@@ -9,6 +9,10 @@
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  */
 import { __setCtx, apiUrl } from "./host-shim";
+// aiti-folder client components are inlined here (WorkspaceDropdown in the task picker) and
+// carry their own host-shim copy — hand it the same ctx so their apiUrl (basePath) and i18n
+// resolve against this extension's runtime instead of falling back to defaults.
+import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/host-shim";
 import { seedDockDefault } from "../../../_shared/ext-float-dock";
 import { api, G, setGRCtx } from "./shared";
 import { openFromToolbar, ReviewWork, DockReviewWork, GrEyeIcon } from "./git-review-app";
@@ -18,6 +22,7 @@ export default function register(ctx: Record<string, any>) {
   seedDockDefault("aiti-git-review:workspace", "right-panel");
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
+  setAitiFolderCtx(ctx);
   setGRCtx(ctx);
 
   // 懒加载 v2 M3批②：声明式条目（无 render）

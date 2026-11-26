@@ -37,8 +37,9 @@ import { showMoveDialog, useMoveDialogOpen } from "./move-dialog";
 // dock v3 (P3 batch): show/hide state machine + right-panel dock face
 import { useGate, usePresent, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
 import { ViewerMessages } from "./viewer-messages";
+import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
 // Cross-extension reuse (inlined at build time; see entry.tsx): aiti-folder's workspace switcher dialog
-// (known-workspace priority list + filter + custom-path fallback DirectoryBrowser).
+// (known-workspace priority list + filter + custom-path fallback to the shared DirectoryPicker).
 import { WorkspaceDropdown } from "../../../aiti-folder/client/src/folder-switcher";
 import { MoveCwdPicker } from "./move-cwd-picker";
 import { truncateRunErrorText } from "./sidebar/pure";
@@ -904,7 +905,7 @@ export function SessionsPanel(props: any) {
   const [modelFilter, setModelFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [datePreset, setDatePreset] = useState("");
-  const [cwdFilter, setCwdFilter] = useState(""); // 目录过滤（aiti-folder DirectoryBrowser 选择）
+  const [cwdFilter, setCwdFilter] = useState(""); // Directory filter (picked via the shared DirectoryPicker)
   const [cwdPickerOpen, setCwdPickerOpen] = useState(false);
   // Move-session dialog module state subscription (opened by showMoveDialog; used by the Esc guard)
   const moveOpen = useMoveDialogOpen();
@@ -993,7 +994,8 @@ export function SessionsPanel(props: any) {
   useEffect(() => {
     if (!cwdPickerOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (cwdMenuRef.current && !cwdMenuRef.current.contains(e.target as Node)) setCwdPickerOpen(false);
+      // The picker dialog is portaled to <body>; a press inside it is not "outside" this menu.
+      if (cwdMenuRef.current && !cwdMenuRef.current.contains(e.target as Node) && !isDirectoryPickerTarget(e.target)) setCwdPickerOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setCwdPickerOpen(false); } };
     document.addEventListener("mousedown", onDown, true);

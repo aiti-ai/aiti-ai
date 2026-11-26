@@ -17,7 +17,8 @@ import { apiUrl, extSvc } from "./host-shim";
 import { ct as t } from "./comp-i18n"; // 组件自带多语：内置字典优先，回落宿主 t
 import { displayCwd, loadUnread, recentProjects, projectActivity } from "./lib";
 import { FolderIcon, CaretIcon, CheckIcon, PathLabel, ActivityBadges } from "./icons";
-import { DirectoryBrowser } from "./directory-browser";
+import { DirectoryPicker } from "./directory-picker";
+import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
 
 /** 弹出菜单（已知 workspace 列表优先）。需挂在 position:relative 容器内。
  *  allOption：传入则在列表顶部渲染「全部」行，选中回传 onSelect("")。
@@ -82,16 +83,19 @@ export function WorkspaceDropdown({ selected, onSelect, onClose, align = "left",
     const next = { left: (c.left - o.x) / z, top: (c.top - o.y) / z, width: m.width };
     setPos((cur) => cur && cur.left === next.left && cur.top === next.top && cur.width === next.width ? cur : next);
   });
-  // fixed 弹层不随内容滚动（滞留旧位 = 错位）——任意容器滚动即关；弹层内部滚动（项目列表/
-  // DirectoryBrowser）豁免。
+  // A fixed popup must not follow content scroll (stale position = wrong place): any container
+  // scroll closes it, except scrolling inside itself or inside the portaled picker dialog.
   useEffect(() => {
     const onScroll = (e: Event) => {
       if (ddRef.current && e.target instanceof Node && ddRef.current.contains(e.target)) return;
+      // The picker dialog portals to <body>: its own scroll/focus traffic must not close the menu
+      // (closing the menu unmounts the dialog).
+      if (pickerOpen || isDirectoryPickerTarget(e.target)) return;
       onClose();
     };
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
-  }, [onClose]);
+  }, [onClose, pickerOpen]);
   // home 目录：优先宿主共享服务 pi-web.home（lib/home-dir 单例，跨全部消费面一次请求）；
   // 旧宿主/服务缺席 → 回退自拉（dedupeFetch 兜同窗口多实例）。
   useEffect(()=>{ let alive = true;
@@ -165,7 +169,7 @@ export function WorkspaceDropdown({ selected, onSelect, onClose, align = "left",
         <svg width={10} height={10} viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" style={{flexShrink:0}}><line x1="5" y1="1" x2="5" y2="9"/><line x1="1" y1="5" x2="9" y2="5"/></svg>
         {t("sidebar.customPath")}
       </button>
-      {pickerOpen ? <DirectoryBrowser initialPath={selectedStr} onSelect={(p)=>{ setPickerOpen(false); onClose(); onSelect(p); }} onCancel={()=>setPickerOpen(false)} /> : null}
+      {pickerOpen ? <DirectoryPicker initialPath={selectedStr} onSelect={(p)=>{ setPickerOpen(false); onClose(); onSelect(p); }} onCancel={()=>setPickerOpen(false)} /> : null}
     </div>
   );
 }
@@ -183,7 +187,7 @@ export function FolderSwitcher({ path, onSelect, compact }: { path?: string; onS
     void p.then((dir)=>{ if (alive && dir) setHome(dir); });
     return ()=>{ alive = false; };
   }, []);
-  useEffect(()=>{ if(!open) return; const h2=(e:any)=>{ if(ddRef.current && !ddRef.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown",h2); return ()=>document.removeEventListener("mousedown",h2); }, [open]);
+  useEffect(()=>{ if(!open) return; const h2=(e:any)=>{ if(ddRef.current && !ddRef.current.contains(e.target) && !isDirectoryPickerTarget(e.target)) setOpen(false); }; document.addEventListener("mousedown",h2); return ()=>document.removeEventListener("mousedown",h2); }, [open]);
   const triggerStyle: Record<string, any> = isCompact
     ? { display:"flex", alignItems:"center", justifyContent:"center", width:36, height:36, padding:0, background:"var(--bg-selected)", borderTop:"none", borderRight:"none", borderBottom:"none", borderLeft:"1px solid var(--border)", color:"var(--text)", cursor:"pointer", flexShrink:0, transition:"color 0.12s" }
     : { width:"100%", display:"flex", alignItems:"center", gap:6, padding:"6px 10px", background:"var(--bg-hover)", border:"1px solid var(--border)", borderRadius:7, cursor:"pointer", fontSize:12, color:"var(--text)", textAlign:"left", transition:"border-color 0.15s, background 0.15s" };

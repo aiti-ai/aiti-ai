@@ -105,3 +105,17 @@ export function createPortal(children: unknown, container: Element | DocumentFra
   const fn = _ctx?.createPortal as ((c: unknown, el: Element | DocumentFragment) => unknown) | undefined;
   return typeof fn === "function" ? fn(children, container) : null;
 }
+
+/** DI: read topic items (consumer-defined inter-extension contract). */
+export function getTopicItems<T = unknown>(topic: string): T[] {
+  const fn = (_ctx as any)?.getTopicItems as ((t: string) => T[]) | undefined;
+  if (typeof fn !== "function") return [];
+  try { return fn(topic) ?? []; } catch { return []; }
+}
+
+/** Lazily materialize another extension before reading its contributions. */
+export function ensureMaterialized(id: string): Promise<boolean> {
+  const fn = (_ctx as any)?.ensureMaterialized as ((id: string) => Promise<boolean>) | undefined;
+  if (typeof fn !== "function") return Promise.resolve(false);
+  try { return Promise.resolve(fn(id)).catch(() => false); } catch { return Promise.resolve(false); }
+}

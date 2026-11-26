@@ -609,7 +609,7 @@ export function SidebarContentDock(props: Record<string, any>) {
               </svg>
               {t("sidebar.new")}
             </button>
-            {/* 加文件夹（多实例 +；走 aiti-folder DirectoryBrowser） */}
+            {/* Add folder (multi-instance +; opens the shared DirectoryPicker) */}
             <button
               type="button"
               onClick={() => setFolderPickerOpen(true)}

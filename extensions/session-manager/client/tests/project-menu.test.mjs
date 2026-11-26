@@ -59,13 +59,21 @@ test("new-session selector is registered as the host workspace takeover and stay
   assert.match(newSession, /renderSlot\("workspacePickerActions"/);
 });
 
-test("directory picker address bar is the shared breadcrumb (no always-on input)", () => {
-  assert.match(directoryPicker, /import \{ PathBreadcrumb \} from "\.\.\/\.\.\/\.\.\/\.\.\/_shared\/path-breadcrumb"/);
-  assert.match(directoryPicker, /<PathBreadcrumb/);
-  assert.match(directoryPicker, /onEditingChange=\{setPathEditing\}/);
-  assert.doesNotMatch(directoryPicker, /directory-picker-path"/);
+test("directory picker address bar is the shared breadcrumb (no always-on input)", async () => {
+  // The dialog body now lives in extensions/_shared/directory-picker.tsx (one shape on every
+  // extension surface); session-manager only binds it to this extension's host-shim. The
+  // Explorer-style bar contract is pinned on the shared file.
+  const shared = await readFile(new URL("../../../_shared/directory-picker.tsx", here), "utf8");
+  assert.match(shared, /import \{ PathBreadcrumb \} from "\.\/path-breadcrumb"/);
+  assert.match(shared, /<PathBreadcrumb/);
+  assert.match(shared, /onEditingChange=\{setPathEditing\}/);
+  assert.doesNotMatch(shared, /directory-picker-path"/);
   // Selection waits for the bar to leave edit mode (the listed folder is the commit point).
-  assert.match(directoryPicker, /!pathEditing/);
+  assert.match(shared, /!pathEditing/);
+  // The binding keeps the export name the lazy picks rely on and passes the host facilities.
+  assert.match(directoryPicker, /export function DirectoryPicker/);
+  assert.match(directoryPicker, /_shared\/directory-picker/);
+  assert.match(directoryPicker, /host=\{HOST\}/);
 });
 
 test("add folder to sidebar mounts the shared picker, not aiti-folder's browse dialog", async () => {

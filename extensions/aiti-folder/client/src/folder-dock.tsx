@@ -29,6 +29,7 @@ import {
 } from "../../../_shared/ext-float-dock";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { dockIconDecl } from "../../../_shared/dock-icons";
+import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
 import type { DockZone, DockHeaderAction } from "../../../_shared/ext-float-dock";
 
 /* ── multi-instance manifest (v2 entries carry pin flag; legacy string[] read-compat) ──
@@ -341,7 +342,9 @@ function FolderTitleSwitcher(props: { path: string; hasParent: boolean; onPick: 
   const [el, setEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: any) => { if (el && !el.contains(e.target)) setOpen(false); };
+    // The picker dialog is portaled to <body>, so a press inside it is "outside" this span —
+    // keep the menu mounted or the dialog unmounts mid-interaction.
+    const onDown = (e: any) => { if (el && !el.contains(e.target) && !isDirectoryPickerTarget(e.target)) setOpen(false); };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, el]);

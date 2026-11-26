@@ -699,7 +699,7 @@ const ext = {
         "sm.dir.all": "All dirs",
         "sm.dir.pick": "Choose directory…",
         "sm.dir.change": "Change directory…",
-        // 跨扩展内联的 aiti-folder DirectoryBrowser/WorkspaceDropdown 所用 key（ctx.t 只读本表，缺则显裸 key）
+        // Keys used by the inlined aiti-folder DirectoryPicker/WorkspaceDropdown (ctx.t reads only this table)
         "sidebar.customPath": "Custom path…",
         "sidebar.filterProjects": "Filter projects…",
         "sidebar.noMatchingProjects": "No matching projects",
@@ -811,7 +811,7 @@ const ext = {
         "sm.sources.error": "Error",
         "sm.import.button": "Import as pi session",
         "sm.import.failed": "Import failed: external session has no cwd, or the pi sessions dir is not writable.",
-"sm.export.button": "Export JSON",
+        "sm.export.button": "Export JSON",
         "sm.export.hintBtn": "Save this session as a JSON file — open it here for reading, or @-reference it from a new session so another agent can inspect / continue the work",
         "sm.export.title": "Export as JSON",
         "sm.export.hint": "The whole normalized message stream is written to one JSON file. Pick a folder and a file name; the file opens right after export and can be @-referenced from any agent session.",
@@ -953,7 +953,7 @@ const ext = {
         "i18n.cancel": "取消",
         "i18n.checking": "檢查中…",
         "sm.extRemove": "從列表移除",
-"sm.extView": "檢視",
+        "sm.extView": "檢視",
         "sm.extViewHint": "開啟唯讀外部會話檢視器（可在其中匯入為 pi 會話）",
         "sm.export.button": "匯出 JSON",
         "sm.export.hintBtn": "把此會話儲存為 JSON 檔案——可在此開啟閱讀，也可在新會話裡用 @ 引用，交給其他 agent 檢視 / 續作",
@@ -1234,7 +1234,7 @@ const ext = {
         "sm.dir.all": "全部目录",
         "sm.dir.pick": "选择目录…",
         "sm.dir.change": "更换目录…",
-        // 跨扩展内联的 aiti-folder DirectoryBrowser/WorkspaceDropdown 所用 key（与 aiti-folder i18n 对齐）
+        // Keys used by the inlined aiti-folder DirectoryPicker/WorkspaceDropdown (aligned with aiti-folder i18n)
         "sidebar.customPath": "自定义路径…",
         "sidebar.filterProjects": "筛选项目…",
         "sidebar.noMatchingProjects": "没有匹配的项目",
@@ -1346,7 +1346,7 @@ const ext = {
         "sm.sources.error": "出错",
         "sm.import.button": "导入为 pi 会话",
         "sm.import.failed": "导入失败：外部会话缺少 cwd 或 pi sessions 目录不可写。",
-"sm.export.button": "导出 JSON",
+        "sm.export.button": "导出 JSON",
         "sm.export.hintBtn": "把这个会话存成 JSON 文件——可在这里打开查看，也可在新会话里 @ 引用，交给其他 agent 查看 / 继续执行",
         "sm.export.title": "导出为 JSON",
         "sm.export.hint": "完整消息流写入单个 JSON 文件。选择目录和文件名，导出后会直接打开该文件，并可在任何 agent 会话里用 @ 引用。",

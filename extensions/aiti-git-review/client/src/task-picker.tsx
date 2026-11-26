@@ -11,6 +11,7 @@ import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { api, jsonBody, G, lastSeg, statusIcon, statusColor, overlay, pickerCard, segBtn, segOn, btnPrimary } from "./shared";
 // aiti-folder 工作区切换器（与 session-manager 同法：构建期内联复用同一组件）
 import { WorkspaceDropdown } from "../../../aiti-folder/client/src/folder-switcher";
+import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
 import { displayCwd } from "../../../aiti-folder/client/src/lib";
 
 /** 版本选项（分支/tag/远程） */
@@ -237,7 +238,10 @@ export function TaskPicker({ onClose, onOpenTask, presetRepo, fallbackRepo, onDo
   }, []);
   useEffect(() => {
     if (!wsOpen) return;
-    const h = (e: MouseEvent) => { if (wsBoxRef.current && !wsBoxRef.current.contains(e.target as Node)) setWsOpen(false); };
+    const h = (e: MouseEvent) => {
+      // The picker dialog is portaled to <body>; a press inside it is not "outside" this switcher.
+      if (wsBoxRef.current && !wsBoxRef.current.contains(e.target as Node) && !isDirectoryPickerTarget(e.target)) setWsOpen(false);
+    };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, [wsOpen]);

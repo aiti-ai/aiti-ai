@@ -53,14 +53,15 @@ import {
   onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
   managerOpen, SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, useFlag, openViewer, openExtViewer,
 } from "./store";
-// 跨扩展复用（构建期内联）：aiti-folder 的目录选择器 DirectoryBrowser。它内部引用
-// aiti-folder 自己的 host-shim 副本——register 时把同一 ctx 也注入那份副本，
-// 其 apiUrl/t 才能委托到宿主（见下方 setAitiFolderCtx）。
+// Cross-extension reuse (inlined at build time): aiti-folder's workspace switcher and folder
+// browser pull in aiti-folder's own host-shim copy — register() hands that copy the same ctx,
+// so their apiUrl/i18n delegate to the host (see setAitiFolderCtx below).
 import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/host-shim";
-// 薄壳拆分（2026-09-14，方案 pi-web-eager-ext-split-plan.md §5.1）：
-//   重 UI（sessions-panel/tag-manager/kanban/menus 三件套/workspace-manage/aiti-folder
-//   DirectoryBrowser）全部懒 chunk；本文件只留 eager 常驻面（store/侧栏行/顶栏标签）
-//   + 懒插槽包装（lazyExtView/LazyMount：active 才 import，dialogs/pages 常挂插槽安全）。
+// Thin-shell split (2026-09-14, pi-web-eager-ext-split-plan.md §5.1): heavy UI
+// (sessions-panel/tag-manager/kanban/menus trio/workspace-manage/aiti-folder directory picker)
+// goes into lazy chunks; this file keeps only the eager shell (store/sidebar rows/topbar tags)
+// + lazy slot wrappers (lazyExtView/LazyMount: import only while active, safe for the
+// always-mounted dialogs/pages slots).
 import { TopbarTags, RowActions } from "./topbar";
 import { ConfirmDialogHost } from "./confirm-dialog";
 import { RelatedDocsHost } from "./related-docs";
