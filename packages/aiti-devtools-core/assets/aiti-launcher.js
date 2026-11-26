@@ -3990,6 +3990,7 @@
     "On (page renders as touch device)": "开（页面按触屏设备渲染）",
     "One-click scenarios: ": "一键应用场景：",
     "Open new window": "打开新窗口",
+    "↗ Open session": "↗ 跳转会话",
     "Option A": "选项 A",
     "Option B": "选项 B",
     "Package the current error state (errors + emulation flags + page state) and send to AI": "把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI",
@@ -6455,11 +6456,12 @@
       var sid = parts.slice(1).join("/");
       var sidShort = sid && sid.length > 10 ? sid.slice(0, 8) + "…" : sid;
       var dev = it && it.targetDevice ? String(it.targetDevice).trim() : "";
+      var url = it && it.agentSessionUrl ? String(it.agentSessionUrl).trim() : "";
       var segs = ["from " + aid];
       if (sidShort) segs.push(t("session") + " " + sidShort);
       if (name && name !== aid) segs.push(name);
       if (dev) segs.push(dev);
-      return { key: ak, aid, sid, name, dev, text: segs.join(" · ") };
+      return { key: ak, aid, sid, name, dev, url, text: segs.join(" · ") };
     };
     ctx.agentSrcInfoBtn = function(it) {
       var src = ctx.formatAgentSrc(it);
@@ -6490,7 +6492,15 @@
       }
       if (src.name && src.name !== src.aid) row("name", src.name);
       if (src.dev) row("device", src.dev);
-      var copyBtn = el("button", { style: "margin-top:4px;border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px" }, [t("📋 Copy session key")]);
+      var actRow = el("div", { style: "display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center" });
+      if (src.url) {
+        var openLink = el("a", { href: src.url, target: "_blank", rel: "noopener", style: "border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px;text-decoration:none;display:inline-flex;align-items:center;line-height:1.5;box-sizing:border-box" }, [t("↗ Open session")]);
+        openLink.addEventListener("click", function(e) {
+          e.stopPropagation();
+        });
+        actRow.appendChild(openLink);
+      }
+      var copyBtn = el("button", { style: "border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px" }, [t("📋 Copy session key")]);
       copyBtn.addEventListener("click", function(e) {
         e.stopPropagation();
         if (ctx.copyToClipboard) ctx.copyToClipboard(src.key, function(ok) {
@@ -6500,7 +6510,8 @@
           }, 1200);
         });
       });
-      wrap.appendChild(copyBtn);
+      actRow.appendChild(copyBtn);
+      wrap.appendChild(actRow);
       return wrap;
     };
     ctx.toggleAgentSrcInfo = function(btn, bodyEl, reflow) {
