@@ -330,12 +330,18 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
   return (
     <div onClick={(e) => { if (e.target === e.currentTarget && !busy) p.onClose(); }}
       style={{ position: "fixed", inset: 0, zIndex: 900, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      {/* data-ext-float：aiti-float 接管拖拽/缩放/持久化；autoh=高度随内容（textarea 可拉、文件列表不定长）；
-          full=小屏（≤640px）默认铺满视口（大屏仍浮窗可缩放移动）——契约 docs/aiti-web-ext-float-dialogs.md */}
-      <div data-ext-float="1" data-ext-float-full="1" data-ext-float-autoh="1"
-        data-ext-float-key="aiti-folder.commit" data-ext-float-w={380}
+      {/* data-ext-float: aiti-float owns drag / resize / persistence; full = small screens
+          (≤640px) fill the viewport, large screens keep the floating window — contract
+          docs/aiti-web-ext-float-dialogs.md.
+          No autoh here: the dialog's initial content (file list + message box + buttons) has a
+          stable height, so a fixed initial height with vertical resizing is what users expect —
+          autoh removes the bottom resize handle and never persists the height.
+          Key suffix v2: an instance persisted under the old (autoh) key would carry its small
+          height over the new default, so the bump lets the initial height apply once. */}
+      <div data-ext-float="1" data-ext-float-full="1"
+        data-ext-float-key="aiti-folder.commit.v2" data-ext-float-w={380} data-ext-float-h={560} data-ext-float-min-h={360}
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 380, maxWidth: "92vw", maxHeight: "80vh", display: "flex", flexDirection: "column", borderRadius: 10, background: "var(--bg)", border: "1px solid var(--border)", boxShadow: "0 14px 36px color-mix(in srgb, var(--text) 16%, transparent)", fontSize: 12 }}>
+        style={{ width: 380, height: 560, maxWidth: "92vw", maxHeight: "80vh", display: "flex", flexDirection: "column", borderRadius: 10, background: "var(--bg)", border: "1px solid var(--border)", boxShadow: "0 14px 36px color-mix(in srgb, var(--text) 16%, transparent)", fontSize: 12 }}>
         <div style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
           {ct("git.commitTitle")}
           <span style={{ flex: 1 }} />
@@ -367,9 +373,9 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
           })}
         </div>
         <div style={{ padding: "8px 12px 10px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 7 }}>
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder={ct("git.commitPlaceholder")} rows={2}
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder={ct("git.commitPlaceholder")} rows={4}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }}
-            style={{ width: "100%", boxSizing: "border-box" as const, resize: "vertical" as const, minHeight: 44, background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: 11.5, padding: "6px 8px", outline: "none", fontFamily: "inherit" }} />
+            style={{ width: "100%", boxSizing: "border-box" as const, resize: "vertical" as const, minHeight: 96, maxHeight: 220, background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", fontSize: 11.5, padding: "6px 8px", outline: "none", fontFamily: "inherit" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
               <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} style={{ accentColor: "var(--accent)", margin: 0 }} />
