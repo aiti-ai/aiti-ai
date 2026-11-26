@@ -104,7 +104,8 @@ function overview(sp: URLSearchParams) {
   const fp = resolveFilters(sp, "provider", "model");           // 代理口径（daily_key 无 agent，忽略 agent 参数）
 
   const totals = db.prepare(`
-    SELECT COUNT(*) msgs, COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(cost_total),0) cost
+    SELECT COUNT(*) msgs, COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(cost_total),0) cost,
+           COALESCE(SUM(credits),0) credits
     FROM usage_caliber ${mergeWhere(r.where, f)}`).get(...r.params, ...f.params) as any;
   const keyTotals = db.prepare(`
     SELECT COALESCE(SUM(reqs),0) reqs, COALESCE(SUM(err429),0) err429
@@ -113,21 +114,23 @@ function overview(sp: URLSearchParams) {
   const g = r.months ? "substr(day,1,7)" : "day";
   const series = db.prepare(`
     SELECT ${g} bucket, provider,
-           SUM(total_tokens) tokens, SUM(cost_total) cost
+           SUM(total_tokens) tokens, SUM(cost_total) cost, SUM(credits) credits
     FROM usage_caliber ${mergeWhere(r.where, f)}
     GROUP BY bucket, provider ORDER BY bucket`).all(...r.params, ...f.params);
 
   const topModels = db.prepare(`
-    SELECT agent, provider, model, SUM(msgs) msgs, SUM(total_tokens) tokens, SUM(cost_total) cost
+    SELECT agent, provider, model, SUM(msgs) msgs, SUM(total_tokens) tokens, SUM(cost_total) cost,
+           SUM(credits) credits
     FROM daily_model ${mergeWhere(r.where, f)}
-    GROUP BY agent, provider, model ORDER BY tokens DESC LIMIT 10`).all(...r.params, ...f.params);
+    GROUP BY agent, provider, model ORDER BY tokens DESC, credits DESC LIMIT 10`).all(...r.params, ...f.params);
 
   // 今日 / 近7天 / 全部 KPI（不受所选范围影响，固定口径；含消息数）
   const today = localDay(Date.now());
   const d7 = localDay(Date.now() - 7 * 86400000);
   // 固定窗口 KPI 同样跟随 provider/model/agent 过滤（否则过滤后卡片数字不变会造成误导）
   const kpiRow = (where: string, params: (string | number)[]) =>
-    db.prepare(`SELECT COUNT(*) msgs, COALESCE(SUM(total_tokens),0) t, COALESCE(SUM(cost_total),0) c
+    db.prepare(`SELECT COUNT(*) msgs, COALESCE(SUM(total_tokens),0) t, COALESCE(SUM(cost_total),0) c,
+                COALESCE(SUM(credits),0) cr
                 FROM usage_caliber ${mergeWhere(where, f)}`).get(...params, ...f.params) as any;
   // 同窗口的代理口径请求（仅多 key 轮转渠道；daily_key 由 flushDaily 落库，极端情况下略滞后）
   const proxyRow = (where: string, params: (string | number)[]) =>
@@ -140,7 +143,7 @@ function overview(sp: URLSearchParams) {
       .get(...params) as any;
   const win = (where: string, params: (string | number)[]) => {
     const k = kpiRow(where, params), p = proxyRow(where, params), u = userRow(where, params);
-    return { tokens: k.t, cost: k.c, msgs: k.msgs, reqs: p.reqs, err429: p.err429, userMsgs: u.msgs, userQuoted: u.quoted };
+    return { tokens: k.t, cost: k.c, credits: k.cr, msgs: k.msgs, reqs: p.reqs, err429: p.err429, userMsgs: u.msgs, userQuoted: u.quoted };
   };
   const todayK = win("WHERE day >= ?", [today]);
   const weekK = win("WHERE day >= ?", [d7]);
@@ -161,9 +164,9 @@ function models(sp: URLSearchParams) {
   const rows = rt.usage.db.prepare(`
     SELECT agent, provider, model, SUM(msgs) msgs, SUM(input) input, SUM(output) output,
            SUM(cache_read) cacheRead, SUM(cache_write) cacheWrite, SUM(reasoning) reasoning,
-           SUM(total_tokens) totalTokens, SUM(cost_total) cost
+           SUM(total_tokens) totalTokens, SUM(cost_total) cost, SUM(credits) credits
     FROM daily_model ${mergeWhere(r.where, f)}
-    GROUP BY agent, provider, model ORDER BY totalTokens DESC`).all(...r.params, ...f.params);
+    GROUP BY agent, provider, model ORDER BY totalTokens DESC, credits DESC`).all(...r.params, ...f.params);
   return json({ label: r.label, rows });
 }
 
@@ -365,6 +368,7 @@ function matrix(sp: URLSearchParams) {
     : `
     SELECT ${selects}, COUNT(*) AS msgs,
            COALESCE(SUM(m.total_tokens),0) AS tokens, COALESCE(SUM(m.cost_total),0) AS cost,
+           COALESCE(SUM(m.credits),0) AS credits,
            COALESCE(SUM(m.input),0) AS input, COALESCE(SUM(m.output),0) AS output,
            COALESCE(SUM(m.cache_read),0) AS cacheRead, COALESCE(SUM(m.cache_write),0) AS cacheWrite,
            COALESCE(SUM(m.reasoning),0) AS reasoning
@@ -426,6 +430,7 @@ const MSG_TREND_EXPRS: Record<string, string> = {
   msgs: "COUNT(*)",
   tokens: "COALESCE(SUM(m.total_tokens),0)",
   cost: "COALESCE(SUM(m.cost_total),0)",
+  credits: "COALESCE(SUM(m.credits),0)",
   input: "COALESCE(SUM(m.input),0)",
   output: "COALESCE(SUM(m.output),0)",
   cacheRead: "COALESCE(SUM(m.cache_read),0)",

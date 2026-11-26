@@ -140,10 +140,71 @@ test("四源会话 → ext_usage 入库 + 幂等水位 + 增量", async () => {
     "SELECT provider, model, msgs, input FROM daily_model WHERE provider='bigmodel' AND model='GLM-5.3-Flash'").get();
   assert.equal(zdm.input, 39374, "zcode 差分后 input 总量 = 38562+812");
 
+  // ⑤b credits dimension: daily_model carries the summed credits of credit-billed rows
+  const qdm = usage.db.prepare(
+    "SELECT credits FROM daily_model WHERE agent='qodercn' AND model='qmodel_38max'").get();
+  assert.ok(qdm, "qodercn row reached daily_model");
+  assert.equal(qdm.credits, 5.5, "daily_model.credits = SUM(ext_usage.credits)");
+
   // 清理（zcode fixture db 防 tmp 残留）
   rmSync(join(zdb, "db.sqlite"), { force: true });
   rmSync(join(zdb, "db.sqlite-wal"), { force: true });
   rmSync(join(zdb, "db.sqlite-shm"), { force: true });
+});
+
+test("old DB migration: daily_model gains credits and the daily cache rebuilds", async () => {
+  const root = tmpRoot();
+  const dbPath = join(root, "usage.sqlite");
+  // Legacy shape: daily_model with the agent column but without credits.
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE msg_usage (
+      session_id TEXT NOT NULL, ts INTEGER NOT NULL, day TEXT NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL,
+      input INTEGER DEFAULT 0, output INTEGER DEFAULT 0,
+      cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
+      reasoning INTEGER DEFAULT 0, total_tokens INTEGER DEFAULT 0, cost_total REAL DEFAULT 0,
+      PRIMARY KEY (session_id, ts, provider, model)
+    );
+    CREATE TABLE ext_usage (
+      agent TEXT NOT NULL, session_id TEXT NOT NULL, ts INTEGER NOT NULL, day TEXT NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL,
+      input INTEGER DEFAULT 0, output INTEGER DEFAULT 0,
+      cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
+      reasoning INTEGER DEFAULT 0, total_tokens INTEGER DEFAULT 0,
+      cost_total REAL DEFAULT 0, credits REAL DEFAULT 0,
+      PRIMARY KEY (agent, session_id, ts, provider, model)
+    );
+    CREATE TABLE daily_model (
+      day TEXT NOT NULL, agent TEXT NOT NULL DEFAULT 'pi', provider TEXT NOT NULL, model TEXT NOT NULL,
+      msgs INTEGER DEFAULT 0, input INTEGER DEFAULT 0, output INTEGER DEFAULT 0,
+      cache_read INTEGER DEFAULT 0, cache_write INTEGER DEFAULT 0,
+      reasoning INTEGER DEFAULT 0, total_tokens INTEGER DEFAULT 0, cost_total REAL DEFAULT 0,
+      PRIMARY KEY (day, agent, provider, model)
+    );
+  `);
+  legacy.prepare(`INSERT INTO ext_usage
+    (agent, session_id, ts, day, provider, model, input, output, cache_read, cache_write, reasoning, total_tokens, cost_total, credits)
+    VALUES ('qodercn', 's1', ?, '2026-11-20', 'qodercn', 'dfmodel', 0, 0, 0, 0, 0, 0, 0, 3.25)`)
+    .run(Date.parse("2026-11-20T10:00:00Z"));
+  legacy.close();
+
+  const usage = openUsageDb(dbPath);
+  usage.ensure();
+  const cols = usage.db.prepare("PRAGMA table_info(daily_model)").all().map((c) => c.name);
+  assert.ok(cols.includes("credits"), "ensure() adds daily_model.credits");
+  assert.equal((usage.db.prepare("SELECT v FROM meta WHERE k='daily_rebuild'").get() ?? {}).v, "1",
+    "migration schedules one full daily rebuild");
+
+  await flushDaily(usage);
+  const row = usage.db.prepare("SELECT credits FROM daily_model WHERE agent='qodercn' AND model='dfmodel'").get();
+  assert.ok(row, "daily_model rebuilt from ext_usage");
+  assert.equal(row.credits, 3.25, "historical credits backfilled without a file rescan");
+  assert.equal((usage.db.prepare("SELECT v FROM meta WHERE k='daily_rebuild'").get() ?? {}).v, undefined,
+    "rebuild marker consumed");
+  usage.close();
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("ext 摄入期间事件循环可响应（防冻结）", async () => {
