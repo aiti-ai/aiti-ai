@@ -4,6 +4,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useI18n, useIsMobile, apiUrl, copyText } from "../host-shim";
 import { ConfirmDialog, UrlRow, SchemaForm, providerDisplayLabel, MiniQr } from "../dialog/shared";
+import { SvcManagerCard } from "./SvcManagerCard";
 import { portmapProbeView } from "../lib-shared";
 import type { ExposeInfo, SelfState } from "../dialog/types";
 
@@ -381,6 +382,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Service management (form detection + register/stop/restart/unregister) —
+          backed by the aiti-updater extension; degrades to a hint when absent */}
+      <SvcManagerCard t={t} />
+
       {/* Access URLs */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8 }}>
