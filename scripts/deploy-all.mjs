@@ -27,6 +27,7 @@
  *   - 状态文件：~/.cache/aiti-ai/deploy-state.json（无记录首次视为变更）
  *
  * 用法（参数风格与现有 deploy.mjs 一致）：
+ *   node scripts/deploy-all.mjs --help         # print the full help and exit (deploys nothing)
  *   node scripts/deploy-all.mjs                # 增量：只部署有变更的
  *   node scripts/deploy-all.mjs --all          # 全量（忽略变更检测）
  *   node scripts/deploy-all.mjs --only aiti-cmd,combo,bridge
@@ -58,6 +59,73 @@ const AGENT = homedir();
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
 const opt = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : null; };
+
+// Help/unknown-argument handling runs BEFORE anything else: this script writes into both the dev
+// and the prod deployment trees and reloads both instances, so an unrecognised flag (e.g. the
+// historical `--help`, which used to be silently ignored and trigger a full run) must abort
+// instead of deploying.
+const USAGE = `deploy-all — deploy changed extensions / pi plugins into the dev and prod trees
+
+Usage:
+  node scripts/deploy-all.mjs [options]
+
+Options:
+  --all                  Deploy every entry (ignore incremental change detection)
+  --only <a,b>           Only these entries (comma separated, space after the flag)
+  --skip <a,b>           Skip these entries (comma separated)
+  --list                 List entries with their change status; deploy nothing
+  --dry-run, -n          Print what would be deployed; deploy nothing
+  --prod | --dev         Pass the target to aiti-devtools only (other entries still write both)
+  --restart-bridge       Restart the standalone aiti-bridge service
+  --allow-conflicts      Skip the git conflict-marker guard
+  -h, --help             Show this help and exit
+
+Environment:
+  AITI_DEV_PORT / AITI_PROD_PORT
+      Required when the run should reload live instances, e.g.
+      AITI_DEV_PORT=30142 AITI_PROD_PORT=20341 node scripts/deploy-all.mjs
+      Unset → child deploy scripts fall back to generic defaults (3001/3002) and every
+      reload POST fails with ECONNREFUSED although both services are healthy.
+
+Examples:
+  node scripts/deploy-all.mjs --list
+  node scripts/deploy-all.mjs --dry-run --all
+  AITI_DEV_PORT=30142 AITI_PROD_PORT=20341 node scripts/deploy-all.mjs --only aiti-folder,aiti-git-review
+`;
+
+if (has("--help") || has("-h")) {
+  console.log(USAGE);
+  process.exit(0);
+}
+
+const KNOWN_FLAGS = new Set(["-n", "--dry-run", "--all", "--list", "--restart-bridge", "--prod", "--dev", "--allow-conflicts"]);
+const KNOWN_OPTS = new Set(["--only", "--skip"]);
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  const key = a.split("=")[0];
+  if (KNOWN_OPTS.has(key)) {
+    if (a.includes("=")) {
+      console.error(`[deploy-all] ${key} takes a space-separated value: ${key} <a,b>\n`);
+      process.exit(2);
+    }
+    const v = args[i + 1];
+    if (!v || v.startsWith("-")) {
+      console.error(`[deploy-all] ${key} needs a value, e.g. ${key} aiti-cmd,bridge\n`);
+      process.exit(2);
+    }
+    i++; // consume the value
+    continue;
+  }
+  if (a.startsWith("-")) {
+    if (KNOWN_FLAGS.has(a)) continue;
+    console.error(`[deploy-all] unknown option: ${a}\n`);
+    console.error(USAGE);
+    process.exit(2);
+  }
+  console.error(`[deploy-all] unexpected argument: ${a}\n`);
+  console.error(USAGE);
+  process.exit(2);
+}
 const DRY = has("--dry-run") || has("-n");
 const ALL = has("--all");
 const LIST = has("--list");
