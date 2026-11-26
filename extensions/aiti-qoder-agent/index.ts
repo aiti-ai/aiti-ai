@@ -660,17 +660,56 @@ export async function fetchQoderUsage(client: QoderClient): Promise<{
   };
 }
 
-/** 入站 user 帧 content 块（空闲 prompt 与运行中注入同一份构造，避免两处漂移）。 */
-function buildUserContent(
+/**
+ * pi-native user content for `liveHistory` (host `UserMessage` shape: text block + base64
+ * image blocks). The mirror must carry the images: the host compares its optimistic bubble
+ * with the loaded copy through `userMessageKey()`, which hashes every image block — a
+ * text-only mirror fails that comparison, so the bubble (with its pictures) is replaced by
+ * a picture-less one and the sent image disappears from the transcript.
+ */
+function historyUserContent(
   text: string,
   images?: Array<{ data: string; mimeType: string }>,
-): Array<Record<string, unknown>> {
-  const content: Array<Record<string, unknown>> = [];
-  for (const img of images ?? []) {
+): string | Array<Record<string, unknown>> {
+  if (!images?.length) return text;
+  const content: Array<Record<string, unknown>> = text ? [{ type: "text", text }] : [];
+  for (const img of images) {
     content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
   }
-  if (text || content.length === 0) content.push({ type: "text", text });
   return content;
+}
+
+/** Replayed user image chunk → pi image block (ACP carries {type:"image", data, mimeType}). */
+function replayImageBlock(content: Record<string, unknown>): Record<string, unknown> | null {
+  if (content.type !== "image" || typeof content.data !== "string" || !content.data) return null;
+  const mimeType = typeof content.mimeType === "string" && content.mimeType ? content.mimeType : "image/png";
+  return { type: "image", source: { type: "base64", media_type: mimeType, data: content.data } };
+}
+
+/**
+ * `IndexedMessage.images` → pi image blocks for cold history replay. Inline base64 data
+ * URLs stay inline; remote URLs (Qoder uploads a pasted screenshot to its own storage and
+ * records the signed URL) become URL-sourced blocks the renderer loads directly.
+ */
+function seedHistoryImages(images: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(images)) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const item of images) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { mime?: unknown; dataUrl?: unknown };
+    const dataUrl = typeof rec.dataUrl === "string" ? rec.dataUrl : "";
+    if (!dataUrl) continue;
+    const inline = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+    if (inline) {
+      out.push({ type: "image", source: { type: "base64", media_type: inline[1], data: inline[2] } });
+      continue;
+    }
+    if (/^https?:\/\//i.test(dataUrl)) {
+      const mime = typeof rec.mime === "string" && rec.mime ? rec.mime : undefined;
+      out.push({ type: "image", source: { type: "url", ...(mime ? { media_type: mime } : {}), url: dataUrl } });
+    }
+  }
+  return out;
 }
 
 // ============================================================================
@@ -710,7 +749,15 @@ export interface AttachedChildOptions {
 const REPLAY_END_EVENT = "replay_end";
 
 /** One entry of the persisted qoder history store (session-manager parse output). */
-type SeedHistoryMessage = { role?: unknown; text?: unknown; model?: unknown; provider?: unknown; tool?: unknown };
+type SeedHistoryMessage = {
+  role?: unknown;
+  text?: unknown;
+  model?: unknown;
+  provider?: unknown;
+  tool?: unknown;
+  /** session-manager `IndexedMessage.images` ({mime, dataUrl}): data: URL or remote URL. */
+  images?: unknown;
+};
 
 /**
  * IndexedMessage[] → liveHistory entries, without touching any handle state.
@@ -735,11 +782,18 @@ function seedHistoryEntries(messages: SeedHistoryMessage[], fallbackModel?: stri
       continue;
     }
     const text = typeof m.text === "string" ? m.text : "";
-    if (!text.trim()) continue;
+    const images = role === "user" ? seedHistoryImages(m.images) : [];
+    // An image-only prompt row is a real turn: replay it instead of dropping it.
+    if (!text.trim() && images.length === 0) continue;
     out.push(
       role === "assistant"
         ? { role, content: [{ type: "text", text }], model, provider }
-        : { role, content: text },
+        : {
+          role,
+          content: images.length === 0
+            ? text
+            : [...(text ? [{ type: "text", text }] : []), ...images],
+        },
     );
   }
   return out;
@@ -1051,6 +1105,22 @@ export class QoderHandle {
       const content = (u.content ?? u.contentBlock ?? {}) as Record<string, unknown>;
       const text = typeof content.text === "string" ? content.text : "";
       this.flushStreamMessages(); // assistant replay segment before this user turn ends here
+      // ACP replays one content block per chunk, so a prompt that carried a picture
+      // arrives as text chunk(s) plus an image chunk. Fold the image into the user entry
+      // right before it: a separate entry would show the picture as its own bubble.
+      const image = replayImageBlock(content);
+      if (image) {
+        const last = this.liveHistory[this.liveHistory.length - 1] as { role?: unknown; content?: unknown } | undefined;
+        if (last?.role === "user") {
+          const prior = typeof last.content === "string"
+            ? (last.content ? [{ type: "text", text: last.content }] : [])
+            : Array.isArray(last.content) ? last.content : [];
+          last.content = [...prior, image];
+        } else {
+          this.liveHistory.push({ role: "user", content: [image] });
+        }
+        return;
+      }
       if (text.trim()) this.liveHistory.push({ role: "user", content: text });
       return;
     }
@@ -1641,7 +1711,7 @@ export class QoderHandle {
     for (const img of options?.images ?? []) {
       prompt.push({ type: "image", data: img.data, mimeType: img.mimeType });
     }
-    this.liveHistory.push({ role: "user", content: text });
+    this.liveHistory.push({ role: "user", content: historyUserContent(text, options?.images) });
     await this.sendPromptTurn(prompt, "primary");
   }
 
@@ -1742,7 +1812,7 @@ export class QoderHandle {
     for (const img of images ?? []) {
       prompt.push({ type: "image", data: img.data, mimeType: img.mimeType });
     }
-    const historyEntry = { role: "user", content: text };
+    const historyEntry = { role: "user", content: historyUserContent(text, images) };
     this.liveHistory.push(historyEntry);
     const mirrorId = `acp-steer-${++this.steerSeq}`;
     this.q.registerSteer(mirrorId, text);

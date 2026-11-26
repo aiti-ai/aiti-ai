@@ -13,7 +13,10 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { ClaudeCodeHandle } = await import("./index.ts");
 
@@ -233,4 +236,64 @@ test("contextUsage: [1m] 模型 → 1M 窗口；全零 usage → undefined（不
   const cu = h.getContextUsage();
   assert.equal(cu.contextWindow, 1_000_000);
   assert.equal(cu.percent, 100, "封顶 100%");
+});
+
+const IMG = { type: "image", data: "QUJD", mimeType: "image/png" };
+const MIRRORED = { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } };
+
+test("prompt 带图：出站帧不变，liveHistory 镜像落宿主同形 base64 块", async () => {
+  const { h, stdinWrites } = makeHandle();
+  await h.prompt("这个按钮错位了", { images: [IMG] });
+  const sent = JSON.parse(stdinWrites.at(-1));
+  assert.deepEqual(sent.message.content, [
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+    { type: "text", text: "这个按钮错位了" },
+  ], "CC 出站形状不变");
+  const user = historyRoles(h, "user").at(-1);
+  assert.deepEqual(user.content, [{ type: "text", text: "这个按钮错位了" }, MIRRORED],
+    "镜像与宿主乐观气泡同形（否则 userMessageKey 对不上，图被纯文本顶替）");
+});
+
+test("prompt 只有图没有文字：镜像只带图块（无图时保持字符串 content）", async () => {
+  const { h } = makeHandle();
+  await h.prompt("", { images: [IMG] });
+  assert.deepEqual(historyRoles(h, "user").at(-1).content, [MIRRORED]);
+  // Separate handle: the first one is now running, so a second prompt there queues.
+  const { h: h2 } = makeHandle();
+  await h2.prompt("纯文字");
+  assert.equal(historyRoles(h2, "user").at(-1).content, "纯文字", "老形状不变");
+});
+
+test("prelude：jsonl 里的图片块进历史，纯图行不丢", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cc-prelude-"));
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  // Sandboxed home: set HOME and USERPROFILE together (red line — Windows resolves the latter).
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const dir = join(home, ".claude", "projects", "-tmp");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "sid-img.jsonl"), [
+      JSON.stringify({ type: "user", timestamp: "2026-11-26T00:00:00.000Z", message: { role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } },
+        { type: "text", text: "这个按钮错位了" },
+      ] } }),
+      JSON.stringify({ type: "user", timestamp: "2026-11-26T00:00:01.000Z", message: { role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "RUVF" } },
+      ] } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-11-26T00:00:02.000Z", message: { role: "assistant", model: "glm-5.2", content: [{ type: "text", text: "看到了" }] } }),
+    ].join("\n") + "\n");
+
+    const { h } = makeHandle("claude:sid-img");
+    const history = await h.getMessages();
+    const users = history.filter((m) => m?.role === "user");
+    assert.equal(users.length, 2, "纯图行也是真实消息");
+    assert.deepEqual(users[0].content, [{ type: "text", text: "这个按钮错位了" }, MIRRORED]);
+    assert.deepEqual(users[1].content, [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "RUVF" } }]);
+    assert.equal(history.filter((m) => m?.role === "assistant").length, 1);
+  } finally {
+    if (prev.HOME === undefined) delete process.env.HOME; else process.env.HOME = prev.HOME;
+    if (prev.USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prev.USERPROFILE;
+    rmSync(home, { recursive: true, force: true });
+  }
 });

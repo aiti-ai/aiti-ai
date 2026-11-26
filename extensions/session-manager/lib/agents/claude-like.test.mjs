@@ -8,6 +8,9 @@
  *   2. 其后 user 行的 tool_result 按 tool_use_id 回填 output/isError（该 user 行正文为空
  *      本就被跳过，不回填就永远只有调用没有输出）；
  *   3. 混排（正文+工具）或一行多工具 → 不给 tool，避免消费方命中 tool 后跳正文。
+ *   4. Image rows (a user pastes a screenshot): both the URL form (Qoder uploads it
+ *      to its own object storage) and the base64 form land in IndexedMessage.images,
+ *      and an image-only row still becomes a row (dropping it lost the whole message).
  *
  * Run: node --test pi-web-ext/session-manager/lib/agents/claude-like.test.mjs
  */
@@ -109,6 +112,31 @@ test("sidechain（子代理）行既不参与配对也不成行", () => {
   assert.equal(tools.length, 1, "子代理调用不进主时间线");
   assert.equal(tools[0].callID, "tu_side");
   assert.equal(tools[0].output, "outer output");
+});
+
+test("图片行：URL 形式与 base64 形式都进 images，无文字的纯图行不丢", () => {
+  const url = "https://qoder-cn-vl-private.example.test/cloud/x/deadbeef.png?Expires=1792385140&Signature=a%2Fb";
+  const parsed = parse([
+    LINE("user", "user", [{ type: "image", source: { type: "url", url } }, { type: "text", text: "顶部横幅的图怎么配的" }]),
+    LINE("user", "user", [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "QUJD" } }]),
+    LINE("assistant", "assistant", [{ type: "text", text: "看这里" }]),
+  ]);
+  assert.equal(parsed.messages.length, 3, "纯图行也是真实消息");
+  assert.deepEqual(parsed.messages[0].images, [{ mime: "image/png", dataUrl: url }], "远程 URL 原样带出（扩展名定 mime）");
+  assert.equal(parsed.messages[0].text, "顶部横幅的图怎么配的");
+  assert.deepEqual(parsed.messages[1], {
+    entryId: "2", role: "user", ts: "2026-09-21T00:00:00.000Z", text: "",
+    images: [{ mime: "image/jpeg", dataUrl: "data:image/jpeg;base64,QUJD" }],
+  });
+  assert.equal(parsed.messages[2].images, undefined, "assistant 行不带图");
+  assert.equal(parsed.meta.messageCount, 3);
+  assert.equal(parsed.meta.firstMessage, "顶部横幅的图怎么配的");
+});
+
+test("首个 user 行只有图时 firstMessage 是占位（会话列表不空白）", () => {
+  const parsed = parse([LINE("user", "user", [{ type: "image", source: { type: "url", url: "https://x.test/a.webp" } }])]);
+  assert.equal(parsed.meta.firstMessage, "[image]");
+  assert.deepEqual(parsed.messages[0].images, [{ mime: "image/webp", dataUrl: "https://x.test/a.webp" }]);
 });
 
 test.after(() => { rmSync(ROOT, { recursive: true, force: true }); });
