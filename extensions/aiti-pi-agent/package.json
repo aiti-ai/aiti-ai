@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-pi-agent",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Spawns a pi --mode rpc child process as a session — the main path of the multi-agent frontend",
   "displayNameI18n": {
     "en": "pi Session Backend"
@@ -17,7 +17,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "b9e17a49ad91881d",
+  "contentHash": "d9ab6617a0ed3864",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

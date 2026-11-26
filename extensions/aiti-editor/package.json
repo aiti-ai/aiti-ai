@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-editor",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "Extensible editor — Monaco editing take over + save (mtime conflict 409 + whitelist/size checks) + archive extraction + unified image viewer (message images and file images unified, zoom · pinch · info panel)",
   "displayNameI18n": {
     "en": "File Editor"
@@ -206,7 +206,7 @@
     }
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "562d82b849e39102",
+  "contentHash": "ee2dacb4db210859",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

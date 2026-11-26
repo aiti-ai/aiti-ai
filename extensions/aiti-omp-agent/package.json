@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-omp-agent",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Oh My Pi (omp.sh) — RPC spawn backend for pi's largest fork (split from aiti-pi-agent to specialize in omp): `omp --mode rpc` child process + ready handshake / get_state capability surface / host tools / login / branch",
   "displayNameI18n": {
     "en": "Oh My Pi (omp subprocess backend)"
@@ -17,7 +17,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "cfe8cdd7f775ff30",
+  "contentHash": "9594b5cf48100ba9",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

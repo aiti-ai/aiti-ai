@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-containers",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Container explorer for the pi-web AI window: containers / images / volumes / networks / compose projects with whitelisted actions, plus agent tools over docker, podman and nerdctl.",
   "displayNameI18n": {
     "en": "Containers"
@@ -32,5 +32,5 @@
   "devDependencies": {
     "esbuild": "^0.24.2"
   },
-  "contentHash": "de47038ee15029c1"
+  "contentHash": "bb451f4fd595b42c"
 }

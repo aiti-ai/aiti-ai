@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-feedback",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "User feedback — compose a sanitized report and open a prefilled GitHub issue",
   "displayNameI18n": {
@@ -28,5 +28,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "9e22b0d340e7c1d9"
+  "contentHash": "6abc16d85fdf5a5d"
 }

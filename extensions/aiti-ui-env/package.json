@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ui-env",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Environment allocator for UI debugging on headless background servers — a 4-state mode arbiter decides whether newly launched MCP/apps land on a real desktop or an Xvfb headless virtual display (Xvfb+openbox+picom+AT-SPI virtual display + VNC-on-web + RDP-on-web), service-ized on Linux/Windows/macOS; the VNC password is authenticated by the VNC server itself (the bridge is pure passthrough)",
   "displayNameI18n": {
     "en": "UI Environment"
@@ -71,7 +71,7 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "5b646abac86c38da",
+  "contentHash": "8af1d43bef6a6209",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

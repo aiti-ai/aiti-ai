@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-sheet-univer",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "In-browser preview + editing for .xlsx/.xlsm (exceljs data layer + Univer view layer); read-only preview and one-click convert to .xlsx for .xls/.ods",
   "displayNameI18n": {
     "en": "Excel Editor"
@@ -33,7 +33,7 @@
     "@univerjs/themes": "0.25.1"
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "be921bc778a7b28d",
+  "contentHash": "3fd683386b00ab15",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

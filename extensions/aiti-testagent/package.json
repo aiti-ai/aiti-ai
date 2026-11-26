@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-testagent",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "AI debugging MCP + IDE for Java backends — scan Java processes / attach one-click bridge connect / tunnel-bridge multi-endpoint management; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57 tools in 10 groups exposed on demand, fully reversible",
   "displayNameI18n": {
@@ -18,7 +18,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "5839b70deb29662a",
+  "contentHash": "a292f01169b32810",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

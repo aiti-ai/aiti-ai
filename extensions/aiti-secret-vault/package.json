@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-secret-vault",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Encrypted secret vault management UI for pi-web: list / add / rotate / reveal / remove aliases, lock/unlock, switch between keyfile and OS-keychain unlock, and inspect which aliases are mounted per session. Values never enter the AI conversation.",
   "displayNameI18n": {
@@ -28,5 +28,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "3b3b5d853e67f85e"
+  "contentHash": "dedfbe670a97d36f"
 }
