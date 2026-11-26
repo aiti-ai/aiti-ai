@@ -48,7 +48,7 @@ function setCwd(root: string): void {
   try { extSvc<{ setCwd: (p: string) => void }>("pi-web.newSession")?.setCwd?.(root); } catch { /* ignore */ }
 }
 
-function recordHistory(root: string, source: "clone" | "local" | "new", extra?: { url?: string }): void {
+function recordHistory(root: string, source: string, extra?: { url?: string }): void {
   // 服务端 clone 已记历史；local/new 在前端补一条（幂等：同 root 去重置顶）
   if (source !== "clone") {
     void fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/history"), {
@@ -98,7 +98,13 @@ const browseBtn: Record<string, unknown> = {
 };
 const errStyle: Record<string, unknown> = { fontSize: 11.5, color: "var(--danger, #ef4444)", lineHeight: 1.5, wordBreak: "break-all" };
 
-type Tab = "clone" | "upload" | "local" | "new";
+type Tab = string;
+
+/** Workspace-hub sources are contributed by other extensions at runtime (topic
+ *  "workspace-hub.source"). The provider may be lazy, so materialize known sources
+ *  before reading the topic; new providers can be added to this hint list. */
+const SOURCE_HINTS = ["aiti-codehub"];
+interface HubSource { id: string; label: string; order?: number; icon?: string; render: (p: { onEnter: (root: string, extra?: { url?: string }) => void }) => unknown }
 
 /** Folder glyph for the browse buttons (stroke = currentColor so the hover color applies). */
 function FolderGlyph() {
@@ -119,6 +125,7 @@ export function WorkspaceHub() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("clone");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [sources, setSources] = useState<HubSource[]>([]);
   /** Optional caller callback: a host picker (video studio etc.) can request a root
    *  without switching the new-session cwd. Cleared on every close/cancel. */
   const pickCallback = useRef<((root: string) => void) | null>(null);
@@ -130,6 +137,12 @@ export function WorkspaceHub() {
       setOpen(true);
       setTab("clone");
       void fetchHistory().then(setHistory);
+      void Promise.all(SOURCE_HINTS.map((id) => ensureMaterialized(id))).then(() => {
+        const list = getTopicItems<HubSource>("workspace-hub.source")
+          .filter((s) => s && typeof s.id === "string" && typeof s.render === "function")
+          .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+        setSources(list);
+      });
     };
     try { window.addEventListener("aiti-quickstart:open-hub", onOpen); } catch { /* ignore */ }
     return () => { try { window.removeEventListener("aiti-quickstart:open-hub", onOpen); } catch { /* ignore */ } };
@@ -139,7 +152,7 @@ export function WorkspaceHub() {
 
   const closeHub = () => { pickCallback.current = null; setOpen(false); };
   const refreshHistory = () => { void fetchHistory().then(setHistory); };
-  const enter = (root: string, source: "clone" | "local" | "new", extra?: { url?: string }) => {
+  const enter = (root: string, source: string, extra?: { url?: string }) => {
     recordHistory(root, source, extra);
     const cb = pickCallback.current;
     pickCallback.current = null;
@@ -185,16 +198,28 @@ export function WorkspaceHub() {
               </div>
             )}
           </div>
-          {/* 四入口 tab */}
+          {/* Built-in four entry tabs + extension sources (topic workspace-hub.source). */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0 }}>
-            {(["clone", "upload", "local", "new"] as Tab[]).map((k) => (
+            {(["clone", "upload", "local", "new"] as const).map((k) => (
               <button key={k} type="button" style={tabBtn(tab === k)} onClick={() => setTab(k)}>{t(`qs.hub.tab.${k}`)}</button>
             ))}
+            {sources.map((s) => {
+              const id = `src:${s.id}`;
+              return (
+                <button key={id} type="button" style={tabBtn(tab === id)} onClick={() => setTab(id)}>{s.label}</button>
+              );
+            })}
           </div>
           {tab === "clone" ? <CloneTab onEnter={enter} onRefreshHistory={refreshHistory} /> : null}
           {tab === "upload" ? <UploadTab onEnter={enter} /> : null}
           {tab === "local" ? <LocalTab onEnter={enter} /> : null}
           {tab === "new" ? <NewTab onEnter={enter} /> : null}
+          {(() => {
+            const src = tab.startsWith("src:") ? sources.find((s) => `src:${s.id}` === tab) : null;
+            if (!src) return null;
+            const Comp = src.render as unknown as (props: { onEnter: (root: string, extra?: { url?: string }) => void }) => unknown;
+            return <Comp onEnter={enter} />;
+          })()}
         </div>
       </div>
     </div>,
