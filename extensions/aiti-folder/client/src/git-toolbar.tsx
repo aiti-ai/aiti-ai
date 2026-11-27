@@ -41,6 +41,8 @@ export interface FolderGit {
   op: (kind: "stage" | "unstage" | "discard", path: string) => Promise<number>;
   /** Batch (bucket header "stage all / unstage all"): one engine call, then re-probe + statusBump */
   opPaths: (kind: "stage" | "unstage" | "discard", paths: string[]) => Promise<number>;
+  /** Untracked row "add to .gitignore" (engine ignore-add); declared for callers (folder nested-git) */
+  ignoreAdd: (rel: string) => Promise<unknown>;
 }
 
 export function useFolderGit(root: string): FolderGit {

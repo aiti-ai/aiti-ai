@@ -20,6 +20,9 @@ import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { useFolderGit, GitBar } from "./git-toolbar";
+import type { FolderGit } from "./git-toolbar";
+import { BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
+import { fetchNestedRepos, invalidateNestedRepos, nestedStatusRows, peekNestedRepos } from "./nested-git";
 import { ct } from "./comp-i18n";
 
 // DI 方案 P2：git-review 打开/聚焦（services 通道优先，旧全局兜底）
@@ -444,8 +447,8 @@ import { folderActions } from "./folder-actions";
 // ── 目录行「+」菜单：对该目录新建文件/文件夹、上传文件/文件夹（目标=该目录，非根）。──
 // 菜单用 fixed 视口定位（树容器 overflow 滚动会裁剪 absolute 弹层）；hovered 传入以在
 // 菜单打开后鼠标移出时保持渲染（否则 onMouseLeave 卸载弹层）。
-function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: string) => void; onRefresh?: () => void; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; t: TFn; root: string; cwd: string }) {
-  const { dir, hovered, onChanged, onRefresh, onOpenFile, onAtMention, onTrash, t: tt, root, cwd } = props;
+function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: string) => void; onRefresh?: () => void; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; t: TFn; root: string; cwd: string; /** Git Review scope: nested-repo rows pass their own dir (plan §3.5); default = open root */ gitScope?: string }) {
+  const { dir, hovered, onChanged, onRefresh, onOpenFile, onAtMention, onTrash, t: tt, root, cwd, gitScope } = props;
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<string | null>(null); // "file" | "folder" | null
   const [name, setName] = useState("");
@@ -594,7 +597,7 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
             // ── Git（特色第二段）──
             root ? menuSep("s-git") : null,
             root ? (
-              <button type="button" key="gr" onClick={(e)=>{e.stopPropagation();setOpen(false);void openGitReview({ kind: "directory", path: root });}} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 10px",border:"none",background:"transparent",color:"var(--accent)",cursor:"pointer",textAlign:"left",fontSize:12,borderRadius:6,whiteSpace:"nowrap"}}>
+              <button type="button" key="gr" onClick={(e)=>{e.stopPropagation();setOpen(false);void openGitReview({ kind: "directory", path: gitScope || root });}} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 10px",border:"none",background:"transparent",color:"var(--accent)",cursor:"pointer",textAlign:"left",fontSize:12,borderRadius:6,whiteSpace:"nowrap"}}>
                 <GrEyeIcon size={13} />
                 Git Review
               </button>
@@ -632,8 +635,8 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
 
 // ── 文件行操作区（与文件夹 DirOpsMenu 同款：大屏悬停显示操作按钮；小屏无悬停→点击后部等效悬停，
 // 再点「+」展开菜单。点击文件名仍开文件；点击操作区不冒泡到行）。
-function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; hovered: boolean; t: TFn; onRefresh?: (p?: string) => void; gitIgnore?: (() => void) | null; /** true = 只渲染 ⋮ 入口（快捷钮 @/🗑/⬇ 不渲染）——变更行与 git 按钮互斥防挤压叠压 */ quickOnly?: boolean; /** 变更行 git 上下文：提供即在 ⋮ 菜单渲染 Git 组（暂存/diff/丢弃/gitignore） */ staged?: boolean; gitOp?: (kind: "stage" | "unstage" | "discard", rel: string) => void; /** 「丢弃」确认经页内弹窗（宿主 FolderBrowser requestDiscard） */ onRequestDiscard?: (o: { title: string; message: string; run: () => void }) => void }) {
-  const { filePath, cwd, root, onOpenFile, onAtMention, onTrash, hovered, t: tt, onRefresh, gitIgnore, quickOnly, staged, gitOp, onRequestDiscard } = props;
+function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; hovered: boolean; t: TFn; onRefresh?: (p?: string) => void; gitIgnore?: (() => void) | null; /** true = render the ⋮ entry only (quick @/trash/download buttons hidden — change rows and git buttons are mutually exclusive to avoid squeeze) */ quickOnly?: boolean; /** change-row git context: when provided the ⋮ menu renders the Git group (stage/diff/discard/gitignore) */ staged?: boolean; gitOp?: (kind: "stage" | "unstage" | "discard", rel: string) => void; /** discard confirm goes through the in-page dialog (host FolderBrowser requestDiscard) */ onRequestDiscard?: (o: { title: string; message: string; run: () => void }) => void; /** Git Review scope（嵌套仓库内文件=嵌套目录；默认=打开的根） */ gitScope?: string }) {
+  const { filePath, cwd, root, onOpenFile, onAtMention, onTrash, hovered, t: tt, onRefresh, gitIgnore, quickOnly, staged, gitOp, onRequestDiscard, gitScope } = props;
   const [open, setOpen] = useState(false); const [pos, setPos] = useState<{left:number;top:number}|null>(null);
   const [renameMode, setRenameMode] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -711,7 +714,7 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
             // ── Git（特色第二段）──
             root ? menuSep("s-git") : null,
             root ? (
-              <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); setOpen(false); void openGitReview({ kind: "directory", path: root }); }}
+              <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); setOpen(false); void openGitReview({ kind: "directory", path: gitScope || root }); }}
                 style={{ display:"flex", alignItems:"center", gap:6, width:"100%", padding:"5px 10px", border:"none", background:"transparent", color:"var(--accent)", cursor:"pointer", textAlign:"left", fontSize:12, borderRadius:6, whiteSpace:"nowrap" }}>
                 <GrEyeIcon size={13} />
                 Git Review
@@ -805,13 +808,187 @@ function ChangedFileRow(o: { st: any; root: string; cwd: string; onOpenFile: (p:
           {gitBtn(ct("git.discardTitle"), "✕", () => { const un = untracked && onTrash; const msg = un ? tt("files.discardUntrackedConfirm") : ct("git.discardConfirm", { path: rel }); if (onRequestDiscard) { onRequestDiscard({ title: tt("files.discardTitle"), message: msg, run: () => { if (un) { onTrash({ path: st.filePath, name: st.filePath.split("/").pop() || st.filePath, isDir: false }); } else { gitOp("discard", rel); } } }); } else if (window.confirm(msg)) { if (un) { onTrash({ path: st.filePath, name: st.filePath.split("/").pop() || st.filePath, isDir: false }); } else { gitOp("discard", rel); } } }, "ds", "#d6a84b")}
         </span>
       ) : null}
-      <FileOpsMenu filePath={st.filePath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={o.onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={onRefresh} staged={staged} gitOp={gitOp} gitIgnore={(untracked && onGitIgnore) ? () => onGitIgnore(rel) : null} quickOnly={!!gitOp} onRequestDiscard={onRequestDiscard} />
+      <FileOpsMenu filePath={st.filePath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={o.onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={onRefresh} staged={staged} gitOp={gitOp} gitIgnore={(untracked && onGitIgnore) ? () => onGitIgnore(rel) : null} quickOnly={!!gitOp} onRequestDiscard={onRequestDiscard} gitScope={root} />
+    </div>
+  );
+}
+
+// ── Changes list (extracted from the root changes section, plan §3.4): shared by the root
+// section and nested-repo inline sections. Bucket split by xy (index col non-blank & not '?'
+// → staged), batch headers with stage/discard-all, per-row actions via ChangedFileRow —
+// behavior identical to the pre-extraction root section. Root mode (nested=false) keeps the
+// header line (count + additions/deletions) and the borderBottom; nested mode indents with a
+// left rule instead. Engine absent (git.avail !== true) → flat read-only rows (no buckets),
+// exactly like before. ──
+export function ChangesList(p: {
+  root: string; cwd: string; git: FolderGit; files: any[];
+  stats?: { additions: number; deletions: number } | null;
+  nested?: boolean;
+  indent?: number;
+  onOpenFile: (p: string) => void;
+  onOpenFolder?: (p: string, name?: string) => void;
+  onAtMention?: (rel: string, b: boolean) => void;
+  onTrash?: (x: { path: string; name: string; isDir: boolean }) => void;
+  t: TFn;
+  onRefresh: () => void;
+  onGitIgnore?: (rel: string) => void;
+  onRequestDiscard?: (o: { title: string; message: string; run: () => void }) => void;
+  /** batch-op feedback (root: header msg slot; nested: local line) */
+  onFeedback?: (m: any) => void;
+}) {
+  const { git, root } = p;
+  const t = p.t;
+  const setMsg = p.onFeedback;
+  const xyMap = new Map((git.refs?.dirtyFiles ?? []).map((f) => [f.path.replace(/\\/g, "/"), f.xy]));
+  const relOf = (filePath: string) => (relFromBase(filePath, root) || filePath).replace(/\\/g, "/");
+  const relRows = p.files.map((st: any) => ({ st, rel: relOf(st.filePath) }));
+  const isStaged = (rel: string) => { const xy = xyMap.get(rel) ?? xyMap.get(rel + "/"); return !!xy && xy[0] !== " " && xy[0] !== "?"; };
+  const stagedRows = git.avail === true ? relRows.filter((r) => isStaged(r.rel)) : [];
+  const unstagedRows = relRows.filter((r) => !stagedRows.includes(r));
+
+  const rowEl = (r: { st: any; rel: string }) => (
+    <ChangedFileRow key={r.st.filePath} st={r.st} root={root} cwd={p.cwd} onOpenFile={p.onOpenFile} onOpenFolder={p.onOpenFolder} onAtMention={p.onAtMention} onTrash={p.onTrash} t={t} onRefresh={p.onRefresh} untracked={r.st.status === "untracked"} onGitIgnore={p.onGitIgnore} onRequestDiscard={p.onRequestDiscard} gitScope={root}
+      staged={git.avail === true ? isStaged(r.rel) : undefined}
+      gitOp={git.avail === true ? (kind, rel) => { void git.op(kind, rel); } : undefined} />
+  );
+  const stats = p.stats;
+  return (
+    <div style={p.nested
+      ? { margin: "1px 0 3px", marginLeft: p.indent || 0, padding: "2px 6px 4px 8px", borderLeft: "2px solid var(--border)" }
+      : { padding: "0 4px 2px", borderBottom: "1px solid var(--border)" }}>
+      {!p.nested ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, height: 24, padding: "0 10px", fontSize: 12 }}>
+          <span style={{ color: "var(--text-dim)" }}>{t("files.changedCount", { count: p.files.length })}</span>
+          {stats ? (
+            <>
+              <span style={{ color: "var(--ok, #4ade80)", fontFamily: "var(--font-mono)" }}>+{stats.additions}</span>
+              <span style={{ color: "var(--danger, #f87171)", fontFamily: "var(--font-mono)" }}>-{stats.deletions}</span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      {git.avail === true && stagedRows.length > 0 ? (
+        <BucketHead label={ct("git.stagedBucket")} count={stagedRows.length} requestDiscard={p.onRequestDiscard} batches={[
+          // Unstage is lossless (files go back to the worktree): no confirm.
+          { id: "unstage-all", title: ct("git.unstageTitle") + " ×" + stagedRows.length, label: "−", run: async () => { const st = await git.opPaths("unstage", stagedRows.map((r) => r.rel)); if (st !== 200) setMsg?.({ err: "HTTP " + st }); else setMsg?.({ ok: ct("git.unstageTitle") + " ✓ ×" + stagedRows.length }); } },
+          // Discard-all is destructive: in-page confirm (tracked files restore to the last commit).
+          { id: "discard-all", title: ct("git.discardTitle") + " ×" + stagedRows.length, label: "✕", color: "#d6a84b", confirm: ct("git.discardConfirm", { path: stagedRows.length + " 个文件" }), run: async () => { const st = await git.opPaths("discard", stagedRows.map((r) => r.rel)); if (st !== 200) setMsg?.({ err: "HTTP " + st }); } },
+        ]} />
+      ) : null}
+      {(git.avail === true ? stagedRows : []).map(rowEl)}
+      {git.avail === true ? (
+        <BucketHead label={ct("git.unstagedBucket")} count={unstagedRows.length} requestDiscard={p.onRequestDiscard} batches={[
+          // Stage is lossless: no confirm.
+          { id: "stage-all", title: ct("git.stageTitle") + " ×" + unstagedRows.length, label: "＋", run: async () => { const st = await git.opPaths("stage", unstagedRows.map((r) => r.rel)); if (st !== 200) setMsg?.({ err: "HTTP " + st }); else setMsg?.({ ok: ct("git.stageTitle") + " ✓ ×" + unstagedRows.length }); } },
+          // Discard-all is destructive: in-page confirm (tracked restore to last commit;
+          // untracked go to the trash, restorable).
+          { id: "discard-all", title: ct("git.discardTitle") + " ×" + unstagedRows.length, label: "✕", color: "#d6a84b", confirm: "将丢弃 " + unstagedRows.length + " 个文件的更改？（未跟踪文件移入回收站，已跟踪文件恢复到上次提交）", run: async () => { const st = await git.opPaths("discard", unstagedRows.map((r) => r.rel)); if (st !== 200) setMsg?.({ err: "HTTP " + st }); } },
+        ]} />
+      ) : null}
+      {unstagedRows.map(rowEl)}
+    </div>
+  );
+}
+
+// ── NestedGit · nested-repo chip + inline changes section (plan §2/§3.3) ──
+// Mounted by the parent tree row for children detected as carrying their own .git. Owns a
+// useFolderGit(dir) instance: every engine call (stage/commit/push/pull/branch panel) runs with
+// cwd = the nested repo, and the engine resolves the repo toplevel from that cwd — so commit
+// management is fully scoped to the nested repo with zero new server surface. Engine absent →
+// /api/git/status fallback: chip still shows with a read-only file list (no op buttons).
+// Rows are reported up via onStatus for the tree badge merge; unmount prunes them.
+function NestedGit(p: {
+  dir: string;
+  /** left margin px (aligns the section under the owning row's children) */
+  indent: number;
+  /** parent-driven re-probe (refreshKey / subtree refresh / live change) */
+  bump: number;
+  onStatus: (dir: string, files: any[] | null) => void;
+  /** a nested write may move the outer repo's submodule pointer → refresh outer git status */
+  onGitChanged: () => void;
+  onOpenFile: (p: string) => void;
+  onOpenFolder?: (p: string, name?: string) => void;
+  onAtMention?: (rel: string, b: boolean) => void;
+  onTrash?: (x: { path: string; name: string; isDir: boolean }) => void;
+  onRequestDiscard: (o: { title: string; message: string; run: () => void }) => void;
+  t: TFn;
+  cwd: string;
+}) {
+  const { dir, t: tt } = p;
+  const git = useFolderGit(dir);
+  const gitRef = useRef(git); gitRef.current = git;
+  const [open, setOpen] = useState(false);
+  // Engine-absent fallback: /api/git/status answers repo-ness and provides read-only rows.
+  const [fb, setFb] = useState<{ files: any[]; isRepo: boolean } | null>(null);
+  const [fbStats, setFbStats] = useState<{ additions: number; deletions: number } | null>(null);
+  const [localMsg, setLocalMsg] = useState<any>(null);
+  // Parent-driven re-probe (bump > previous keeps the initial mount from double-probing).
+  const bumpRef = useRef(p.bump);
+  useEffect(() => { if (p.bump > bumpRef.current) { bumpRef.current = p.bump; gitRef.current.refresh(); } }, [p.bump]);
+  useEffect(() => {
+    if (git.avail !== false) return;
+    let c = false;
+    fetch(apiUrl("/api/git/status"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: dir }) })
+      .then((r) => r.json()).then((st: any) => {
+        if (c) return;
+        if (st && st.isGitRepository) { setFb({ files: st.files || [], isRepo: true }); setFbStats({ additions: st.additions || 0, deletions: st.deletions || 0 }); }
+        else setFb({ files: [], isRepo: false });
+      })
+      .catch(() => { if (!c) setFb({ files: [], isRepo: false }); });
+    return () => { c = true; };
+  }, [git.avail, dir]);
+  // Rows reported up for the badge merge; engine rows are synthesized from dirtyFiles, fallback
+  // rows come from /api/git/status (absolute already).
+  const rows = useMemo(
+    () => (git.avail === true ? nestedStatusRows(dir, git.refs?.dirtyFiles) : (fb?.isRepo ? fb.files : [])),
+    [git.avail, git.refs?.dirtyFiles, dir, fb],
+  );
+  const onStatusRef = useRef(p.onStatus); onStatusRef.current = p.onStatus;
+  useEffect(() => { onStatusRef.current(dir, rows); }, [dir, rows]);
+  useEffect(() => () => onStatusRef.current(dir, null), [dir]);
+  const branch = git.avail === true ? (git.refs?.current || null) : (fb ? (fb.isRepo ? "Git" : null) : null);
+  if (!branch) return null;
+  const count = rows.length;
+  const title = ct("git.nestedRepoTip") + " · " + branch + (count ? " · " + count : "");
+  const stats = git.avail === true ? null : fbStats;
+  return (
+    <div data-nested-git={dir} style={{ paddingLeft: p.indent }}>
+      <span onClick={() => setOpen((v) => !v)} role="button" aria-expanded={open} title={title} aria-label={title}
+        style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", cursor: "pointer" }}>
+        <BranchChipBadge branch={branch} dirtyCount={count} open={open} title={title} />
+      </span>
+      {open ? (
+        <div>
+          {git.avail === true && git.refs?.current ? (
+            <GitBar root={dir} git={git} onChanged={p.onGitChanged} changesOpen={open} onToggleChanges={() => setOpen((v) => !v)} />
+          ) : (
+            <div title={ct("git.nestedFallbackHint")} style={{ padding: "2px 0 1px", fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+              ⎇ {branch} · {count} · {ct("git.nestedFallbackHint")}
+            </div>
+          )}
+          <ChangesList nested indent={p.indent} root={dir} cwd={p.cwd || dir} git={git} files={rows} stats={stats}
+            onOpenFile={p.onOpenFile} onOpenFolder={p.onOpenFolder} onAtMention={p.onAtMention} onTrash={p.onTrash}
+            t={tt} onRefresh={() => { gitRef.current.refresh(); p.onGitChanged(); }}
+            onGitIgnore={git.avail === true ? (rel) => { void gitRef.current.ignoreAdd(rel).then(() => gitRef.current.refresh()); } : undefined}
+            onRequestDiscard={p.onRequestDiscard} onFeedback={setLocalMsg} />
+          {localMsg ? (
+            <div style={{ margin: "0 0 3px", marginLeft: p.indent, fontSize: 10, color: localMsg.err ? "var(--danger, #f87171)" : "var(--ok, #4ade80)" }}>
+              {localMsg.err || localMsg.ok || ""}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function TreeNode(o: any) {
   const node=o.node, depth=o.depth, cwd=o.cwd, expanded=o.expanded, onToggle=o.onToggle, onOpenFile=o.onOpenFile, onOpenFolder=o.onOpenFolder, onAtMention=o.onAtMention, onTrash=o.onTrash, onChanged=o.onChanged, gitByPath=o.gitByPath, changedDirs=o.changedDirs, hlPath=o.highlightPath, tt=o.t, root=o.root;
+  const isGitRepo: boolean = o.isGitRepo === true; // parent scan says this dir carries its own .git
+  const parentGitScope: string = o.gitScope || root; // nearest repo dir at or above self
+  const onNestedStatus: (dir: string, files: any[] | null) => void = o.onNestedStatus || (() => {});
+  const onGitChanged: () => void = o.onGitChanged || (() => {});
+  const onRequestDiscard: undefined | ((o: { title: string; message: string; run: () => void }) => void) = o.onRequestDiscard;
   const selMode: boolean = o.selMode === true;
   const selSelected: boolean = o.selSelected === true;
   const onSelectRow: undefined | ((fp: string, on: boolean) => void) = o.onSelectRow;
@@ -830,23 +1007,36 @@ function TreeNode(o: any) {
   const loadGenRef = useRef(0);
   const loadChildren = useCallback(async (force?: boolean)=>{ if(loaded&&!force) return; const gen=++loadGenRef.current; setLoading(true); try{ const e=await fetchEntries(apiUrl, node.fullPath, { force, showIgnored: showIgnoredRef.current }); if(gen!==loadGenRef.current) return; setChildren(e); setLoaded(true);}catch{/* noop */}finally{ if(gen===loadGenRef.current) setLoading(false); } }, [loaded, node.fullPath]);
   useEffect(()=>{ if(open&&!loaded) loadChildren(); }, [open, loaded, loadChildren]);
+  // Nested-repo detection among children (plan §3.5): scan once children are listed; forced
+  // paths (refresh / live change / parent subtree refresh) invalidate the scan cache first so
+  // the rescan is real. scanSeq doubles as the NestedGit re-probe bump.
+  const [childRepos, setChildRepos] = useState<string[]>(() => peekNestedRepos(node.fullPath) ?? []);
+  const [scanSeq, setScanSeq] = useState(0);
+  // Subtree reload with nested-scan invalidation: every forced path goes through here.
+  const reloadSubtree = useCallback(()=>{ invalidateNestedRepos(node.fullPath); setScanSeq((s)=>s+1); loadChildren(true); }, [loadChildren, node.fullPath]);
+  useEffect(() => {
+    if (!loaded) return;
+    let c = false;
+    fetchNestedRepos(apiUrl, node.fullPath).then((rs) => { if (!c) setChildRepos((prev) => (prev.length === rs.length && prev.every((p, i) => p === rs[i])) ? prev : rs); }).catch(() => { /* keep the previous list */ });
+    return () => { c = true; };
+  }, [loaded, children, node.fullPath]);
   // 根工具栏「刷新」：refreshKey 变化时已加载过的子树强制重拉（含折叠态，再展开即新内容）
   const rkRef = useRef(refreshKey);
-  useEffect(()=>{ if(rkRef.current===refreshKey) return; rkRef.current=refreshKey; if(loaded) loadChildren(true); }, [refreshKey, loaded, loadChildren]);
+  useEffect(()=>{ if(rkRef.current===refreshKey) return; rkRef.current=refreshKey; if(loaded) reloadSubtree(); }, [refreshKey, loaded, reloadSubtree]);
   // 父节点发起的子树刷新：强拉自己并继续向自己的子树传播
   const seqRef = useRef(parentSeq);
   const downSeqRef = useRef(0);
-  useEffect(()=>{ if(seqRef.current===parentSeq) return; seqRef.current=parentSeq; if(loaded){ loadChildren(true); downSeqRef.current+=1; setDownSeq(downSeqRef.current); } }, [parentSeq, loaded, loadChildren]);
+  useEffect(()=>{ if(seqRef.current===parentSeq) return; seqRef.current=parentSeq; if(loaded){ reloadSubtree(); downSeqRef.current+=1; setDownSeq(downSeqRef.current); } }, [parentSeq, loaded, reloadSubtree]);
   // 目录内发生变更（新建/上传/删除）：已展开时 force 刷新本子树，再冒泡到根刷新。
   const handleChanged = useCallback((changedDir?: string)=>{
-    if(changedDir && (changedDir === node.fullPath || changedDir.startsWith(node.fullPath + "/"))) loadChildren(true);
+    if(changedDir && (changedDir === node.fullPath || changedDir.startsWith(node.fullPath + "/"))) reloadSubtree();
     onChanged?.(changedDir);
-  }, [node.fullPath, loadChildren, onChanged]);
+  }, [node.fullPath, reloadSubtree, onChanged]);
   // 目录菜单「刷新」：只递归刷新本目录子树（自拉 + 向下传播），不冒泡到根、不闪全树
   const handleRefreshTree = useCallback(()=>{
-    if(loaded){ loadChildren(true); downSeqRef.current+=1; setDownSeq(downSeqRef.current); }
-    else loadChildren(true);
-  }, [loaded, loadChildren]);
+    reloadSubtree();
+    if(loaded){ downSeqRef.current+=1; setDownSeq(downSeqRef.current); }
+  }, [loaded, reloadSubtree]);
   // Directory live watch (borrow plan §2.4): watch expanded dirs only (DSH perf discipline); frame →
   // invalidate cache + force-reload this subtree; trailing throttle merges bursts. Ignored dirs are
   // not watched at all: their churn never changes a listing or a git badge. `onLiveChange` lets the
@@ -859,10 +1049,10 @@ function TreeNode(o: any) {
       if(now - watchThrottleRef.current < 600) return;
       watchThrottleRef.current = now;
       invalidateEntries(node.fullPath);
-      loadChildren(true);
+      reloadSubtree();
       o.onLiveChange?.();
     });
-  }, [open, loaded, node.fullPath, node.ignored, loadChildren, o.onLiveChange]);
+  }, [open, loaded, node.fullPath, node.ignored, reloadSubtree, o.onLiveChange]);
   // 点击处理：点前半段（文件名附近）开文件/展开；点后部触发操作区（小屏无悬停等效）。
   // 搜索结果里的命中目录同样展开（懒加载真实内容）；要新 tab 打开用 hover 的「打开」按钮。
   const handleClick = useCallback(()=>{ if(node.isDir){ const n=!open; onToggle(node.fullPath, n); if(n&&!loaded) loadChildren(); } else { onOpenFile(node.fullPath); } }, [node, open, loaded, loadChildren, onOpenFile, onToggle]);
@@ -879,6 +1069,9 @@ function TreeNode(o: any) {
   const norm = normSlash(node.fullPath)!;
   const git = gitByPath.get(norm);
   const containsGit = node.isDir && (git!==undefined || changedDirs.has(norm));
+  // Nearest repo dir at or above self: this row's own menus (Git Review) scope there.
+  const myScope = isGitRepo ? node.fullPath : parentGitScope;
+  const indent = 8 + (depth + 1) * 14;
   return (
     <div key="row">
       <div key="row-inner" data-file-node={node.fullPath} onClick={node.isDir?handleClick:handleRowClick} onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)}
@@ -903,7 +1096,11 @@ function TreeNode(o: any) {
             <span style={{width:6,height:6,borderRadius:"50%",background:"#d6a84b"}} />
           </span>
         ) : null}
-        {(node.isDir) ? <DirOpsMenu dir={node.fullPath} hovered={hovered} onChanged={handleChanged} onRefresh={handleRefreshTree} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} t={tt} root={root} cwd={cwd} /> : null}
+        {(node.isDir) ? <DirOpsMenu dir={node.fullPath} hovered={hovered} onChanged={handleChanged} onRefresh={handleRefreshTree} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} t={tt} root={root} cwd={cwd} gitScope={myScope} /> : null}
+        {(node.isDir && hovered) ? (
+          <button onClick={e=>{e.stopPropagation(); handleRefreshTree();}} title={tt("files.refresh")} aria-label={tt("files.refresh")}
+            style={{position:"absolute",right:128,top:"50%",transform:"translateY(-50%)",display:"flex",alignItems:"center",justifyContent:"center",height:20,width:22,padding:0,background:"var(--bg-panel)",border:"1px solid var(--border)",borderRadius:4,color:"var(--text-muted)",cursor:"pointer"}}><MiRefresh/></button>
+        ) : null}
         {(node.isDir && hovered && onAtMention) ? (
           <button onClick={e=>{e.stopPropagation(); onAtMention(relTo(node.fullPath,cwd),false);}} title={tt("files.insertPathTitle")}
             style={{position:"absolute",right:80,top:"50%",transform:"translateY(-50%)",display:"flex",alignItems:"center",justifyContent:"center",height:20,width:22,padding:0,background:"var(--bg-panel)",border:"1px solid var(--border)",borderRadius:4,color:"var(--accent)",cursor:"pointer",fontSize:11,fontWeight:700}}>@</button>
@@ -916,11 +1113,21 @@ function TreeNode(o: any) {
           <button onClick={e=>{e.stopPropagation(); onOpenFolder(node.fullPath, node.name);}} title={tt("files.openInPanel")}
             style={{position:"absolute",right:32,top:"50%",transform:"translateY(-50%)",display:"flex",alignItems:"center",justifyContent:"center",height:20,padding:"0 8px",background:"var(--bg-panel)",border:"1px solid var(--border)",borderRadius:4,color:"var(--accent)",cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>{tt("files.open")}</button>
         ) : null}
-        {(!node.isDir && (onAtMention||onTrash)) ? <FileOpsMenu filePath={node.fullPath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={handleChanged} /> : null}
+        {(!node.isDir && (onAtMention||onTrash)) ? <FileOpsMenu filePath={node.fullPath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={handleChanged} gitScope={parentGitScope} /> : null}
       </div>
+      {/* Nested git repo chip + inline changes section (mounted when the parent scan flagged this dir) */}
+      {(node.isDir && isGitRepo) ? (
+        <NestedGit dir={node.fullPath} indent={indent} bump={scanSeq} onStatus={onNestedStatus} onGitChanged={onGitChanged}
+          onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash}
+          onRequestDiscard={onRequestDiscard || ((o: any) => { try { if (window.confirm(o.message)) o.run(); } catch { /* noop */ } })}
+          t={tt} cwd={cwd} />
+      ) : null}
       {(node.isDir && open) ? (
         <div key="tree">
-          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} onLiveChange={o.onLiveChange} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selSelected} onSelectRow={onSelectRow} />)}
+          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} onLiveChange={o.onLiveChange} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selSelected} onSelectRow={onSelectRow}
+            isGitRepo={childRepos.includes(ch.fullPath)}
+            gitScope={childRepos.includes(ch.fullPath) ? ch.fullPath : myScope}
+            onNestedStatus={onNestedStatus} onGitChanged={onGitChanged} onRequestDiscard={onRequestDiscard} />)}
           {(children.length===0 && loaded) ? <div key="empty" style={{paddingLeft:8+(depth+1)*14,fontSize:11,color:"var(--text-dim)",height:22,display:"flex",alignItems:"center"}}>{tt("files.noFiles")}</div> : null}
         </div>
       ) : null}
@@ -1461,6 +1668,7 @@ export function FolderBrowser(props: any) {
     liveTimerRef.current = setTimeout(()=>{
       liveTimerRef.current = null;
       invalidateEntries(root);
+      invalidateNestedRepos(root);
       void loadRootsRef.current?.();
       setGitBump(k=>k+1);
     }, 600);
@@ -1477,6 +1685,21 @@ export function FolderBrowser(props: any) {
   // git 工具面（git-ops M3）：引擎在位探测 + refs + `aiti-git-ops:changed:*` topic 订阅；
   // statusBump 追加进 /api/git/status 拉取依赖——引擎写操作/checkout 后树徽标即时刷新（零轮询）。
   const folderGit = useFolderGit(root);
+  // ── Nested-repo status merge (plan §3.5): each mounted NestedGit reports its repo's dirty
+  // rows here; merged into the badge maps so files inside nested repos get GitBadges and their
+  // ancestors get the change dot. Compare-guarded: identical reports keep the Map reference
+  // (no render churn); unmount reports null and prunes. ──
+  const [nestedFiles, setNestedFiles] = useState<Map<string, any[]>>(() => new Map());
+  const handleNestedStatus = useCallback((dir: string, files: any[] | null) => {
+    setNestedFiles((prev) => {
+      if (!files) { if (!prev.has(dir)) return prev; const n = new Map(prev); n.delete(dir); return n; }
+      const cur = prev.get(dir);
+      if (cur && cur.length === files.length && cur.every((f, i) => f.filePath === files[i].filePath && f.status === files[i].status)) return prev;
+      const n = new Map(prev); n.set(dir, files); return n;
+    });
+  }, []);
+  const nestedRows = useMemo(() => { const out: any[] = []; for (const fs of nestedFiles.values()) out.push(...fs); return out; }, [nestedFiles]);
+  const allGitFiles = useMemo(() => (nestedRows.length > 0 ? [...gitFiles, ...nestedRows] : gitFiles), [gitFiles, nestedRows]);
   // Git badges: 250ms debounce + single-flight coalescing (no status/diff pile-up while an agent writes).
   const gitFetchingRef = useRef(false);
   const gitFetchAgainRef = useRef(false);
@@ -1500,8 +1723,20 @@ export function FolderBrowser(props: any) {
     const t = setTimeout(()=>{ void runGitStatusFetch(); }, 250);
     return ()=>clearTimeout(t);
   }, [root, refreshKey, props.gitRefreshKey, folderGit.statusBump, gitBump, runGitStatusFetch]);
-  const gitByPath = useMemo(()=>buildGitByPath(gitFiles), [gitFiles]);
-  const changedDirs = useMemo(()=>buildChangedDirs(gitFiles, root), [gitFiles, root]);
+  const gitByPath = useMemo(()=>buildGitByPath(allGitFiles), [allGitFiles]);
+  const changedDirs = useMemo(()=>buildChangedDirs(allGitFiles, root), [allGitFiles, root]);
+  // Nested-repo detection for the root listing (plan §3.5): which top-level entries carry .git.
+  // The scan cache absorbs redundant calls; explicit refreshes go forced (refreshKey > 0).
+  const [rootRepos, setRootRepos] = useState<string[]>(() => peekNestedRepos(root) ?? []);
+  useEffect(() => { setRootRepos(peekNestedRepos(root) ?? []); }, [root]);
+  useEffect(() => {
+    if (roots.length === 0) return;
+    let c = false;
+    fetchNestedRepos(apiUrl, root, refreshKey > 0 ? { force: true } : undefined)
+      .then((rs) => { if (!c) setRootRepos((prev) => (prev.length === rs.length && prev.every((p, i) => p === rs[i])) ? prev : rs); })
+      .catch(() => { /* keep the previous list */ });
+    return () => { c = true; };
+  }, [root, roots, refreshKey]);
   const toggle = useCallback((fp: string,o: boolean)=>{ setExpanded(p=>{ const n=new Set(p); if(o) n.add(fp); else n.delete(fp); return n; }); }, []);
   const doRefresh = useCallback(()=>{ setRefreshKey(k=>k+1); setGitBump(k=>k+1); setRefreshDone(true); setTimeout(()=>setRefreshDone(false), 1500); }, []);
   // 变更文件行「加入 .gitignore」（untracked 新文件）：引擎 ignore-add → 通知位反馈 → 刷新变更
@@ -1918,53 +2153,11 @@ export function FolderBrowser(props: any) {
         ) : null}
         {/* git 工具条（引擎在位才渲染；⎇ 分支面板 / ↑↓ 同步 / ✎ 提交——git-ops M3） */}
         <GitBar root={root} git={folderGit} onChanged={doRefresh} changesOpen={changesOpen} onToggleChanges={() => setChangesOpen((v: boolean) => !v)} />
-        {/* 变更区段（展开且有意变更） */}
+        {/* Changes section (open on purpose; shares ChangesList with nested-repo inline sections) */}
         {(changesOpen && gitFiles.length>0) ? (
-          <div style={{ padding:"0 4px 2px", borderBottom:"1px solid var(--border)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:6, height:24, padding:"0 10px", fontSize:12 }}>
-              <span style={{color:"var(--text-dim)"}}>{t("files.changedCount",{count:gitFiles.length})}</span>
-              <span style={{color:"var(--ok, #4ade80)",fontFamily:"var(--font-mono)"}}>+{gitStats.additions}</span>
-              <span style={{color:"var(--danger, #f87171)",fontFamily:"var(--font-mono)"}}>-{gitStats.deletions}</span>
-            </div>
-            {(() => {
-              // 双列态（git-ops §4）：xy[0]（index）非空且非 ? → 已暂存桶，其余 → 工作区桶；
-              // xy 来源 = 引擎 refs.dirtyFiles（-z 原始路径）；引擎缺席（avail!==true）不分行、不显行钮。
-              const xyMap = new Map((folderGit.refs?.dirtyFiles ?? []).map((f) => [f.path.replace(/\\/g, "/"), f.xy]));
-              const relOf = (filePath: string) => (relFromBase(filePath, root) || filePath).replace(/\\/g, "/");
-              const relRows = gitFiles.map((st: any) => ({ st, rel: relOf(st.filePath) }));
-              const isStaged = (rel: string) => { const xy = xyMap.get(rel) ?? xyMap.get(rel + "/"); return !!xy && xy[0] !== " " && xy[0] !== "?"; };
-              const stagedRows = folderGit.avail === true ? relRows.filter((r) => isStaged(r.rel)) : [];
-              const unstagedRows = relRows.filter((r) => !stagedRows.includes(r));
-
-              const rowEl = (r: { st: any; rel: string }) => (
-                <ChangedFileRow key={r.st.filePath} st={r.st} root={root} cwd={cwd||root} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} t={t} onRefresh={doRefresh} untracked={r.st.status === "untracked"} onGitIgnore={handleGitIgnore} onRequestDiscard={requestDiscard}
-                  staged={folderGit.avail === true ? isStaged(r.rel) : undefined}
-                  gitOp={folderGit.avail === true ? (kind, rel) => { void folderGit.op(kind, rel); } : undefined} />
-              );
-              return (
-                <>
-                  {folderGit.avail === true && stagedRows.length > 0 ? (
-                    <BucketHead label={ct("git.stagedBucket")} count={stagedRows.length} requestDiscard={requestDiscard} batches={[
-                      // 取消暂存 = 无损（文件回到工作区），不提示
-                      { id: "unstage-all", title: ct("git.unstageTitle") + " ×" + stagedRows.length, label: "−", run: async () => { const st = await folderGit.opPaths("unstage", stagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); else setUploadMsg({ ok: ct("git.unstageTitle") + " ✓ ×" + stagedRows.length }); } },
-                      // 放弃全部 = 破坏性，页内确认弹窗（已跟踪恢复到上次提交）
-                      { id: "discard-all", title: ct("git.discardTitle") + " ×" + stagedRows.length, label: "✕", color: "#d6a84b", confirm: ct("git.discardConfirm", { path: stagedRows.length + " 个文件" }), run: async () => { const st = await folderGit.opPaths("discard", stagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); } },
-                    ]} />
-                  ) : null}
-                  {(folderGit.avail === true ? stagedRows : []).map(rowEl)}
-                  {folderGit.avail === true ? (
-                    <BucketHead label={ct("git.unstagedBucket")} count={unstagedRows.length} requestDiscard={requestDiscard} batches={[
-                      // 暂存 = 无损，不提示
-                      { id: "stage-all", title: ct("git.stageTitle") + " ×" + unstagedRows.length, label: "＋", run: async () => { const st = await folderGit.opPaths("stage", unstagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); else setUploadMsg({ ok: ct("git.stageTitle") + " ✓ ×" + unstagedRows.length }); } },
-                      // 放弃全部 = 破坏性，页内确认弹窗（已跟踪恢复到上次提交；未跟踪移入回收站可还原）
-                      { id: "discard-all", title: ct("git.discardTitle") + " ×" + unstagedRows.length, label: "✕", color: "#d6a84b", confirm: "将丢弃 " + unstagedRows.length + " 个文件的更改？（未跟踪文件移入回收站，已跟踪文件恢复到上次提交）", run: async () => { const st = await folderGit.opPaths("discard", unstagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); } },
-                    ]} />
-                  ) : null}
-                  {unstagedRows.map(rowEl)}
-                </>
-              );
-            })()}
-          </div>
+          <ChangesList root={root} cwd={cwd || root} git={folderGit} files={gitFiles} stats={gitStats}
+            onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash}
+            t={t} onRefresh={doRefresh} onGitIgnore={handleGitIgnore} onRequestDiscard={requestDiscard} onFeedback={setUploadMsg} />
         ) : null}
         {/* Thin 2px refresh strip: always reserved (no shift), pulses while loading; the tree never disappears. */}
         <div aria-hidden data-folder-refreshing={refreshing ? "1" : undefined}
@@ -1973,7 +2166,10 @@ export function FolderBrowser(props: any) {
         {/* 树（有搜索查询时隐藏，腾位给结果树；对齐 pi-web (!fileSearchOpen || !hasSearchQuery)） */}
         {!hasSearchQuery ? (loading && roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.loading")}</div>
         : roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.noFiles")}</div>
-        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} onLiveChange={scheduleGit} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />)) : null}
+        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} onLiveChange={scheduleGit} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow}
+          isGitRepo={rootRepos.includes(node.fullPath)}
+          gitScope={rootRepos.includes(node.fullPath) ? node.fullPath : root}
+          onNestedStatus={handleNestedStatus} onGitChanged={scheduleGit} onRequestDiscard={requestDiscard} />)) : null}
       </div>
       {/* 「放弃更改」页内确认弹窗（替代 window.confirm——2026-11-24 用户拍板） */}
       {pendingDiscard ? (

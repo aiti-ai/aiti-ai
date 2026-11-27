@@ -98,6 +98,8 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.diffTitle": "View diff (git-review)",
     "git.changesToggle": "Toggle changed-files section",
     "git.planRetry": "Retry remaining groups",
+    "git.nestedRepoTip": "Nested git repository (click to toggle its changes)",
+    "git.nestedFallbackHint": "git-ops engine unavailable — read-only view",
   },
   "zh-CN": {
     "files.cancel": "取消",
@@ -185,6 +187,8 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.diffTitle": "查看 diff（git-review）",
     "git.changesToggle": "开/合变更文件区",
     "git.planRetry": "重试剩余组",
+    "git.nestedRepoTip": "嵌套 Git 仓库（点击展开/收起其变更）",
+    "git.nestedFallbackHint": "git-ops 引擎未启用——只读视图",
   },
 };
 

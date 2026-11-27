@@ -22,6 +22,7 @@ import { renameSync, rmSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSy
 import { groupHeuristic, loadPlan, savePlan, newPlan, learn } from "./server/git-plan";
 import { folderWatchApi } from "./server/watch";
 import { contentSearchApi } from "./server/search";
+import { scanNestedGitRepos } from "./server/nested-git";
 import { launchFileManager } from "./server/open-in-file-manager";
 import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { spawn } from "node:child_process";
@@ -755,6 +756,18 @@ export default {
           mtimeMs: typeof d.mtimeMs === "number" ? d.mtimeMs : 0,
         }));
         return json({ ok: true, available: true, items });
+      }
+
+      // POST /nested-git { dir } → direct children of dir that carry their own .git (directory or
+      // gitfile). Detection only (metadata scan, no git spawn); the client probes each repo via
+      // the git-ops engine (refs) or falls back to /api/git/status. Read face = same allowedDir
+      // gate as the other read routes (isAllowed), so no path outside the browsable roots leaks.
+      if (route === "nested-git" && req.method === "POST") {
+        const body = await req.json().catch(() => null);
+        const dir = typeof body?.dir === "string" ? body.dir : "";
+        const root = await allowedDir(dir, ctx);
+        if (!root) return json({ ok: false, error: "dir not in readable scope" }, 403);
+        return json(scanNestedGitRepos(root));
       }
 
       if (route === "entry-info" && req.method === "POST") {
