@@ -1,7 +1,7 @@
 "use strict";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { execFileSync, spawnSync } = require("child_process");
+const { execFileSync, spawn, spawnSync } = require("child_process");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const fs = require("fs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -116,11 +116,145 @@ function getGlobalNpmRoot() {
   }
 }
 
-function runNpmInstall(version) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// npm's install failure modes on Windows: the package directory is still open
+// in some process (EBUSY / "resource busy or locked"), or a file in it is held
+// (EPERM). Only these are worth retrying — a 404 or a bad spec is not.
+const LOCK_ERROR_PATTERN = /EBUSY|EPERM|resource busy|being used by another process/i;
+const LOCK_RETRY_DELAYS_MS = [1_500, 3_000, 6_000];
+
+// Run npm once, forwarding its output live. The tail is kept so the retry loop
+// can tell a lock failure from a real install error (npm prints progress and
+// errors on the same streams).
+function spawnNpmOnce(invocation, {
+  spawnChild = spawn,
+  stdout = process.stdout,
+  stderr = process.stderr,
+  tailLimit = 8_000,
+} = {}) {
+  return new Promise((resolve) => {
+    let tail = "";
+    const collect = (target) => (chunk) => {
+      target.write(chunk);
+      tail = (tail + chunk).slice(-tailLimit);
+    };
+    let child;
+    try {
+      child = spawnChild(invocation.command, invocation.args, { stdio: ["inherit", "pipe", "pipe"] });
+    } catch (error) {
+      resolve({ code: 1, output: error.message });
+      return;
+    }
+    for (const [stream, target] of [[child.stdout, stdout], [child.stderr, stderr]]) {
+      if (!stream) continue;
+      stream.setEncoding?.("utf8");
+      stream.on("data", collect(target));
+    }
+    child.on("error", (error) => resolve({ code: 1, output: `${tail}\n${error.message}` }));
+    child.on("close", (code) => resolve({ code: code === null ? 1 : code, output: tail }));
+  });
+}
+
+async function runNpmInstall(version, {
+  platform = process.platform,
+  spawnChild = spawn,
+  wait = sleep,
+  retryDelaysMs = LOCK_RETRY_DELAYS_MS,
+  log = console.log,
+  ...io
+} = {}) {
   const invocation = findNpmInvocation(npmInstallArgs(`@aiti-ai/pi-web@${version}`));
   if (!invocation) return null;
-  const result = spawnSync(invocation.command, invocation.args, { stdio: "inherit" });
-  return result.status ?? 1;
+  // Windows only: a directory that a process just released can stay locked for
+  // a moment (killed server, antivirus scan), so retry a few times before
+  // reporting the failure.
+  const attempts = platform === "win32" ? retryDelaysMs.length + 1 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const { code, output } = await spawnNpmOnce(invocation, { spawnChild, ...io });
+    if (code === 0) return 0;
+    if (attempt === attempts || !LOCK_ERROR_PATTERN.test(output)) return 1;
+    const delay = retryDelaysMs[attempt - 1];
+    log(`npm could not replace the install (files still locked); retrying in ${Math.round(delay / 1_000)} s (${attempt}/${attempts - 1}) ...`);
+    await wait(delay);
+  }
+  return 1;
+}
+
+// ---- Windows: who still holds the install directory ----------------------
+//
+// npm replaces a global package by renaming the old directory aside first;
+// Windows refuses that rename (EBUSY) while any process still has a file open
+// underneath. Run records only cover servers this CLI started, so also ask the
+// OS for every command line that mentions the install directory: a detached
+// agent wrapper, a managed service, or a stray terminal would otherwise show
+// up as a bare EBUSY.
+function listWindowsProcesses({ spawnSync: run = spawnSync } = {}) {
+  const script = [
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
+    "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress",
+  ].join("; ");
+  const result = run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8",
+    timeout: 20_000,
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error || result.status !== 0 || typeof result.stdout !== "string") return [];
+  try {
+    const rows = JSON.parse(result.stdout);
+    return Array.isArray(rows) ? rows : [rows];
+  } catch {
+    return [];
+  }
+}
+
+function findInstallHolders(pkgDir, {
+  platform = process.platform,
+  spawnSync: run = spawnSync,
+  selfPid = process.pid,
+  parentPid = process.ppid,
+} = {}) {
+  if (platform !== "win32") return [];
+  // Compare the way Windows resolves paths: absolute, backslashes, case-insensitive.
+  const needle = pkgDir.replace(/[\\/]+$/, "").replace(/\//g, "\\").toLowerCase();
+  if (!needle) return [];
+  const holders = [];
+  for (const row of listWindowsProcesses({ spawnSync: run })) {
+    const pid = Number(row?.ProcessId);
+    const command = typeof row?.CommandLine === "string" ? row.CommandLine : "";
+    if (!Number.isInteger(pid) || pid === selfPid || pid === parentPid || !command) continue;
+    if (!command.toLowerCase().includes(needle)) continue;
+    holders.push({ pid, name: typeof row.Name === "string" ? row.Name : "?", command });
+  }
+  return holders;
+}
+
+function formatHolder({ pid, name, command }) {
+  return `  pid ${pid}  ${name}  ${command.length > 200 ? `${command.slice(0, 197)}...` : command}`;
+}
+
+function refuseWhenInstallDirInUse(pkgDir, { error, findHolders = findInstallHolders } = {}) {
+  const holders = findHolders(pkgDir);
+  if (holders.length === 0) return false;
+  error(
+    "The install directory is still in use (Windows keeps it locked while these processes run):\n"
+      + holders.map(formatHolder).join("\n")
+      + "\nClose them, then run `pi-web update` again. `pi-web stop` only stops servers this CLI started;"
+      + " detached agent sessions and externally managed services have to be stopped their own way.",
+  );
+  return true;
+}
+
+// The version actually on disk after an install. Returns null when package.json
+// cannot be read (unusual layouts), so callers can skip the comparison.
+function readInstalledVersion(pkgDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+    return typeof pkg?.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---- install channels ----------------------------------------------------
@@ -333,6 +467,7 @@ async function runArchiveUpdate({
   homedir = os.homedir(),
   fetchLatestRelease = fetchLatestArchiveRelease,
   fetchBuffer = defaultFetchBuffer,
+  findHolders = findInstallHolders,
   spawnSync: spawn = spawnSync,
   exists = fs.existsSync,
   rm = fs.rmSync,
@@ -363,6 +498,7 @@ async function runArchiveUpdate({
   }
 
   const assetName = archiveAssetName(release.tag, { platform, arch });
+  if (refuseWhenInstallDirInUse(pkgDir, { error, findHolders })) return 1;
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-update-"));
   try {
     log(`Downloading ${assetName} ...`);
@@ -433,6 +569,7 @@ async function runNpmUpdate({
   fetchLatest = fetchLatestVersion,
   getNpmRoot = getGlobalNpmRoot,
   install = runNpmInstall,
+  findHolders = findInstallHolders,
   realpath = fs.realpathSync,
   log = console.log,
   error = console.error,
@@ -468,7 +605,9 @@ async function runNpmUpdate({
     return 1;
   }
 
-  const code = install(latest);
+  if (refuseWhenInstallDirInUse(pkgDir, { error, findHolders })) return 1;
+
+  const code = await install(latest);
   if (code === null) {
     error(`Could not find npm. Run: ${MANUAL_COMMAND}`);
     return 1;
@@ -476,20 +615,35 @@ async function runNpmUpdate({
   // Windows surfaces libuv errno values as negative exit codes (installing over
   // a directory that is in use fails with EBUSY = -4082). Collapse every
   // failure to 1 so the CLI exit code stays in the portable 0..255 range.
-  return code === 0 ? 0 : 1;
+  if (code !== 0) return 1;
+  // The version check asks registry.npmjs.org while the install follows
+  // ~/.npmrc: a lagging mirror can install an older tarball and still exit 0.
+  const installed = readInstalledVersion(pkgDir);
+  if (installed !== null && installed !== latest) {
+    error(
+      `npm finished, but ${pkgDir} still contains ${installed} (expected ${latest}).\n`
+        + `Check the registry npm uses (npm config get registry), then retry or run: ${MANUAL_COMMAND}`,
+    );
+    return 1;
+  }
+  log(`pi-web updated to ${latest}. Start it with: pi-web start`);
+  return 0;
 }
 
 module.exports = {
   ALLOW_SCRIPTS,
   MANUAL_COMMAND,
   archiveAssetName,
+  findInstallHolders,
   findNpmInvocation,
   fetchLatestArchiveRelease,
   getInstallKind,
   isArchiveInstall,
   isNewerStableVersion,
   npmInstallArgs,
+  readInstalledVersion,
   releasePlatform,
+  runNpmInstall,
   runUpdate,
   sha256File,
 };
