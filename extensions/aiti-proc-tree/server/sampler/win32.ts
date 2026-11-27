@@ -41,7 +41,7 @@ async function scanCim(): Promise<{ raw: Map<number, RawProc>; details: Map<numb
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,CommandLine,CreationDate,KernelModeTime,UserModeTime | ConvertTo-Json -Compress",
+    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,CommandLine,CreationDate,KernelModeTime,UserModeTime,Name | ConvertTo-Json -Compress",
   ], { maxBuffer: 16 * 1024 * 1024, timeout: 12000, windowsHide: true });
   const parsed = JSON.parse(String(stdout || "[]"));
   const list = Array.isArray(parsed) ? parsed : [parsed];
@@ -58,6 +58,17 @@ async function scanCim(): Promise<{ raw: Map<number, RawProc>; details: Map<numb
     const etimeMs = Number.isFinite(created) && created > 0 ? Math.max(0, Date.now() - created) : null;
     // 100ns ticks → cumulative CPU; the sampler diff converts to percent
     const ticks = Number(p && p.KernelModeTime) + Number(p && p.UserModeTime);
+    // Clean display name: the exe basename from the CIM Name field. Script hosts
+    // (node/powershell/cmd/bash/python) get a short argv hint so ten identical
+    // "node" rows are tellable apart.
+    const exeName = String((p && p.Name) || "").replace(/\.exe$/i, "") || "process";
+    const argvHint = /^(node|powershell|pwsh|cmd|bash|wsl|python|java)$/i.test(exeName)
+      ? (() => {
+          const m = /(?:^\s*(?:"[^"]*"|\S+)\s+)(.{0,42})/.exec(cmd);
+          const hint = m ? m[1].trim() : "";
+          return hint ? " · " + (hint.length >= 42 ? hint.slice(0, 40) + "…" : hint) : "";
+        })()
+      : "";
     raw.set(pid, {
       pid,
       ppid: Number(p && p.ParentProcessId) || 0,
@@ -67,7 +78,7 @@ async function scanCim(): Promise<{ raw: Map<number, RawProc>; details: Map<numb
       starttime: Number.isFinite(created) ? Math.round(created / 10) : 0, // keep in 100ns ticks for tick-key identity
     });
     details.set(pid, {
-      name: cmd.split(/\s+/)[0] || "",
+      name: exeName + argvHint,
       user: process.env.USERNAME || "",
       uid: null,
       state: "",
