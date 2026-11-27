@@ -1338,6 +1338,13 @@ export class AcpHandle {
     this.markDead("disposed");
   }
 
+  /** Child-process pid (native spawn or wrapper); null while detached/unknown. */
+  getPid(): number | null {
+    const child = this.child as unknown as { pid?: unknown } | null;
+    const pid = child && Number(child.pid);
+    return Number.isFinite(pid) && (pid as number) > 0 ? (pid as number) : null;
+  }
+
   alive(): boolean {
     return this.aliveFlag && (!this.child || this.child.exitCode === null);
   }
@@ -1519,6 +1526,21 @@ let registered: string[] = [];
 let currentAgents: Array<{ name: string; bin: string; args: string[]; agentKey?: string; isBuiltin: boolean; registered?: boolean }> = [];
 let builtinNames = new Set<string>();
 
+/**
+ * Live ACP handles keyed by native id, exposed read-only through
+ * `ctx.services["aiti-acp-agent.procs"]` (aiti-proc-tree). Entries are dropped
+ * lazily when the handle is dead and has no child pid.
+ */
+const acpProcessHandles = new Map<string, AcpHandle>();
+
+function registerAcpHandle(handle: AcpHandle): AcpHandle {
+  try {
+    const key = String(handle.nativeKey || handle.id || "");
+    if (key) acpProcessHandles.set(key, handle);
+  } catch { /* projection must never break session creation */ }
+  return handle;
+}
+
 // ── Backend scan (shared by startup + rescanBackends) ─────────────────────
 // Probe + register pass over builtin + user ACP agents — unconditional
 // registration: a missing CLI still registers the entry (available:false +
@@ -1606,13 +1628,13 @@ function scanAcpBackends(
           await handle.start(cwd, { child: options.attached.child, sessionId: options.attached.sessionId });
           const saved = await readExtModelState(`acp-${agent.agentKey ?? agent.name}`, `${agent.agentKey ?? agent.name}:${options.attached.sessionId}`);
           if (saved?.selected?.id) handle.adoptModel(saved.selected.id);
-          return handle as unknown as AcpHandle;
+          return registerAcpHandle(handle as unknown as AcpHandle);
         }
         await handle.start(cwd);
         if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
         else await handle.newSession(cwd);
         await applyAcpSeedModel(handle, options.model, { sessionId: options.sessionId });
-        return handle as unknown as AcpHandle;
+        return registerAcpHandle(handle as unknown as AcpHandle);
       },
     });
     if (resolved) {
@@ -2006,6 +2028,31 @@ export default {
       };
     }) {
       registered = [];
+      // Read-only projection for aiti-proc-tree: live ACP handles with their child pid.
+      try {
+        ctx.services?.provide?.("aiti-acp-agent.procs", {
+          list: () => {
+            const rows: any[] = [];
+            for (const [key, handle] of Array.from(acpProcessHandles.entries())) {
+              try {
+                if (!handle.alive() && handle.getPid() == null) { acpProcessHandles.delete(key); continue; }
+                const pid = handle.getPid();
+                rows.push({
+                  owner: "aiti-acp-agent",
+                  kind: "agent",
+                  id: key,
+                  label: String(handle.agentName || handle.agentKey || "acp") + " · acp",
+                  pid: pid || undefined,
+                  state: handle.alive() ? "running" : "stopped",
+                  cwd: handle.cwd || undefined,
+                  transport: pid ? "local" : "detached",
+                });
+              } catch { /* one bad handle must not break the list */ }
+            }
+            return rows;
+          },
+        });
+      } catch { /* old host without services */ }
       hostFeatures = (ctx as { features?: { get(extId: string, fid: string): unknown } }).features ?? null;
       captureSpawnEnvFeatures((ctx as any)?.features ?? null); // D1：spawn.env feature 捕获（否则 spawnEnvList 恒空）
       // 队列崩溃恢复 sidecar 根（<stateDir>/queues/<sessionId>.json；docs/aiti-remote-queue-and-sidecar-plan.md §3）
@@ -2100,13 +2147,13 @@ export default {
                   await handle.start(cwd, { child: opts.attached.child, sessionId: opts.attached.sessionId });
                   const saved = await readExtModelState(`acp-${body.agentKey ?? body.name}`, `${body.agentKey ?? body.name}:${opts.attached.sessionId}`);
                   if (saved?.selected?.id) handle.adoptModel(saved.selected.id);
-                  return handle as unknown as AcpHandle;
+                  return registerAcpHandle(handle as unknown as AcpHandle);
                 }
                 await handle.start(cwd);
                 if (opts.sessionId) await handle.loadSession(opts.sessionId, cwd);
                 else await handle.newSession(cwd);
                 await applyAcpSeedModel(handle, opts.model, { sessionId: opts.sessionId });
-                return handle as unknown as AcpHandle;
+                return registerAcpHandle(handle as unknown as AcpHandle);
               },
             });
             // 更新 currentAgents 供 GET 查询

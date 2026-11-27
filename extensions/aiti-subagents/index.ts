@@ -844,6 +844,34 @@ export default {
   server: {
     startup(ctx) {
       console.log(`[aiti-subagents] 就绪（fork 引擎：subagent 工具由 pi packages 的 @aiti-ai/pi-subagents 提供）`);
+      // Cross-extension projection (aiti-proc-tree): attached foreground runs have
+      // no pid of their own; expose them as virtual rows so the process tree can
+      // hang them under the hosting instance. Detached runs are covered by the
+      // async status.json registry (pid included) read by aiti-proc-tree directly.
+      try {
+        ctx.services?.provide?.("aiti-subagents.procs", {
+          list: () => {
+            try {
+              const { runs } = uf().listUpstreamRuns();
+              return (runs || [])
+                .filter((r: any) => (r.status === "running" || r.status === "pending") && r.background === false)
+                .map((r: any) => ({
+                  owner: "aiti-subagents",
+                  kind: "subagent",
+                  id: String(r.id || ""),
+                  label: String(r.agent || "subagent") + " · attached",
+                  pid: undefined,
+                  virtual: true,
+                  attached: true,
+                  state: r.status,
+                  cwd: r.cwd || undefined,
+                  sessionFile: r.sessionFile || undefined,
+                  startedAt: r.createdAt || r.startedAt,
+                }));
+            } catch { return []; }
+          },
+        });
+      } catch { /* old host without services */ }
     },
 
     shutdown() {

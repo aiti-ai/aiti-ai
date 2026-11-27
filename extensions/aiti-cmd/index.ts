@@ -1901,6 +1901,28 @@ export default {
         } catch {}
       };
       runner = createRunner(audit, store, dirCache, publish);
+      // Cross-extension projection (aiti-proc-tree): read-only session rows with
+      // pid/transport so the process tree can link a terminal node to its session.
+      try {
+        ctx.services?.provide?.("aiti-cmd.procs", {
+          list: () => {
+            try {
+              const sessions = typeof (runner as any)?.list === "function" ? (runner as any).list() : [];
+              return sessions.map((s: any) => ({
+                owner: "aiti-cmd",
+                kind: "terminal",
+                id: String(s.id || ""),
+                label: s.name || (s.source === "shell" ? "shell" : String(s.cmd || "command")),
+                pid: s.pid || undefined,
+                cwd: s.cwd || undefined,
+                state: s.status || undefined,
+                transport: s.mode || "local",
+                source: s.source || undefined,
+              }));
+            } catch { return []; }
+          },
+        });
+      } catch { /* old host without services */ }
       // Sessions hosted by a detached pty-host survive a reload / restart — reattach them and
       // let the host replay its journal so the terminal snapshot comes back.
       if (typeof (runner as { reattach?: () => Promise<number> }).reattach === "function") {

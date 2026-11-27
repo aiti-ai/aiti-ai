@@ -47,6 +47,26 @@ export default {
       // 跨扩展服务出口（DI 方案 P1）：ctx.services 通道（aiti-devtools 读 enroll 等；
       // globalThis.__piServiceTunnels 双轨保留——宿主 middleware 独立 bundle 仍走它）
       ctx.services?.provide?.("service-tunnels.api", st);
+      // Cross-extension projection (aiti-proc-tree): tunnel sessions with pid/url.
+      // Helper processes (nginx/redis/authelia/guardian) are discovered by the
+      // process tree from the registered-pids files + env markers directly.
+      try {
+        ctx.services?.provide?.("service-tunnels.procs", {
+          list: () => {
+            try {
+              return st.tunnels.list().map((t: any) => ({
+                owner: "service-tunnels",
+                kind: "tunnel",
+                id: String(t.name || t.type || "tunnel"),
+                label: String(t.name || t.type || "tunnel"),
+                pid: t.pid || undefined,
+                url: t.url || undefined,
+                state: t.running ? "running" : "stopped",
+              }));
+            } catch { return []; }
+          },
+        });
+      } catch { /* old host without services */ }
       // 注入白名单持久化（expose 周期一致）：文件随 configDir，startup 恢复（reload 不丢）
       try {
         initExposeInjectFile(join(ctx?.configDir ?? "", "expose-inject.json"));

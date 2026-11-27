@@ -626,6 +626,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       status: s.status, pid: s.pid, startTs: s.startTs,
       exitCode: s.exitCode, signal: s.signal, durationMs: s.status === "exit" ? s.lastSeen - s.startTs : Date.now() - s.startTs,
       ringBytes: s.ringBytes, truncated: s.truncated, sandbox: s.sandbox,
+      mode: s.mode || "local",
       queuePosition: s.status === "queued" ? queuePosition(s.id) : undefined,
       queueLength: queue.length,
       slots: { kind: isShellSource(s.source) ? "shell" : "cmd", running: runningCount(isShellSource(s.source)), max: poolCap(isShellSource(s.source)) },
