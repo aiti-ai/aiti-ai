@@ -157,7 +157,11 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
   var MD_DARK = ${dark ? "true" : "false"};
   var __i18n = ${i18nJson};
   var __mdFence = [];
-  (function(){
+  // Fence pass: called for the initial render and for every incremental update (matches only
+  // unwrapped pre > code, so it is idempotent). It used to run once at script evaluation, which
+  // meant blocks inserted by an update were never rendered — hence the reusable entry point.
+  document.__aitiFence = { pass: function(){
+    var started = [];
     var ED = null;
     try { ED = window.parent.__aitiEditor; } catch (e) { return; }
     if (!ED || typeof ED.resolveMdRenderers !== "function") return;
@@ -191,10 +195,13 @@ export function fenceShellScript(dark: boolean, langs: string[]): string {
       body.appendChild(view); body.appendChild(err); body.appendChild(srcPre);
       w.appendChild(head); w.appendChild(body);
       pre.replaceWith(w);
-      __mdFence.push({ w: w, view: view, err: err, render: r.render, base: r.base || "", code: src, lang: lm[1] });
+      var it = { w: w, view: view, err: err, render: r.render, base: r.base || "", code: src, lang: lm[1] };
+      __mdFence.push(it);
+      started.push(it);
     }
-    for (var k = 0; k < __mdFence.length; k++) __mdFenceRun(__mdFence[k]);
-  })();
+    for (var k = 0; k < started.length; k++) __mdFenceRun(started[k]);
+  } };
+  document.__aitiFence.pass();
   function __mdFenceRun(it){
     var settled = false;
     function fail(msg){
@@ -259,9 +266,10 @@ export function markdownPreviewHtml(
     const m = lines[i].match(/^(#{1,6})\s+(.+)/);
     if (m) tocItems.push({ level: m[1].length, text: m[2].trim() });
   }
+  const tocTitle = t("内容目录");
   let tocHtml = "";
   if (tocItems.length > 0) {
-    tocHtml = "<div class=\"toc\"><div class=\"toc-title\">" + t("内容目录") + "</div>";
+    tocHtml = "<div class=\"toc\"><div class=\"toc-title\">" + tocTitle + "</div>";
     for (const item of tocItems) {
       const anchor = mdSlug(item.text);
       tocHtml += "<div class=\"toc-item\" style=\"padding-left:" + ((item.level - 1) * 16) + "px\"><a href=\"#" + anchor + "\">" + item.text + "</a></div>";
@@ -306,16 +314,198 @@ export function markdownPreviewHtml(
   [data-msg-smart-card]{pointer-events:none}
   [data-msg-smart-card] button{pointer-events:auto}
 ${fenceRs.length ? fenceShellCss(dark) + fenceCss : ""}
-  </style></head><body class="markdown-body">${tocHtml}<div id="content"></div>
+  </style></head><body class="markdown-body"><div id="tocHost">${tocHtml}</div><div id="content"></div>
 <script src="${markedSrc}"></script>
 <script>
-  document.getElementById("content").innerHTML=marked.parse(decodeURIComponent("${escaped}"));
+  // ── Same-document incremental update runtime (plan §3.2) ──
+  // The initial render and every disk/edit update share one pipeline:
+  // renderInto → fence pass → annotate → TOC → scroll anchoring.
+  // Block diffing compares the pristine render signatures (marked.parse top-level children) and
+  // never the live DOM: fence renderers rewrite it (code blocks become wrappers, diagrams inject SVG), so a
+  // live comparison would wipe diagrams back to code blocks.
+  var __aitiContent = document.getElementById("content");
+  var __aitiTocHost = document.getElementById("tocHost");
+  var __aitiTocTitle = ${JSON.stringify(tocTitle)};
+  var __aitiState = { raw: null, chg: null, blocks: [] };
+  var chgRanges = ${changesJson};
+  var __mdChg = [];
   // 统一标题 id（对齐 TOC 锚点算法），供滚动同步/锚点跳转
   // 模板字符串内须双重转义：否则生成脚本的 \\w 会变成字面量 w，英文/数字锚点全部丢失。
   var slug = function(t){ return String(t).toLowerCase().replace(/[^\\w\\u4e00-\\u9fff]+/g,"-").replace(/^-|-$/g,"") || "section"; };
-  document.querySelectorAll("#content h1,#content h2,#content h3,#content h4,#content h5,#content h6").forEach(function(h){
-    if (!h.id) h.id = slug(h.textContent.trim());
-  });
+
+  // Block signature: outerHTML in production (exact); tag+attrs+text fallback for the vm/mini-dom stub
+  function __aitiSig(el){
+    try { if (typeof el.outerHTML === "string") return el.outerHTML; } catch (e) {}
+    var out = el.tagName || "";
+    if (el.attrs) { for (var k in el.attrs) out += " " + k + "=" + el.attrs[k]; }
+    return out + "|" + (el.textContent || "") + "|" + (el.innerHTML || "");
+  }
+  function __aitiParseBlocks(raw){
+    var tmp = document.createElement("div");
+    tmp.innerHTML = marked.parse(raw);
+    var nodes = Array.prototype.slice.call(tmp.children);
+    var sigs = [];
+    for (var i = 0; i < nodes.length; i++) sigs.push(__aitiSig(nodes[i]));
+    return { nodes: nodes, sigs: sigs };
+  }
+  function __aitiSameChg(a, b){
+    try { return JSON.stringify(a || []) === JSON.stringify(b || []); } catch (e) { return false; }
+  }
+  function __aitiScrollEl(){ return document.scrollingElement || document.documentElement; }
+  function __aitiScrollTop(){ var el = __aitiScrollEl(); return el && typeof el.scrollTop === "number" ? el.scrollTop : 0; }
+  function __aitiMaxScroll(){
+    var el = __aitiScrollEl();
+    var vh = (typeof window !== "undefined" && window.innerHeight) || 0;
+    var sh = el && typeof el.scrollHeight === "number" ? el.scrollHeight : 0;
+    return Math.max(0, sh - vh);
+  }
+  // Reading-position snapshot: scroll offset + ratio fallback + first visible block's source line and viewport offset
+  function __aitiSnapshot(){
+    var st = __aitiScrollTop();
+    var max = __aitiMaxScroll();
+    var line = 0, offset = 0;
+    var kids = __aitiContent ? __aitiContent.children : [];
+    for (var i = 0; i < kids.length; i++) {
+      if (!kids[i].getBoundingClientRect) break;
+      var r = kids[i].getBoundingClientRect();
+      if (r && r.bottom > 0) { line = +(kids[i].getAttribute("data-src-start") || 0); offset = r.top; break; }
+    }
+    return { scrollTop: st, ratio: max > 0 ? st / max : 0, line: line, offset: offset };
+  }
+  // Restore the reading position: prefer the same source line (survives replaced/reflowed blocks), ratio fallback
+  function __aitiRestore(snap){
+    if (!snap) return;
+    var y = null;
+    if (snap.line) {
+      var kids = __aitiContent ? __aitiContent.children : [];
+      var best = null;
+      for (var i = 0; i < kids.length; i++) {
+        var s = +(kids[i].getAttribute("data-src-start") || 0);
+        var e = +(kids[i].getAttribute("data-src-end") || s);
+        if (s && s <= snap.line && snap.line <= e) { best = kids[i]; break; }
+        if (!best && s && s > snap.line) best = kids[i]; // nearest following block (when the anchored one was removed)
+      }
+      if (best && best.getBoundingClientRect) { y = __aitiScrollTop() + best.getBoundingClientRect().top - (snap.offset || 0); }
+    }
+    if (y == null) y = snap.ratio ? snap.ratio * __aitiMaxScroll() : (snap.scrollTop || 0);
+    try {
+      window.__aitiSuppressScroll = true;
+      window.scrollTo(0, Math.max(0, y));
+      setTimeout(function(){ window.__aitiSuppressScroll = false; }, 120);
+    } catch (e) {}
+  }
+  function __aitiTocHtml(raw){
+    var lines = String(raw || "").split("\\n"), items = [];
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^(#{1,6})\\s+(.+)/);
+      if (m) items.push({ level: m[1].length, text: m[2].trim() });
+    }
+    if (!items.length) return "";
+    var out = '<div class="toc"><div class="toc-title">' + __aitiTocTitle + "</div>";
+    for (var j = 0; j < items.length; j++) {
+      out += '<div class="toc-item" style="padding-left:' + ((items[j].level - 1) * 16) + 'px"><a href="#' + slug(items[j].text) + '">' + items[j].text + "</a></div>";
+    }
+    return out + "</div><hr>";
+  }
+  function __aitiSyncToc(raw, cacheOnly){
+    if (!__aitiTocHost) return;
+    var html = __aitiTocHtml(raw);
+    if (__aitiTocHost.__tocHtml === html) return;
+    __aitiTocHost.__tocHtml = html;
+    if (!cacheOnly) __aitiTocHost.innerHTML = html;
+  }
+  // Annotate: data-src-*/data-aiti-blk/data-code-start, heading ids, git change blocks. Recomputed after every apply.
+  function __aitiAnnotate(raw, chg){
+    var kids = Array.prototype.slice.call(__aitiContent.children);
+    for (var hi = 0; hi < kids.length; hi++) {
+      var tag = kids[hi].tagName;
+      if (tag && /^H[1-6]$/.test(tag)) {
+        var id = slug((kids[hi].textContent || "").trim());
+        if (kids[hi].id !== id) kids[hi].id = id;
+      }
+      if (kids[hi].classList) kids[hi].classList.remove("md-chg");
+    }
+    __mdChg = [];
+    var toks;
+    try { toks = marked.lexer(raw); } catch (e) { return false; }
+    var renderable = 0;
+    for (var ti = 0; ti < toks.length; ti++) if (toks[ti].type !== "space") renderable++;
+    // Top-level tokens and rendered top-level elements are 1:1; if not (e.g. an html block with
+    // multiple roots), skip annotation (safe fallback).
+    if (renderable !== kids.length) return false;
+    var lineNum = 1, ki = 0;
+    for (var ti2 = 0; ti2 < toks.length; ti2++) {
+      var tk = toks[ti2];
+      var rawStr = tk.raw || "";
+      var nlRaw = (rawStr.match(/\\n/g) || []).length;
+      if (tk.type === "space") { lineNum += nlRaw; continue; }
+      var el = kids[ki++];
+      var endsNl = rawStr.slice(-1) === "\\n";
+      var s = lineNum, e2 = lineNum + nlRaw - (endsNl ? 1 : 0);
+      el.setAttribute("data-src-start", s);
+      el.setAttribute("data-src-end", e2);
+      // Smart-click anchor: data-aiti-blk lets the parent look the element up; code blocks also
+      // record the source line of their first code line (fence row is not code → +1; indented blocks no offset).
+      el.setAttribute("data-aiti-blk", ki - 1);
+      if (el.tagName === "PRE" && tk.type === "code") {
+        var fenced = tk.codeBlockStyle ? tk.codeBlockStyle === "fenced" : /^[ \\t]{0,3}[\\u0060~]{3}/.test(rawStr);
+        el.setAttribute("data-code-start", s + (fenced ? 1 : 0));
+      }
+      for (var ci = 0; ci < chg.length; ci++) {
+        if (chg[ci].start <= e2 && chg[ci].end >= s) { el.classList.add("md-chg"); __mdChg.push(el); break; }
+      }
+      lineNum += nlRaw;
+    }
+    return true;
+  }
+  // Replace only the changed range: blocks outside the common prefix/suffix are rebuilt
+  // (streaming append → pure append, existing block nodes keep their identity).
+  function __aitiApply(raw, chg){
+    raw = String(raw == null ? "" : raw);
+    chg = Array.isArray(chg) ? chg : [];
+    if (__aitiState.raw === raw && __aitiSameChg(__aitiState.chg, chg)) return { ok: true, changed: false, blocks: __aitiState.blocks.length };
+    var next = __aitiParseBlocks(raw);
+    var old = __aitiState.blocks || [];
+    var initial = __aitiState.raw === null;
+    var snap = initial ? null : __aitiSnapshot();
+    var lim = Math.min(old.length, next.sigs.length);
+    var p = 0;
+    while (p < lim && old[p] === next.sigs[p]) p++;
+    var s = 0;
+    while (s < lim - p && old[old.length - 1 - s] === next.sigs[next.sigs.length - 1 - s]) s++;
+    var oldEnd = old.length - s, newEnd = next.sigs.length - s;
+    if (initial) {
+      __aitiContent.innerHTML = "";
+      for (var i0 = 0; i0 < next.nodes.length; i0++) __aitiContent.appendChild(next.nodes[i0]);
+    } else {
+      var kids = Array.prototype.slice.call(__aitiContent.children);
+      for (var r = p; r < oldEnd; r++) { if (kids[r]) kids[r].remove(); }
+      var anchor = kids[oldEnd] || null;
+      for (var n = p; n < newEnd; n++) __aitiContent.insertBefore(next.nodes[n], anchor);
+    }
+    __aitiState.raw = raw; __aitiState.chg = chg; __aitiState.blocks = next.sigs;
+    chgRanges = chg;
+    // Fence rendering only touches newly inserted pre > code (already-wrapped ones do not match; idempotent)
+    try { if (document.__aitiFence && typeof document.__aitiFence.pass === "function") document.__aitiFence.pass(); } catch (e) {}
+    __aitiAnnotate(raw, chg);
+    __aitiSyncToc(raw, initial);
+    if (!initial) __aitiRestore(snap);
+    // Source-line span of the replaced blocks: lets the parent decide whether an open card's
+    // anchor was touched (without relying on DOM element identity across the patch).
+    var srcFrom = null, srcTo = null;
+    if (oldEnd > p || newEnd > p) {
+      var live = __aitiContent.children;
+      var to = Math.min(Math.max(p, newEnd - 1), live.length - 1);
+      for (var qi = Math.min(p, live.length - 1); qi <= to; qi++) {
+        var s0 = +(live[qi].getAttribute("data-src-start") || 0);
+        var e0 = +(live[qi].getAttribute("data-src-end") || s0);
+        if (!s0) continue;
+        if (srcFrom == null || s0 < srcFrom) srcFrom = s0;
+        if (srcTo == null || e0 > srcTo) srcTo = e0;
+      }
+    }
+    return { ok: true, changed: true, prefix: p, removed: oldEnd - p, added: newEnd - p, blocks: next.sigs.length, srcFrom: srcFrom, srcTo: srcTo };
+  }
 ${fenceRs.length ? fenceShellScript(dark, fenceLangs) : ""}
   // 智能点击上报（aiti-msg-smart 弹层）：点击语义块 / 代码行 → postMessage 给父窗。
   // 消息只带语义（文本 + 源码行区间 + 行号/字符偏移），DOM 元素由父窗按 data-aiti-blk 回查。
@@ -425,42 +615,6 @@ ${fenceRs.length ? fenceShellScript(dark, fenceLangs) : ""}
   // ── 来源行标注：marked 顶层 token 的 raw 回算源码行区间（始终计算，供 @ 引用/定位恢复行号）──
   // ── git 变更块高亮：与变更区间相交的块附加 .md-chg（有变更才标）──
   // 父窗发 {type:"aiti-editor-chg-goto", idx} 循环滚动到第 idx 个变更块并闪烁
-  var chgRanges = ${changesJson};
-  var __mdChg = [];
-  try {
-    var mdSrc = decodeURIComponent("${escaped}");
-    var toks = marked.lexer(mdSrc);
-    var kids = document.getElementById("content").children;
-    var renderable = 0;
-    for (var ti = 0; ti < toks.length; ti++) if (toks[ti].type !== "space") renderable++;
-    // 顶层 token 与渲染顶层元素应一一对应；不一一对应（如 html 块多子节点）则放弃标注（安全兜底）
-    // 行号：逐 token 携带自身换行数推进 lineNum（token.raw 含尾换行，直接 split 会每块多计一行漂移）
-    if (renderable === kids.length) {
-      var lineNum = 1, ki = 0;
-      for (var ti2 = 0; ti2 < toks.length; ti2++) {
-        var tk = toks[ti2];
-        var rawStr = tk.raw || "";
-        var nlRaw = (rawStr.match(/\\n/g) || []).length;
-        if (tk.type === "space") { lineNum += nlRaw; continue; }
-        var el = kids[ki++];
-        var endsNl = rawStr.slice(-1) === "\\n";
-        var s = lineNum, e2 = lineNum + nlRaw - (endsNl ? 1 : 0);
-        el.setAttribute("data-src-start", s);
-        el.setAttribute("data-src-end", e2);
-        // 智能点击锚点：data-aiti-blk 供父窗回查元素；代码块额外记录「首行代码对应的源码行」
-        // （围栏行不属代码内容 → +1；缩进代码块不加）
-        el.setAttribute("data-aiti-blk", ki - 1);
-        if (el.tagName === "PRE" && tk.type === "code") {
-          var fenced = tk.codeBlockStyle ? tk.codeBlockStyle === "fenced" : /^[ \\t]{0,3}[\\u0060~]{3}/.test(rawStr);
-          el.setAttribute("data-code-start", s + (fenced ? 1 : 0));
-        }
-        for (var ci = 0; ci < chgRanges.length; ci++) {
-          if (chgRanges[ci].start <= e2 && chgRanges[ci].end >= s) { el.classList.add("md-chg"); __mdChg.push(el); break; }
-        }
-        lineNum += nlRaw;
-      }
-    }
-  } catch (err) { /* 标注失败不影响预览 */ }
   window.addEventListener("message", function(ev){
     var m = ev.data;
     if (!m || m.type !== "aiti-editor-chg-goto" || !__mdChg.length) return;
@@ -470,6 +624,18 @@ ${fenceRs.length ? fenceShellScript(dark, fenceLangs) : ""}
     void el.offsetWidth;
     el.classList.add("md-chg-flash");
   });
+  // Parent-facing API: apply = same-document incremental update; snapshot/restore = reading position
+  // for the manual full reload and for rebuild paths.
+  document.__aitiMd = {
+    version: 1,
+    apply: __aitiApply,
+    snapshot: __aitiSnapshot,
+    restore: __aitiRestore,
+    scrollToLine: function(line){ __aitiRestore({ line: line, offset: 0, scrollTop: 0, ratio: 0 }); },
+    blockCount: function(){ return __aitiState.blocks.length; },
+    rawLength: function(){ return (__aitiState.raw || "").length; }
+  };
+  __aitiApply(decodeURIComponent("${escaped}"), ${changesJson});
 </script>
 </body></html>`;
 }

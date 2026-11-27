@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust } = await import("./disk-refresh.ts");
+const { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust, diffRange, previewBudget } = await import("./disk-refresh.ts");
 const editorAppSrc = await readFile(new URL("./editor-app.tsx", import.meta.url), "utf8");
 
 // ── sameDiskSig（保存回环抑制）──
@@ -104,4 +104,43 @@ test("recoverMedia only resets its retry budget outside the ticket re-issue path
   assert.ok(!body.includes("mediaErrRef.current = 0"));
   assert.ok(editorAppSrc.includes("onSrcLoaded={() => { mediaErrRef.current = 0; }}"));
   assert.ok(editorAppSrc.includes("if (fileType !== \"text\") { mediaErrRef.current = 0; setMediaBust"));
+});
+
+// ── diffRange (minimal edit range for silent buffer updates) ──
+test("diffRange: identical text → null (no undo entry, no re-render)", () => {
+  assert.equal(diffRange("same", "same"), null);
+});
+
+test("diffRange: append / prepend / middle keep the untouched text out of the edit", () => {
+  assert.deepEqual(diffRange("abc", "abcdef"), { start: 3, end: 3, text: "def" });
+  assert.deepEqual(diffRange("abcdef", "abc"), { start: 3, end: 6, text: "" });
+  assert.deepEqual(diffRange("abcXYZdef", "abc123def"), { start: 3, end: 6, text: "123" });
+  assert.deepEqual(diffRange("", "hello"), { start: 0, end: 0, text: "hello" });
+  assert.deepEqual(diffRange("hello", ""), { start: 0, end: 5, text: "" });
+});
+
+test("diffRange: applying the edit reproduces the new text", () => {
+  const cases = [["a\nb\nc", "a\nB\nc"], ["x", "x\ny"], ["k1\nk2\nk3", "k0\nk1\nk3"]];
+  for (const [oldText, newText] of cases) {
+    const e = diffRange(oldText, newText);
+    assert.equal(oldText.slice(0, e.start) + e.text + oldText.slice(e.end), newText);
+  }
+});
+
+test("diffRange: surrogate pairs are never split (emoji edits stay valid)", () => {
+  const e = diffRange("a😀b", "a😃b");
+  assert.equal(e.start, 1);
+  assert.equal(e.end, 3);
+  assert.equal(e.text, "😃");
+  // No half surrogate may end up at either boundary of the replacement.
+  const before = "a😀b".charCodeAt(e.start - 1);
+  assert.ok(!(before >= 0xd800 && before <= 0xdbff) || e.start === 0, "start must not split a pair");
+});
+
+// ── previewBudget (large documents widen the coalescing windows) ──
+test("previewBudget: large documents stretch the windows, small ones stay tight", () => {
+  const small = previewBudget(1024);
+  assert.deepEqual(small, { quietMs: 250, maxMs: 1200 });
+  const large = previewBudget(1024 * 1024);
+  assert.ok(large.quietMs > small.quietMs && large.maxMs > small.maxMs);
 });

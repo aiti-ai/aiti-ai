@@ -99,6 +99,13 @@ export function makeEl(tag, doc) {
   el.addEventListener = (t, fn) => { (el.handlers[t] ||= []).push(fn); };
   el.fire = (t, ev) => (el.handlers[t] || []).forEach((fn) => fn(ev));
   el.click = () => { el.clicked = (el.clicked || 0) + 1; el.fire("click", { target: el }); };
+  // Layout stub: slide/scroll logic only needs relative tops. Tests set offsetTop/offsetHeight.
+  el.getBoundingClientRect = () => {
+    const top = typeof el.offsetTop === "number" ? el.offsetTop : 0;
+    const height = typeof el.offsetHeight === "number" ? el.offsetHeight : 0;
+    return { top, bottom: top + height, height, left: 0, right: 0, width: 0 };
+  };
+  el.scrollIntoView = () => { el.scrolledIntoView = (el.scrolledIntoView || 0) + 1; };
   el.showModal = () => { el.open = true; };
   el.close = () => { el.open = false; el.fire("close", {}); };
   Object.defineProperty(el, "innerHTML", {
@@ -109,8 +116,14 @@ export function makeEl(tag, doc) {
       const stack = [el];
       const tagRe = /<(\/?)([a-zA-Z][\w-]*)([^>]*)>/g;
       let m;
+      let lastIndex = 0;
       while ((m = tagRe.exec(el._html)) !== null) {
         const top = stack[stack.length - 1];
+        // Direct text segment → parent's textContent (stub-level fidelity: inline nesting keeps
+        // only its text, which is enough for block-signature / annotation tests).
+        const text = el._html.slice(lastIndex, m.index);
+        if (text) top.textContent = (top.textContent || "") + text;
+        lastIndex = tagRe.lastIndex;
         if (m[1]) { if (stack.length > 1) stack.pop(); continue; }
         const child = makeEl(m[2], doc);
         const attrRe = /([\w-]+)\s*=\s*"([^"]*)"/g;
@@ -122,6 +135,11 @@ export function makeEl(tag, doc) {
         }
         top.appendChild(child);
         if (!/\/\s*$/.test(m[3]) && !VOID_TAGS.has(m[2].toLowerCase())) stack.push(child);
+      }
+      const tail = el._html.slice(lastIndex);
+      if (tail) {
+        const top = stack[stack.length - 1];
+        top.textContent = (top.textContent || "") + tail;
       }
     },
   });
@@ -145,6 +163,16 @@ export function makeDoc(win) {
   doc.head = makeEl("head", doc);
   doc.body = makeEl("body", doc);
   doc.documentElement = makeEl("html", doc);
+  doc.scrollingElement = doc.documentElement;
   doc.querySelector = (sel) => [doc.documentElement, doc.head, doc.body].map((n) => n.querySelector(sel)).filter(Boolean)[0] || null;
+  doc.getElementById = (id) => {
+    let found = null;
+    [doc.documentElement, doc.head, doc.body].forEach((root) => {
+      if (found) return;
+      if (root.id === id) { found = root; return; }
+      descendants(root, (c) => { if (!found && c.id === id) found = c; });
+    });
+    return found;
+  };
   return doc;
 }

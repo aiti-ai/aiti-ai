@@ -75,3 +75,55 @@ export function sigOfFrame(frame: { mtimeMs?: unknown; size?: unknown } | null |
   if (typeof size !== "number" || !isFinite(size) || size < 0) return null;
   return { mtimeMs, size };
 }
+
+// ── Coalescing budgets (plan §3.5) ────────────────────────────────────────────────
+// Auto-reload used to be a dropping throttle: a suppressed final frame was recorded as
+// "known" and the view stayed stale until the next write. Callers now feed every frame into
+// a coalescer (./coalesce.ts): quiet-period debounce + max-wait ceiling + trailing guarantee.
+export const DISK_RELOAD_QUIET_MS = 350;
+export const DISK_RELOAD_MAX_MS = 1500;
+export const PREVIEW_APPLY_QUIET_MS = 250;
+export const PREVIEW_APPLY_MAX_MS = 1200;
+/** Above this size a document render is expensive enough to deserve a longer quiet window. */
+export const LARGE_DOC_BYTES = 256 * 1024;
+
+/**
+ * Preview coalescing budget for a document of `bytes` characters.
+ * Large documents stretch both windows (rendering scales with size); the max ceiling keeps
+ * a long agent stream visible at least every ~1.8s.
+ */
+export function previewBudget(bytes: number): { quietMs: number; maxMs: number } {
+  const large = (bytes || 0) > LARGE_DOC_BYTES;
+  return large
+    ? { quietMs: PREVIEW_APPLY_QUIET_MS * 2, maxMs: Math.round(PREVIEW_APPLY_MAX_MS * 1.5) }
+    : { quietMs: PREVIEW_APPLY_QUIET_MS, maxMs: PREVIEW_APPLY_MAX_MS };
+}
+
+// ── Minimal text edit (plan §3.3) ─────────────────────────────────────────────────
+/** A single contiguous replacement, offsets in UTF-16 code units (Monaco model offsets). */
+export interface TextEdit { start: number; end: number; text: string }
+
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
+/**
+ * Common-prefix/suffix diff: the smallest single edit that turns `oldText` into `newText`.
+ * Returns null when the texts are identical (caller skips the edit entirely — no undo entry).
+ * Surrogate pairs are never split (Monaco positions would break on a half emoji).
+ */
+export function diffRange(oldText: string, newText: string): TextEdit | null {
+  const a = String(oldText == null ? "" : oldText);
+  const b = String(newText == null ? "" : newText);
+  if (a === b) return null;
+  const aLen = a.length, bLen = b.length;
+  const max = Math.min(aLen, bLen);
+  let prefix = 0;
+  while (prefix < max && a.charCodeAt(prefix) === b.charCodeAt(prefix)) prefix++;
+  let suffix = 0;
+  while (suffix < max - prefix
+    && a.charCodeAt(aLen - 1 - suffix) === b.charCodeAt(bLen - 1 - suffix)) suffix++;
+  if (prefix > 0 && isLowSurrogate(b.charCodeAt(prefix))) prefix--;
+  if (suffix > 0 && isLowSurrogate(b.charCodeAt(bLen - suffix))) suffix--;
+  const start = prefix;
+  const end = Math.max(prefix, aLen - suffix);
+  return { start, end, text: b.slice(start, bLen - suffix) };
+}

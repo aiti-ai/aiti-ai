@@ -9,9 +9,10 @@ import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc, get
 import { getCtx, editorRefHolder } from "./env";
 import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTheme, describeMonacoError } from "./lib";
 import { detectLanguage, mdFenceDescriptors } from "./registry";
-import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
+import { markdownPreviewHtml, markdownRenderHtml, frontmatterToFence } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
-import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust, type DiskSig } from "./disk-refresh";
+import { sameDiskSig, shouldAutoReload, sigOfFrame, mediaUrlWithBust, previewBudget, diffRange, DISK_RELOAD_QUIET_MS, DISK_RELOAD_MAX_MS, type DiskSig } from "./disk-refresh";
+import { createCoalescer, type Coalescer } from "./coalesce";
 import { normalizeDiffEol, isEolOnlyChange, hunksFromDiffs, pickDiffCounts, detectEolKind, countLines } from "./diff-eol";
 import { deriveGitViewState, pickJumpTarget, outlinePlacement, type GitView } from "./git-view-model";
 import { getPopover, previewClickInfo, registerSelectionContainer, unregisterSelectionContainer, previewSelectionMeta, closePreviewPopover, mdSmartEnabled } from "./md-smart";
@@ -27,7 +28,7 @@ import {
   isDeferredMode, type EditorLimits, type OpenMode,
 } from "../../shared/limits";
 import { setRuntimeLimits } from "./limits-runtime";
-import { FileToolbar, type MenuAction, MiFileText, MiPin, MiChevronL, MiChevronR } from "./file-toolbar";
+import { FileToolbar, type MenuAction, MiFileText, MiPin, MiChevronL, MiChevronR, MiRefresh } from "./file-toolbar";
 import { MoveToDialog } from "./move-dialog";
 import { ThirdPartyProviderHost } from "./provider-host";
 import {
@@ -279,15 +280,43 @@ export function EditorApp(props: Record<string, any>) {
   // 同 tab 内切换文件（‹ › 导航 / 重开另一文件）→ 按新文件类型重置默认模式（首挂载值相同，setState bail-out 无额外渲染）
   useEffect(() => { setViewMode(defaultViewModeOf(filePath, detectLanguage(filePath))); }, [filePath]);
   const [previewTick, setPreviewTick] = useState(0);
-  const previewDebounceRef = useRef<any>(null);
   const previewTickRef = useRef(0);
-  const bumpPreview = useCallback(() => {
-    if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
-    previewDebounceRef.current = setTimeout(() => {
-      previewTickRef.current += 1;
-      setPreviewTick(previewTickRef.current);
-    }, 300); // debounce 300ms
-  }, []);
+  // Coalesced preview refresh (plan §3.5): quiet-period debounce + max wait. A plain debounce
+  // starves on a continuous agent stream; a dropping throttle can lose the final write.
+  const previewBytesRef = useRef(0);
+  const previewCoalescerRef = useRef<Coalescer | null>(null);
+  if (!previewCoalescerRef.current) {
+    previewCoalescerRef.current = createCoalescer({
+      quietMs: () => previewBudget(previewBytesRef.current).quietMs,
+      maxMs: () => previewBudget(previewBytesRef.current).maxMs,
+      run: () => { previewTickRef.current += 1; setPreviewTick(previewTickRef.current); },
+    });
+  }
+  const bumpPreview = useCallback(() => { previewCoalescerRef.current?.schedule(); }, []);
+  // Markdown preview shell state: a signature change (theme/renderers) forces a full rebuild;
+  // otherwise content updates go through __aitiMd.apply (same document, plan §3.2).
+  const mdShellRef = useRef<{ sig: string; ready: boolean; token: number }>({ sig: "", ready: false, token: 0 });
+  const mdBuildRef = useRef<{ sig: string; text: string } | null>(null);
+  // Anchor element of the open msg-smart card: incremental updates keep it alive unless the
+  // block it points at is the one that got replaced (plan §3.2).
+  const mdPopoverAnchorRef = useRef<{ srcStart: number; srcEnd: number; doc: any } | null>(null);
+  const mdForceRef = useRef(false);
+  const mdPendingRestoreRef = useRef<any>(null);
+  // Large documents render slower → the coalescer stretches its windows (plan §3.5).
+  useEffect(() => { previewBytesRef.current = (meta && meta.size) || 0; }, [meta, filePath]);
+  // A pending refresh must never leak across files (or outlive the component).
+  useEffect(() => () => {
+    previewCoalescerRef.current?.cancel();
+    diskReloadCoalescerRef.current?.cancel();
+  }, [filePath]);
+  // A new file always starts from a fresh preview document (no inherited force/scroll snapshot).
+  useEffect(() => {
+    mdForceRef.current = false;
+    mdPendingRestoreRef.current = null;
+    mdBuildRef.current = null;
+    mdPopoverAnchorRef.current = null;
+    mdShellRef.current = { sig: "", ready: false, token: mdShellRef.current.token };
+  }, [filePath]);
   const editorRef = useRef<any>(null);
   const baseMtimeRef = useRef<any>(null);
   const initialContentRef = useRef<any>(null);   // 打开时内容，dirty 判定基准
@@ -332,6 +361,18 @@ export function EditorApp(props: Record<string, any>) {
   const lastDiskReloadRef = useRef(0);                   // 文本自动重载节流游标
   const archiveTickRef = useRef(0);                      // 压缩包列表刷新 tick（帧到 → 重拉列表）
   const [archiveTick, setArchiveTick] = useState(0);
+  // Coalesced disk auto-reload (plan §3.5): replaces the dropping throttle, so the last frame
+  // of a burst is never lost. diskSigRef is only committed after a successful read.
+  const pendingDiskSigRef = useRef<DiskSig | null>(null);
+  const diskReloadCoalescerRef = useRef<Coalescer | null>(null);
+  const reloadFromDiskRef = useRef<(sig?: DiskSig | null, opts?: { force?: boolean }) => void>(() => {});
+  if (!diskReloadCoalescerRef.current) {
+    diskReloadCoalescerRef.current = createCoalescer({
+      quietMs: DISK_RELOAD_QUIET_MS,
+      maxMs: DISK_RELOAD_MAX_MS,
+      run: () => { lastDiskReloadRef.current = Date.now(); reloadFromDiskRef.current(pendingDiskSigRef.current); },
+    });
+  }
   useEffect(() => {
     setMediaBust(0);
     setMediaDuration(null);
@@ -370,10 +411,70 @@ export function EditorApp(props: Record<string, any>) {
     return () => { dead = true; setWatchLive(false); stop(); try { unsub?.(); } catch { /* noop */ } };
   }, [filePath, props.watchEnabled]);
 
-  // 从磁盘重读文本并重置编辑缓冲（watch 帧 clean 自动刷新 / ⋯菜单「重新加载」共用）。
-  // setValue → onDidChangeModelContent → bumpPreview 自动联动预览刷新；基线签名同步
-  // diskSigRef（下一次自己保存前的帧不再误报）。
-  const reloadFromDisk = useCallback((sig?: DiskSig | null) => {
+  // ── Silent buffer update (plan §3.3; mirrors VSCode textFileEditorModel#reloadFromDisk) ──
+  // Replace only the changed range: Monaco shifts the cursor by the edit delta (it stays on the
+  // same text, never snaps back to 1:1), the edit is one undo group, and the caller restores the
+  // scroll offset. A whole-document setValue would reset cursor, scroll and the undo stack.
+  const applyTextSilently = useCallback((ed: any, next: string) => {
+    try {
+      const model = ed && typeof ed.getModel === "function" ? ed.getModel() : null;
+      if (!model || typeof model.pushEditOperations !== "function") { if (ed) ed.setValue(next); return; }
+      const edit = diffRange(model.getValue(), next);
+      if (!edit) return; // identical → no undo entry, no re-render
+      const start = model.getPositionAt(edit.start);
+      const end = model.getPositionAt(edit.end);
+      const scrollTop = typeof ed.getScrollTop === "function" ? ed.getScrollTop() : 0;
+      const scrollLeft = typeof ed.getScrollLeft === "function" ? ed.getScrollLeft() : 0;
+      model.pushEditOperations([], [{
+        range: {
+          startLineNumber: start.lineNumber, startColumn: start.column,
+          endLineNumber: end.lineNumber, endColumn: end.column,
+        },
+        text: edit.text,
+      }], () => null);
+      if (typeof ed.setScrollTop === "function") ed.setScrollTop(scrollTop);
+      if (typeof ed.setScrollLeft === "function") ed.setScrollLeft(scrollLeft);
+    } catch {
+      try { ed.setValue(next); } catch { /* noop */ }
+    }
+  }, []);
+
+  // Reading-position snapshot (used by the manual full reload): editor cursor/scroll + the
+  // preview iframe's source-line anchor.
+  const captureViewSnapshot = useCallback(() => {
+    const ed = editorRef.current;
+    const pos = ed && typeof ed.getPosition === "function" ? ed.getPosition() : null;
+    let preview: any = null;
+    try {
+      const d: any = previewRef.current && previewRef.current.contentDocument;
+      if (d && d.__aitiMd && typeof d.__aitiMd.snapshot === "function") preview = d.__aitiMd.snapshot();
+    } catch { /* same-origin srcdoc: only present while the preview is mounted */ }
+    return {
+      lineNumber: pos ? pos.lineNumber : 1,
+      column: pos ? pos.column : 1,
+      scrollTop: ed && typeof ed.getScrollTop === "function" ? ed.getScrollTop() : 0,
+      scrollLeft: ed && typeof ed.getScrollLeft === "function" ? ed.getScrollLeft() : 0,
+      preview,
+    };
+  }, []);
+
+  const restoreEditorView = useCallback((ed: any, snap: any) => {
+    const model = ed && typeof ed.getModel === "function" ? ed.getModel() : null;
+    if (!model || !snap) return;
+    try {
+      const line = Math.min(Math.max(1, snap.lineNumber || 1), model.getLineCount());
+      const column = Math.min(Math.max(1, snap.column || 1), model.getLineMaxColumn(line));
+      ed.setPosition({ lineNumber: line, column });
+      if (typeof ed.setScrollTop === "function") ed.setScrollTop(snap.scrollTop || 0);
+      if (typeof ed.setScrollLeft === "function") ed.setScrollLeft(snap.scrollLeft || 0);
+    } catch { /* noop */ }
+  }, []);
+
+  // Re-read the text from disk (shared by the clean auto-refresh and the menu "Reload").
+  // force=true (manual full reload): whole-document setValue wipes the patch/undo state, then the
+  // cursor and reading position are restored. force=false (auto): minimal edit, no cursor jump.
+  // Both paths sync diskSigRef with what was actually read.
+  const reloadFromDisk = useCallback((sig?: DiskSig | null, opts: { force?: boolean } = {}) => {
     // Info card / chunked viewer: never pull the whole file back; just refresh metadata
     // (and let the line-count effect re-run).
     if (isDeferredMode(openMode)) {
@@ -400,7 +501,19 @@ export function EditorApp(props: Record<string, any>) {
       const mtimeMs = (m && m.ok && typeof m.mtimeMs === "number") ? m.mtimeMs : (sig ? sig.mtimeMs : Date.now());
       const size = (m && m.ok && typeof m.size === "number") ? m.size : (sig ? sig.size : content.length);
       const ed = editorRef.current;
-      if (ed) ed.setValue(content);
+      const snap = opts.force ? captureViewSnapshot() : null;
+      if (opts.force) {
+        // Escape hatch: wipe incremental state entirely, then put the reader back where they were.
+        if (ed) ed.setValue(content);
+        restoreEditorView(ed, snap);
+        mdPendingRestoreRef.current = snap ? snap.preview : null;
+        mdShellRef.current = { ...mdShellRef.current, ready: false };
+        mdForceRef.current = true;
+        previewTickRef.current += 1;
+        setPreviewTick(previewTickRef.current);
+      } else if (ed) {
+        applyTextSilently(ed, content);
+      }
       initialContentRef.current = content;
       setMeta((prev: any) => (prev ? { ...prev, content, size } : prev));
       const cache = (window as any).__aitiEditor._cacheGet(filePath);
@@ -411,7 +524,9 @@ export function EditorApp(props: Record<string, any>) {
       (window as any).__aitiEditor._setDirty(filePath, false);
       setExtChange(null);
     }).catch(() => { /* 下一次帧/渲染期磁盘检查兜底 */ });
-  }, [filePath, meta, bumpPreview, openMode]);
+  }, [filePath, meta, bumpPreview, openMode, applyTextSilently, captureViewSnapshot, restoreEditorView]);
+
+  reloadFromDiskRef.current = reloadFromDisk;
 
   // ⋯菜单「重新加载」：clean 直接重读磁盘；dirty 不丢编辑 → 拉真实磁盘签名后弹
   // 「磁盘已修改」条（三路合并/加载磁盘版/保留当前）；二进制 → bust 强制重载。
@@ -423,7 +538,7 @@ export function EditorApp(props: Record<string, any>) {
         .catch(() => setExtChange({ diskMtimeMs: Date.now(), diskSize: 0 }));
       return;
     }
-    reloadFromDisk(null);
+    reloadFromDisk(null, { force: true });
   }, [filePath, fileType, dirty, reloadFromDisk]);
 
   // 帧分派（每渲染重挂 ref——闭包始终拿最新 dirty/meta/fileType；订阅本身不随渲染重启）
@@ -434,16 +549,22 @@ export function EditorApp(props: Record<string, any>) {
       const sig = sigOfFrame(frame);
       if (!sig) return;
       if (sameDiskSig(sig, diskSigRef.current)) return; // 自己保存的回声 / 已知状态，忽略
-      diskSigRef.current = sig;
       if (fileType !== "text") {
+        diskSigRef.current = sig;
         setMediaBust((v: number) => v + 1); // 图片/PDF/媒体：bust 换缓存指纹重载
         if (fileType === "archive") { archiveTickRef.current += 1; setArchiveTick(archiveTickRef.current); } // 压缩包列表重拉
         return;
       }
-      if (!shouldAutoReload("text", dirty)) { setExtChange({ diskMtimeMs: sig.mtimeMs, diskSize: sig.size }); return; }
-      if (!throttleOk(lastDiskReloadRef.current, Date.now(), 1000)) return; // 高频写节流，下一帧/菜单兜底
-      lastDiskReloadRef.current = Date.now();
-      reloadFromDisk(sig);
+      if (!shouldAutoReload("text", dirty)) {
+        // Dirty: show the "disk modified" bar once per signature (frames can be dense).
+        setExtChange((prev: any) => (prev && prev.diskMtimeMs === sig.mtimeMs && prev.diskSize === sig.size
+          ? prev : { diskMtimeMs: sig.mtimeMs, diskSize: sig.size }));
+        return;
+      }
+      // NOT committed to diskSigRef here: a coalesced-away frame must not look "known" —
+      // the reload below records the signature it actually read from disk.
+      pendingDiskSigRef.current = sig;
+      diskReloadCoalescerRef.current?.schedule();
     };
   }); // 无依赖数组：每渲染更新
   const isMarkdown = language === "markdown";
@@ -1545,10 +1666,61 @@ export function EditorApp(props: Record<string, any>) {
     try { previewRef.current?.contentWindow?.postMessage({ type: "aiti-editor-chg-goto", idx: chgGotoRef.current - 1 }, "*"); } catch { /* 忽略 */ }
   }, [mdChgRanges]);
 
-useEffect(() => {
+  // Markdown preview shell signature: changes here (theme / smart-click / fence renderer set)
+  // require a fresh document; everything else is applied in place by __aitiMd.apply.
+  const mdShellSignature = useCallback(() => {
+    const dark = isDarkTheme();
+    const fences = mdFenceDescriptors(dark).map((d: any) => d.lang + ":" + String((d && d.css) || "").length).join(",");
+    return (dark ? "dark" : "light") + "|" + (mdSmartEnabled() ? "smart" : "plain") + "|" + fences;
+  }, []);
+
+  useEffect(() => {
     if (previewKind !== "markdown") return;
     const ifr = previewRef.current;
     if (!ifr) return;
+    const editor = editorRef.current;
+    const text = editor ? editor.getValue() : (meta ? (meta.content || "") : "");
+    const raw = frontmatterToFence(text);          // same normalization the srcdoc build applies
+    const chg = mdChgRanges;
+    const dark = isDarkTheme();
+    const sig = mdShellSignature();
+    const force = mdForceRef.current;
+    mdForceRef.current = false;
+
+    // Same document: silent incremental update (no iframe navigation → no flash, no scroll reset).
+    const liveDoc: any = ifr.contentDocument;
+    if (!force && mdShellRef.current.ready && mdShellRef.current.sig === sig
+        && liveDoc && liveDoc.__aitiMd && typeof liveDoc.__aitiMd.apply === "function") {
+      try {
+        const r = liveDoc.__aitiMd.apply(raw, chg);
+        if (r && r.ok) {
+          // The card survives an update unless the anchor's source lines were inside a
+          // replaced block (element identity is not reliable across an in-place patch).
+          const anchor = mdPopoverAnchorRef.current;
+          if (anchor && anchor.doc === liveDoc && r.changed && (r.removed || r.added)
+              && r.srcFrom != null && r.srcTo != null
+              && anchor.srcStart <= r.srcTo && anchor.srcEnd >= r.srcFrom) {
+            closePreviewPopover();
+            mdPopoverAnchorRef.current = null;
+          }
+          return;   // includes the no-op case (content + chg unchanged)
+        }
+      } catch { /* fall through to a clean rebuild */ }
+    }
+
+    // A rebuild for the same content is already in flight (e.g. the coalesced preview tick that
+    // follows the forced reload) — starting another one would drop the pending scroll restore.
+    if (!force && !mdShellRef.current.ready && mdBuildRef.current
+        && mdBuildRef.current.sig === sig && mdBuildRef.current.text === text) return;
+
+    // Rebuild path (first mount / shell change / force / apply failure): preserve the reading
+    // position across the document swap so even a full reload does not jump to the top.
+    let snap = mdPendingRestoreRef.current;
+    if (!snap && liveDoc && liveDoc.__aitiMd && typeof liveDoc.__aitiMd.snapshot === "function") {
+      try { snap = liveDoc.__aitiMd.snapshot(); } catch { snap = null; }
+    }
+    // Keep it until a document actually restores it: a superseding rebuild must inherit it.
+    if (snap) mdPendingRestoreRef.current = snap;
     // 重建前先收掉预览里的弹层：srcdoc 重赋值会整体销毁 iframe 文档，弹层/监听随之消失
     // （不显式关 → msg-smart 的 state.opening 残留，下次点同段被判为 toggle 直接关闭）
     // and unregister the old document's selection container (its listener dies with the
@@ -1556,18 +1728,29 @@ useEffect(() => {
     const prevDoc = ifr.contentDocument;
     if (prevDoc) unregisterSelectionContainer(prevDoc);
     closePreviewPopover();
-    const content = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
-    const dark = isDarkTheme();
-    ifr.srcdoc = markdownPreviewHtml(content, dark, mdChgRanges.length ? mdChgRanges : undefined, mdSmartEnabled(), mdFenceDescriptors(dark));
+    mdPopoverAnchorRef.current = null;
+    const token = ++mdShellRef.current.token;
+    mdShellRef.current = { sig, ready: false, token };
+    mdBuildRef.current = { sig, text };
+    ifr.style.background = dark ? "#0d1117" : "#fff";  // hide the blank frame during navigation
+    ifr.srcdoc = markdownPreviewHtml(text, dark, chg.length ? chg : undefined, mdSmartEnabled(), mdFenceDescriptors(dark));
     // New preview doc ready → register the selection container (msg-smart attaches pointerup
     // inside the iframe document directly: detect/read selection/render in one document — the
     // standard approach; the old five-step postMessage relay kept breaking, removed).
     ifr.addEventListener("load", () => {
+      if (mdShellRef.current.token !== token) return;  // a newer rebuild superseded this one
+      mdShellRef.current = { sig, ready: true, token };
       const doc = ifr.contentDocument;
-      const win = ifr.contentWindow;
+      const win: any = ifr.contentWindow;
       if (doc && win) registerSelectionContainer(doc, win, previewSelectionMeta(filePath));
+      mdBuildRef.current = null;
+      const readyDoc: any = ifr.contentDocument;
+      if (snap && readyDoc && readyDoc.__aitiMd && typeof readyDoc.__aitiMd.restore === "function") {
+        try { readyDoc.__aitiMd.restore(snap); } catch { /* noop */ }
+      }
+      mdPendingRestoreRef.current = null;  // consumed (or superseded by a newer capture)
     }, { once: true });
-  }, [viewMode, meta, previewKind, previewTick, mdChgRanges, filePath]);
+  }, [viewMode, meta, previewKind, previewTick, mdChgRanges, filePath, mdShellSignature]);
 
   // 预览滚动消息 → 编辑器联动（分栏双向）
   useEffect(() => {
@@ -1633,7 +1816,14 @@ useEffect(() => {
         win: ifr.contentWindow,
         filePath,
       });
-      if (info) api.open(info);
+      if (info) {
+        mdPopoverAnchorRef.current = {
+          srcStart: Number(d.srcStart) || 0,
+          srcEnd: Number(d.srcEnd) || 0,
+          doc: ifr.contentDocument,
+        };
+        api.open(info);
+      }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
@@ -2489,6 +2679,12 @@ useEffect(() => {
         mentionTitle={"\u63D0\u53CA\u6587\u4EF6\u2014\u2014\u5C06\u5F53\u524D\u9009\u533A\u6216\u884C\u5199\u5165\u804A\u5929\u8F93\u5165\u6846"}
         rightExtra={(
           <>
+            {/* Full reload (escape hatch): wipes incremental/undo state, then restores the reading position by source line */}
+            <button type="button" onClick={doReload} title={t("从头重新加载（重置增量状态并回到原阅读位置）")}
+              aria-label={t("重新加载")}
+              style={{ ...T.btn, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px" }}>
+              <MiRefresh size={13} />
+            </button>
             {/* 保存（仅 dirty / 只读时显示）；编码徽标已移至底部状态栏 */}
             {(isReadOnly || saving || dirty) && (
               <button

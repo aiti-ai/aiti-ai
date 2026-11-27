@@ -94,6 +94,8 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
   // 刷新动作顺手走一遍 ensureEditorTicket（客户端缓存命中即零请求，过期才真的换票）
   const [tkOver, setTkOver] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  /** Reading position reported by the shim (opaque origin → the parent cannot read scroll). */
+  const scrollRatioRef = useRef(0);
   /** When the selection card opened (dismiss window: the same-gesture closing click is ignored) */
   const selOpenAtRef = useRef(0);
 
@@ -110,10 +112,13 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
   const ticket = tkOver || props.ticket || "";
   const rootBase = ticket ? editorBase() + "/preview/" + encodeURIComponent(ticket) + "/" : "";
   const abs = absBase(rootBase, typeof location !== "undefined" ? location.href : "");
-  const shim = useMemo(() => buildPreviewShim({ base: abs, docRel: "" }), [abs]);
+
 
   const fastDoc = useMemo(() => {
     if (mode !== "fast") return "";
+    // Rebuild carries the last reported reading position (plan §3.4): the parent cannot read
+    // scroll out of the sandboxed document, so the shim restores it on load.
+    const shim = buildPreviewShim({ base: abs, docRel: "", restoreRatio: scrollRatioRef.current });
     return buildHtmlPreviewSrcdoc({
       content: props.getBufferText() || "",
       base: abs,
@@ -122,7 +127,7 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
       shim,
     }).doc;
     // deps 里是「内容变了」的信号本身，不是 getBufferText（每次渲染新函数，放进去等于每帧重渲染）
-  }, [mode, props.previewTick, abs, scripts, props.dark, shim]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, props.previewTick, abs, scripts, props.dark]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 入口恒为票据文件本身：站内链接由 shim 改道到 dock（不在此框架里导航），
   // 所以 shim 报回的 docRel 只作面包屑显示——回流进 src 会自己刷自己
@@ -152,6 +157,10 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
         const target = resolvePreviewRel(props.filePath, rel);
         if (!target) { props.showToast("warn", t("链接指向预览目录之外，未改道")); return; }
         props.onOpenPath(target);
+        return;
+      }
+      if (d.type === PREVIEW_MSG.scroll) {
+        if (typeof d.ratio === "number" && d.ratio >= 0 && d.ratio <= 1) scrollRatioRef.current = d.ratio;
         return;
       }
       if (d.type === PREVIEW_MSG.report) {
@@ -260,7 +269,8 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
             sandbox={mode === "fast" ? "allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock" : undefined}
             src={mode === "served" ? src : undefined}
             srcDoc={mode === "fast" ? src : undefined}
-            style={st.frame}
+            // The blank frame during navigation uses the page background (no white flash in dark mode)
+            style={{ ...st.frame, background: props.dark ? "#0d1117" : "#fff" }}
           />
         )}
         {src && !loaded && (

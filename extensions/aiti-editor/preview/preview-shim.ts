@@ -24,6 +24,7 @@ export const PREVIEW_MSG = {
   report: "aiti-editor-html-report",
   select: "aiti-editor-html-select",
   dismiss: "aiti-editor-html-dismiss",
+  scroll: "aiti-editor-html-scroll",
 } as const;
 
 export interface PreviewShimOpts {
@@ -36,12 +37,20 @@ export interface PreviewShimOpts {
   base: string;
   /** 本文档相对票据目录的路径（"" = 票据入口文件本身） */
   docRel: string;
+  /**
+   * Reading position to restore after the rebuild (0..1 of the scrollable height).
+   * Auto-refresh replaces the whole document (opaque origin: the parent cannot read scroll),
+   * so the previous position is captured by the scroll reporter below and fed back here.
+   */
+  restoreRatio?: number;
 }
 
 /** 生成上报脚本源码（不含 <script> 标签）。 */
 export function buildPreviewShim(opts: PreviewShimOpts): string {
   const base = String(opts && opts.base ? opts.base : "");
   const docRel = String(opts && opts.docRel ? opts.docRel : "");
+  const restoreRatio = opts && typeof opts.restoreRatio === "number" && isFinite(opts.restoreRatio)
+    ? Math.min(1, Math.max(0, opts.restoreRatio)) : 0;
   const lines = [
     "(function(){",
     "var BASE=" + JSON.stringify(base) + ";",
@@ -49,6 +58,7 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     // BASE 归一：改道判定是绝对 href 前缀比较 → 根相对形态补成绝对；缺尾斜杠补上（否则 rel 多切一段）
     "if(BASE&&BASE.charAt(0)==='/'){try{BASE=new URL(BASE,document.baseURI||location.href).href;}catch(e){}}",
     "if(BASE&&BASE.charAt(BASE.length-1)!=='/')BASE+='/';",
+    "var REST=" + restoreRatio + ";",
     "var SENT=0, CAP=60;",
     "function short(s){ s=String(s==null?'':s); return s.length>240?s.slice(0,240)+'…':s; }",
     "function safe(x){ if(typeof x==='string')return x; try{return JSON.stringify(x);}catch(e){ try{return String(x);}catch(e2){return '[unprintable]';} } }",
@@ -154,6 +164,18 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     "  try{parent.postMessage({type:'"+PREVIEW_MSG.select+"',docRel:DOC_REL,text:txt.trim(),",
     "    top:r.top,left:r.left,bottom:r.bottom,width:r.width,height:r.height},'*');}catch(err){}",
     "},true);",
+    // 4.9) Scroll: restore the pre-rebuild reading position, then report the current ratio so the
+    //      next rebuild can restore it again. Bypasses send() (CAP is for error reports).
+    "function maxScroll(){var el=document.scrollingElement||document.documentElement;return Math.max(0,(el.scrollHeight||0)-(window.innerHeight||0));}",
+    "function restoreScroll(){ if(!(REST>0))return; try{window.scrollTo(0, REST*maxScroll());}catch(e){} }",
+    "window.addEventListener('load',restoreScroll);",
+    "if(document.readyState==='complete'){restoreScroll();}",
+    "(function(){var t=0;window.addEventListener('scroll',function(){",
+    "  if(t)return; t=1;",
+    "  setTimeout(function(){ t=0; var m=maxScroll();",
+    "    try{parent.postMessage({type:'"+PREVIEW_MSG.scroll+"',docRel:DOC_REL,ratio:m>0?((window.scrollY||0)/m):0},'*');}catch(e){}",
+    "  },120);",
+    "},{passive:true});})();",
     // 5) 装载完成上报（DOM 就绪即报，不等图片加载；带标题供父页面包屑）
     "function ready(){send('"+PREVIEW_MSG.ready+"',{title:short(document&&document.title)});}",
     "if(document.readyState==='complete'||document.readyState==='interactive'){ready();}",

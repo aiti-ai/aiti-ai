@@ -13,7 +13,7 @@ const {
   fenceShellCss, fenceShellScript, frontmatterToFence,
 } = await import("./markdown.ts");
 const { mermaidFenceCss } = await import("./md-mermaid.ts");
-const { makeEl } = await import("./mini-dom.mjs");
+const { makeEl, makeDoc } = await import("./mini-dom.mjs");
 const { mdSlug } = await import("./lib.ts");
 
 const FENCE = "graph TD\n  A --> B";
@@ -22,42 +22,42 @@ const NO_MERMAID = "# t\n\n```js\nvar a = 1;\n```\n";
 // 注册表构建期描述符的等价物（registry.mdFenceDescriptors 已把 css 按主题求值）
 const MERMAID_RS = [{ lang: "mermaid", css: mermaidFenceCss(false) }];
 
-test("预览：实际生成脚本的标题 ID 与 TOC 一致，点击能滚到相应章节", () => {
+test("预览：标题 ID 与 TOC 锚点算法一致，点击能滚到相应章节", () => {
   const titles = ["Introduction", "Hello, World!", "API v2_0", "第 1 章 Setup", "纯中文章节"];
   const expected = ["introduction", "hello-world", "api-v2_0", "第-1-章-setup", "纯中文章节"];
   assert.deepEqual(titles.map(mdSlug), expected);
-  const html = markdownPreviewHtml(titles.map(t => "## " + t).join("\n\n"), false);
-  const links = [...html.matchAll(/<a href="#([^"]+)">/g)].map(m => m[1]);
+
+  const raw = titles.map((t) => "## " + t).join("\n\n");
+  const html = markdownPreviewHtml(raw, false);
+  // TOC block only: the inline script also carries the TOC template used by incremental updates.
+  const tocBlock = html.slice(html.indexOf('id="tocHost"'), html.indexOf('<div id="content">'));
+  assert.deepEqual([...tocBlock.matchAll(/<a href="#([^"]+)">/g)].map((m) => m[1]), expected);
+
+  // Execute the real generated script against a mini-dom document: heading ids must match TOC slugs.
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const listeners = {};
+  const win = { innerHeight: 800, parent: { postMessage() {} }, scrollTo() {}, addEventListener() {}, getSelection: () => null };
+  const doc = makeDoc(win);
+  win.document = doc;
+  const content = doc.createElement("div"); content.id = "content";
+  const toc = doc.createElement("div"); toc.id = "tocHost";
+  doc.body.appendChild(content); doc.body.appendChild(toc);
+  const marked = {
+    parse: () => titles.map((t) => "<h2>" + t + "</h2>").join(""),
+    lexer: () => titles.map((t) => ({ type: "heading", raw: "## " + t + "\n" })),
+  };
+  runInNewContext(script, { marked, document: doc, window: win });
+  const headings = content.children.slice();
+  assert.deepEqual(headings.map((h) => h.id), expected);
+
+  // In-document anchor click → scrollIntoView on the matching heading + parent message.
   const messages = [];
-  const headings = titles.map(textContent => ({
-    textContent, id: "", scrolls: 0,
-    scrollIntoView() { this.scrolls++; },
-  }));
-  const content = { innerHTML: "", children: [] };
-  // 执行最终 HTML 里的脚本，而不是仅匹配 TS 源码，覆盖模板字符串转义丢失。
-  runInNewContext(script, {
-    marked: { parse: () => "", lexer: () => [] },
-    document: {
-      getElementById: id => id === "content" ? content : headings.find(h => h.id === id),
-      querySelectorAll: () => headings,
-      addEventListener: (type, handler) => { listeners[type] = handler; },
-    },
-    window: { parent: { postMessage: m => messages.push(m) }, addEventListener() {} },
+  win.parent.postMessage = (m) => messages.push(m);
+  doc.fire("click", {
+    target: { closest: () => ({ getAttribute: () => "#" + expected[1] }) },
+    preventDefault() {}, stopPropagation() {},
   });
-  assert.deepEqual(links, expected);
-  assert.deepEqual(headings.map(h => h.id), expected);
-  links.forEach((id, index) => {
-    let prevented = false;
-    listeners.click({
-      target: { closest: () => ({ getAttribute: () => "#" + id }) },
-      preventDefault() { prevented = true; }, stopPropagation() {},
-    });
-    assert.equal(prevented, true);
-    assert.equal(headings[index].scrolls, 1);
-    assert.equal(messages[index].anchor, id);
-  });
+  assert.equal(headings[1].scrolledIntoView, 1);
+  assert.equal(messages[0].anchor, expected[1]);
 });
 
 // ── frontmatter → 代码围栏（预览/导出渲染前处理；行数不变，行号映射不失准）──
@@ -94,7 +94,9 @@ test("预览：frontmatter 进 srcdoc 前已转 yaml 围栏（正文/TOC 链路�
   const html = markdownPreviewHtml(FM + "\n## 章节\n", false);
   assert.match(html, /%60%60%60yaml/); // encodeURIComponent("```yaml")
   assert.doesNotMatch(html, /%0A---%0A/); // 不会再有裸 --- 首尾围栏进 parse 流
-  const links = [...html.matchAll(/<a href="#([^"]+)">/g)].map((m) => m[1]);
+  // Only the rendered TOC block: the inline script also carries the TOC template for updates.
+  const tocBlock = html.slice(html.indexOf('id="tocHost"'), html.indexOf('<div id="content">'));
+  const links = [...tocBlock.matchAll(/<a href="#([^"]+)">/g)].map((m) => m[1]);
   assert.deepEqual(links, ["正文", "章节"]); // TOC 仍只收正文标题（frontmatter 行不进 TOC）
 });
 
@@ -337,6 +339,8 @@ function runScript(html) {
   const elById = {};
   const doc = {
     getElementById: (id) => (id === "content" ? content : elById[id]),
+    createElement: (t) => makeEl(t, doc),
+    scrollingElement: { scrollTop: 0, scrollHeight: 0 },
     querySelectorAll: () => [],
     addEventListener: (type, handler) => { if (type === "click") clicks.push(handler); },
     createTreeWalker: () => ({ nextNode: () => null }),
@@ -394,7 +398,13 @@ test("预览：划选收尾的 click 不上报（有非折叠选区 → 让行�
   const messages = [];
   runInNewContext(script, {
     marked: { parse: () => "", lexer: () => [] },
-    document: { getElementById: () => ({ innerHTML: "", children: [] }), querySelectorAll: () => [], addEventListener: (t, h) => { if (t === "click") clicks.push(h); } },
+    document: {
+      getElementById: () => ({ innerHTML: "", children: [] }),
+      createElement: (t) => makeEl(t),
+      scrollingElement: { scrollTop: 0, scrollHeight: 0 },
+      querySelectorAll: () => [],
+      addEventListener: (t, h) => { if (t === "click") clicks.push(h); },
+    },
     window: { parent: { postMessage: (m) => messages.push(m) }, addEventListener() {}, getSelection: () => ({ isCollapsed: false, rangeCount: 1, toString: () => "正文" }) },
   });
   clicks[0]({ target: hitTarget(), clientX: 5, clientY: 5 });
