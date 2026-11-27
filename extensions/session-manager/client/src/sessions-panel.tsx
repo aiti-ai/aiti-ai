@@ -355,12 +355,13 @@ export function ExtViewerDockFace(props: any) { return renderExtViewer(props, "d
 function renderExtViewer(props: any, face?: string) {
   const st = usePresent(EXT_VIEWER_KEY);
   const [id, setId] = useState<string | null>(extViewerId());
+  const [notice, setNotice] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openErr, setOpenErr] = useState<string | null>(null);
-  useEffect(() => subscribeExtViewer(() => setId(extViewerId())), []);
+  useEffect(() => subscribeExtViewer((n) => { setId(extViewerId()); setNotice(n); }), []);
   useEffect(() => {
     if (!id) { setData(null); setErr(null); return; }
     let alive = true;
@@ -482,6 +483,11 @@ function renderExtViewer(props: any, face?: string) {
               style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>}
           </span>
         </div>
+        {notice && (
+          <div style={{ padding: "6px 12px", background: "color-mix(in srgb, #f59e0b 10%, transparent)", borderBottom: "1px solid var(--border)", color: ensureReadability("#f59e0b"), fontSize: 11 }}>
+            {t("sm.viewer.degraded", { reason: notice })}
+          </div>
+        )}
         {openErr && (
           <div style={{ padding: "6px 12px", background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", borderBottom: "1px solid var(--border)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>
             {openErr}

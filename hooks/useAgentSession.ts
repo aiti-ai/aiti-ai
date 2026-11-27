@@ -1477,13 +1477,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setError(null);
         }
         deleteSessionViewSnapshot(sid);
-        // Composite external id (qodercnide:<sid>, zed:<sid>, …): read-only history
+        // Composite external id (qodercn:<sid>, zed:<sid>, …): read-only history
         // sources have no session file and may have no driving backend, so this route
         // 404s. Hand it to the extensions (session-manager opens its read-only viewer)
         // instead of leaving an empty chat behind a sidebar click / ?session= restore.
+        // The server's takeover-failure reason ("no provider for this agentKey",
+        // wrapper launch races, …) rides along so the viewer can show a degraded-mode
+        // banner instead of a silent fallback that looks like intended behavior.
         if (sid.includes(":") && !sid.includes(":new-")) {
+          let reason = "";
           try {
-            window.dispatchEvent(new CustomEvent("pi-web:session-unopenable", { detail: { id: sid } }));
+            const body = await res.json() as { reason?: unknown; error?: unknown } | null;
+            reason = typeof body?.reason === "string" ? body.reason : typeof body?.error === "string" ? body.error : "";
+          } catch { /* body already consumed / not json — reason stays empty */ }
+          try {
+            window.dispatchEvent(new CustomEvent("pi-web:session-unopenable", { detail: { id: sid, ...(reason ? { reason } : {}) } }));
           } catch { /* non-DOM */ }
         }
         return null;

@@ -1925,9 +1925,16 @@ export function subscribeViewerSession(fn: () => void): () => void {
   return () => { viewerState.subs.delete(fn); };
 }
 
-const extViewerState = { id: null as string | null, subs: new Set<() => void>() };
-export function openExtViewer(id: string) {
+const extViewerState = { id: null as string | null, notice: null as string | null, subs: new Set<() => void>() };
+/**
+ * Open the read-only external-session viewer.
+ * @param notice optional degraded-mode reason (the host's takeover failure, e.g.
+ *   "no provider for this agentKey" from a `pi-web:session-unopenable` dispatch) —
+ *   rendered as a banner so a silent fallback never looks like intended behavior.
+ */
+export function openExtViewer(id: string, notice?: string) {
   extViewerState.id = id;
+  extViewerState.notice = notice ?? null;
   for (const l of extViewerState.subs) l();
   openFloat(EXT_VIEWER_KEY);
   // Same as above: docked state is flashed by openFloat; a floating one is raised to the top
@@ -1937,13 +1944,29 @@ export function openExtViewer(id: string) {
 }
 export function closeExtViewer() {
   extViewerState.id = null;
+  extViewerState.notice = null;
   for (const l of extViewerState.subs) l();
   closePanel(EXT_VIEWER_KEY);
 }
 export function extViewerId(): string | null { return extViewerState.id; }
-export function subscribeExtViewer(fn: () => void): () => void {
-  extViewerState.subs.add(fn);
-  return () => { extViewerState.subs.delete(fn); };
+/**
+ * Subscribe to ext-viewer changes. The callback receives the current degraded
+ * notice directly (and once immediately on subscribe, so late-mounted viewers
+ * still see a notice dispatched before their mount).
+ *
+ * ⚠ The notice deliberately travels as a callback argument instead of a
+ * standalone `extViewerNotice()` getter export: rollup (vite 7 build) drops a
+ * new export that is ONLY referenced from a lazy chunk — the function body
+ * vanished from the entry chunk while the lazy chunk still called it bare
+ * (ReferenceError at runtime, 2026-11-27). Passing the value through the
+ * existing subscription channel keeps every symbol the lazy chunk needs in its
+ * import list.
+ */
+export function subscribeExtViewer(fn: (notice: string | null) => void): () => void {
+  const l = () => fn(extViewerState.notice);
+  extViewerState.subs.add(l);
+  queueMicrotask(l); // immediate initial snapshot
+  return () => { extViewerState.subs.delete(l); };
 }
 
 /** flag（makeFlag 产物）的 React 订阅 hook：懒包装门控用（TagManager/KanbanPage 常挂

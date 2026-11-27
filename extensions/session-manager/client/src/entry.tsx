@@ -430,8 +430,11 @@ export default function register(ctx: Record<string, unknown>) {
     if (!w.__smSessionUnopenableHook) {
       w.__smSessionUnopenableHook = true;
       window.addEventListener("pi-web:session-unopenable", (e) => {
-        const id = (e as CustomEvent<{ id?: unknown }>).detail?.id;
-        if (typeof id === "string" && id) openExtViewer(id);
+        const d = (e as CustomEvent<{ id?: unknown; reason?: unknown }>).detail;
+        const id = d?.id;
+        if (typeof id === "string" && id) {
+          openExtViewer(id, typeof d?.reason === "string" && d.reason ? d.reason : undefined);
+        }
       });
     }
   } catch { /* non-DOM */ }

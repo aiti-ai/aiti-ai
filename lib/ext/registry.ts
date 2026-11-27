@@ -28,6 +28,7 @@ import type {
 import { registerImageProvider as registerImageProviderForExt, unregisterImageProviders } from "../image-generation.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
+import { healCandidate, syncSharedLayerFromRepo } from "./shared-layer-heal.ts";
 import { extProtocolInfo, EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, EXT_PROTOCOL_STRICT_BLOCKED, type ExtProtocolInfo } from "./protocol.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { buildClientBundle, emptyClientBundleCode, usesImportMeta, type ClientBundleEntry } from "./client-bundle.ts";
@@ -295,6 +296,10 @@ export class ExtRegistryImpl {
   /** Capability registry (rebuilt by loadAll): capability name → all providers (provides ∪ takeover declarers). Input to the resolver. */
   private _caps = new Map<string, Array<{ id: string; version?: string; source?: ExtensionSource; takeover: boolean }>>();
   private errors = new Map<string, string>();
+  /** Module-graph load failures of the most recent loadAll (extension id → message). Distinct from errors: that ledger also holds startup/protocol failures; this one is the shared-layer self-heal's signal. (Not the loadFailures() accessor — that maps `errors` for the manifest.) */
+  private moduleLoadFailures = new Map<string, string>();
+  /** Latch: at most one shared-layer heal per process until a fully green loadAll resets it. */
+  private sharedHealAttempted = false;
   private loaded = false;
 
   constructor(options: RegistryOptions) {
@@ -646,6 +651,7 @@ export class ExtRegistryImpl {
     this.invalidateBootGraph();
     this.extensions.clear();
     this.errors.clear();
+    this.moduleLoadFailures.clear();
     this.winners.clear();
     this.candidates.clear();
     this.pkgDescriptions.clear();
@@ -784,6 +790,9 @@ export class ExtRegistryImpl {
         } else {
           console.error(`[ext] ${id} failed to load:`, msg);
           this.errors.set(id, msg);
+          // Module-graph ledger (distinct from this.errors: the latter also holds
+          // startup/protocol failures) — the shared-layer self-heal keys on it.
+          this.moduleLoadFailures.set(id, msg);
         }
       } finally {
         if (timingEnabled) {
@@ -819,6 +828,22 @@ export class ExtRegistryImpl {
     }
     this.buildCapabilityIndex();
     this.loaded = true;
+    // Shared-layer self-heal (see shared-layer-heal.ts for the 2026-11-23 outage
+    // forensics): module-graph failures that look like missing shared exports, a
+    // repo checkout on disk, and an installed shared-root copy → copy the repo's
+    // _shared over it and reload once. One attempt per process until a fully
+    // green loadAll resets the latch — a genuinely broken extension (its own
+    // TypeError matching the pattern) must not loop copies+reloads forever.
+    if (!this.sharedHealAttempted && healCandidate(this.moduleLoadFailures)) {
+      this.sharedHealAttempted = true;
+      const copied = syncSharedLayerFromRepo();
+      if (copied > 0) {
+        console.log(`[ext] shared-layer self-heal: ${this.moduleLoadFailures.size} load failure(s) look like missing shared exports — copied ${copied} repo _shared file(s) over the shared root, reloading`);
+        await this.loadAll();
+        return;
+      }
+    }
+    if (this.moduleLoadFailures.size === 0) this.sharedHealAttempted = false;
     if (timingEnabled) {
       const total = timings.reduce((s, t) => s + t.ms, 0);
       const misses = timings.filter((t) => t.retranspiled > 0).length;

@@ -400,12 +400,19 @@ export async function openExternalSession(
   // its doors: placeholder uuid / composite id / old placeholder alias) — reuse it
   // rather than rebuild: putHandle's overwrite semantics would dispose the previous
   // one, and the two doors would kill each other.
-  for (const [key, existing] of listAllHandles()) {
-    if (!existing.alive() || existing.id !== compositeId) continue;
-    if (key !== compositeId) putHandleAt(compositeId, existing);
-    if (requestedId !== compositeId) putHandleAt(requestedId, existing);
-    return existing;
-  }
+  // Extracted so the wrapper launch-race recovery below can re-run the same
+  // reuse pass after the winning open has registered its handle.
+  const reuseAliveHandle = (): SessionHandle | undefined => {
+    for (const [key, existing] of listAllHandles()) {
+      if (!existing.alive() || existing.id !== compositeId) continue;
+      if (key !== compositeId) putHandleAt(compositeId, existing);
+      if (requestedId !== compositeId) putHandleAt(requestedId, existing);
+      return existing;
+    }
+    return undefined;
+  };
+  const reused = reuseAliveHandle();
+  if (reused) return reused;
   const candidates = findProvidersForAgent(agent);
   if (candidates.length === 0) return undefined;
   // A hosting switch may have persisted "direct subprocess" for this external
@@ -435,6 +442,31 @@ export async function openExternalSession(
       return handle;
     } catch (e) {
       lastError = e;
+      // Wrapper launch race (2026-11-23): a parallel cold-open of the same session
+      // loses the wrapper spawn flight and lands here just after the winner's
+      // createSession returned — the loser's 404 then silently degraded the UI to
+      // the read-only viewer. Give the winner's putHandle a beat and reuse its
+      // handle; if it never registered (crashed mid-flight), one recovery attach
+      // adopts the wrapper process it left behind. Neither applies → keep the
+      // original error and stop trying other providers (they would hit the same
+      // already-hosted wrapper).
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("(launch in flight)")) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const raced = reuseAliveHandle();
+        if (raced) return raced;
+        const retry = await attachDetachedSessionOnce(sid);
+        if (retry.status === "attached") {
+          const revived = retry.handle;
+          putHandle(revived);
+          if (requestedId !== revived.id) putHandleAt(requestedId, revived);
+          if (findProvidersForAgent(agent).some((p) => p.agentKey)) {
+            wireExternalPlaceholder(revived, true, options.cwd, options.name);
+          }
+          return revived;
+        }
+        break;
+      }
     }
   }
   throw lastError ?? new Error(`No provider could open ${compositeId}`);

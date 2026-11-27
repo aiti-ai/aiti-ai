@@ -847,6 +847,7 @@ const ext = {
         "sm.viewer.openImage": "click to open",
         "sm.viewer.truncated": "… {n} more lines not shown",
         "sm.viewer.extSession": "External session",
+        "sm.viewer.degraded": "Live takeover failed — showing the read-only viewer. Reason: {reason}",
         "sm.agentFilter.empty": "No source selected — pick agents from the chips above.",
         "sm.dockAdv": "Adv",
         "sm.dockAdvTitle": "Advanced filters (agents / tags)",
@@ -1011,6 +1012,7 @@ const ext = {
         "sm.viewer.openImage": "點擊開啟",
         "sm.viewer.truncated": "… 其餘 {n} 行未顯示",
         "sm.viewer.extSession": "外部會話",
+        "sm.viewer.degraded": "後端接管失敗，已降級為唯讀檢視。原因：{reason}",
       },
       "zh-CN": {
         "feat.master": "侧栏接管",
@@ -1393,6 +1395,7 @@ const ext = {
         "sm.viewer.openImage": "点击打开",
         "sm.viewer.truncated": "… 其余 {n} 行未显示",
         "sm.viewer.extSession": "外部会话",
+        "sm.viewer.degraded": "后端接管失败，已降级为只读查看。原因：{reason}",
         "sm.cloudsCollapsed": "标签 / 来源已收拢",
         "sm.expanded": "已展开",
         "sm.scrollToCollapse": "再向下滚动自动收拢",
