@@ -222,6 +222,23 @@ function Triangle(props: { open: boolean; onClick: (e: any) => void }) {
 
 // ---------------------------------------------------------------- row
 
+/** Compact column mode: below this container width the numeric columns shrink and
+ *  the action column collapses into the ⋯ menu (no hover-only buttons on touch). */
+const COMPACT_W = 480;
+
+function useCompact(): boolean {
+  const [compact, setCompact] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= COMPACT_W : false));
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: " + COMPACT_W + "px)");
+    const on = () => setCompact(mq.matches);
+    on();
+    try { mq.addEventListener("change", on); return () => mq.removeEventListener("change", on); }
+    catch { mq.addListener(on); return () => mq.removeListener(on); }
+  }, []);
+  return compact;
+}
+
 function ProcRow(props: {
   node: ProcNode;
   depth: number;
@@ -232,8 +249,9 @@ function ProcRow(props: {
   onTerminal: (node: ProcNode) => void;
   hasChildren: boolean;
   selected: number | null;
+  compact: boolean;
 }) {
-  const { node, depth, expanded, toggle, onSelect, onKill, onTerminal, hasChildren, selected } = props;
+  const { node, depth, expanded, toggle, onSelect, onKill, onTerminal, hasChildren, selected, compact } = props;
   const [hover, setHover] = useState(false);
   const open = expanded.has(node.pid);
   const dim = node.state === "Z" || node.state === "zombie";
@@ -258,11 +276,11 @@ function ProcRow(props: {
         {node.attached ? <span style={{ marginLeft: 5, fontSize: 9, color: "var(--text-dim,#888)" }}>attached</span> : null}
         {node.instance === "external" ? <span style={{ marginLeft: 5, fontSize: 9, color: "var(--text-dim,#888)" }}>ext</span> : null}
       </span>
-      <span style={{ width: 62, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{node.pid}</span>
-      <span style={{ width: 52, textAlign: "right", fontVariantNumeric: "tabular-nums", color: (node.cpu || 0) >= 70 ? "#d4574e" : "var(--text)" }}>{fmtCpu(node.cpu)}</span>
-      <span style={{ width: 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{fmtBytes(node.mem)}</span>
-      <span style={{ width: 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{fmtDuration(node.etimeMs)}</span>
-      <span style={{ width: 56, display: "flex", justifyContent: "flex-end", gap: 2, flexShrink: 0 }}>
+      <span style={{ width: compact ? 48 : 62, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{node.pid}</span>
+      <span style={{ width: compact ? 40 : 52, textAlign: "right", fontVariantNumeric: "tabular-nums", color: (node.cpu || 0) >= 70 ? "#d4574e" : "var(--text)" }}>{fmtCpu(node.cpu)}</span>
+      <span style={{ width: compact ? 46 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtBytes(node.mem, 0) : fmtBytes(node.mem)}</span>
+      <span style={{ width: compact ? 44 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtDuration(node.etimeMs).replace(/ \d+s$/, "") : fmtDuration(node.etimeMs)}</span>
+      <span style={{ width: compact ? 22 : 56, display: "flex", justifyContent: "flex-end", gap: 2, flexShrink: 0 }}>
         {hover ? (
           <>
             {node.canKill ? (
@@ -389,6 +407,7 @@ function Field(props: { k: string; v: string }) {
 
 function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
   const embedded = props.embedded === true;
+  const compact = useCompact();
   const features = extFeatures();
   const [intervalSec, setIntervalSec] = useState<number>(() => num(features.interval, 2, 1, 30));
   const [limit, setLimit] = useState<number>(() => num(features.limit, 200, 0, 2000));
@@ -535,6 +554,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
           onTerminal={openTerminal}
           hasChildren={Boolean(index.children.get(kid.pid)?.length)}
           selected={selected}
+          compact={compact}
         />,
       );
       if (expanded.has(kid.pid)) out.push(...renderChildren(kid, depth + 1));
@@ -598,10 +618,10 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
                 style={{ flex: "1 1 auto", minWidth: 90, cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
               >{t("名称")}<SortArrow active={sortKey === "name"} dir={sortDir} /></span>
               {([
-                ["pid", "PID", 62, false],
-                ["cpu", "CPU", 52, false],
-                ["mem", t("内存"), 66, true],
-                ["etime", t("时长"), 66, true],
+                ["pid", "PID", compact ? 48 : 62, false],
+                ["cpu", "CPU", compact ? 40 : 52, false],
+                ["mem", compact ? t("内存").slice(0, 2) : t("内存"), compact ? 46 : 66, true],
+                ["etime", compact ? t("时长").slice(0, 1) : t("时长"), compact ? 44 : 66, true],
               ] as Array<[SortKey, string, number, boolean]>).map(([key, label, width, right]) => (
                 <span
                   key={key}
@@ -610,7 +630,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
                   style={{ width, textAlign: "right", cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 2 }}
                 >{label}<SortArrow active={sortKey === key} dir={sortDir} /></span>
               ))}
-              <span style={{ width: 56 }} />
+              <span style={{ width: compact ? 22 : 56 }} />
             </div>
             {groups.map((g) => {
               const gcollapsed = collapsedGroups.has(g.key);
@@ -623,7 +643,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
                   </div>
                   {gcollapsed ? null : g.roots.map((root) => (
                     <div key={root.pid}>
-                      <ProcRow node={root} depth={0} expanded={expanded} toggle={toggle} onSelect={setSelected} onKill={doKill} onTerminal={openTerminal} hasChildren={Boolean(index.children.get(root.pid)?.length)} selected={selected} />
+                      <ProcRow node={root} depth={0} expanded={expanded} toggle={toggle} onSelect={setSelected} onKill={doKill} onTerminal={openTerminal} hasChildren={Boolean(index.children.get(root.pid)?.length)} selected={selected} compact={compact} />
                       {expanded.has(root.pid) ? renderChildren(root, 1) : null}
                     </div>
                   ))}
