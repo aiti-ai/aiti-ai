@@ -73,6 +73,7 @@ pi-web
 Commands:
 
 ```bash
+pi-web start [options]  # start the server (same as running pi-web with no command)
 pi-web version          # print the installed version
 pi-web status           # list running servers
 pi-web stop [--port N]  # stop a running server
@@ -80,7 +81,7 @@ pi-web open [--port N]  # open a running server in the browser
 pi-web update [--check] # update a global npm install
 ```
 
-To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @aiti-ai/pi-web`.
+To update, run `pi-web stop`, then `pi-web update`, then `pi-web start` (or run the same install command again). To uninstall, run `npm uninstall -g @aiti-ai/pi-web`.
 
 ## Configuration
 

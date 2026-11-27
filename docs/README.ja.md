@@ -56,6 +56,7 @@ pi-web
 コマンド：
 
 ```bash
+pi-web start [オプション]  # サーバーを起動（引数なしの pi-web と同じ）
 pi-web version          # インストール済みのバージョンを表示
 pi-web status           # 実行中のサーバーを一覧表示
 pi-web stop [--port N]  # 実行中のサーバーを停止
@@ -63,7 +64,7 @@ pi-web open [--port N]  # 実行中のサーバーをブラウザーで開く
 pi-web update [--check] # グローバル npm インストールを更新
 ```
 
-更新時は `pi-web stop` を実行してから `pi-web update` を実行します（同じインストールコマンドの再実行でも構いません）。アンインストールするには `npm uninstall -g @aiti-ai/pi-web` を実行します。
+更新時は `pi-web stop` を実行してから `pi-web update`、最後に `pi-web start` を実行します（同じインストールコマンドの再実行でも構いません）。アンインストールするには `npm uninstall -g @aiti-ai/pi-web` を実行します。
 
 ## 設定
 

@@ -30,7 +30,8 @@ function normalizePort(value) {
 }
 
 // Subcommands and their own options. Matched only as the first argument, so a
-// bare `pi-web [options]` still starts the server.
+// bare `pi-web [options]` still starts the server. `start` is not listed here:
+// it takes the full launch options and is handled before this table.
 const COMMAND_OPTIONS = {
   version: {},
   status: {},
@@ -45,6 +46,7 @@ function getHelpText() {
 Start the Pi Web UI server, or run one of the commands below.
 
 Commands:
+  start [options]            Start the server (same as running pi-web with no command)
   version                    Print the installed Pi Web version (also -v, --version)
   status                     List running Pi Web servers
   stop [--port <port>]       Stop a running server
@@ -83,6 +85,11 @@ function toParseError(error) {
 function parseCommandLine(args = process.argv.slice(2), env = process.env) {
   const first = args[0];
   const command = first === "-v" || first === "--version" ? "version" : first;
+  // Explicit `pi-web start` is the same launch as a bare `pi-web`, and accepts
+  // the same options — documentation and update guides spell it out this way.
+  if (command === "start") {
+    return { command, ...parseLaunchOptions(args.slice(1), env) };
+  }
   if (!Object.hasOwn(COMMAND_OPTIONS, command)) {
     return { command: "start", ...parseLaunchOptions(args, env) };
   }
