@@ -106,13 +106,26 @@ export async function sample(opts: {
   const scanned = await win32.scan();
   const preview = core.visibleSet(scanned.raw, opts.rows, opts.selfPid, opts.cliPid);
   const details = new Map<number, any>();
+  // Win32_Process carries 100ns cumulative CPU ticks — same delta math as Linux
+  // (HZ = 1e7). First tick or >60s gaps render null like the Linux path.
+  const WIN_HZ = 10_000_000;
+  const nowW = Date.now();
+  const dtW = lastScanTs ? nowW - lastScanTs : 0;
   for (const pid of preview.visible) {
-    const d = scanned.details.get(pid);
-    if (d) details.set(pid, d);
+    const p = scanned.raw.get(pid);
+    const d: any = scanned.details.get(pid);
+    if (!p || !d) continue;
+    const key = pid + ":" + p.starttime;
+    const prev = ticks.get(key);
+    d.cpu = prev && dtW > 0 && dtW <= 60_000 ? core.cpuPercent(prev, p, dtW, WIN_HZ) : null;
+    ticks.set(key, { utime: p.utime, stime: p.stime, ts: nowW });
+    details.set(pid, d);
   }
+  pruneTicks(scanned.raw);
   const wasFirst = firstTick;
   firstTick = false;
-  return { raw: scanned.raw, details, firstTick: wasFirst, scanned: scanned.raw.size, visible: details.size, approxCpu: true };
+  lastScanTs = nowW;
+  return { raw: scanned.raw, details, firstTick: wasFirst, scanned: scanned.raw.size, visible: details.size, approxCpu: false };
 }
 
 /** Reset caches (tests / extension reload). */

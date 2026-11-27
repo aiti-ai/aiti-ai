@@ -136,7 +136,7 @@ export async function readDetail(pid: number, opts: { withEnv?: boolean } = {}):
     if (close > 0) {
       const rest = p.slice(close + 2).trim().split(/\s+/);
       const start = Number(rest[19]) || 0;
-      d.etimeMs = Math.max(0, Date.now() - (bootTime() + start / CLK_TCK) * 1000);
+      d.etimeMs = Math.max(0, Date.now() - ((await bootTime()) + start / CLK_TCK) * 1000);
     }
   } catch { /* ignore */ }
   try {
