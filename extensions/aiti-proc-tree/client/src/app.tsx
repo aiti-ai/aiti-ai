@@ -280,7 +280,7 @@ function ProcRow(props: {
 
 // ---------------------------------------------------------------- detail drawer
 
-function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void }) {
+function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -303,6 +303,9 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         <strong style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node ? node.label : t("详情")}</strong>
         {node && node.kind === "terminal" && node.sessionId ? (
           <button type="button" onClick={() => props.onTerminal(node)} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4 }}>{t("打开终端")}</button>
+        ) : null}
+        {node && (node.kind === "agent" || node.kind === "helper") && node.sessionId && node.owner === "agent-starter" ? (
+          <button type="button" title={t("打开对应会话")} onClick={() => props.onOpenSession(node)} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4 }}>{t("打开会话")}</button>
         ) : null}
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
@@ -340,6 +343,14 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
       </div>
     </div>
   );
+}
+
+/** Open the pi session this agent node belongs to (host pi-web.session service). */
+function openAgentSession(node: ProcNode): void {
+  if (!node.sessionId) return;
+  const svc = getExtService<any>("pi-web.session");
+  if (svc && typeof svc.open === "function") { svc.open(node.sessionId); return; }
+  try { console.warn("[aiti-proc-tree] pi-web.session.open unavailable; cannot open session " + node.sessionId); } catch { /* noop */ }
 }
 
 function Field(props: { k: string; v: string }) {
@@ -620,6 +631,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
           pid={selected}
           onClose={() => setSelected(null)}
           onTerminal={(node) => { openTerminal(node); }}
+          onOpenSession={openAgentSession}
         />
       ) : null}
     </div>
