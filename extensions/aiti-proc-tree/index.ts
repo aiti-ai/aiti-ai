@@ -279,6 +279,7 @@ export default {
 
   server: {
     async startup(ctx: any) {
+      try { sampler.restoreTicks(ctx.stateDir); } catch { /* best effort */ }
       const instance = await resolveSelf();
       console.log(
         "[aiti-proc-tree] ready · platform=" + sampler.platform +
@@ -291,7 +292,10 @@ export default {
       try { void serviceRows(ctx); } catch { /* ignore */ }
     },
 
-    async shutdown() {
+    async shutdown(ctx: any) {
+      // Persist the tick table across extension reloads so the first tick after
+      // a reload still shows CPU values (instead of one interval of em dashes).
+      try { sampler.persistTicks(ctx.stateDir); } catch { /* best effort */ }
       sampler.reset();
     },
 

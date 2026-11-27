@@ -136,6 +136,40 @@ export function reset(): void {
   lastScanTs = 0;
 }
 
+const TICKS_FILE = "sampler-ticks.json";
+
+/** Persist raw ticks + timestamps so a reload's first tick keeps CPU values. */
+export function persistTicks(stateDir: string): void {
+  try {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const payload = {
+      savedAt: Date.now(),
+      lastScanTs,
+      ticks: Array.from(ticks.entries()),
+    };
+    fs.writeFileSync(path.join(stateDir, TICKS_FILE), JSON.stringify(payload));
+  } catch { /* best effort */ }
+}
+
+/** Restore ticks persisted by a previous instance (same boot only). */
+export function restoreTicks(stateDir: string): void {
+  try {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const raw = fs.readFileSync(path.join(stateDir, TICKS_FILE), "utf8");
+    const saved = JSON.parse(raw);
+    // Ignore snapshots from a previous boot: starttime values encode boot-relative
+    // process identity, so a stale table would mismatch every pid.
+    if (!saved || !saved.savedAt || Date.now() - saved.savedAt > 10 * 60_000) return;
+    if (!Array.isArray(saved.ticks)) return;
+    ticks = new Map(saved.ticks);
+    lastScanTs = saved.lastScanTs || 0;
+    firstTick = ticks.size > 0 ? false : firstTick;
+  } catch { /* missing/corrupt file — start cold */ }
+}
+
 export function uidOf(pid: number): number | null {
   return platform === "linux" ? linux.uidOf(pid) : impl.uidOf ? impl.uidOf(pid) : null;
 }

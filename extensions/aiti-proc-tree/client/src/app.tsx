@@ -5,7 +5,7 @@
  * is visible — the dock block collapsed or the browser tab hidden stops the loop.
  * The server holds no timers; the client cadence is the only sampling driver.
  */
-import { useEffect, useMemo, useState, apiUrl, t, extFeatures, onFeatureChange, getExtService, ensureMaterialized } from "./host-shim";
+import { useEffect, useMemo, useState, useRef, apiUrl, t, extFeatures, onFeatureChange, getExtService, ensureMaterialized } from "./host-shim";
 import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present } from "../../../_shared/ext-float-dock";
 import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
 import { fmtBytes, fmtCpu, fmtDuration } from "../../core.cjs";
@@ -61,6 +61,7 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
 
 function useSnapshot(enabled: boolean, intervalSec: number, limit: number) {
   const [data, setData] = useState<TreeData | null>(null);
+  const dataRef = useRef<TreeData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hidden, setHidden] = useState<boolean>(() => typeof document !== "undefined" && document.hidden);
 
@@ -82,7 +83,19 @@ function useSnapshot(enabled: boolean, intervalSec: number, limit: number) {
         const r = await fetch(apiUrl("/api/extensions/aiti-proc-tree/tree?" + q.toString()), { cache: "no-store" });
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = (await r.json()) as TreeData;
-        if (!stopped) { setData(j); setError(null); }
+        if (!stopped) {
+          // Display continuity: a null CPU (first tick / pid churn / cold server
+          // ticks) inherits the previous snapshot's value instead of flashing an
+          // em dash, then converges on the next tick.
+          const prev = dataRef.current;
+          if (prev) {
+            const prevCpu = new Map(prev.nodes.map((n) => [n.pid, n.cpu]));
+            for (const n of j.nodes) if (n.cpu == null && prevCpu.has(n.pid)) n.cpu = prevCpu.get(n.pid)!;
+          }
+          dataRef.current = j;
+          setData(j);
+          setError(null);
+        }
       } catch (e: any) {
         if (!stopped) setError(String(e?.message || e));
       }
@@ -300,21 +313,24 @@ function ProcRow(props: {
 function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void; onKill: (node: ProcNode, mode: "single" | "subtree") => void; onNotify: (msg: string) => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const dataRef = useRef<any>(null);
   useEffect(() => {
     let stopped = false;
-    setData(null);
     setError(null);
+    // Stale-while-revalidate: switching rows keeps the previous drawer content
+    // (dimmed via the key below) until the new node arrives — no Loading flash.
     fetch(apiUrl("/api/extensions/aiti-proc-tree/node/" + props.pid), { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
-      .then((j) => { if (!stopped) setData(j); })
+      .then((j) => { if (!stopped) { dataRef.current = j; setData(j); } })
       .catch((e) => { if (!stopped) setError(String(e?.message || e)); });
     return () => { stopped = true; };
   }, [props.pid]);
+  const stale = data && data.pid !== props.pid;
 
   const node: ProcNode | undefined = data?.node;
   const env: Record<string, string> = data?.detail?.env || {};
   return (
-    <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 320, borderLeft: "1px solid var(--border,#333)", background: "var(--bg-panel,var(--bg,elevated))", display: "flex", flexDirection: "column", zIndex: 2, fontSize: 11 }}>
+    <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 320, borderLeft: "1px solid var(--border,#333)", background: "var(--bg-panel,var(--bg,elevated))", display: "flex", flexDirection: "column", zIndex: 2, fontSize: 11, opacity: stale ? 0.55 : 1, transition: "opacity 0.15s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid var(--border,#333)" }}>
         <Dot color={kindColor(node?.kind || "unknown")} />
         <strong style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node ? node.label : t("详情")}</strong>
