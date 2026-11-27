@@ -953,17 +953,24 @@ function NestedGit(p: {
   const stats = git.avail === true ? null : fbStats;
   return (
     <div data-nested-git={dir} style={{ paddingLeft: p.indent }}>
-      <span onClick={() => setOpen((v) => !v)} role="button" aria-expanded={open} title={title} aria-label={title}
-        style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", cursor: "pointer" }}>
-        <BranchChipBadge branch={branch} dirtyCount={count} open={open} title={title} />
-      </span>
+      {/* Collapsed: chip is the single header line (branch + dirty count; click to expand).
+          Expanded: the chip row steps aside — GitBar alone is the header line (its ☰ collapses),
+          so the section stays two lines before the file rows. */}
+      {!open ? (
+        <span onClick={() => setOpen(true)} role="button" aria-expanded={false} title={title} aria-label={title}
+          style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", cursor: "pointer" }}>
+          <BranchChipBadge branch={branch} dirtyCount={count} open={false} title={title} />
+        </span>
+      ) : null}
       {open ? (
         <div>
           {git.avail === true && git.refs?.current ? (
-            <GitBar root={dir} git={git} onChanged={p.onGitChanged} changesOpen={open} onToggleChanges={() => setOpen((v) => !v)} />
+            <GitBar root={dir} git={git} onChanged={p.onGitChanged} changesOpen onToggleChanges={() => setOpen(false)} />
           ) : (
-            <div title={ct("git.nestedFallbackHint")} style={{ padding: "2px 0 1px", fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              ⎇ {branch} · {count} · {ct("git.nestedFallbackHint")}
+            <div onClick={() => setOpen(false)} title={ct("git.nestedFallbackHint")}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 0 1px", fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", cursor: "pointer" }}>
+              <span>⎇ {branch} · {count}</span>
+              <span>· {ct("git.nestedFallbackHint")} ▴</span>
             </div>
           )}
           <ChangesList nested indent={p.indent} root={dir} cwd={p.cwd || dir} git={git} files={rows} stats={stats}
@@ -2093,7 +2100,10 @@ export function FolderBrowser(props: any) {
                       <TreeNode key={searchQuery+":"+node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={searchExpanded}
                         onToggle={(fp:string,o:boolean)=>setSearchExpanded(prev=>{ const n=new Set(prev); if(o) n.add(fp); else n.delete(fp); return n; })}
                         onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} onLiveChange={scheduleGit}
-                        gitByPath={gitByPath} changedDirs={changedDirs} t={t} root={root} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />
+                        gitByPath={gitByPath} changedDirs={changedDirs} t={t} root={root} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow}
+                        isGitRepo={rootRepos.includes(node.fullPath)}
+                        gitScope={rootRepos.includes(node.fullPath) ? node.fullPath : root}
+                        onNestedStatus={handleNestedStatus} onGitChanged={scheduleGit} onRequestDiscard={requestDiscard} />
                     ))}
                   </div>
                 ) : null}
