@@ -139,8 +139,6 @@ export default {
         "恢复": "恢复",
         "刷新间隔": "刷新间隔",
         "搜索 PID / 命令 / 名称": "搜索 PID / 命令 / 名称",
-        "显示未归属（只读）": "显示未归属（只读）",
-        "显示其它实例": "显示其它实例",
         "结束进程": "结束进程",
         "结束子树": "结束子树",
         "查看详情": "查看详情",
@@ -196,8 +194,6 @@ export default {
         "恢复": "Resume",
         "刷新间隔": "Interval",
         "搜索 PID / 命令 / 名称": "Search PID / command / name",
-        "显示未归属（只读）": "Show unowned (read-only)",
-        "显示其它实例": "Show other instances",
         "结束进程": "End process",
         "结束子树": "End subtree",
         "查看详情": "Details",
@@ -267,22 +263,6 @@ export default {
       value: "200",
       placeholder: "200",
     },
-    {
-      id: "showUnknown",
-      type: "boolean",
-      label: "显示未归属进程（只读）",
-      group: "范围",
-      description: "调试用：列出未归属进程的 stat 级信息（PID/PPID/状态），不读命令行/环境变量，永远不可结束。默认关。",
-      default: false,
-    },
-    {
-      id: "showOtherInstances",
-      type: "boolean",
-      label: "显示其它 pi-web 实例",
-      group: "范围",
-      description: "调试用：显示其它 pi-web 实例的宿主树（只读）。默认关，避免把生产/沙箱实例混在一起。",
-      default: false,
-    },
   ],
 
   server: {
@@ -311,17 +291,12 @@ export default {
       if (action === "tree" && method === "GET") {
         const params = ctx.searchParams || new URLSearchParams();
         const withCmd = params.get("withCmd") === "1";
-        const includeUnknown = params.get("includeUnknown") === "1";
-        const includeOther = params.get("includeOtherInstances") === "1";
         const limitRaw = params.get("limit");
         const limit = limitRaw == null ? 200 : Math.max(0, Math.min(2000, Number(limitRaw) || 0));
 
         try {
           const snap = await buildSnapshot(ctx);
           let nodes = snap.tree.nodes;
-          if (!includeUnknown) nodes = nodes.filter((n: any) => n.kind !== "unknown");
-          if (!includeOther) nodes = nodes.filter((n: any) => n.instance !== "other");
-
           // Sort: CPU desc (null last), then pid asc. Client builds the tree from
           // parentPid, so list order is purely for truncation/totals.
           nodes = nodes.slice().sort((a: any, b: any) => {

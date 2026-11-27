@@ -68,7 +68,12 @@ export async function sample(opts: {
       const key = pid + ":" + p.starttime;
       const prev = ticks.get(key);
       const dt = lastScanTs ? now - lastScanTs : 0;
-      d.cpu = prev ? core.cpuPercent(prev, p, dt, HZ) : null;
+      // Window cap (plan §3.4): the panel closing pauses the client loop, so the
+      // gap since the previous request can be arbitrarily long. Deltas over 60s
+      // would render as a meaningless diluted average — treat them as a fresh
+      // first tick (null) instead. Below the cap a reopening panel gets real
+      // CPU values on its very first tick.
+      d.cpu = prev && dt > 0 && dt <= 60_000 ? core.cpuPercent(prev, p, dt, HZ) : null;
       ticks.set(key, { utime: p.utime, stime: p.stime, ts: now });
       details.set(pid, d);
     }

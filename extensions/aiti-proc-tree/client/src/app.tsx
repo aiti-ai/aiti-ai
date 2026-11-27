@@ -59,7 +59,7 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
 
 // ---------------------------------------------------------------- polling
 
-function useSnapshot(enabled: boolean, intervalSec: number, includeUnknown: boolean, includeOther: boolean, limit: number) {
+function useSnapshot(enabled: boolean, intervalSec: number, limit: number) {
   const [data, setData] = useState<TreeData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hidden, setHidden] = useState<boolean>(() => typeof document !== "undefined" && document.hidden);
@@ -79,8 +79,6 @@ function useSnapshot(enabled: boolean, intervalSec: number, includeUnknown: bool
       try {
         const q = new URLSearchParams();
         q.set("limit", String(limit));
-        if (includeUnknown) q.set("includeUnknown", "1");
-        if (includeOther) q.set("includeOtherInstances", "1");
         const r = await fetch(apiUrl("/api/extensions/aiti-proc-tree/tree?" + q.toString()), { cache: "no-store" });
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = (await r.json()) as TreeData;
@@ -95,7 +93,7 @@ function useSnapshot(enabled: boolean, intervalSec: number, includeUnknown: bool
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [enabled, hidden, intervalSec, includeUnknown, includeOther, limit]);
+  }, [enabled, hidden, intervalSec, limit]);
 
   return { data, error };
 }
@@ -281,7 +279,8 @@ function ProcRow(props: {
       <span style={{ width: compact ? 46 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtBytes(node.mem, 0) : fmtBytes(node.mem)}</span>
       <span style={{ width: compact ? 44 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtDuration(node.etimeMs).replace(/ \d+s$/, "") : fmtDuration(node.etimeMs)}</span>
       <span style={{ width: compact ? 22 : 56, display: "flex", justifyContent: "flex-end", gap: 2, flexShrink: 0 }}>
-        {hover ? (
+        {/* Touch: always-visible (hover is unreliable); desktop: hover-only to keep rows calm. */}
+        {compact || hover ? (
           <>
             {node.canKill ? (
               <button type="button" title={t("结束进程")} onClick={(e: any) => { e.stopPropagation(); onKill(node, "single"); }}
@@ -411,8 +410,6 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
   const features = extFeatures();
   const [intervalSec, setIntervalSec] = useState<number>(() => num(features.interval, 2, 1, 30));
   const [limit, setLimit] = useState<number>(() => num(features.limit, 200, 0, 2000));
-  const [showUnknown, setShowUnknown] = useState<boolean>(() => features.showUnknown === true);
-  const [showOther, setShowOther] = useState<boolean>(() => features.showOtherInstances === true);
   const [paused, setPaused] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("cpu");
@@ -433,14 +430,12 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
       const f = extFeatures();
       setIntervalSec(num(f.interval, 2, 1, 30));
       setLimit(num(f.limit, 200, 0, 2000));
-      setShowUnknown(f.showUnknown === true);
-      setShowOther(f.showOtherInstances === true);
     });
     return off;
   }, []);
 
   const enabled = props.enabledOverride !== false && !paused;
-  const { data, error } = useSnapshot(enabled, intervalSec, showUnknown, showOther, limit);
+  const { data, error } = useSnapshot(enabled, intervalSec, limit);
 
   // First data arrival: expand depth 0 and 1 once so the tree is not a flat list.
   useEffect(() => {
