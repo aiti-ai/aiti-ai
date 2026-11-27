@@ -363,6 +363,22 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             <Field k={t("来源")} v={(node?.source || "") + (node?.transport ? " · " + node.transport : "")} />
             {node?.url ? <Field k="URL" v={node.url} /> : null}
             {node?.socket ? <Field k={t("套接字 / Unit")} v={node.socket} /> : null}
+            {data.selfMemory ? (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                  <span style={{ color: "var(--text-dim,#888)" }}>{t("Node 内存")}</span>
+                  <span style={{ fontSize: 9, color: "var(--text-dim,#888)" }}>node {data.selfMemory.nodeVersion} · {t("已运行")} {fmtDuration((data.selfMemory.uptimeSec || 0) * 1000)}</span>
+                </div>
+                <MemBar self={data.selfMemory} />
+                <div style={{ margin: "4px 0 8px" }}>
+                  <Field k="heap used" v={fmtBytes(data.selfMemory.heapUsed) + " / " + fmtBytes(data.selfMemory.heapTotal)} />
+                  <Field k="external" v={fmtBytes(data.selfMemory.external)} />
+                  <Field k="arrayBuffers" v={fmtBytes(data.selfMemory.arrayBuffers)} />
+                  <Field k="RSS" v={fmtBytes(data.selfMemory.rss)} />
+                  <Field k="heap limit" v={fmtBytes(data.selfMemory.heapSizeLimit)} />
+                </div>
+              </>
+            ) : null}
             <div style={{ marginTop: 8, color: "var(--text-dim,#888)" }}>{t("命令行")}</div>
             <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "3px 0 8px", fontSize: 10, lineHeight: 1.35 }}>{data.detail?.cmd || "—"}</pre>
             <div style={{ color: "var(--text-dim,#888)" }}>{t("环境变量")}（{t("白名单")}）</div>
@@ -485,6 +501,26 @@ function openAgentSession(node: ProcNode): void {
   const svc = getExtService<any>("pi-web.session");
   if (svc && typeof svc.open === "function") { svc.open(node.sessionId); return; }
   try { console.warn("[aiti-proc-tree] pi-web.session.open unavailable; cannot open session " + node.sessionId); } catch { /* noop */ }
+}
+
+/** Heap usage bar for the self process: heapUsed against heapTotal with a
+ *  limit marker context. Cyan to match the Clean memory chip. */
+function MemBar(props: { self: any }) {
+  const used = Number(props.self.heapUsed) || 0;
+  const total = Number(props.self.heapTotal) || 1;
+  const pct = Math.min(100, Math.round((used / total) * 100));
+  const color = pct >= 85 ? "#d4574e" : pct >= 65 ? "#c9a227" : "#39c5cf";
+  return (
+    <div style={{ margin: "5px 0 2px" }}>
+      <div style={{ height: 8, borderRadius: 4, background: "color-mix(in srgb, currentColor 10%, transparent)", overflow: "hidden" }}>
+        <div style={{ width: Math.max(2, pct) + "%", height: "100%", borderRadius: 4, background: color, transition: "width 0.3s" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-dim,#888)", marginTop: 2 }}>
+        <span>{pct}% {t("已用")}</span>
+        <span>{fmtBytes(used)} / {fmtBytes(total)}</span>
+      </div>
+    </div>
+  );
 }
 
 function Field(props: { k: string; v: string }) {

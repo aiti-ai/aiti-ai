@@ -150,6 +150,8 @@ export default {
         "清理中": "清理中…",
         "已清理": "已清理",
         "清理内存提示": "对 pi-web 宿主进程执行一次 V8 垃圾回收（约 0.1~0.5s 暂停），回收缓存垃圾。宿主进程不可结束，但可以清理。",
+        "Node 内存": "Node 内存",
+        "已用": "已用",
         "打开服务面板": "打开服务面板",
         "复制 PID": "复制 PID",
         "复制命令": "复制命令",
@@ -209,6 +211,8 @@ export default {
         "清理中": "Cleaning…",
         "已清理": "Freed",
         "清理内存提示": "Runs one V8 garbage-collection pass on the hosting pi-web process (~0.1–0.5s pause) to reclaim cache garbage. The host process cannot be killed — but it can be tidied.",
+        "Node 内存": "Node memory",
+        "已用": "used",
         "打开服务面板": "Open services panel",
         "复制 PID": "Copy PID",
         "复制命令": "Copy command",
@@ -463,6 +467,28 @@ export default {
           const node = snap.tree.nodes.find((n: any) => n.pid === pid);
           if (!node) return json({ error: "not a managed process" }, 404);
 
+          // Self process: rich in-process memory breakdown (the /proc RSS row is
+          // just the tip — heap/external/arrayBuffers + heap limits are what the
+          // Clean memory action actually acts on).
+          const selfMemory = pid === process.pid
+            ? (() => {
+                const m = process.memoryUsage();
+                const h = require("node:v8").getHeapStatistics();
+                return {
+                  rss: m.rss,
+                  heapTotal: m.heapTotal,
+                  heapUsed: m.heapUsed,
+                  external: m.external,
+                  arrayBuffers: m.arrayBuffers,
+                  heapSizeLimit: h.heap_size_limit,
+                  usedHeapSize: h.used_heap_size,
+                  uptimeSec: Math.round(process.uptime()),
+                  pid: process.pid,
+                  nodeVersion: process.version,
+                };
+              })()
+            : null;
+
           let detail: any = snap.sampled.details.get(pid) || {};
           if (process.platform === "linux") {
             try {
@@ -492,6 +518,7 @@ export default {
             },
             parent: parent ? { pid: parent.pid, label: parent.label } : null,
             children,
+            selfMemory,
           });
         } catch (e: any) {
           return json({ error: String(e?.message || e) }, 500);
