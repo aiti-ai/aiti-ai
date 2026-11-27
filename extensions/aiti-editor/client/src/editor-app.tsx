@@ -358,7 +358,6 @@ export function EditorApp(props: Record<string, any>) {
   // 页面事件流客户端缺席（core 过旧）→ 静态预览降级 + ⋯菜单「重新加载」手动兜底。
   // 帧分派决策（回环抑制/节流/视图路由）见 ./disk-refresh（方案 §3.1）。
   const diskSigRef = useRef<DiskSig | null>(null);      // 最近已知磁盘签名（自己保存的回声抑制）
-  const lastDiskReloadRef = useRef(0);                   // 文本自动重载节流游标
   const archiveTickRef = useRef(0);                      // 压缩包列表刷新 tick（帧到 → 重拉列表）
   const [archiveTick, setArchiveTick] = useState(0);
   // Coalesced disk auto-reload (plan §3.5): replaces the dropping throttle, so the last frame
@@ -370,7 +369,7 @@ export function EditorApp(props: Record<string, any>) {
     diskReloadCoalescerRef.current = createCoalescer({
       quietMs: DISK_RELOAD_QUIET_MS,
       maxMs: DISK_RELOAD_MAX_MS,
-      run: () => { lastDiskReloadRef.current = Date.now(); reloadFromDiskRef.current(pendingDiskSigRef.current); },
+      run: () => { reloadFromDiskRef.current(pendingDiskSigRef.current); },
     });
   }
   useEffect(() => {
@@ -378,7 +377,6 @@ export function EditorApp(props: Record<string, any>) {
     setMediaDuration(null);
     mediaErrRef.current = 0; // new file → fresh recovery budget (count is per-file consecutive failures)
     diskSigRef.current = null;
-    lastDiskReloadRef.current = 0;
     if (props.watchEnabled === false) return;
     let dead = false;
     let unsub: (() => void) | null = null;

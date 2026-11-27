@@ -41,16 +41,6 @@ export function shouldAutoReload(kind: ViewKind, dirty: boolean): boolean {
 }
 
 /**
- * Throttle gate for automatic text reloads: agents streaming into a file can produce a
- * frame every 300ms (server debounce); reloading + re-rendering Monaco that often is
- * wasteful, so automatic reloads keep a minimum interval. Skipped frames still update
- * the known signature (the next frame or the manual Reload menu item catches up).
- */
-export function throttleOk(lastReloadAt: number, now: number, minIntervalMs = 1000): boolean {
-  return now - lastReloadAt >= minIntervalMs;
-}
-
-/**
  * Cache-busted media URL for a binary preview (image / video / audio / pdf).
  *
  * The bust rides as a QUERY parameter: ticketed media URLs carry no query string of

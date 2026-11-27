@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, mediaUrlWithBust, diffRange, previewBudget } = await import("./disk-refresh.ts");
+const { sameDiskSig, shouldAutoReload, sigOfFrame, mediaUrlWithBust, diffRange, previewBudget } = await import("./disk-refresh.ts");
 const editorAppSrc = await readFile(new URL("./editor-app.tsx", import.meta.url), "utf8");
 
 // ── sameDiskSig（保存回环抑制）──
@@ -44,16 +44,6 @@ test("shouldAutoReload: binary views always reload", () => {
 test("shouldAutoReload: text view reloads only when clean", () => {
   assert.equal(shouldAutoReload("text", false), true);
   assert.equal(shouldAutoReload("text", true), false);
-});
-
-// ── throttleOk（自动重载节流）──
-test("throttleOk: first reload (last=0) always allowed", () => {
-  assert.equal(throttleOk(0, 5000, 1000), true);
-});
-
-test("throttleOk: within interval denied, at/past interval allowed", () => {
-  assert.equal(throttleOk(5000, 5999, 1000), false);
-  assert.equal(throttleOk(5000, 6000, 1000), true);
 });
 
 // ── sigOfFrame（帧解析）──
