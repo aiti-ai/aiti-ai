@@ -20,7 +20,7 @@ import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
 // initialization", measured 2026-11-24).
 import { BranchPanel, BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
 import { CommitPlanDialog } from "./git-plan";
-import { pickWorkItemHeader, prependHeader } from "./wi-pick";
+import { setupCommitActions, useCommitActions, type CommitActionCtx } from "./commit-actions";
 
 export interface FolderGitRefs {
   current: string | null;
@@ -276,6 +276,16 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cross-extension action slot (docs: commit-actions.ts) — other extensions
+  // register buttons into the message action row (first consumer: aiti-codehub
+  // "Work item"); the built-in AI Generate stays the last button.
+  const extActions = useCommitActions();
+  const actionCtx = useMemo<CommitActionCtx>(() => ({
+    root: p.root,
+    getMessage: () => message,
+    setMessage: (updater) => setMessage((m: string) => updater(m)),
+    getFiles: () => [...checked],
+  }), [message, checked, p.root]);
   // AI commit message (docs/aiti-folder-commit-ai-message-plan.md): availability probe +
   // generation state
   const [aiAvail, setAiAvail] = useState(false);
@@ -420,14 +430,17 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
               {ct("git.amend")}
             </label>
             <span style={{ flex: 1 }} />
-            <button type="button" onClick={() => void (async () => {
-              const h = await pickWorkItemHeader();
-              if (h) setMessage((m) => prependHeader(h, m, "\n\n"));
-            })()} title={ct("git.wiPickTitle")}
-              style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: "pointer",
-                background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-              {ct("git.wiPick")}
-            </button>
+            {extActions.map((a) => {
+              const act = a.factory(actionCtx);
+              if (!act) return null;
+              return (
+                <button key={a.id} type="button" title={act.title} onClick={() => void act.onClick(actionCtx)}
+                  style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: "pointer",
+                    background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                  {act.label}
+                </button>
+              );
+            })}
             {aiAvail ? (
               <button type="button" disabled={aiBusy || checked.size === 0} onClick={() => void genMessage()} title={ct("git.aiMessageTitle")}
                 style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: aiBusy || checked.size === 0 ? "not-allowed" : "pointer",

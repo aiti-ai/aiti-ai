@@ -19,6 +19,7 @@ import { FolderSwitcher } from "./folder-switcher";
 import { syncFolderDockFaces, INSTANCES_EVENT, openFolderDocked } from "./folder-dock";
 import { CommitHost, openCommit } from "./commit-service";
 import { PickHost, pickDirectory } from "./pick-service";
+import { setupCommitActions } from "./commit-actions";
 
 // [懒加载 v2 D3 拆包] FolderBrowser（目录树/预览，~113K 大头）按需 import()：
 // 薄入口（本文件 + pathPicker + registerAction 开放点）随启动物化即时可用；
@@ -121,6 +122,8 @@ export default function register(ctx: Record<string, unknown>) {
   ]);
   try { (ctx as any).registerExtService?.("aiti-folder.commit", { open: openCommit }); } catch { /* old host */ }
   try { (ctx as any).registerExtService?.("aiti-folder.pick", { directory: pickDirectory }); } catch { /* old host */ }
+  // Commit-dialog action row slot: other extensions register buttons (aiti-codehub "Work item")
+  setupCommitActions(ctx as Record<string, any>);
 
   // 多实例 dock faces（v2）：左栏栈/浮窗/右栏三面按清单动态注册；instances 变化
   // （项目切换自动加 / ＋ 选择器 / 钉住 / FIFO 挤出）→ 事件驱动重注册（零轮询）。
