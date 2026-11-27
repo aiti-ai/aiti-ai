@@ -677,7 +677,7 @@ export function ProcTreePage() {
   return (
     <div
       data-ext-float="1"
-      data-ext-float-key={PT_KEY + ":float"}
+      data-ext-float-key={PT_KEY}
       data-ext-float-w={980}
       data-ext-float-h={640}
       data-ext-float-full="1"
