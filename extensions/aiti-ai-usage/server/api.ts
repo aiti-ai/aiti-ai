@@ -552,6 +552,13 @@ export async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response 
     case "userstat": return userStat(sp);
     case "session-keys": return rest.length ? sessionKeys(rest[0]) : null;
     case "catalog": return catalog(sp);
+    case "gateway": {
+      // gateway dimension (aiti-model-gateway traffic): per-token + per-day aggregates
+      const { queryGatewayUsage } = await import("../lib/gateway-ingest.ts");
+      const from = Number(sp.get("from")) || undefined;
+      const to = Number(sp.get("to")) || undefined;
+      return json(queryGatewayUsage(runtime().usage, { from, to }));
+    }
     default: return null;
   }
 }

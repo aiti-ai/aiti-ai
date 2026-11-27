@@ -10,6 +10,7 @@
  */
 import { init, runtime } from "./server/runtime.ts";
 import { handleApi } from "./server/api.ts";
+import { ingestGatewayUsage, queryGatewayUsage } from "./lib/gateway-ingest.ts";
 
 let initialized = false;
 
@@ -32,6 +33,21 @@ export default {
     async startup(ctx) {
       init(ctx.configDir);
       initialized = true;
+      // Cross-extension ingest (aiti-model-gateway pushes its per-request usage here).
+      // Contract key "aiti-ai-usage.ingest"; runtime() is resolved per call so hot
+      // reload (close db → new db) never hands the caller a closed handle.
+      try {
+        ctx?.services?.provide?.("aiti-ai-usage.ingest", {
+          ingestGateway(rows: any[]) {
+            return ingestGatewayUsage(runtime().usage, Array.isArray(rows) ? rows : []);
+          },
+          queryGateway(opts?: { from?: number; to?: number }) {
+            return queryGatewayUsage(runtime().usage, opts ?? {});
+          },
+        });
+      } catch (e) {
+        console.warn("[aiti-ai-usage] services.provide(ingest) failed:", e instanceof Error ? e.message : e);
+      }
     },
 
     async shutdown() {

@@ -180,6 +180,28 @@ export function openUsageDb(dbPath: string): UsageDb {
         CREATE INDEX IF NOT EXISTS idx_ext_pm ON ext_usage(provider, model);
         CREATE INDEX IF NOT EXISTS idx_ext_agent ON ext_usage(agent);
 
+        -- Model gateway (aiti-model-gateway) traffic: standalone dimension, NOT part of the usage_caliber totals.
+        -- subject='agent' rows are token-journalling agent CLIs (their JSONL is already counted via ext_usage)
+        -- and never write ext_usage; subject='external' is mirrored into ext_usage (agent='gateway') by the ingester.
+        CREATE TABLE IF NOT EXISTS gateway_usage (
+          token TEXT NOT NULL,
+          subject TEXT NOT NULL DEFAULT 'external',
+          ts INTEGER NOT NULL,
+          day TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          input INTEGER DEFAULT 0,
+          output INTEGER DEFAULT 0,
+          cache_read INTEGER DEFAULT 0,
+          cache_write INTEGER DEFAULT 0,
+          reasoning INTEGER DEFAULT 0,
+          total_tokens INTEGER DEFAULT 0,
+          cost_total REAL DEFAULT 0,
+          PRIMARY KEY (token, ts, provider, model)
+        );
+        CREATE INDEX IF NOT EXISTS idx_gateway_day ON gateway_usage(day);
+        CREATE INDEX IF NOT EXISTS idx_gateway_token ON gateway_usage(token);
+
         -- 外部会话增量水位：jsonl 源 = mtime_ms+size；sqlite 源 = rev（time_updated ms）
         CREATE TABLE IF NOT EXISTS ext_files (
           path TEXT NOT NULL,
