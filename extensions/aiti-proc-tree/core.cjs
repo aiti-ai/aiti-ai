@@ -148,7 +148,9 @@ function normalizeRegistryRows(input) {
       owner: "agent-starter",
       kind: "agent",
       id: String(e.sessionId || e.key || ""),
-      label: String(e.agentKey || "agent") + (e.providerType ? " · " + String(e.providerType) : ""),
+      label: String(e.agentKey || "agent")
+        + (e.sessionId ? " · " + String(e.sessionId).slice(0, 8) : "")
+        + (e.providerType ? " · " + String(e.providerType) : ""),
       pid: Number(e.pid || e.wrapperPid || 0),
       wrapperPid: Number(e.wrapperPid || 0) || undefined,
       launcherPid: Number(e.launcherPid || 0) || undefined,

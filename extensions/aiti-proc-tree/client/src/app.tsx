@@ -110,9 +110,13 @@ function groupOf(node: ProcNode): { key: string; label: string } {
   if (node.kind === "agent") return { key: "agent", label: "外部 Agent" };
   if (node.kind === "subagent") return { key: "subagent", label: "子代理" };
   if (node.kind === "tunnel") return { key: "tunnel", label: "隧道" };
-  // Helper rows belong to the tunnel group only for service-tunnels; agent-starter
-  // wrappers are the external-agent host process and stay with their agent.
-  if (node.kind === "helper") return node.owner === "service-tunnels" ? { key: "tunnel", label: "隧道" } : { key: "agent", label: "外部 Agent" };
+  // Helper rows stay with their owner: aiti-cmd pty-host wrappers are terminals,
+  // service-tunnels helpers are tunnels, agent-starter wrappers host external agents.
+  if (node.kind === "helper") {
+    if (node.owner === "service-tunnels") return { key: "tunnel", label: "隧道" };
+    if (node.owner === "aiti-cmd") return { key: "terminal", label: "终端" };
+    return { key: "agent", label: "外部 Agent" };
+  }
   return { key: "other", label: "其它" };
 }
 
@@ -272,7 +276,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
   const node: ProcNode | undefined = data?.node;
   const env: Record<string, string> = data?.detail?.env || {};
   return (
-    <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 320, borderLeft: "1px solid var(--border,#333)", background: "var(--bg,elevated)", display: "flex", flexDirection: "column", zIndex: 2, fontSize: 11 }}>
+    <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 320, borderLeft: "1px solid var(--border,#333)", background: "var(--bg-panel,var(--bg,elevated))", display: "flex", flexDirection: "column", zIndex: 2, fontSize: 11 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid var(--border,#333)" }}>
         <Dot color={kindColor(node?.kind || "unknown")} />
         <strong style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node ? node.label : t("详情")}</strong>
@@ -295,7 +299,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             {node?.socket ? <Field k={t("套接字 / Unit")} v={node.socket} /> : null}
             <div style={{ marginTop: 8, color: "var(--text-dim,#888)" }}>{t("命令行")}</div>
             <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "3px 0 8px", fontSize: 10, lineHeight: 1.35 }}>{data.detail?.cmd || "—"}</pre>
-            <div style={{ color: "var(--text-dim,#888)" }}>{t("环境变量")}（白名单）</div>
+            <div style={{ color: "var(--text-dim,#888)" }}>{t("环境变量")}（{t("白名单")}）</div>
             <div style={{ margin: "3px 0 8px" }}>
               {Object.keys(env).length === 0 ? <span style={{ color: "var(--text-dim,#888)" }}>—</span> : null}
               {Object.entries(env).map(([k, v]) => (
@@ -480,6 +484,30 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
 
   const body = (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: embedded ? "auto" : "100%", minHeight: 0 }}>
+      {embedded ? null : (
+        <div
+          data-ext-float-drag="1"
+          style={{
+            display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+            height: 36, padding: "0 8px 0 12px",
+            borderBottom: "1px solid var(--border,#333)", cursor: "move", userSelect: "none",
+          }}
+        >
+          <Dot color={kindColor("host")} />
+          <span style={{ fontWeight: 600, fontSize: 12 }}>{t("子进程管理")}</span>
+          <span style={{ color: "var(--text-dim,#888)", fontSize: 10 }}>{data ? data.stats.total + " " + t("个进程") : ""}</span>
+          {/* Spacer keeps the injected chrome (⇱/⛶ from aiti-float, 🔧/🤖 from helpers)
+              flush against our close button: schedule's header contract. */}
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            aria-label={t("关闭")}
+            title={t("关闭")}
+            onClick={() => { try { present(PT_KEY, "close"); } catch { /* ignore */ } }}
+            style={{ width: 26, height: 26, padding: 0, border: "none", borderRadius: 6, background: "none", color: "var(--text-muted,var(--text-dim,#888))", cursor: "pointer", fontSize: 13, flexShrink: 0 }}
+          >✕</button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px solid var(--border,#333)", flexWrap: "wrap" }}>
         <input
           value={search}
@@ -517,7 +545,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
                 <div key={g.key}>
                   <div onClick={() => toggleGroup(g.key)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 8px", fontSize: 10, color: "var(--text-dim,#888)", background: "color-mix(in srgb, currentColor 4%, transparent)", cursor: "pointer", userSelect: "none" }}>
                     <Triangle open={!gcollapsed} onClick={(e: any) => { e.stopPropagation(); toggleGroup(g.key); }} />
-                    <strong>{g.label}</strong>
+                    <strong>{t(g.label)}</strong>
                     <span>· {g.roots.length}</span>
                   </div>
                   {gcollapsed ? null : g.roots.map((root) => (
