@@ -326,37 +326,29 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         ) : null}
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
-      {node ? (
-        <div style={{ display: "flex", gap: 6, padding: "6px 10px", borderBottom: "1px solid var(--border,#333)", alignItems: "center", flexWrap: "wrap" }}>
-          {node.protectedReason === "self" ? (
-            <CleanMemoryChip onDone={(msg: string) => props.onNotify(msg)} />
-          ) : node.canKill ? (
-            <>
-              <button type="button" onClick={() => props.onKill(node, "single")}
-                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, border: "1px solid #d4574e", color: "#d4574e", background: "none", cursor: "pointer" }}>
-                {t("结束进程")}
-              </button>
-              <button type="button" onClick={() => props.onKill(node, "subtree")}
-                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, border: "1px solid #d4574e", color: "#fff", background: "#d4574e", cursor: "pointer" }}>
-                {t("结束子树")}
-              </button>
-            </>
-          ) : (
-            <span style={{ fontSize: 10, color: "var(--text-dim,#888)" }} title={node.protectedReason}>
-              {node.protectedReason === "host" ? t("宿主进程默认禁止结束") : t("不可结束") + (node.protectedReason ? " · " + node.protectedReason : "")}
-            </span>
-          )}
-          <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-dim,#888)" }}>
-            {node.canKill ? t("确认结束") + " · " + t("TERM→KILL") : ""}
-          </span>
-        </div>
-      ) : null}
       <div style={{ flex: 1, overflow: "auto", padding: "8px 10px" }}>
         {error ? <div style={{ color: "#d4574e" }}>{error}</div> : null}
         {!data && !error ? <div style={{ color: "var(--text-dim,#888)" }}>{t("加载中")}</div> : null}
         {data ? (
           <>
-            <Field k={t("PID")} v={String(data.pid)} />
+            <Field k={t("PID")} v={String(data.pid)} extra={
+              node && node.canKill ? (
+                <span style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}>
+                  <button type="button" title={t("确认结束") + " · " + t("TERM→KILL")} onClick={() => props.onKill(node!, "single")}
+                    style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, border: "1px solid #d4574e", color: "#d4574e", background: "none", cursor: "pointer" }}>
+                    {t("结束进程")}
+                  </button>
+                  <button type="button" title={t("确认结束") + " · " + t("TERM→KILL")} onClick={() => props.onKill(node!, "subtree")}
+                    style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, border: "1px solid #d4574e", color: "#fff", background: "#d4574e", cursor: "pointer" }}>
+                    {t("结束子树")}
+                  </button>
+                </span>
+              ) : node ? (
+                <span style={{ fontSize: 9, color: "var(--text-dim,#888)" }} title={node.protectedReason}>
+                  {node.protectedReason === "host" ? t("宿主进程默认禁止结束") : t("不可结束") + (node.protectedReason ? " · " + node.protectedReason : "")}
+                </span>
+              ) : null
+            } />
             <Field k={t("状态")} v={(data.detail?.state || node?.state || "") + (node?.owner ? " · " + node.owner : "")} />
             <Field k={t("用户")} v={data.detail?.user || node?.user || ""} />
             <Field k={t("工作目录")} v={data.detail?.cwd || node?.cwd || ""} />
@@ -368,6 +360,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
                   <span style={{ color: "var(--text-dim,#888)" }}>{t("Node 内存")}</span>
                   <span style={{ fontSize: 9, color: "var(--text-dim,#888)" }}>node {data.selfMemory.nodeVersion} · {t("已运行")} {fmtDuration((data.selfMemory.uptimeSec || 0) * 1000)}</span>
+                  <CleanMemoryChip onDone={props.onNotify} />
                 </div>
                 <MemBar self={data.selfMemory} />
                 <div style={{ margin: "4px 0 8px" }}>
@@ -523,11 +516,12 @@ function MemBar(props: { self: any }) {
   );
 }
 
-function Field(props: { k: string; v: string }) {
+function Field(props: { k: string; v: string; extra?: any }) {
   return (
-    <div style={{ display: "flex", gap: 8, padding: "2px 0" }}>
+    <div style={{ display: "flex", gap: 8, padding: "2px 0", alignItems: "baseline", flexWrap: "wrap" }}>
       <span style={{ color: "var(--text-dim,#888)", width: 78, flexShrink: 0 }}>{props.k}</span>
       <span style={{ wordBreak: "break-all" }}>{props.v || "—"}</span>
+      {props.extra || null}
     </div>
   );
 }
