@@ -935,7 +935,9 @@ export default function register(ctx) {
       //   用会话识别仓/workspace 关注路径作为补充分辨基逐根重试。惰性单飞：同一次点击
       //   最多发一次 resolve-roots；未装/禁用 aiti-git-trace → 空数组静默降级（行为与无跨仓分辨一致）。
       if (capsOf("file")) {
-        const all = extractFilePaths(text).slice(0, 3);
+        // 上限 6：lenient 二次提取（空格/全角标点文件名）会在 strict 碎片候选之后追加  // cjk-ok
+        // 整名候选，碎片探测 404 后整名命中；上限太窄会让多文件消息的真路径被挤出探测窗口  // cjk-ok
+        const all = extractFilePaths(text).slice(0, 6);
         if (all.length) {
           // cwd 兜底：段落广播可能不带 cwd（pre/diff 行点击）——落到全局 __piWebCwd
           // （与 onNewSession/划选路径同源），保证相对路径拼接与自引用消歧在行点击场景也可用

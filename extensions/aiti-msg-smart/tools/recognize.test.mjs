@@ -364,6 +364,43 @@ test("extractFiles: 裸词无后缀与版本串不误判", () => {
   assert.equal(extractFilePaths("这是 version v1.2 的新版").length, 0);
 });
 
+test("extractFiles: 空格/全角标点文件名（lenient 追加候选，探测过滤误报）", () => {
+  // 回归——strict 字符类无空格/无全角括号，中文工作流的文件名只能截出碎片  // cjk-ok
+  // （docs/…/电池二维码 + -对齐说明.md），探测全 404 → 文件按钮消失  // cjk-ok
+  const paren = extractFilePaths("对齐说明文档（含完整映射表） | docs/battery-passport-datapoints/电池二维码（对齐版）-对齐说明.md");
+  assert.ok(
+    paren.some((p) => p.path === "docs/battery-passport-datapoints/电池二维码（对齐版）-对齐说明.md" && !p.isDir),
+    JSON.stringify(paren),
+  );
+  // 空格 + 全角括号混合，且同段内另一个普通文件不受影响（余量续扫剥出）  // cjk-ok
+  const sp = extractFilePaths("已写入 docs/电池二维码 （对齐版） - 对齐说明.md 和 docs/普通.md 两个文件");
+  assert.ok(sp.some((p) => p.path === "docs/电池二维码 （对齐版） - 对齐说明.md"), JSON.stringify(sp));
+  assert.ok(sp.some((p) => p.path === "docs/普通.md"), JSON.stringify(sp));
+  // ASCII 空格裸文件名（白名单后缀）  // cjk-ok
+  const bare = extractFilePaths("下载的 notes (1).pdf 在附件里");
+  assert.ok(bare.some((p) => p.path === "notes (1).pdf"), JSON.stringify(bare));
+  // 目录前缀的 CJK 空格文件名（branch1 覆盖，AI 常见格式）  // cjk-ok
+  const cjk = extractFilePaths("看 docs/安装记录 v2.md 这个文件");
+  assert.ok(cjk.some((p) => p.path === "docs/安装记录 v2.md"), JSON.stringify(cjk));
+});
+
+test("extractFiles: lenient 吞句防护——多文件逐个剥出、散文不进候选", () => {
+  // 两个带空格文件名同段：贪心窗口吞成一条 → 首个内部白名单后缀截断 + 余量续扫  // cjk-ok
+  const two = extractFilePaths("对比 docs/my file.md 和 docs/other sp.md 的差异");
+  assert.ok(two.some((p) => p.path === "docs/my file.md"), JSON.stringify(two));
+  assert.ok(two.some((p) => p.path === "docs/other sp.md"), JSON.stringify(two));
+  // 版本串夹在路径间：纯数字记号仅在后方还有后缀记号时截断  // cjk-ok
+  const ver = extractFilePaths("docs/v1.2 和 docs/x.md 都要看");
+  assert.ok(ver.some((p) => p.path === "docs/v1.2") && ver.some((p) => p.path === "docs/x.md"), JSON.stringify(ver));
+  assert.ok(!ver.some((p) => p.path.includes(" 和 ")), JSON.stringify(ver));
+  // 顿号/逗号列举逐个剥出  // cjk-ok
+  const list = extractFilePaths("对比 a.md，b.md，c.md 三份文件");
+  assert.deepEqual(list.map((p) => p.path), ["a.md", "b.md", "c.md"]);
+  // 老断言保持：版本串散文与重复列举的候选数不变  // cjk-ok
+  assert.equal(extractFilePaths("这是 version v1.2 的新版").length, 0);
+  assert.equal(extractFilePaths("a.md 和 a.md 和 b.ts").length, 2);
+});
+
 test("extractFiles: MSYS 挂载形式（git-bash 输出 /d/...）识别并归一化为盘符", () => {
   // /d/foo、//d/foo → D:/foo；/usr/ 多字母首段不命中锚（不误转，保持旧相对行为）
   const msys = extractFilePaths("git-bash 里跑的 /d/workspace/demo-repo/pi-web-ext/aiti-msg-smart/client/src/recognize.js");

@@ -511,7 +511,20 @@ const BARE_FILE_EXTS =
 const PATH_SEG =
   "(?:~[\\\\/]|\\.[\\\\/]|[A-Za-z]:[\\\\/]|/[A-Za-z][\\\\/]|\\\\\\\\[\\w." + CJK + "-]+[\\\\/][\\w.@" + CJK + "-]+[\\\\/]|[\\w." + CJK + "-]+[\\\\/]|/[\\w." + CJK + "-]+[\\\\/])";
 
+/** Shared candidate normalization for strict/lenient matches: trailing CJK/ASCII
+ *  punctuation peel → backslashes to / (char-by-char, UNC \\\\ must survive) → MSYS
+ *  drive mount (/d/foo) to D:/foo → trailing separator marks a directory. */
+function normalizeExtractedPath(raw) {
+  let p = raw.replace(/[），。、；：!！?？)>"'`]$/u, "");
+  p = p.replace(/\\/g, "/");
+  p = p.replace(/^\/+([A-Za-z])\//, (_, L) => L.toUpperCase() + ":/");
+  const isDir = p.endsWith("/");
+  if (isDir) p = p.slice(0, -1);
+  return { path: p, isDir };
+}
+
 export function extractFilePaths(text) {
+  // Strict pass (unchanged behavior, candidates come first):
   // 1) dir/name.ext、./dir/name.ext、~/dir/name.ext、D:\dir\name.ext（文件带路径，末段必须带扩展名）
   // 2) 带常见源码/文档/图片等后缀的裸文件名（后缀见 BARE_FILE_EXTS）
   // 3) 目录：至少一段路径（~/ ./ 盘符 UNC 隐藏段如 .pi/ 普通段均支持），末段可有可无扩展名、尾分隔符可选
@@ -522,19 +535,109 @@ export function extractFilePaths(text) {
     "|(?<![A-Za-z0-9_." + CJK + "-])[A-Za-z0-9_." + CJK + "-]+\\.(?:" + BARE_FILE_EXTS + ")\\b)",
     "gu"
   );
+  const t = text == null ? "" : String(text);
   const seen = new Set();
   const out = [];
-  for (const m of text.matchAll(re)) {
-    let p = m[0].replace(/[），。、；：!！?？)>"'`]$/u, "");
-    p = p.replace(/\\/g, "/"); // Windows 反斜杠逐个替换为 /（不可用 \\+ 折叠 run——UNC 前导 \\\\ 会丢成一个 /）（下游按 / 处理；Windows fs 两种都认）
-    // MSYS 盘符路径（git-bash 挂载形式）归一化为盘符：/d/foo、//d/foo → D:/foo；转换错也仅探测 404 不显按钮
-    p = p.replace(/^\/+([A-Za-z])\//, (_, L) => L.toUpperCase() + ":/");
-    const isDir = p.endsWith("/");
-    if (isDir) p = p.slice(0, -1);
-    if (p.length >= 3 && !seen.has(p)) {
-      seen.add(p);
-      out.push({ path: p, isDir });
+  const push = (cand) => {
+    if (cand.path.length >= 3 && !seen.has(cand.path)) {
+      seen.add(cand.path);
+      out.push(cand);
     }
+  };
+  for (const m of t.matchAll(re)) push(normalizeExtractedPath(m[0]));
+  // Lenient extras appended after strict — the caller probes existence (/api/files),
+  // so false positives cost one 404 probe and never surface a wrong button.
+  for (const cand of extractLenient(t)) push(cand);
+  return out;
+}
+
+// ── lenient second pass: spaces / fullwidth punctuation inside file names ──┐
+// Strict char classes ([\w.@CJK-]) hold no spaces and no fullwidth punctuation, yet
+// CJK-workflow file names frequently contain both ("电池二维码（对齐版）-对齐说明.md",  // cjk-ok
+// "安装记录 v2.md", "notes (1).pdf"). Strict extraction therefore truncates at the  // cjk-ok
+// first such char ("docs/…/电池二维码" + "-对齐说明.md") and every fragment probe 404s —  // cjk-ok
+// the file row silently disappears. The lenient pass runs AFTER strict (strict output
+// stays first → zero regression) and appends whole-name candidates. Space-allowing
+// tails greedily swallow prose, so three guards keep the candidate pool lean:
+//   - trim + resume: the greedy window ends at the LAST dot, so prose between two real
+//     names ("a.md 和 b.md") lands in one match. Cut at the first interior whitelisted  // cjk-ok
+//     extension and keep scanning the remainder — multiple names peel off one by one.
+//   - bare names only match whitelisted extensions: version strings ("version v1.2")
+//     stay unrecognized, same rule as the strict bare branch.
+//   - noise shapes rejected wholesale: "." + separator past the leading anchor and
+//     whitespace glued to a separator ("extensions/ 和 ./client", "docs / x.md") are  // cjk-ok
+//     prose the window swept in, never real file names.
+// Known gaps, kept out on purpose:
+//   - directory segments with spaces ("D:/Program Files/…", "我的 文档/x.md") — spacey  // cjk-ok
+//     segment iteration needs leading-junk stripping and opens a much wider false-positive
+//     window; strict directory behavior is unchanged. Prefixed CJK spacey names
+//     ("docs/安装记录 v2.md") ARE covered by branch 1, which is the common AI format.  // cjk-ok
+//   - bare CJK spacey names ("安装记录 v2.md", no directory prefix) — a CJK tail start  // cjk-ok
+//     makes "和 a.md" prose glue indistinguishable from a real name; branch 2 therefore  // cjk-ok
+//     requires an ASCII first char.
+const LENIENT_TAIL_EXTRA =
+  " \\u3000.,;:!?'\"()[\\]{}~^$\u00b7\u30fb\u3001\u3002\u300a-\u300f\u2013\u2014\u2018\u2019\u201c\u201d\u2026\uff01\uff08\uff09\uff0c\uff1a\uff1b\uff1f\uff3b\uff3d\uff5b\uff5d";
+const LENIENT_REST = "[\\w.@" + CJK + LENIENT_TAIL_EXTRA + "-]*";
+// Branch 1: strict directory segments + one spacey final name, any extension (strict
+// branch 1 semantics). The tail's first char stays in the strict class — "docs/ 下的  // cjk-ok
+// x.md" prose shapes cannot match. No "/" in the tail — spacey directory segments are
+// out of scope. Branch 2: spacey bare file name, ASCII first char, whitelisted
+// extension only (version strings and CJK-glue excluded).
+const LENIENT_RE = new RegExp(
+  "(?:" + PATH_SEG + "+[\\w.@" + CJK + "-]" + LENIENT_REST + "\\.\\w+" +
+  "|(?<![A-Za-z0-9_." + CJK + "-])[A-Za-z0-9_.]" + LENIENT_REST + "\\.(?:" + BARE_FILE_EXTS + ")\\b)",
+  "gu"
+);
+const COMMON_EXT_SET = new Set(BARE_FILE_EXTS.split("|"));
+
+/** First interior cut point of a greedy lenient match (slice end, or -1): a dot-token
+ *  that does NOT sit at the match end and whose extension is whitelisted; pure-digit
+ *  tokens ("v1.2" version parts) only cut when a later dot-token follows
+ *  ("docs/v1.2 和 docs/x.md" → "docs/v1.2" + rescan). The final ext is the anchor of  // cjk-ok
+ *  the greedy match, never a cut point. */
+function lenientTrimCut(m) {
+  const marks = [...m.matchAll(/[.][A-Za-z0-9][A-Za-z0-9]{0,11}/g)];
+  for (let k = 0; k < marks.length; k++) {
+    const end = marks[k].index + marks[k][0].length;
+    if (end >= m.length) continue;
+    const ext = marks[k][0].slice(1).toLowerCase();
+    if (COMMON_EXT_SET.has(ext) || (/^\d+$/.test(ext) && k < marks.length - 1)) return end;
+  }
+  return -1;
+}
+
+/** Wholesale noise rejection: "." glued to a separator beyond the leading anchor, or
+ *  whitespace glued to a separator — prose shapes a space-allowing tail sweeps in. */
+function lenientNoise(m) {
+  const body = m.replace(/^(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{2}|\.[\\/]|\/[A-Za-z][\\/])/, "");
+  return /\.[\\/]/.test(body) || /\s[\\/]/.test(m);
+}
+
+/** Iterative lenient scan: match → (noise? drop whole match) → (interior whitelist ext?
+ *  cut there) → push candidate → resume from the cut/next char. The resume-from-cut is
+ *  what peels "docs/my file.md 和 docs/other sp.md" into both names. Bounded iterations.  // cjk-ok
+ *  Lenient matches always end at an extension → never directories (isDir false). */
+function extractLenient(text) {
+  const out = [];
+  let rest = text;
+  for (let guard = 0; guard < 12 && rest.length; guard++) {
+    LENIENT_RE.lastIndex = 0;
+    const m = LENIENT_RE.exec(rest);
+    if (!m) break;
+    if (lenientNoise(m[0])) {
+      rest = rest.slice(m.index + m[0].length);
+      continue;
+    }
+    let cand = m[0];
+    let used = cand.length;
+    const cut = lenientTrimCut(cand);
+    if (cut > 0) {
+      cand = cand.slice(0, cut);
+      used = cut;
+    }
+    const norm = normalizeExtractedPath(cand);
+    if (norm.path.length >= 3 && !norm.isDir) out.push({ path: norm.path, isDir: false });
+    rest = rest.slice(m.index + used);
   }
   return out;
 }
