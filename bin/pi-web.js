@@ -32,6 +32,8 @@ const { provisionPiPlugins } = require("./pi-plugins-provision.js");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getPackageVersion, runCommand } = require("./pi-web-commands");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { findActiveUpdateLock } = require("./pi-web-update");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatReachableAddresses } = require("./network-addresses");
 
 // `pi-web wrapper --config <launch.json>`: run the detachable agent host.
@@ -97,6 +99,19 @@ async function startServer({ port, hostname, openBrowser }) {
 
   const pkgDir = path.join(__dirname, "..");
   const nextDir = path.join(pkgDir, ".next");
+
+  // An update that is halfway through replacing this directory must finish
+  // first: a server booting now would hold files in the package (Windows makes
+  // npm fail) or read a half-swapped tree (Linux replaces it underneath).
+  const activeUpdate = findActiveUpdateLock(pkgDir);
+  if (activeUpdate) {
+    console.error(
+      `A pi-web update is running (pid ${activeUpdate.pid}, started ${activeUpdate.startedAt ?? "unknown"}).\n`
+        + "Wait for it to finish, then start the server again."
+        + ` If it crashed, delete ${activeUpdate.lockPath}.`,
+    );
+    process.exit(1);
+  }
 
   // v3 bundled 扩展依赖 reconcile：主包随包分发 extensions/，但其各自声明的运行时
   // 依赖 npm 不随主包安装——首启动（及依赖集变化后）一次性装进共享根

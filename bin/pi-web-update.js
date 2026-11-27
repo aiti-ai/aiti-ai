@@ -190,9 +190,14 @@ async function runNpmInstall(version, {
 // agent wrapper, a managed service, or a stray terminal would otherwise show
 // up as a bare EBUSY.
 function listWindowsProcesses({ spawnSync: run = spawnSync } = {}) {
+  // The payload leaves PowerShell base64-encoded: Win32 command lines contain
+  // user names and install paths that may be non-ASCII, and PowerShell 5.1
+  // writes redirected output in the OEM code page, which a JSON read as UTF-8
+  // would silently corrupt (and then miss the very holder we are looking for).
   const script = [
-    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress",
+    "$ErrorActionPreference = 'Stop'",
+    "$json = Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress",
+    "[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))",
   ].join("; ");
   const result = run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
@@ -202,18 +207,49 @@ function listWindowsProcesses({ spawnSync: run = spawnSync } = {}) {
   });
   if (result.error || result.status !== 0 || typeof result.stdout !== "string") return [];
   try {
-    const rows = JSON.parse(result.stdout);
+    const decoded = Buffer.from(result.stdout.trim(), "base64").toString("utf8");
+    const rows = JSON.parse(decoded);
     return Array.isArray(rows) ? rows : [rows];
   } catch {
     return [];
   }
 }
 
+// Split a Windows command line into argv-like tokens (quotes group, spaces
+// separate). Only used to decide whether a token IS a path inside the install
+// directory — a script that merely mentions the path ("$pkg='C:\\...'")
+// stays one token and must not count as a holder.
+function splitCommandLine(command) {
+  const tokens = [];
+  let current = "";
+  let quoted = false;
+  for (const char of command) {
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && (char === " " || char === "\t")) {
+      if (current) tokens.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function commandUsesDir(command, needle) {
+  return splitCommandLine(command).some((token) => {
+    const normalized = token.replace(/\//g, "\\").toLowerCase();
+    return normalized === needle || normalized.startsWith(`${needle}\\`);
+  });
+}
+
 function findInstallHolders(pkgDir, {
   platform = process.platform,
   spawnSync: run = spawnSync,
   selfPid = process.pid,
-  parentPid = process.ppid,
 } = {}) {
   if (platform !== "win32") return [];
   // Compare the way Windows resolves paths: absolute, backslashes, case-insensitive.
@@ -223,11 +259,46 @@ function findInstallHolders(pkgDir, {
   for (const row of listWindowsProcesses({ spawnSync: run })) {
     const pid = Number(row?.ProcessId);
     const command = typeof row?.CommandLine === "string" ? row.CommandLine : "";
-    if (!Number.isInteger(pid) || pid === selfPid || pid === parentPid || !command) continue;
-    if (!command.toLowerCase().includes(needle)) continue;
+    // Only this process is exempt: the parent (a shell, or a future
+    // server-initiated update) can hold the directory just like anyone else.
+    if (!Number.isInteger(pid) || pid === selfPid || !command) continue;
+    if (!commandUsesDir(command, needle)) continue;
     holders.push({ pid, name: typeof row.Name === "string" ? row.Name : "?", command });
   }
   return holders;
+}
+
+// Whether `child` is `parent` or sits underneath it, using the platform's
+// separator rules (Windows is case-insensitive and accepts both separators).
+function isInsideDir(parent, child, { platform = process.platform } = {}) {
+  const normalize = (value) => {
+    const resolved = path.resolve(value).replace(/[\\/]+$/, "");
+    return platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const root = normalize(parent);
+  const target = normalize(child);
+  if (!root) return false;
+  if (target === root) return true;
+  const separators = platform === "win32" ? ["\\", "/"] : [path.sep];
+  return separators.some((separator) => target.startsWith(`${root}${separator}`));
+}
+
+// A shell whose working directory is inside the package directory keeps
+// Windows from renaming it — and the shell that started this process holds the
+// same cwd, so chdir-ing this process alone would not help. Refuse early with
+// something the user can act on instead of npm's bare EBUSY.
+function refuseWhenShellInsideInstall(pkgDir, {
+  platform = process.platform,
+  cwd = process.cwd(),
+  error = console.error,
+} = {}) {
+  if (platform !== "win32" || !isInsideDir(pkgDir, cwd, { platform })) return false;
+  error(
+    `Your shell is inside the install directory (${cwd}).\n`
+      + "Windows cannot replace a directory that a process is working in."
+      + " Change to another directory and run `pi-web update` again.",
+  );
+  return true;
 }
 
 function formatHolder({ pid, name, command }) {
@@ -468,6 +539,7 @@ async function runArchiveUpdate({
   fetchLatestRelease = fetchLatestArchiveRelease,
   fetchBuffer = defaultFetchBuffer,
   findHolders = findInstallHolders,
+  cwd = process.cwd(),
   spawnSync: spawn = spawnSync,
   exists = fs.existsSync,
   rm = fs.rmSync,
@@ -498,6 +570,7 @@ async function runArchiveUpdate({
   }
 
   const assetName = archiveAssetName(release.tag, { platform, arch });
+  if (refuseWhenShellInsideInstall(pkgDir, { platform, cwd, error })) return 1;
   if (refuseWhenInstallDirInUse(pkgDir, { error, findHolders })) return 1;
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-update-"));
   try {
@@ -543,7 +616,7 @@ async function runArchiveUpdate({
     } catch {
       log(`Could not remove the previous install at ${realPkgDir} (delete it manually to free ~800 MB).`);
     }
-    log(`pi-web updated to ${latest}. Start it with: pi-web`);
+    log(`pi-web updated to ${latest}. Start it with: pi-web start`);
     return 0;
   } catch (updateError) {
     error(`Update failed: ${updateError.message}`);
@@ -553,11 +626,100 @@ async function runArchiveUpdate({
   }
 }
 
-async function runUpdate(options) {
-  if (isArchiveInstall(options.pkgDir, options.exists)) {
-    return runArchiveUpdate(options);
+// ---- update mutex --------------------------------------------------------
+//
+// Two `pi-web update` runs racing each other make one of them lose to EBUSY
+// after a two-minute download. The lock lives next to the install (not in a
+// shared temp dir) so it is per installation; the owning pid may re-enter, and
+// a lock whose pid is gone is stale and gets replaced.
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
   }
-  return runNpmUpdate(options);
+}
+
+function updateLockPath(pkgDir) {
+  return path.join(path.dirname(path.resolve(pkgDir)), ".pi-web-update.lock");
+}
+
+// The holder of an in-flight update, or null. `pi-web start` uses this so a
+// server cannot come up in the middle of a package swap (on Linux the swap
+// succeeds and leaves the fresh server reading a half-replaced tree).
+function findActiveUpdateLock(pkgDir, { isAlive = isProcessAlive, readFile = fs.readFileSync } = {}) {
+  const lockPath = updateLockPath(pkgDir);
+  try {
+    const holder = JSON.parse(readFile(lockPath, "utf8"));
+    const pid = Number(holder?.pid);
+    if (Number.isInteger(pid) && isAlive(pid)) {
+      return { pid, startedAt: typeof holder.startedAt === "string" ? holder.startedAt : null, lockPath };
+    }
+  } catch {
+    // Missing or unreadable lock: nothing is running.
+  }
+  return null;
+}
+
+function acquireUpdateLock(pkgDir, {
+  pid = process.pid,
+  now = new Date(),
+  isAlive = isProcessAlive,
+  readFile = fs.readFileSync,
+  writeFile = fs.writeFileSync,
+  remove = fs.rmSync,
+} = {}) {
+  const lockPath = updateLockPath(pkgDir);
+  let holder = null;
+  try {
+    holder = JSON.parse(readFile(lockPath, "utf8"));
+  } catch {
+    holder = null;
+  }
+  const holderPid = Number(holder?.pid);
+  if (Number.isInteger(holderPid) && holderPid !== pid && isAlive(holderPid)) {
+    return { ok: false, holder, lockPath, release: () => {} };
+  }
+  try {
+    writeFile(lockPath, JSON.stringify({ pid, startedAt: now.toISOString() }), "utf8");
+  } catch {
+    // Unwritable parent (system install): keep going, npm will report the real error.
+    return { ok: true, lockPath, release: () => {} };
+  }
+  return {
+    ok: true,
+    lockPath,
+    release: () => {
+      try {
+        const current = JSON.parse(readFile(lockPath, "utf8"));
+        if (Number(current?.pid) === pid) remove(lockPath, { force: true });
+      } catch {
+        // Already gone or unreadable — nothing to release.
+      }
+    },
+  };
+}
+
+async function runUpdate(options) {
+  const run = () => (isArchiveInstall(options.pkgDir, options.exists)
+    ? runArchiveUpdate(options)
+    : runNpmUpdate(options));
+  if (options.check) return run();
+  const acquire = options.acquireLock ?? ((pkgDir) => acquireUpdateLock(pkgDir));
+  const lock = acquire(options.pkgDir);
+  if (lock.ok === false) {
+    (options.error ?? console.error)(
+      `Another \`pi-web update\` is running (pid ${lock.holder?.pid}, started ${lock.holder?.startedAt ?? "unknown"}).\n`
+        + `Wait for it to finish, or delete ${lock.lockPath} if it crashed.`,
+    );
+    return 1;
+  }
+  try {
+    return await run();
+  } finally {
+    lock.release?.();
+  }
 }
 
 async function runNpmUpdate({
@@ -570,6 +732,8 @@ async function runNpmUpdate({
   getNpmRoot = getGlobalNpmRoot,
   install = runNpmInstall,
   findHolders = findInstallHolders,
+  platform = process.platform,
+  cwd = process.cwd(),
   realpath = fs.realpathSync,
   log = console.log,
   error = console.error,
@@ -605,6 +769,7 @@ async function runNpmUpdate({
     return 1;
   }
 
+  if (refuseWhenShellInsideInstall(pkgDir, { platform, cwd, error })) return 1;
   if (refuseWhenInstallDirInUse(pkgDir, { error, findHolders })) return 1;
 
   const code = await install(latest);
@@ -633,13 +798,16 @@ async function runNpmUpdate({
 module.exports = {
   ALLOW_SCRIPTS,
   MANUAL_COMMAND,
+  acquireUpdateLock,
   archiveAssetName,
+  findActiveUpdateLock,
   findInstallHolders,
   findNpmInvocation,
   fetchLatestArchiveRelease,
   getInstallKind,
   isArchiveInstall,
   isNewerStableVersion,
+  isInsideDir,
   npmInstallArgs,
   readInstalledVersion,
   releasePlatform,
