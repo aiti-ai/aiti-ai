@@ -338,7 +338,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
           <ActionChip label={t("打开终端")} icon="terminal" onClick={() => props.onTerminal(node)} />
         ) : null}
         {node && (node.kind === "agent" || node.kind === "helper") && node.sessionId && node.owner === "agent-starter" ? (
-          <ActionChip label={t("打开会话")} icon="chat" title={t("打开对应会话")} onClick={() => props.onOpenSession(node)} />
+          <ActionChip label={data.sessionName || t("打开会话")} icon="chat" title={t("打开对应会话") + (data.sessionName ? " · " + data.sessionName : "")} onClick={() => props.onOpenSession(node)} truncate />
         ) : null}
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
@@ -369,6 +369,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             <Field k={t("用户")} v={data.detail?.user || node?.user || ""} />
             <Field k={t("工作目录")} v={data.detail?.cwd || node?.cwd || ""} />
             <Field k={t("来源")} v={(node?.source || "") + (node?.transport ? " · " + node.transport : "")} />
+            {data.sessionName ? <Field k={t("会话")} v={data.sessionName} /> : null}
             {node?.url ? <Field k="URL" v={node.url} /> : null}
             {node?.socket ? <Field k={t("套接字 / Unit")} v={node.socket} /> : null}
             {data.selfMemory ? (
@@ -431,7 +432,7 @@ const CHIP_ICONS: Record<string, any> = {
 
 /** Accent-tinted action pill used in the detail drawer title bar: icon + label,
  *  obvious affordance (border + tint + hover lift) unlike a bare text button. */
-function ActionChip(props: { label: string; icon: string; title?: string; onClick: () => void }) {
+function ActionChip(props: { label: string; icon: string; title?: string; onClick: () => void; truncate?: boolean }) {
   const [hov, setHov] = useState(false);
   return (
     <button
@@ -451,7 +452,7 @@ function ActionChip(props: { label: string; icon: string; title?: string; onClic
       }}
     >
       {CHIP_ICONS[props.icon]}
-      <span style={{ whiteSpace: "nowrap" }}>{props.label}</span>
+      <span style={{ whiteSpace: "nowrap", maxWidth: props.truncate ? 180 : undefined, overflow: "hidden", textOverflow: "ellipsis" }}>{props.label}</span>
       <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ opacity: 0.7 }}>
         <path d="M7 17L17 7" /><path d="M8 7h9v9" />
       </svg>

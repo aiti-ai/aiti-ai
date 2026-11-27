@@ -144,6 +144,7 @@ export default {
         "查看详情": "查看详情",
         "打开终端": "打开终端",
         "打开会话": "打开会话",
+        "会话": "会话",
         "打开对应会话": "打开该进程对应的外部 Agent 会话",
         "TERM→KILL": "TERM→KILL",
         "清理内存": "清理内存",
@@ -205,6 +206,7 @@ export default {
         "查看详情": "Details",
         "打开终端": "Open terminal",
         "打开会话": "Open session",
+        "会话": "Session",
         "打开对应会话": "Open the agent session behind this process",
         "TERM→KILL": "TERM→KILL",
         "清理内存": "Clean memory",
@@ -474,6 +476,17 @@ export default {
           // Self process: rich in-process memory breakdown (the /proc RSS row is
           // just the tip — heap/external/arrayBuffers + heap limits are what the
           // Clean memory action actually acts on).
+          // External agent (agent-starter) rows carry the pi session uuid —
+          // resolve a human-readable session name (first message) for the drawer.
+          let sessionName: string | null = null;
+          if (node && node.owner === "agent-starter" && node.sessionId) {
+            try {
+              const list = (await ctx.core.listSessions()) as any[];
+              const hit = (list || []).find((r: any) => r && (r.id === node.sessionId || String(r.path || "").includes(String(node.sessionId))));
+              if (hit && hit.firstMessage) sessionName = truncate(hit.firstMessage, 80);
+            } catch { /* list unavailable — fall back to the raw id */ }
+          }
+
           const selfMemory = pid === process.pid
             ? (() => {
                 const m = process.memoryUsage();
@@ -522,6 +535,7 @@ export default {
             },
             parent: parent ? { pid: parent.pid, label: parent.label } : null,
             children,
+            sessionName,
             selfMemory,
           });
         } catch (e: any) {
