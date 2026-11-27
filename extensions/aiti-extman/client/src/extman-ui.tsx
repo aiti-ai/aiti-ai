@@ -14,6 +14,7 @@ import {
   localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader, semverGt,
   extDisplayName, subscribeAll, dependentsOf, execOp, depEdges, hardDependents, clientDependents,
   invokeHelper, extUi18nExact, extSoulText, extDescriptionText, onlineName, featureGroupText,
+  resolveExtItemText,
   EXTMAN_KEY,
 } from "./extman-core";
 import { t, apiUrl } from "./host-shim";
@@ -1647,7 +1648,9 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                       : <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>{t("ext.global")}</span>}
                   </div>
                   {items.map((it: any) => {
-                    const label = (it.label || it.title || it.id) + "";
+                    // "i18n:<key>" labels resolve against the declaring extension's manifest ui.i18n
+                    // (shared registry, primed at register; bare key until it lands — same as host)
+                    const label = resolveExtItemText(id, (it.label || it.title || it.id) + "");
                     const where = it.where || "";
                     return (
                       <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>

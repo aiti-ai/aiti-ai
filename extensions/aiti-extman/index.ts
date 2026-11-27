@@ -177,14 +177,22 @@ const SLOT_CONTEXT: Record<string, { context: "global" | "context"; where: strin
   sidebar: { context: "global", where: "左侧栏" },
   sidebarFooter: { context: "global", where: "侧栏底部" },
   sessionTopbar: { context: "global", where: "顶部工具条" },
+  topbarMobileLeading: { context: "global", where: "小屏顶栏前导区（侧栏开关右侧）" },
   dialogs: { context: "global", where: "弹窗（由扩展自身入口触发）" },
   banners: { context: "global", where: "页面顶部横幅（常驻）" },
   pages: { context: "global", where: "主区域页面面板（常驻）" },
   sessionRowActions: { context: "context", where: "左侧会话列表·会话行操作按钮" },
+  sessionRowMeta: { context: "context", where: "左侧会话列表·会话行元信息区" },
+  sessionStatsInline: { context: "context", where: "会话信息统计条内联区" },
+  sessionInfoPanel: { context: "context", where: "会话信息弹层（配额面板等）" },
   chatInputTop: { context: "context", where: "聊天输入框上方" },
   commands: { context: "global", where: "命令目录（无 UI 渲染点；应用中心动作卡 + 输入命令提示消费）" },
   fileViewer: { context: "context", where: "文件查看/编辑接管（按文件匹配）" },
   pathPicker: { context: "global", where: "目录选择器能力（顶栏打开文件夹等消费）" },
+  sidebarProjects: { context: "global", where: "左侧栏 Projects 列表接管" },
+  sidebarExplorerDock: { context: "global", where: "左侧栏内容 Dock 区块（可折叠）" },
+  sidebarTasks: { context: "global", where: "左侧栏任务区 Dock" },
+  rightFileDock: { context: "global", where: "右侧文件区 Dock 页签面板" },
 };
 
 /** Attach slot-item details (label/title/context/position) to entries — read from the declared ui. */

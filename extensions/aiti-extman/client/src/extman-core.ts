@@ -7,45 +7,25 @@
 import { t, apiUrl } from "./host-shim";
 import { typoMatch } from "../../../_shared/typo-search.mjs";
 import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
-import { extDescriptionFor, extSoulFor, onExtRegistryReady, extDisplayName as sharedDisplayName } from "../../../_shared/ext-display-names";
+import { extDescriptionFor, extSoulFor, onExtRegistryReady, extDisplayName as sharedDisplayName, extItemText as sharedExtItemText, manifestEntry, ui18nExact } from "../../../_shared/ext-display-names";
 
-/* ── 跨扩展条目文案解析（"i18n:<key>" 前缀 → 声明扩展 manifest ui.i18n 表）──
- * 插槽条目 label/title 携带 i18n key 后，extman 的 direct-open 按 DOM 文案/title 匹配，
- * 须先把 key 解析成当前 locale 文案才能命中。manifest 拉一次缓存（register 时预热；
- * 未就绪时回退裸 key，与旧行为等价）。级联与宿主 translateExtItemText 一致。 */
-let extI18nTables: Record<string, Record<string, Record<string, string>>> | null = null;
-let extI18nPrimed = false;
-function primeExtI18n(): void {
-  if (extI18nPrimed || typeof window === "undefined") return;
-  extI18nPrimed = true;
-  fetch(apiUrl("/api/extensions/manifest"))
-    .then((r) => r.json())
-    .then((d) => {
-      const map: Record<string, Record<string, Record<string, string>>> = {};
-      for (const e of d?.extensions ?? []) if (e?.id && e?.ui?.i18n) map[e.id] = e.ui.i18n;
-      extI18nTables = map;
-    })
-    .catch(() => { /* 下次重试 */ extI18nPrimed = false; });
-}
-function tableFor(ui18n: Record<string, Record<string, string>> | undefined, locale: string): Record<string, string> {
-  if (!ui18n) return {};
-  const short = locale.split("-")[0];
-  return ui18n[locale] ?? ui18n[short] ?? (short === "zh" ? ui18n["zh-CN"] : undefined) ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
-}
+/* ── Cross-extension item-text resolution ("i18n:<key>" prefix → the declaring
+ * extension's manifest ui.i18n table) ──
+ * Slot labels/titles may carry i18n keys; extman's direct-open matches DOM text/title,
+ * so keys must resolve to the current-locale copy first. Tables come from the shared
+ * _shared/ext-display-names manifest registry (primed once at register via
+ * primeExtRegistry(apiUrl); bare-key fallback before it lands, same as before).
+ * The cascade matches the host translateExtItemText; once the registry lands,
+ * subscribeAll → onExtRegistryReady repaints consumers. */
 /** 解析 "i18n:" 前缀文案；无前缀/缺表/缺键原样（裸 key）。 */
 export function resolveExtItemText(extId: string | undefined, text: string | undefined): string {
-  if (!text) return "";
-  if (!extId || !text.startsWith("i18n:")) return text;
-  primeExtI18n();
-  const key = text.slice("i18n:".length);
-  return tableFor(extI18nTables?.[extId], currentLocaleKey())[key] ?? key;
+  return sharedExtItemText(extId, text, currentLocaleKey());
 }
 /** Current-locale-only table for one extension (NO cascade — manifest text is the
  *  zh-CN source; only the current locale's own table overrides it). Self-declared
  *  "ext.description" / "feat.<id>" overrides per the 2026-11-15 i18n convention. */
 export function extUi18nExact(extId: string | undefined): Record<string, string> {
-  primeExtI18n();
-  return extI18nTables?.[extId ?? ""]?.[currentLocaleKey()] ?? {};
+  return ui18nExact(manifestEntry(extId)?.ui?.i18n, currentLocaleKey());
 }
 
 /** Current UI locale key (same source as the host i18n: localStorage pi-locale, default en). */
@@ -65,7 +45,7 @@ export function extSoulText(
 ): string {
   // Online registry rows carry a flat soulEn instead of a locale map.
   const map = pkg?.soulI18n ?? (pkg?.soulEn ? { en: pkg.soulEn } : undefined);
-  return extSoulFor({ soul: pkg?.soul, soulI18n: map, ui: { i18n: extI18nTables?.[extId ?? ""] } }, currentLocaleKey());
+  return extSoulFor({ soul: pkg?.soul, soulI18n: map, ui: { i18n: manifestEntry(extId)?.ui?.i18n } }, currentLocaleKey());
 }
 
 /** One-line description for the current locale: ui.i18n["ext.description"] → descriptionI18n[locale] → raw.
@@ -80,7 +60,7 @@ export function extDescriptionText(
   const text = extDescriptionFor({
     description: pkg?.description ?? fallback,
     descriptionI18n: map,
-    ui: { i18n: extI18nTables?.[extId ?? ""] },
+    ui: { i18n: manifestEntry(extId)?.ui?.i18n },
   }, currentLocaleKey());
   return text || fallback || "";
 }

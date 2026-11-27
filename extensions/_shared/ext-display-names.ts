@@ -60,6 +60,12 @@ export function onExtRegistryReady(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
+/** Registry entry for one id (ui.i18n included); undefined until the manifest fetch lands.
+ *  Lets consumers read soul/description/exact-table sources without keeping their own manifest copy. */
+export function manifestEntry(id: string | undefined): ExtManifestEntry | undefined {
+  return (id && registry?.[id]) || undefined;
+}
+
 /** The current locale's exact entry table (deliberately non-cascading — see the file header). */
 export function ui18nExact(ui18n: UiI18n, locale: string): Record<string, string> {
   if (!ui18n) return {};
