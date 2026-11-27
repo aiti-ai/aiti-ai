@@ -104,15 +104,25 @@ export function useShowIgnored(path: string): boolean {
 
 function normalizeEntries(raw: unknown): FolderEntry[] {
   if (!Array.isArray(raw)) return [];
-  const out: FolderEntry[] = [];
+  const byKey = new Map<string, FolderEntry>();
   for (const x of raw) {
-    if (typeof x === "string") out.push({ p: x });
+    let e: FolderEntry | null = null;
+    if (typeof x === "string") e = { p: x };
     else if (x && typeof x === "object" && typeof (x as Record<string, unknown>).p === "string") {
-      const e = x as FolderEntry;
-      out.push(e.pin ? { p: e.p, pin: 1 } : { p: e.p });
+      const src = x as FolderEntry;
+      e = src.pin ? { p: src.p, pin: 1 } : { p: src.p };
     }
+    if (!e) continue;
+    const key = folderPathKey(e.p);
+    const kept = byKey.get(key);
+    // One folder can enter the manifest under several Windows spellings (drive
+    // case, `\` vs `/`): keep the first spelling and merge the pin flag. This
+    // also heals manifests written before folderPathKey existed — the old
+    // exact-string dedup let both spellings of the same folder coexist.
+    if (!kept) byKey.set(key, e);
+    else if (!kept.pin && e.pin) byKey.set(key, { p: kept.p, pin: 1 });
   }
-  return out;
+  return [...byKey.values()];
 }
 
 export function readFolderEntries(): FolderEntry[] {
@@ -120,18 +130,34 @@ export function readFolderEntries(): FolderEntry[] {
   catch { return []; }
 }
 function writeFolderEntries(entries: FolderEntry[]): void {
-  try { localStorage.setItem(INSTANCES_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+  try {
+    // Canonicalize on write too: concurrent flows may hold a manifest read from
+    // before another flow healed it — writing raw would resurrect the duplicate
+    // until the next read. Every persisted manifest is deduped.
+    localStorage.setItem(INSTANCES_KEY, JSON.stringify(normalizeEntries(entries)));
+  } catch { /* ignore */ }
   try { window.dispatchEvent(new Event(INSTANCES_EVENT)); } catch { /* ignore */ }
 }
 /** 纯路径清单（遍历/展示用；钉标走 readFolderPins/isFolderPinned）。 */
 export function readFolderInstances(): string[] { return readFolderEntries().map((e) => e.p); }
 export function readFolderPins(): Set<string> {
-  return new Set(readFolderEntries().filter((e) => e.pin).map((e) => e.p));
+  return new Set(readFolderEntries().filter((e) => e.pin).map((e) => folderPathKey(e.p)));
 }
 
-/** 区块 itemKey（faces 注册复合 id = itemKey，dock 方案链路约定；尾斜杠归一）。 */
+/** Comparison/identity form of a folder path. Windows paths are case- and
+ *  separator-insensitive (`D:\w`, `d:/w` and `D:/w/` are one folder), posix is
+ *  not, so only win-shaped paths get folded. Same policy as session-manager's
+ *  workspace key normalization. Trailing separators drop on both platforms. */
+function folderPathKey(path: string): string {
+  const p = (path || "").trim().replace(/[\\/]+$/, "");
+  if (/^[a-zA-Z]:[\\/]/.test(p) || p.includes("\\")) return p.replace(/\\/g, "/").toLowerCase();
+  return p;
+}
+
+/** Block itemKey: faces register under this composite id (dock chain contract);
+ *  identity goes through folderPathKey so one folder has exactly one key. */
 export function folderItemKey(path: string): string {
-  return `aiti-folder:folder:${path.replace(/[\\/]+$/, "")}`;
+  return `aiti-folder:folder:${folderPathKey(path)}`;
 }
 
 /** 文件夹「新窗口打开」（独立 viewer 窗；与 folder-browser 的目录菜单同链路）。 */
@@ -156,8 +182,9 @@ export function addFolderInstance(path: string): void {
   const p = (path || "").trim();
   if (!p) return;
   declareFolderInstance(p);
+  const key = folderPathKey(p);
   const entries = readFolderEntries();
-  if (entries.some((e) => e.p === p)) return;
+  if (entries.some((e) => folderPathKey(e.p) === key)) return;
   let next: FolderEntry[] = [...entries, { p }];
   const unpinned = next.filter((e) => !e.pin);
   const victims = unpinned.slice(0, Math.max(0, unpinned.length - maxUnpinnedFolders()));
@@ -178,15 +205,16 @@ export function addFolderInstance(path: string): void {
 export function toggleFolderPin(path: string): void {
   const p = (path || "").trim();
   if (!p) return;
+  const key = folderPathKey(p);
   const entries = readFolderEntries();
-  if (!entries.some((e) => e.p === p)) {
+  if (!entries.some((e) => folderPathKey(e.p) === key)) {
     writeFolderEntries([...entries, { p, pin: 1 }]);
     return;
   }
-  writeFolderEntries(entries.map((e) => (e.p === p ? (e.pin ? { p } : { p, pin: 1 }) : e)));
+  writeFolderEntries(entries.map((e) => (folderPathKey(e.p) === key ? (e.pin ? { p: e.p } : { p: e.p, pin: 1 }) : e)));
 }
 export function isFolderPinned(path: string): boolean {
-  return readFolderPins().has((path || "").trim());
+  return readFolderPins().has(folderPathKey(path || ""));
 }
 
 /** 项目切换联动：当前 cwd 的文件夹区块**必定打开**（用户拍板 2026-09-15）：
@@ -221,7 +249,8 @@ export function openFolderDocked(path: string, zone: DockZone = "right-panel", o
 export function removeFolderInstance(path: string): void {
   const p = (path || "").trim();
   if (!p) return;
-  writeFolderEntries(readFolderEntries().filter((e) => e.p !== p));
+  const key = folderPathKey(p);
+  writeFolderEntries(readFolderEntries().filter((e) => folderPathKey(e.p) !== key));
   try { present(folderItemKey(p), "close"); } catch { /* ignore */ }
   declareDockWindowOpener(folderItemKey(p), null); // 注销「新窗口打开」能力
 }
@@ -586,8 +615,10 @@ let prevFacePaths: string[] | null = null;
  *  落进降级 store」竞态）；本模块只负责声明落位/默认折叠 + 三面注册。 */
 
 /** 注册 raw id（无扩展前缀；宿主拼后 = folderItemKey）。 */
+/** Register the raw id (no extension prefix; with the host prefix this must
+ *  equal folderItemKey — fold the path the same way folderItemKey does). */
 function folderRawId(path: string): string {
-  return `folder:${path.replace(/[\\/]+$/, "")}`;
+  return `folder:${folderPathKey(path)}`;
 }
 
 /* ── faces 注册项按路径缓存（render/meta 引用恒定）───────────────────────────────

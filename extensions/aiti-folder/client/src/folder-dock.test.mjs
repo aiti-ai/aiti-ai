@@ -160,10 +160,55 @@ test("钉住清单：toggle 翻转 + 事件广播 + 清单缺席追加钉住条�
   assert.equal(mod.isFolderPinned("/c"), true);
   assert.equal(fired, 3, "每次 toggle 都应广播");
 
-  // 空路径忽略；尾斜杠差异按原样比较（清单内精确匹配）
+  // Empty path is a no-op; a trailing-separator spelling now flips the same entry
+  // via folderPathKey, keeping the first stored spelling.
   const before = globalThis.localStorage.getItem(KEY);
   mod.toggleFolderPin("");
   assert.equal(globalThis.localStorage.getItem(KEY), before, "空路径 no-op");
+  mod.toggleFolderPin("/a/");
+  assert.deepEqual(readEntries(), [{ p: "/a" }, { p: "/b" }, { p: "/c", pin: 1 }], "尾斜杠拼写翻转已钉条目，首拼法保留");
+});
+
+test("Windows 路径变体归一：同目录多拼写只留一个实例（首拼法保留、钉标合并、跨拼写删/钉生效）", async (t) => {
+  const { mod } = await loadFolderDock(t);
+
+  // ① itemKey folding: win paths fold case/separators/trailing seps; posix only strips trailing seps
+  assert.equal(mod.folderItemKey("D:\\workspace\\pi-web\\"), "aiti-folder:folder:d:/workspace/pi-web");
+  assert.equal(mod.folderItemKey("d:/workspace/pi-web"), "aiti-folder:folder:d:/workspace/pi-web");
+  assert.equal(mod.folderItemKey("/home/wind/pi-web/"), "aiti-folder:folder:/home/wind/pi-web", "posix 不折叠大小写");
+
+  // ② add dedupe: several spellings of one folder enter the manifest once, first spelling kept
+  mod.addFolderInstance("D:/workspace/pi-web");
+  mod.addFolderInstance("D:\\workspace\\pi-web");
+  mod.addFolderInstance("d:\\workspace\\pi-web\\");
+  assert.deepEqual(readEntries(), [{ p: "D:/workspace/pi-web" }], "同目录多拼写只入清单一次");
+
+  // ③ removal across spellings
+  mod.removeFolderInstance("d:/workspace/pi-web");
+  assert.deepEqual(readEntries(), [], "不同拼写的移除删掉同一实例");
+
+  // ④ legacy manifests (written before the fix) heal on read: first spelling wins, pin flags merge
+  writeEntries([{ p: "D:\\workspace\\x" }, { p: "D:/workspace/x", pin: 1 }]);
+  assert.deepEqual(mod.readFolderEntries(), [{ p: "D:\\workspace\\x", pin: 1 }], "存量重复清单读取即收敛");
+
+  // ⑤ healed entries still remove/pin across spellings
+  mod.removeFolderInstance("D:/WORKSPACE\\x");
+  assert.deepEqual(readEntries(), [], "收敛后条目仍可跨拼写移除");
+  mod.toggleFolderPin("D:/workspace/y");
+  assert.deepEqual(readEntries(), [{ p: "D:/workspace/y", pin: 1 }]);
+  mod.toggleFolderPin("D:\\workspace\\y");
+  assert.deepEqual(readEntries(), [{ p: "D:/workspace/y" }], "另一拼写的 toggle 翻转同一条目");
+  assert.equal(mod.isFolderPinned("d:\\workspace\\y\\"), false);
+
+  // ⑥ Face registration ids must be shape-equal to folderItemKey: the host prefixes
+  // extId onto the raw id, and the result must exactly equal the itemKey — otherwise
+  // the dock state machine (present/collapse/order keys) detaches from the face and
+  // the block header buttons go dead.
+  const batches = [];
+  const ctx = { registerItems: (slot, items) => batches.push([slot, items]), disposeItems: () => {} };
+  mod.addFolderInstance("D:\\workspace\\z");
+  mod.syncFolderDockFaces(ctx);
+  assert.ok(itemsOf(batches, "sidebarExplorerDock").has("folder:d:/workspace/z"), "注册 raw id 折叠后 = folderItemKey");
 });
 
 test("未钉 FIFO 配额：>3 未钉挤最旧，钉住豁免", async (t) => {
