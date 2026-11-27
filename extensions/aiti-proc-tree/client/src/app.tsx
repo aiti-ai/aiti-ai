@@ -120,14 +120,35 @@ function groupOf(node: ProcNode): { key: string; label: string } {
   return { key: "other", label: "其它" };
 }
 
-function sortNodes(list: ProcNode[], key: string, dir: 1 | -1): ProcNode[] {
+type SortKey = "name" | "pid" | "cpu" | "mem" | "etime";
+
+/** Windows Task Manager semantics: click a header to sort, click again to flip;
+ *  name/pid start ascending, numeric columns start descending. */
+function sortNodes(list: ProcNode[], key: SortKey, dir: 1 | -1): ProcNode[] {
   const val = (n: ProcNode): number => {
     if (key === "cpu") return n.cpu == null ? -1 : n.cpu;
     if (key === "mem") return n.mem == null ? -1 : n.mem;
     if (key === "etime") return n.etimeMs == null ? -1 : n.etimeMs;
     return n.pid;
   };
-  return list.slice().sort((a, b) => (val(a) - val(b)) * dir || a.pid - b.pid);
+  return list.slice().sort((a, b) => {
+    if (key === "name") {
+      const r = a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" });
+      return (r * dir) || a.pid - b.pid;
+    }
+    return (val(a) - val(b)) * dir || a.pid - b.pid;
+  });
+}
+
+function SortArrow(props: { active: boolean; dir: 1 | -1 }) {
+  // Only the active column renders an arrow (others keep the width so headers
+  // do not shift when the sort column changes).
+  if (!props.active) return <span style={{ display: "inline-block", width: 8 }} />;
+  return (
+    <span style={{ display: "inline-block", width: 8, fontSize: 8, lineHeight: 1 }}>
+      {props.dir === 1 ? "▲" : "▼"}
+    </span>
+  );
 }
 
 function buildIndex(nodes: ProcNode[]) {
@@ -341,8 +362,13 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
   const [showOther, setShowOther] = useState<boolean>(() => features.showOtherInstances === true);
   const [paused, setPaused] = useState(false);
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<"cpu" | "mem" | "pid" | "etime">("cpu");
-  const [sortDir] = useState<1 | -1>(-1);
+  const [sortKey, setSortKey] = useState<SortKey>("cpu");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const applySort = (key: SortKey) => {
+    if (key === sortKey) { setSortDir((d) => (d === 1 ? -1 : 1)); return; }
+    setSortKey(key);
+    setSortDir(key === "name" || key === "pid" ? 1 : -1);
+  };
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [expandedOnce, setExpandedOnce] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -532,11 +558,24 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 10, color: "var(--text-dim,#888)", borderBottom: "1px solid var(--border,#333)", position: "sticky", top: 0, background: "var(--bg,elevated)", zIndex: 1 }}>
               <span style={{ width: 14, flexShrink: 0 }} />
-              <span style={{ flex: "1 1 auto", minWidth: 90 }}>{t("名称")}</span>
-              <span style={{ width: 62, textAlign: "right", cursor: "pointer" }} onClick={() => setSortKey("pid")}>PID</span>
-              <span style={{ width: 52, textAlign: "right", cursor: "pointer" }} onClick={() => setSortKey("cpu")}>CPU</span>
-              <span style={{ width: 66, textAlign: "right", cursor: "pointer" }} onClick={() => setSortKey("mem")}>{t("内存")}</span>
-              <span style={{ width: 66, textAlign: "right", cursor: "pointer" }} onClick={() => setSortKey("etime")}>{t("时长")}</span>
+              <span
+                onClick={() => applySort("name")}
+                title={t("按名称排序")}
+                style={{ flex: "1 1 auto", minWidth: 90, cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
+              >{t("名称")}<SortArrow active={sortKey === "name"} dir={sortDir} /></span>
+              {([
+                ["pid", "PID", 62, false],
+                ["cpu", "CPU", 52, false],
+                ["mem", t("内存"), 66, true],
+                ["etime", t("时长"), 66, true],
+              ] as Array<[SortKey, string, number, boolean]>).map(([key, label, width, right]) => (
+                <span
+                  key={key}
+                  onClick={() => applySort(key)}
+                  title={right ? t("点击排序（再次点击切换升/降序）") : t("点击排序")}
+                  style={{ width, textAlign: "right", cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 2 }}
+                >{label}<SortArrow active={sortKey === key} dir={sortDir} /></span>
+              ))}
               <span style={{ width: 56 }} />
             </div>
             {groups.map((g) => {
