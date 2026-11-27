@@ -146,6 +146,10 @@ export default {
         "打开会话": "打开会话",
         "打开对应会话": "打开该进程对应的外部 Agent 会话",
         "TERM→KILL": "TERM→KILL",
+        "清理内存": "清理内存",
+        "清理中": "清理中…",
+        "已清理": "已清理",
+        "清理内存提示": "对 pi-web 宿主进程执行一次 V8 垃圾回收（约 0.1~0.5s 暂停），回收缓存垃圾。宿主进程不可结束，但可以清理。",
         "打开服务面板": "打开服务面板",
         "复制 PID": "复制 PID",
         "复制命令": "复制命令",
@@ -201,6 +205,10 @@ export default {
         "打开会话": "Open session",
         "打开对应会话": "Open the agent session behind this process",
         "TERM→KILL": "TERM→KILL",
+        "清理内存": "Clean memory",
+        "清理中": "Cleaning…",
+        "已清理": "Freed",
+        "清理内存提示": "Runs one V8 garbage-collection pass on the hosting pi-web process (~0.1–0.5s pause) to reclaim cache garbage. The host process cannot be killed — but it can be tidied.",
         "打开服务面板": "Open services panel",
         "复制 PID": "Copy PID",
         "复制命令": "Copy command",
@@ -412,6 +420,39 @@ export default {
         } catch (e: any) {
           return json({ error: String(e?.message || e) }, 500);
         }
+      }
+
+      // Self memory cleanup: run V8 GC on the hosting pi-web process. The host
+      // itself is un-killable (protectedReason: self) — this is the safe way to
+      // act on a bloated host row. GC is synchronous V8 work (~100-500ms on a
+      // large heap); the response is sent first and the collection runs on the
+      // next tick so the UI never hangs on the request.
+      if (action === "clean" && method === "POST") {
+        let body: any = {};
+        try { body = await req.json(); } catch { /* empty body ok */ }
+        if (body.confirm !== true) return json({ error: "confirm required" }, 400);
+        const heapBefore = process.memoryUsage();
+        const rssBefore = heapBefore.rss;
+        const result = await new Promise<any>((resolve) => {
+          setImmediate(() => {
+            try {
+              // The standard trick (v8.setFlagsFromString + vm realm): makes gc()
+              // callable without the --expose-gc launch flag.
+              const v8 = require("node:v8");
+              const vm = require("node:vm");
+              v8.setFlagsFromString("--expose-gc");
+              const gc = vm.runInNewContext("gc");
+              const t0 = Date.now();
+              if (typeof gc === "function") gc();
+              const after = process.memoryUsage();
+              resolve({ ok: true, gcMs: Date.now() - t0, heapUsedBefore: heapBefore.heapUsed, heapUsedAfter: after.heapUsed, rssBefore, rssAfter: after.rss });
+            } catch (e: any) {
+              resolve({ ok: false, error: String(e?.message || e) });
+            }
+          });
+        });
+        const freed = result.ok ? Math.max(0, result.heapUsedBefore - result.heapUsedAfter) : 0;
+        return json({ ...result, freedBytes: freed });
       }
 
       if (action === "node" && path[1] && method === "GET") {

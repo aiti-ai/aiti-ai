@@ -297,7 +297,7 @@ function ProcRow(props: {
 
 // ---------------------------------------------------------------- detail drawer
 
-function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void; onKill: (node: ProcNode, mode: "single" | "subtree") => void }) {
+function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void; onKill: (node: ProcNode, mode: "single" | "subtree") => void; onNotify: (msg: string) => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -327,8 +327,10 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
       {node ? (
-        <div style={{ display: "flex", gap: 6, padding: "6px 10px", borderBottom: "1px solid var(--border,#333)" }}>
-          {node.canKill ? (
+        <div style={{ display: "flex", gap: 6, padding: "6px 10px", borderBottom: "1px solid var(--border,#333)", alignItems: "center", flexWrap: "wrap" }}>
+          {node.protectedReason === "self" ? (
+            <CleanMemoryChip onDone={(msg: string) => props.onNotify(msg)} />
+          ) : node.canKill ? (
             <>
               <button type="button" onClick={() => props.onKill(node, "single")}
                 style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, border: "1px solid #d4574e", color: "#d4574e", background: "none", cursor: "pointer" }}>
@@ -345,7 +347,7 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             </span>
           )}
           <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-dim,#888)" }}>
-            {t("确认结束")} · {t("TERM→KILL")}
+            {node.canKill ? t("确认结束") + " · " + t("TERM→KILL") : ""}
           </span>
         </div>
       ) : null}
@@ -428,6 +430,51 @@ function ActionChip(props: { label: string; icon: string; title?: string; onClic
       <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ opacity: 0.7 }}>
         <path d="M7 17L17 7" /><path d="M8 7h9v9" />
       </svg>
+    </button>
+  );
+}
+
+/** "Clean memory" action for the hosting pi-web process (self): runs a V8 GC
+ *  pass via POST /clean and reports the freed heap. Host rows show this chip
+ *  instead of kill buttons — you can tidy the palace, not demolish it. */
+function CleanMemoryChip(props: { onDone: (msg: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await fetch(apiUrl("/api/extensions/aiti-proc-tree/clean"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        props.onDone(String(j.error || "clean failed"));
+        return;
+      }
+      props.onDone(t("已清理") + " " + fmtBytes(j.freedBytes) + " · GC " + j.gcMs + "ms");
+    } catch (e: any) {
+      props.onDone(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={busy}
+      title={t("清理内存提示")}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 999,
+        border: "1px solid " + (busy ? "var(--border,#555)" : "color-mix(in srgb, #39c5cf 45%, transparent)"),
+        background: busy ? "none" : "color-mix(in srgb, #39c5cf 12%, transparent)",
+        color: "#39c5cf", cursor: busy ? "wait" : "pointer",
+      }}
+    >
+      {busy ? t("清理中") : t("清理内存")}
     </button>
   );
 }
@@ -718,6 +765,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
           onTerminal={(node) => { openTerminal(node); }}
           onOpenSession={openAgentSession}
           onKill={doKill}
+          onNotify={(msg) => { setToast(msg); window.setTimeout(() => setToast(null), 3500); }}
         />
       ) : null}
     </div>
