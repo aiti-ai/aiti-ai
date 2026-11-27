@@ -1251,10 +1251,10 @@ export function initSuggest(apiUrl: (p: string) => string) {
     barClear("suggest");
     sugClose();
   }
-  // 应用图标三形态（宿主 renderExtItemIcon 同规则）：{svg} 内联 / "icons/*.svg" CSS-mask（URL 同宿主
-  // /api/extensions/<extId>/assets/） / emoji 文本；异常返回 null（行内无图标不阻断候选）
-  function sugAppIcon(h) {
-    const icon = h && h.icon;
+  // Icon renderer, three forms (same contract as the host's renderExtItemIcon): {svg} inline /
+  // relative "*.svg" path via CSS-mask (URL = /api/extensions/<extId>/assets/, same as host) /
+  // emoji text. Returns null on bad input — a missing icon never blocks a candidate row.
+  function sugIconOf(icon, extId) {
     if (icon == null) return null;
     try {
       if (typeof icon === "object" && icon.svg) {
@@ -1264,7 +1264,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
         return span;
       }
       if (typeof icon === "string" && icon.endsWith(".svg")) {
-        const url = apiUrl(`/api/extensions/${h.extId || ""}/assets/${icon}`);
+        const url = apiUrl(`/api/extensions/${extId || ""}/assets/${icon}`);
         const span = document.createElement("span");
         span.setAttribute("aria-hidden", "true");
         span.style.cssText = "flex-shrink:0;display:inline-block;width:16px;height:16px;background:currentColor;-webkit-mask-image:url(\"" + url + "\");mask-image:url(\"" + url + "\");-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;";
@@ -1276,13 +1276,43 @@ export function initSuggest(apiUrl: (p: string) => string) {
       return span;
     } catch (e) { return null; }
   }
+  function sugAppIcon(h) { return sugIconOf(h && h.icon, h && h.extId); }
+
   /** Blank icon slot (no icon declared) — keeps the 16px gutter so row labels stay aligned. */
-  function sugAppIconPlaceholder() {
+  function sugIconPlaceholder() {
     const span = document.createElement("span");
     span.setAttribute("aria-hidden", "true");
     span.style.cssText = "flex-shrink:0;display:inline-block;width:16px;height:16px;";
     return span;
   }
+
+  // Source-extension icon for prompt/cmd rows: provider (aiti-prompts / aiti-cmd / any registered
+  // provider) → its declared icon + display name from the host manifest ("icon.svg" path or emoji).
+  // 30s TTL + in-flight merge; any failure is silent (candidates still list, just without an icon).
+  const EXT_ICON_TTL = 30000;
+  const extIconCache = { at: 0, map: new Map<string, { icon: string; name: string }>(), inflight: null as Promise<void> | null };
+  function extIconsWarm(): Promise<void> {
+    if (extIconCache.inflight) return extIconCache.inflight;
+    if (extIconCache.at && Date.now() - extIconCache.at < EXT_ICON_TTL) return Promise.resolve();
+    extIconCache.inflight = (async () => {
+      try {
+        const r = await fetch(apiUrl("/api/extensions/manifest"), { cache: "no-store" });
+        const d = r.ok ? await r.json() : null;
+        const rows = d && Array.isArray(d.extensions) ? d.extensions : [];
+        const map = new Map<string, { icon: string; name: string }>();
+        for (const e of rows) {
+          if (!e || !e.id) continue;
+          if (typeof e.icon !== "string" || !e.icon) continue;
+          map.set(String(e.id), { icon: e.icon, name: String(e.name || e.id) });
+        }
+        extIconCache.map = map;
+        extIconCache.at = Date.now();
+      } catch (e) { /* no icons — candidate rows render as before */ }
+      finally { extIconCache.inflight = null; }
+    })();
+    return extIconCache.inflight;
+  }
+  const extMetaOf = (provider: unknown) => (provider ? extIconCache.map.get(String(provider)) || null : null);
   // 应用命令候选行（桌面弹窗）：徽标「应用」+ 图标 + label + 次级（来源扩展 · 分类）+ toggle 尾态；
   // 点击 = 直接执行（真实动作不填入）
   function sugAppRow(it, i) {
@@ -1297,7 +1327,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     badge.style.cssText = "flex-shrink:0;font-size:11px;color:var(--text-dim,#9ca3af);border:1px solid var(--border,#e0e0e0);border-radius:999px;padding:1px 7px;white-space:nowrap;";
     row.appendChild(badge);
     const icon = sugAppIcon(h);
-    row.appendChild(icon || sugAppIconPlaceholder());
+    row.appendChild(icon || sugIconPlaceholder());
     const main = document.createElement("span");
     main.textContent = h.label || it.name || "";
     main.title = t("suggest.appRunTitle");
@@ -1349,7 +1379,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
         // 被压到只剩一个字符（用户实测「方案先行」只显示「方」）——长收藏场景左右布局天然不成立，
         // 改为 name 独占一行（完整显示，超长才省略）+ prev 块级 clamp 3 行
         const row = document.createElement("div");
-        row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;min-width:0;font-size:13px;line-height:1.5;touch-action:manipulation;transition:background .12s";
+        row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;min-width:0;font-size:13px;line-height:1.5;touch-action:manipulation;transition:background .12s;display:flex;gap:8px;align-items:flex-start;";
         if (i === SUG.idx) {
           hotRow = row;
           row.style.background = "color-mix(in srgb, var(--accent, #2563eb) 18%, transparent)";
@@ -1364,11 +1394,22 @@ export function initSuggest(apiUrl: (p: string) => string) {
         row.addEventListener("mouseleave", () => {
           if (i !== SUG.idx) row.style.background = "";
         });
+        // Source-extension icon gutter (same 16px slot as app rows): tells at a glance which
+        // extension the matched prompt/command comes from (provider id → manifest icon).
+        const srcMeta = extMetaOf(it.provider);
+        const gutter = sugIconOf(srcMeta && srcMeta.icon, it.provider) || sugIconPlaceholder();
+        gutter.style.marginTop = "2px"; // align with the name's first line
+        if (srcMeta) gutter.title = srcMeta.name;
+        row.appendChild(gutter);
+        // Content column: name + preview stay left-aligned with each other under the icon gutter
+        const col = document.createElement("div");
+        col.style.cssText = "min-width:0;flex:1 1 auto;";
+        row.appendChild(col);
         // 名称优先完整显示（去掉图标、去掉 45% 截断）；预览才收缩省略
         const name = document.createElement("span");
         name.textContent = it.name;
         name.style.cssText = "font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-        row.appendChild(name);
+        col.appendChild(name);
         // 预览文案与名称相同（收藏时常见：name=首行）→ 省略，避免小屏重复占两列；且与输入一致时已在上层过滤
         const prevText = it.kind === "cmd" ? (it.cmd || "") : (it.text || "");
         if (prevText && prevText !== it.name && prevText !== input) {
@@ -1377,7 +1418,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
           // 块级 + clamp 3 行+尾部省略（-webkit-box；Chrome/Safari/Firefox 68+ 均支持）；
           // 不控制则长收藏全文 wrap 占满弹窗（maxHeight 240 全被一条候选吃掉）
           prev.style.cssText = "display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;opacity:.65;margin-top:2px;";
-          row.appendChild(prev);
+          col.appendChild(prev);
         }
         // suggest ⚡ 一键执行（§3.4，feature ai-input.suggestRun 默认关）：命令文本已在联想结果
         // （前端持有）→ 直接前端 POST aiti-cmd /run，不绕本扩展服务端；用户显式点 ⚡ 才跑。
@@ -1385,7 +1426,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
           const runBtn = document.createElement("button");
           runBtn.textContent = "⚡";
           runBtn.title = "执行此命令（危险命令会二次确认）";
-          runBtn.style.cssText = "flex-shrink:0;border:1px solid var(--border,#e0e0e0);background:transparent;color:inherit;border-radius:6px;padding:1px 7px;cursor:pointer;font-size:12px;line-height:1.4";
+          runBtn.style.cssText = "flex-shrink:0;align-self:center;border:1px solid var(--border,#e0e0e0);background:transparent;color:inherit;border-radius:6px;padding:1px 7px;cursor:pointer;font-size:12px;line-height:1.4";
           const swallow = (e) => { e.preventDefault(); e.stopPropagation(); };
           runBtn.addEventListener("pointerdown", (e) => { swallow(e); sugRunCmd(it); });
           runBtn.addEventListener("touchend", swallow, { passive: false });
@@ -1433,6 +1474,8 @@ export function initSuggest(apiUrl: (p: string) => string) {
     const [data, appHints] = await Promise.all([
       wantHttp ? sugFetch(q) : Promise.resolve(null),
       wantApps ? sugQueryApps(q) : Promise.resolve([]),
+      // Provider icons must be resolved before the first paint (else rows render icon-less once)
+      wantHttp ? extIconsWarm() : Promise.resolve(),
     ]);
     if (data && (data.q !== SUG.q || SUG.ta !== ta)) return; // 已有更新触发的联想在途 → 本轮作废
     if (!wantHttp && SUG.ta !== ta) return; // 应用链路同样遵守锚漂移作废
