@@ -280,7 +280,7 @@ function ProcRow(props: {
 
 // ---------------------------------------------------------------- detail drawer
 
-function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void }) {
+function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (node: ProcNode) => void; onOpenSession: (node: ProcNode) => void; onKill: (node: ProcNode, mode: "single" | "subtree") => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -309,6 +309,29 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         ) : null}
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
+      {node ? (
+        <div style={{ display: "flex", gap: 6, padding: "6px 10px", borderBottom: "1px solid var(--border,#333)" }}>
+          {node.canKill ? (
+            <>
+              <button type="button" onClick={() => props.onKill(node, "single")}
+                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, border: "1px solid #d4574e", color: "#d4574e", background: "none", cursor: "pointer" }}>
+                {t("结束进程")}
+              </button>
+              <button type="button" onClick={() => props.onKill(node, "subtree")}
+                style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, border: "1px solid #d4574e", color: "#fff", background: "#d4574e", cursor: "pointer" }}>
+                {t("结束子树")}
+              </button>
+            </>
+          ) : (
+            <span style={{ fontSize: 10, color: "var(--text-dim,#888)" }} title={node.protectedReason}>
+              {node.protectedReason === "host" ? t("宿主进程默认禁止结束") : t("不可结束") + (node.protectedReason ? " · " + node.protectedReason : "")}
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-dim,#888)" }}>
+            {t("确认结束")} · {t("TERM→KILL")}
+          </span>
+        </div>
+      ) : null}
       <div style={{ flex: 1, overflow: "auto", padding: "8px 10px" }}>
         {error ? <div style={{ color: "#d4574e" }}>{error}</div> : null}
         {!data && !error ? <div style={{ color: "var(--text-dim,#888)" }}>{t("加载中")}</div> : null}
@@ -632,6 +655,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
           onClose={() => setSelected(null)}
           onTerminal={(node) => { openTerminal(node); }}
           onOpenSession={openAgentSession}
+          onKill={doKill}
         />
       ) : null}
     </div>
