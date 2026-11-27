@@ -24,10 +24,13 @@ only for the visible set. Toggle `showUnknown` for a read-only stat-level list.
 
 ## Controls
 
-- Five columns: name / PID / CPU / memory / age. Click any row for the detail
-  drawer (full command line, cwd, whitelisted env vars, parent/children).
+- Five sortable columns (name / PID / CPU / memory / age; click a header to
+  sort, click again to flip). Click any row for the detail drawer: full
+  command line, cwd, whitelisted env vars, parent/children, plus End process
+  / End subtree actions for killable nodes and Open terminal (terminals) /
+  Open session (external agents).
 - `✕` ends the process; `⋯` opens details. Terminal rows can open the matching
-  aiti-cmd terminal (double-click), tunnel rows open the service panel.
+  aiti-cmd terminal (double-click), tunnel rows open the services panel.
 - Kill is guarded: same uid, protected pids (init, the extension host, the
   pi-web CLI, other instances), owned pids only, danger confirmation, and a
   `kill-audit.jsonl` trail under the extension state dir.
