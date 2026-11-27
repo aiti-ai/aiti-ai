@@ -1306,9 +1306,8 @@ export function initSuggest(apiUrl: (p: string) => string) {
           map.set(String(e.id), { icon: e.icon, name: String(e.name || e.id) });
         }
         extIconCache.map = map;
-        extIconCache.at = Date.now();
-      } catch (e) { /* no icons — candidate rows render as before */ }
-      finally { extIconCache.inflight = null; }
+      } catch (e) { /* keep the previous map — rows just stay icon-less */ }
+      finally { extIconCache.at = Date.now(); extIconCache.inflight = null; } // failure also gets the TTL: no retry storm on 403/offline
     })();
     return extIconCache.inflight;
   }
@@ -1405,7 +1404,8 @@ export function initSuggest(apiUrl: (p: string) => string) {
         const col = document.createElement("div");
         col.style.cssText = "min-width:0;flex:1 1 auto;";
         row.appendChild(col);
-        // 名称优先完整显示（去掉图标、去掉 45% 截断）；预览才收缩省略
+        // Name keeps its own line (full text, ellipsis only when too long); the preview is what
+        // shrinks — side-by-side name+preview used to squeeze long names down to one character.
         const name = document.createElement("span");
         name.textContent = it.name;
         name.style.cssText = "font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
