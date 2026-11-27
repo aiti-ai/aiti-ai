@@ -6,7 +6,7 @@
  * 开放点：window.__aitiFolder.registerAction（其他扩展注册目录级工具条按钮）。
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff } from "./host-shim";
+import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff, openFile } from "./host-shim";
 import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "../../../_shared/ext-float-dock";
 import type { DockMenuItem } from "../../../_shared/ext-float-dock";
 import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, invalidateEntries, groupContentMatches, type SearchTreeNode } from "./lib";
@@ -19,9 +19,11 @@ import { DirectoryPicker } from "./directory-picker";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
-import { useFolderGit, GitBar } from "./git-toolbar";
+import { useFolderGit, GitBar, CommitDialog } from "./git-toolbar";
 import type { FolderGit } from "./git-toolbar";
-import { BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
+import { CommitPlanDialog } from "./git-plan";
+import { BranchChipBadge, BranchPanel } from "../../../_shared/git-ops-client/branch-panel";
+import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
 import { fetchNestedRepos, invalidateNestedRepos, nestedStatusRows, peekNestedRepos } from "./nested-git";
 import { ct } from "./comp-i18n";
 
@@ -949,30 +951,22 @@ function NestedGit(p: {
   const branch = git.avail === true ? (git.refs?.current || null) : (fb ? (fb.isRepo ? "Git" : null) : null);
   if (!branch) return null;
   const count = rows.length;
-  const title = ct("git.nestedRepoTip") + " · " + branch + (count ? " · " + count : "");
   const stats = git.avail === true ? null : fbStats;
   return (
     <div data-nested-git={dir} style={{ paddingLeft: p.indent }}>
-      {/* Collapsed: chip is the single header line (branch + dirty count; click to expand).
-          Expanded: the chip row steps aside — GitBar alone is the header line (its ☰ collapses),
-          so the section stays two lines before the file rows. */}
-      {!open ? (
-        <span onClick={() => setOpen(true)} role="button" aria-expanded={false} title={title} aria-label={title}
-          style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", cursor: "pointer" }}>
-          <BranchChipBadge branch={branch} dirtyCount={count} open={false} title={title} />
-        </span>
-      ) : null}
+      {/* Fused header bar (plan §2): chip + (expanded) sync + hover action strip + "…" menu — one line
+          in both states; ChangesList follows only when open. */}
+      <NestedGitBar dir={dir} open={open} onToggleOpen={() => setOpen((v) => !v)} git={git} count={count}
+        onChanged={p.onGitChanged} onRequestDiscard={p.onRequestDiscard} onOpenFile={p.onOpenFile}
+        onOpenFolder={p.onOpenFolder} t={tt} />
       {open ? (
         <div>
-          {git.avail === true && git.refs?.current ? (
-            <GitBar root={dir} git={git} onChanged={p.onGitChanged} changesOpen onToggleChanges={() => setOpen(false)} />
-          ) : (
-            <div onClick={() => setOpen(false)} title={ct("git.nestedFallbackHint")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 0 1px", fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", cursor: "pointer" }}>
-              <span>⎇ {branch} · {count}</span>
-              <span>· {ct("git.nestedFallbackHint")} ▴</span>
+          {git.avail !== true ? (
+            <div title={ct("git.nestedFallbackHint")}
+              style={{ padding: "1px 0 2px", fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+              · {ct("git.nestedFallbackHint")}
             </div>
-          )}
+          ) : null}
           <ChangesList nested indent={p.indent} root={dir} cwd={p.cwd || dir} git={git} files={rows} stats={stats}
             onOpenFile={p.onOpenFile} onOpenFolder={p.onOpenFolder} onAtMention={p.onAtMention} onTrash={p.onTrash}
             t={tt} onRefresh={() => { gitRef.current.refresh(); p.onGitChanged(); }}
@@ -988,6 +982,184 @@ function NestedGit(p: {
     </div>
   );
 }
+
+// ── NestedGitBar · fused one-line header for a nested repo (merge plan §2/§3) ──
+// Chip (click = toggle the inline changes section) + sync counters (expanded, engine only) +
+// hover-revealed action strip (grouped plan / ☰ / commit) + "…" menu (7 entries, merge plan §3)
+// + BranchPanel / CommitDialog / CommitPlanDialog mounts. Hover matrix follows the tree's own
+// design: info always visible, actions appear on hover (opacity transition, BucketHead-style);
+// menu-open / busy keep the strip visible. Sync confirm flow mirrors git-toolbar.GitBar (kept
+// local on purpose: the root GitBar stays untouched).
+function NestedGitBar(p: {
+  dir: string;
+  open: boolean;
+  onToggleOpen: () => void;
+  git: FolderGit;
+  count: number;
+  onChanged: () => void;
+  onRequestDiscard: (o: { title: string; message: string; run: () => void }) => void;
+  onOpenFile: (p: string) => void;
+  onOpenFolder?: (p: string, name?: string) => void;
+  t: TFn;
+}) {
+  const { dir, git, open, t: tt } = p;
+  const engine = git.avail === true && !!git.refs?.current;
+  const [hovered, setHovered] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [toast, setToast] = useState<{ err?: string; ok?: string } | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelAnchor, setPanelAnchor] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const api = useMemo(() => createGitOpsApi({ apiUrl }), []);
+  const branch = git.refs?.current || "";
+  const count = p.count;
+  const ab = git.refs?.aheadBehind ?? null;
+  const chipTitle = ct("git.nestedRepoTip") + " · " + branch + (count ? " · " + count : "");
+  const busy = syncBusy;
+  const visible = hovered || menuOpen || busy || panelOpen;
+
+  // Outside click / scroll closes the "…" menu (fixed-position menus don't follow container scroll).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: any) => { if (!(e.target as Element).closest?.("[data-nested-git-menu]")) setMenuOpen(false); };
+    const onWheel = () => setMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("wheel", onWheel, { passive: true } as any);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("wheel", onWheel); };
+  }, [menuOpen]);
+
+  // Sync (push/pull) — same confirm flow as git-toolbar.GitBar, scoped to this nested repo.
+  const runSync = useCallback(async (kind: "push" | "pull") => {
+    if (syncBusy) return;
+    setSyncBusy(true); setToast(null);
+    try {
+      const r = kind === "push" ? await api.push(dir, {}) : await api.pull(dir, "ff-only");
+      if (r.status !== 200) { setToast({ err: r.data?.error ?? "HTTP " + r.status }); return; }
+      setToast({ ok: kind === "push" ? "push ✓" : "pull ✓" });
+      git.refresh();
+      p.onChanged();
+    } finally { setSyncBusy(false); }
+  }, [syncBusy, api, dir, p.onChanged]);
+
+  const toggleMenu = (e: any) => {
+    e.stopPropagation();
+    if (menuOpen) { setMenuOpen(false); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    const mh = 260; const menuWidth = 230;
+    const left = Math.max(8, Math.min(r.right - menuWidth, window.innerWidth - menuWidth - 8));
+    const overflowDown = r.bottom + 4 + mh > window.innerHeight;
+    const overflowUp = r.top - mh - 4 < 0;
+    let top: number;
+    if (overflowDown && !overflowUp) top = Math.max(8, r.top - mh - 4);
+    else if (overflowDown && overflowUp) top = 8;
+    else top = r.bottom + 4;
+    const zf = zoomFactorOf(e.currentTarget);
+    setMenuPos({ left: left / zf, top: top / zf });
+    setMenuOpen(true);
+  };
+
+  const barBtn = (o: { key: string; title: string; onClick: (e: any) => void; children: any; hover?: boolean; color?: string }) => (
+    <button key={o.key} type="button" title={o.title} aria-label={o.title} onClick={o.onClick}
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 2, height: 18, padding: "0 4px",
+        border: "none", background: "none", color: o.color || "var(--text-dim)", cursor: "pointer", borderRadius: 4,
+        fontSize: 10.5, fontFamily: "var(--font-mono)", flexShrink: 0,
+        opacity: o.hover ? (visible ? 1 : 0) : 1, transition: "opacity 0.12s, color 0.12s" }}>{o.children}</button>
+  );
+
+  const menu = (icon: any, label: string, onClick: () => void, key: string) => (
+    <button key={key} type="button" onClick={onClick}
+      style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "5px 10px", border: "none", background: "transparent", color: "var(--text,#222)", cursor: "pointer", textAlign: "left", fontSize: 12, borderRadius: 6, whiteSpace: "nowrap" }}>
+      {icon ? <span style={{ display: "inline-flex", flexShrink: 0, width: 13, justifyContent: "center" }}>{icon}</span> : null}{label}
+    </button>
+  );
+
+  return (
+    <div data-nested-git-bar={dir} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      onClick={(e) => e.stopPropagation()}
+      style={{ display: "flex", alignItems: "center", gap: 3, paddingTop: 1, minWidth: 0 }}>
+      <span onClick={p.onToggleOpen} role="button" aria-expanded={open} title={chipTitle} aria-label={chipTitle}
+        style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", minWidth: 0, cursor: "pointer", flexShrink: 1 }}>
+        <BranchChipBadge branch={branch} dirtyCount={count} open={open} title={chipTitle} />
+      </span>
+      {/* Sync counters: always visible when expanded (engine only) — same semantics as the root GitBar */}
+      {open && engine && ab && ab[0] > 0 ? barBtn({ key: "push", title: ct("git.pushTitle"), onClick: () => { if (window.confirm(ct("git.pushConfirm", { count: ab[0] }))) void runSync("push"); }, children: <>{ab[0]}<MiArrowUpSmall /></> }) : null}
+      {open && engine && ab && ab[1] > 0 ? barBtn({ key: "pull", title: ct("git.pullTitle"), onClick: () => { if (window.confirm(ct("git.pullConfirm", { count: ab[1] }))) void runSync("pull"); }, children: <><MiArrowDownSmall />{ab[1]}</> }) : null}
+      {open && engine && ab && ab[0] === 0 && ab[1] === 0 ? <span style={{ color: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)", flexShrink: 0 }}>✓</span> : null}
+      <span style={{ flex: 1, minWidth: 0 }} />
+      {/* Hover-revealed action strip (expanded only): grouped plan / ☰ / commit */}
+      {open ? (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+          {engine ? barBtn({ key: "plan", hover: true, title: ct("git.planTitle"), onClick: () => { git.refresh(); setPlanOpen(true); }, children: ct("git.planShort") }) : null}
+          {barBtn({ key: "tog", hover: true, title: ct("git.changesToggle"), onClick: p.onToggleOpen, children: "☰" })}
+          {engine ? barBtn({ key: "commit", hover: true, title: ct("git.commitTitle"), onClick: () => { git.refresh(); setCommitOpen(true); }, children: ct("git.commitShort") }) : null}
+        </span>
+      ) : null}
+      {/* "…" more menu anchor: present in both states, hover-revealed */}
+      <button type="button" title={ct("git.moreActions")} aria-label={ct("git.moreActions")} aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleMenu}
+        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", height: 18, width: 20, padding: 0,
+          border: "none", background: menuOpen ? "var(--bg-selected)" : "none", color: menuOpen ? "var(--accent)" : "var(--text-dim)",
+          cursor: "pointer", borderRadius: 4, fontSize: 12, fontWeight: 700, lineHeight: 1, flexShrink: 0,
+          opacity: visible ? 1 : 0, transition: "opacity 0.12s" }}>…</button>
+      {toast ? (
+        <span title={toast.err ?? toast.ok} onClick={() => setToast(null)}
+          style={{ fontSize: 10, color: toast.err ? "var(--danger, #f87171)" : "var(--text-dim)", cursor: "pointer", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono)", flexShrink: 1 }}>
+          {toast.err ? "⚠ " + toast.err : toast.ok}
+        </span>
+      ) : null}
+      {menuOpen ? (
+        <div data-nested-git-menu="1" style={{ position: "fixed", left: menuPos!.left, top: menuPos!.top, zIndex: 400, minWidth: 220, padding: 6, background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)", borderRadius: 10, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 12, display: "flex", flexDirection: "column", gap: 2 }} onClick={(e) => e.stopPropagation()}>
+          {engine ? menu(<BranchSvg />, ct("git.branchPanelEntry"), () => {
+            const el = document.querySelector(`[data-nested-git-menu="1"]`);
+            const r = el ? el.getBoundingClientRect() : null;
+            setPanelAnchor(r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null);
+            setMenuOpen(false); setPanelOpen(true);
+          }, "bp") : null}
+          {menu(<GrEyeIcon size={13} />, "Git Review", () => { setMenuOpen(false); void openGitReview({ kind: "directory", path: dir }); }, "gr")}
+          {engine ? menu(<MiRefresh />, ct("git.refreshRepo"), () => { setMenuOpen(false); git.refresh(); p.onChanged(); }, "rf") : null}
+          {menu(null, ct("git.openAsFolderTab"), () => { setMenuOpen(false); const n = lastSeg(dir) || dir; if (p.onOpenFolder) p.onOpenFolder(dir, n); }, "tab")}
+          {menu(<TerminalIcon />, tt("files.openTerminal"), () => { setMenuOpen(false); void openTerminal(dir).then((err) => { if (err) setToast({ err }); }); }, "ot")}
+          {menu(<NewWindowIcon />, tt("files.openNewWindow"), () => { setMenuOpen(false); openNewWindow("folder", dir); }, "nw")}
+          {open ? menu(<MiArrowUp />, ct("git.collapseChanges"), () => { setMenuOpen(false); p.onToggleOpen(); }, "cl") : null}
+        </div>
+      ) : null}
+      {panelOpen ? (
+        <BranchPanel apiUrl={apiUrl} cwd={dir} floatKey="folder-nested-branch-panel" locale={typeof navigator !== "undefined" ? navigator.language : "en"}
+          open={panelOpen} onClose={() => setPanelOpen(false)} anchor={panelAnchor} extSvc={extSvc}
+          openFile={(fp) => openFile(fp, fp.split("/").pop())}
+          onChanged={() => { git.refresh(); p.onChanged(); }} />
+      ) : null}
+      {commitOpen ? (
+        <CommitDialog root={dir} dirtyFiles={git.refs?.dirtyFiles ?? []} onClose={() => setCommitOpen(false)}
+          onDone={() => { setCommitOpen(false); git.refresh(); p.onChanged(); }} />
+      ) : null}
+      {planOpen ? (
+        <CommitPlanDialog root={dir} git={git} onClose={() => setPlanOpen(false)} />
+      ) : null}
+    </div>
+  );
+}
+
+// Small sync arrows (local copies of git-toolbar's private MiArrowUp/DownSmall, same shapes).
+function MiArrowUpSmall() {
+  return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 11 12 6 7 11" /><line x1="12" y1="6" x2="12" y2="20" /></svg>;
+}
+function MiArrowDownSmall() {
+  return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="7 13 12 18 17 13" /><line x1="12" y1="18" x2="12" y2="4" /></svg>;
+}
+
+// Small branch glyph for the menu row (same 16-viewBox shape as BranchChipBadge's icon).
+function BranchSvg() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ flexShrink: 0 }} aria-hidden="true">
+      <circle cx="4" cy="3.5" r="1.8" /><circle cx="4" cy="12.5" r="1.8" /><circle cx="12" cy="3.5" r="1.8" />
+      <path d="M4 5.3v5.4M12 5.3c0 3-3 3.6-6 4.1" />
+    </svg>
+  );
+}
+
 
 function TreeNode(o: any) {
   const node=o.node, depth=o.depth, cwd=o.cwd, expanded=o.expanded, onToggle=o.onToggle, onOpenFile=o.onOpenFile, onOpenFolder=o.onOpenFolder, onAtMention=o.onAtMention, onTrash=o.onTrash, onChanged=o.onChanged, gitByPath=o.gitByPath, changedDirs=o.changedDirs, hlPath=o.highlightPath, tt=o.t, root=o.root;

@@ -100,6 +100,11 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.planRetry": "Retry remaining groups",
     "git.nestedRepoTip": "Nested git repository (click to toggle its changes)",
     "git.nestedFallbackHint": "git-ops engine unavailable — read-only view",
+    "git.moreActions": "More actions",
+    "git.branchPanelEntry": "Branch panel",
+    "git.refreshRepo": "Refresh this repo (git status only)",
+    "git.openAsFolderTab": "Open as folder tab",
+    "git.collapseChanges": "Collapse changes",
   },
   "zh-CN": {
     "files.cancel": "取消",
@@ -189,6 +194,11 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.planRetry": "重试剩余组",
     "git.nestedRepoTip": "嵌套 Git 仓库（点击展开/收起其变更）",
     "git.nestedFallbackHint": "git-ops 引擎未启用——只读视图",
+    "git.moreActions": "更多操作",
+    "git.branchPanelEntry": "分支面板",
+    "git.refreshRepo": "刷新本仓（仅 git 状态）",
+    "git.openAsFolderTab": "打开为独立文件夹标签页",
+    "git.collapseChanges": "收起变更区",
   },
 };
 
