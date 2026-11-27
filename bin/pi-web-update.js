@@ -473,7 +473,10 @@ async function runNpmUpdate({
     error(`Could not find npm. Run: ${MANUAL_COMMAND}`);
     return 1;
   }
-  return code;
+  // Windows surfaces libuv errno values as negative exit codes (installing over
+  // a directory that is in use fails with EBUSY = -4082). Collapse every
+  // failure to 1 so the CLI exit code stays in the portable 0..255 range.
+  return code === 0 ? 0 : 1;
 }
 
 module.exports = {
