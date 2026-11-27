@@ -319,10 +319,10 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         <Dot color={kindColor(node?.kind || "unknown")} />
         <strong style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node ? node.label : t("详情")}</strong>
         {node && node.kind === "terminal" && node.sessionId ? (
-          <button type="button" onClick={() => props.onTerminal(node)} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4 }}>{t("打开终端")}</button>
+          <ActionChip label={t("打开终端")} icon="terminal" onClick={() => props.onTerminal(node)} />
         ) : null}
         {node && (node.kind === "agent" || node.kind === "helper") && node.sessionId && node.owner === "agent-starter" ? (
-          <button type="button" title={t("打开对应会话")} onClick={() => props.onOpenSession(node)} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4 }}>{t("打开会话")}</button>
+          <ActionChip label={t("打开会话")} icon="chat" title={t("打开对应会话")} onClick={() => props.onOpenSession(node)} />
         ) : null}
         <button type="button" onClick={props.onClose} style={{ fontSize: 12, padding: "0 4px", background: "none", border: "none", cursor: "pointer", color: "var(--text-dim,#888)" }}>✕</button>
       </div>
@@ -382,6 +382,53 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Inline action-chip icons (stroke style, currentColor) — keeps the bundle icon-free. */
+const CHIP_ICONS: Record<string, any> = {
+  // terminal prompt: >_ in a rounded box
+  terminal: (
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  ),
+  // chat bubble
+  chat: (
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+};
+
+/** Accent-tinted action pill used in the detail drawer title bar: icon + label,
+ *  obvious affordance (border + tint + hover lift) unlike a bare text button. */
+function ActionChip(props: { label: string; icon: string; title?: string; onClick: () => void }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button
+      type="button"
+      title={props.title || props.label}
+      onClick={(e: any) => { e.stopPropagation(); props.onClick(); }}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+        fontSize: 10, fontWeight: 600, lineHeight: 1,
+        padding: "4px 8px", borderRadius: 999,
+        border: "1px solid " + (hov ? "var(--accent,#4c8bf5)" : "color-mix(in srgb, var(--accent,#4c8bf5) 45%, transparent)"),
+        background: hov ? "color-mix(in srgb, var(--accent,#4c8bf5) 22%, transparent)" : "color-mix(in srgb, var(--accent,#4c8bf5) 12%, transparent)",
+        color: "var(--accent,#4c8bf5)",
+        cursor: "pointer", transition: "background 0.12s, border-color 0.12s",
+      }}
+    >
+      {CHIP_ICONS[props.icon]}
+      <span style={{ whiteSpace: "nowrap" }}>{props.label}</span>
+      <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ opacity: 0.7 }}>
+        <path d="M7 17L17 7" /><path d="M8 7h9v9" />
+      </svg>
+    </button>
   );
 }
 
