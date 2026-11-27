@@ -56,27 +56,33 @@ export async function sample(opts: {
     if (now - rawCache.ts < 500 && rawCache.map.size) {
       raw = rawCache.map;
     } else {
-      raw = linux.scanRaw();
+      raw = await linux.scanRaw();
       rawCache = { ts: now, map: raw };
     }
     const preview = core.visibleSet(raw, opts.rows, opts.selfPid, opts.cliPid);
     const details = new Map<number, any>();
-    for (const pid of preview.visible) {
-      const p = raw.get(pid);
-      if (!p) continue;
-      const d: any = linux.readDetail(pid, { withEnv: preview.seeds.has(pid) });
-      const key = pid + ":" + p.starttime;
-      const prev = ticks.get(key);
-      const dt = lastScanTs ? now - lastScanTs : 0;
-      // Window cap (plan §3.4): the panel closing pauses the client loop, so the
-      // gap since the previous request can be arbitrarily long. Deltas over 60s
-      // would render as a meaningless diluted average — treat them as a fresh
-      // first tick (null) instead. Below the cap a reopening panel gets real
-      // CPU values on its very first tick.
-      d.cpu = prev && dt > 0 && dt <= 60_000 ? core.cpuPercent(prev, p, dt, HZ) : null;
-      ticks.set(key, { utime: p.utime, stime: p.stime, ts: now });
-      details.set(pid, d);
-    }
+    // Parallel detail reads: the async path awaits per-file I/O; serial awaits
+    // multiplied per-pid latency. Promise.all keeps one event-loop yield per
+    // read while the wall clock stays close to the slowest single read.
+    const readIds = Array.from(preview.visible).filter((pid) => raw.has(pid));
+    const readResults = await Promise.all(
+      readIds.map(async (pid) => {
+        const p = raw.get(pid)!;
+        const d: any = await linux.readDetail(pid, { withEnv: preview.seeds.has(pid) });
+        const key = pid + ":" + p.starttime;
+        const prev = ticks.get(key);
+        const dt = lastScanTs ? now - lastScanTs : 0;
+        // Window cap (plan §3.4): the panel closing pauses the client loop, so the
+        // gap since the previous request can be arbitrarily long. Deltas over 60s
+        // would render as a meaningless diluted average — treat them as a fresh
+        // first tick (null) instead. Below the cap a reopening panel gets real
+        // CPU values on its very first tick.
+        d.cpu = prev && dt > 0 && dt <= 60_000 ? core.cpuPercent(prev, p, dt, HZ) : null;
+        ticks.set(key, { utime: p.utime, stime: p.stime, ts: now });
+        return [pid, d] as const;
+      }),
+    );
+    for (const [pid, d] of readResults) details.set(pid, d);
     const wasFirst = firstTick;
     firstTick = false;
     lastScanTs = now;

@@ -8,9 +8,12 @@
  * time, closing the re-spawn race that per-pid kills leave open).
  * The wait loop is a bounded kill grace period, not a polling mechanism.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const exec = promisify(execFile);
 
 export interface KillResult {
   pid: number;
@@ -52,10 +55,10 @@ async function waitGone(pids: number[], graceMs: number): Promise<number[]> {
   return remaining;
 }
 
-function audit(stateDir: string, record: unknown): void {
+async function audit(stateDir: string, record: unknown): Promise<void> {
   try {
-    mkdirSync(stateDir, { recursive: true });
-    appendFileSync(join(stateDir, "kill-audit.jsonl"), JSON.stringify(record) + "\n", "utf8");
+    await mkdir(stateDir, { recursive: true });
+    await appendFile(join(stateDir, "kill-audit.jsonl"), JSON.stringify(record) + "\n", "utf8");
   } catch {
     /* audit failure must not break the kill response */
   }
@@ -87,7 +90,7 @@ export async function executeKill(opts: {
     };
     for (const pid of roots) {
       try {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", timeout: 8000 });
+        await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 8000 });
         results.push({ pid, ok: true, signal: "TASKKILL" });
         // Pids already in results are skipped below. A root whose /T succeeded may
         // have swept sibling-requested descendants too — leave them to their own
@@ -115,7 +118,7 @@ export async function executeKill(opts: {
     }
   }
 
-  audit(opts.stateDir, {
+  await audit(opts.stateDir, {
     ts: new Date().toISOString(),
     actor: "ui",
     mode: opts.mode,

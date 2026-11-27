@@ -6,7 +6,8 @@
  * by every pi-web instance of the same user (single-writer per file), so this
  * module never writes anything.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,46 +21,46 @@ export interface RegistrySnapshot {
 
 const home = () => homedir();
 
-function readJson(file: string): any {
+async function readJson(file: string): Promise<any> {
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    return JSON.parse(await readFile(file, "utf8"));
   } catch {
     return null;
   }
 }
 
-function listJson(dir: string): any[] {
+async function listJson(dir: string): Promise<any[]> {
   const out: any[] = [];
   let names: string[] = [];
   try {
-    names = readdirSync(dir);
+    names = await readdir(dir);
   } catch {
     return out;
   }
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    const value = readJson(join(dir, name));
+    const value = await readJson(join(dir, name));
     if (value && typeof value === "object") out.push(value);
   }
   return out;
 }
 
 /** aiti-cmd detached PTY sessions: <root>/registry/<sid>.json */
-function readCmdHost(): any[] {
+async function readCmdHost(): Promise<any[]> {
   const root = process.env.AITI_CMD_HOST_DIR || join(home(), ".pi", "agent", "aiti-cmd-host");
   return listJson(join(root, "registry"));
 }
 
 /** agent-starter detached agent sessions: <root>/registry/<key>.json */
-function readAgentStarter(): any[] {
+async function readAgentStarter(): Promise<any[]> {
   const root = process.env.PI_AGENT_STARTER_DIR || join(home(), ".pi", "agent", "agent-starter");
   return listJson(join(root, "registry"));
 }
 
 /** TUI /web bridge registry: {sessionFile: {socket, pid, startedAt}} */
-function readBridge(): Record<string, any> {
+async function readBridge(): Promise<Record<string, any>> {
   const file = process.env.PI_BRIDGE_REGISTRY || join(home(), ".pi", "agent", "bridge-registry.json");
-  const raw = readJson(file);
+  const raw = await readJson(file);
   if (!raw || typeof raw !== "object") return {};
   const out: Record<string, any> = {};
   for (const [key, entry] of Object.entries(raw)) {
@@ -98,14 +99,14 @@ function isAlive(pid: number): boolean {
  * service-tunnels PID registry files: registered-pids-<parentPid>.json with
  * [{pid, role, t}]. Only files whose parent process is alive are trusted.
  */
-function readTunnels(): any[] {
+async function readTunnels(): Promise<any[]> {
   const out: any[] = [];
   const seen = new Set<number>();
   for (const dir of tunnelCacheDirs()) {
     if (!existsSync(dir)) continue;
     let names: string[] = [];
     try {
-      names = readdirSync(dir);
+      names = await readdir(dir);
     } catch {
       continue;
     }
@@ -114,7 +115,7 @@ function readTunnels(): any[] {
       if (!m) continue;
       const parentPid = Number(m[1]);
       if (!isAlive(parentPid)) continue;
-      const list = readJson(join(dir, name));
+      const list = await readJson(join(dir, name));
       if (!Array.isArray(list)) continue;
       for (const e of list) {
         const pid = Number(e && e.pid);
@@ -137,12 +138,12 @@ function readTunnels(): any[] {
  * Only live states are returned; attached runs (no pid) are listed without pid
  * and attached=true so the tree can hang them under the host.
  */
-function readSubagents(): any[] {
+async function readSubagents(): Promise<any[]> {
   const out: any[] = [];
   const seen = new Set<string>();
   let scopes: string[] = [];
   try {
-    scopes = readdirSync(tmpdir()).filter((n) => n.startsWith("pi-subagents-"));
+    scopes = (await readdir(tmpdir())).filter((n) => n.startsWith("pi-subagents-"));
   } catch {
     return out;
   }
@@ -150,7 +151,7 @@ function readSubagents(): any[] {
     const root = join(tmpdir(), scope, "async-subagent-runs");
     let runs: string[] = [];
     try {
-      runs = readdirSync(root);
+      runs = await readdir(root);
     } catch {
       continue;
     }
@@ -159,8 +160,8 @@ function readSubagents(): any[] {
       const file = join(root, runId, "status.json");
       let status: any = null;
       try {
-        if (!statSync(file).isFile()) continue;
-        status = readJson(file);
+        if (!(await stat(file)).isFile()) continue;
+        status = await readJson(file);
       } catch {
         continue;
       }
@@ -185,12 +186,13 @@ function readSubagents(): any[] {
   return out;
 }
 
-export function readRegistries(): RegistrySnapshot {
-  return {
-    cmdHost: readCmdHost(),
-    agentStarter: readAgentStarter(),
-    bridge: readBridge(),
-    tunnels: readTunnels(),
-    subagents: readSubagents(),
-  };
+export async function readRegistries(): Promise<RegistrySnapshot> {
+  const [cmdHost, agentStarter, bridge, tunnels, subagents] = await Promise.all([
+    readCmdHost(),
+    readAgentStarter(),
+    readBridge(),
+    readTunnels(),
+    readSubagents(),
+  ]);
+  return { cmdHost, agentStarter, bridge, tunnels, subagents };
 }

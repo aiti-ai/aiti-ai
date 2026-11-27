@@ -65,8 +65,8 @@ function serviceRows(ctx: any): any[] {
 }
 
 async function buildSnapshot(ctx: any) {
-  const instance = resolveSelf();
-  const registries = readRegistries();
+  const instance = await resolveSelf();
+  const registries = await readRegistries();
   const rows = core.normalizeRegistryRows({
     cmdHost: registries.cmdHost,
     agentStarter: registries.agentStarter,
@@ -266,8 +266,8 @@ export default {
   ],
 
   server: {
-    startup(ctx: any) {
-      const instance = resolveSelf();
+    async startup(ctx: any) {
+      const instance = await resolveSelf();
       console.log(
         "[aiti-proc-tree] ready · platform=" + sampler.platform +
         " · self=" + instance.selfPid +
@@ -374,6 +374,16 @@ export default {
           const snap = await buildSnapshot(ctx);
           const owned = new Set<number>(snap.tree.nodes.map((n: any) => n.pid));
           const uid = typeof process.getuid === "function" ? process.getuid() : null;
+          // Pre-resolve owner uids for the target roots plus their descendants
+          // (killPlan compares synchronously; sampler.uidOf is async now).
+          const uidMap = new Map<number, number | null>();
+          if (process.platform === "linux") {
+            const candidates = new Set<number>(pids);
+            if (mode === "subtree") {
+              for (const pid of pids) for (const child of core.descendantPids(snap.sampled.raw, [pid])) candidates.add(child);
+            }
+            for (const pid of candidates) uidMap.set(pid, await sampler.uidOf(pid));
+          }
           const plan = core.killPlan({
             raw: snap.sampled.raw,
             targets: pids,
@@ -383,7 +393,7 @@ export default {
             cliPid: snap.instance.cliPid,
             allowHost,
             owned,
-            uidOf: (pid: number) => (process.platform === "linux" ? sampler.uidOf(pid) : null),
+            uidOf: (pid: number) => (uidMap.has(pid) ? (uidMap.get(pid) as number | null) : null),
           });
           const result = await executeKill({
             allowed: plan.allowed,

@@ -6,7 +6,7 @@
  * pi-web instances are intentionally NOT scanned in v1: the default view only
  * collects this instance's own tree (unrelated processes stay untouched).
  */
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
 export interface SelfInstance {
   selfPid: number;
@@ -18,17 +18,17 @@ export interface SelfInstance {
 let cached: SelfInstance | null = null;
 let cachedAt = 0;
 
-function readCmdline(pid: number): string {
+async function readCmdline(pid: number): Promise<string> {
   try {
-    return readFileSync("/proc/" + pid + "/cmdline", "utf8").replace(/\0/g, " ").trim();
+    return (await readFile("/proc/" + pid + "/cmdline", "utf8")).replace(/\0/g, " ").trim();
   } catch {
     return "";
   }
 }
 
-function readPpid(pid: number): number | null {
+async function readPpid(pid: number): Promise<number | null> {
   try {
-    const line = readFileSync("/proc/" + pid + "/stat", "utf8");
+    const line = await readFile("/proc/" + pid + "/stat", "utf8");
     const close = line.lastIndexOf(")");
     if (close < 0) return null;
     const rest = line.slice(close + 2).trim().split(/\s+/);
@@ -44,9 +44,9 @@ function parsePort(cmd: string): number | null {
 }
 
 /** PORT / PI_WEB_PORT from a process env (dev units often pass the port via env). */
-function portFromEnv(pid: number): number | null {
+async function portFromEnv(pid: number): Promise<number | null> {
   try {
-    const env = readFileSync("/proc/" + pid + "/environ", "utf8");
+    const env = await readFile("/proc/" + pid + "/environ", "utf8");
     const m = /(?:^|\0)(?:PORT|PI_WEB_PORT)=(\d+)(?:\0|$)/.exec(env + "\0");
     return m ? Number(m[1]) : null;
   } catch {
@@ -61,7 +61,7 @@ function modeOf(port: number | null): string {
 }
 
 /** Resolve (and cache) the current instance's CLI ancestor + port. */
-export function resolveSelf(): SelfInstance {
+export async function resolveSelf(): Promise<SelfInstance> {
   const now = Date.now();
   if (cached && now - cachedAt < 5 * 60 * 1000) return cached;
   const selfPid = process.pid;
@@ -74,7 +74,7 @@ export function resolveSelf(): SelfInstance {
     const seen = new Set<number>();
     while (cur && cur > 1 && depth < 32 && !seen.has(cur)) {
       seen.add(cur);
-      const cmd = readCmdline(cur);
+      const cmd = await readCmdline(cur);
       if (cur === selfPid) port = parsePort(cmd) || port;
       // `bin/pi-web.js wrapper --config ...` is an agent-starter wrapper, not a
       // pi-web instance CLI; skip it and keep climbing. Dev units run
@@ -83,7 +83,7 @@ export function resolveSelf(): SelfInstance {
       const isCli = (/bin[\\/]pi-web\.js|bin[\\/]pi-web\b/.test(cmd) && !/\swrapper\s/.test(cmd)) || isNext;
       if (isCli) {
         cliPid = cur;
-        port = parsePort(cmd) || portFromEnv(cur) || port;
+        port = parsePort(cmd) || (await portFromEnv(cur)) || port;
         break;
       }
       cur = readPpid(cur);
@@ -94,7 +94,7 @@ export function resolveSelf(): SelfInstance {
       // looks like the next-server process, but never climb past init.
       const ppid = readPpid(selfPid);
       if (ppid && ppid > 1) {
-        const cmd = readCmdline(ppid);
+        const cmd = await readCmdline(ppid);
         if ((cmd.includes("next") || cmd.includes("pi-web")) && !/\swrapper\s/.test(cmd)) cliPid = ppid;
       }
     }

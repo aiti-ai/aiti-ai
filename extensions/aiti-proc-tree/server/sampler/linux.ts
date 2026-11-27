@@ -7,7 +7,7 @@
  *
  * Nothing here starts a timer; the client's poll cadence is the only driver.
  */
-import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
+import { readdir, readFile, readlink } from "node:fs/promises";
 import os from "node:os";
 
 export interface RawProc {
@@ -36,10 +36,10 @@ const CLK_TCK = 100;
 let btimeSec: number | null = null;
 
 /** Boot time (epoch seconds) from /proc/stat, cached for the process lifetime. */
-function bootTime(): number {
+async function bootTime(): Promise<number> {
   if (btimeSec != null) return btimeSec;
   try {
-    const m = /^btime\s+(\d+)/m.exec(readFileSync("/proc/stat", "utf8"));
+    const m = /^btime\s+(\d+)/m.exec(await readFile("/proc/stat", "utf8"));
     btimeSec = m ? Number(m[1]) : Math.floor(Date.now() / 1000 - os.uptime());
   } catch {
     btimeSec = Math.floor(Date.now() / 1000 - os.uptime());
@@ -48,47 +48,49 @@ function bootTime(): number {
 }
 
 /** Phase A: one stat read per pid; malformed entries are skipped. */
-export function scanRaw(): Map<number, RawProc> {
+export async function scanRaw(): Promise<Map<number, RawProc>> {
   const out = new Map<number, RawProc>();
   let entries: string[] = [];
   try {
-    entries = readdirSync("/proc").filter((n) => /^\d+$/.test(n));
+    entries = (await readdir("/proc")).filter((n) => /^\d+$/.test(n));
   } catch {
     return out;
   }
-  for (const name of entries) {
-    try {
-      const line = readFileSync("/proc/" + name + "/stat", "utf8");
-      const close = line.lastIndexOf(")");
-      if (close < 0) continue;
-      const pid = Number(name);
-      const rest = line.slice(close + 2).trim().split(/\s+/);
-      if (!Number.isFinite(pid) || rest.length < 20) continue;
-      out.set(pid, {
-        pid,
-        state: rest[0] || "?",
-        ppid: Number(rest[1]) || 0,
-        utime: Number(rest[11]) || 0,
-        stime: Number(rest[12]) || 0,
-        starttime: Number(rest[19]) || 0,
-      });
-    } catch {
-      /* process vanished mid-scan */
-    }
+  // One Promise.all over every pid: fs promise overhead per file is ~0.1ms, so
+  // the whole graph read lands ~60-90ms async (vs ~25ms sync) while the event
+  // loop stays free — the trade this extension deliberately makes for the
+  // >1s-blocking red line. Details/other reads follow the same pattern.
+  const lines = await Promise.all(entries.map((name) => readFile("/proc/" + name + "/stat", "utf8").catch(() => null)));
+  for (let j = 0; j < entries.length; j++) {
+    const line = lines[j];
+    if (!line) continue;
+    const close = line.lastIndexOf(")");
+    if (close < 0) continue;
+    const pid = Number(entries[j]);
+    const rest = line.slice(close + 2).trim().split(/\s+/);
+    if (!Number.isFinite(pid) || rest.length < 20) continue;
+    out.set(pid, {
+      pid,
+      state: rest[0] || "?",
+      ppid: Number(rest[1]) || 0,
+      utime: Number(rest[11]) || 0,
+      stime: Number(rest[12]) || 0,
+      starttime: Number(rest[19]) || 0,
+    });
   }
   return out;
 }
 
 /** Effective start time (epoch ms) derived from starttime + boot time. */
-export function startMs(p: RawProc): number {
-  return (bootTime() + p.starttime / CLK_TCK) * 1000;
+export async function startMs(p: RawProc): Promise<number> {
+  return ((await bootTime()) + p.starttime / CLK_TCK) * 1000;
 }
 
 /** Phase B: one process detail. `withEnv` is opt-in (ownership markers only). */
-export function readDetail(pid: number, opts: { withEnv?: boolean } = {}): ProcDetail {
+export async function readDetail(pid: number, opts: { withEnv?: boolean } = {}): Promise<ProcDetail> {
   const d: ProcDetail = {};
   try {
-    const status = readFileSync("/proc/" + pid + "/status", "utf8");
+    const status = await readFile("/proc/" + pid + "/status", "utf8");
     const name = /^Name:\s*(.+)$/m.exec(status);
     if (name) d.name = name[1].trim();
     const state = /^State:\s*(\S+)/m.exec(status);
@@ -101,13 +103,13 @@ export function readDetail(pid: number, opts: { withEnv?: boolean } = {}): ProcD
     /* vanished */
   }
   try {
-    const cmd = readFileSync("/proc/" + pid + "/cmdline", "utf8");
+    const cmd = await readFile("/proc/" + pid + "/cmdline", "utf8");
     d.cmd = cmd.replace(/\0/g, " ").trim();
   } catch {
     /* keep empty */
   }
   try {
-    d.cwd = readlinkSync("/proc/" + pid + "/cwd");
+    d.cwd = await readlink("/proc/" + pid + "/cwd");
   } catch {
     /* permission / vanished */
   }
@@ -123,13 +125,13 @@ export function readDetail(pid: number, opts: { withEnv?: boolean } = {}): ProcD
   } catch { /* ignore */ }
   if (opts.withEnv) {
     try {
-      d.envText = readFileSync("/proc/" + pid + "/environ", "utf8");
+      d.envText = await readFile("/proc/" + pid + "/environ", "utf8");
     } catch {
       /* other-user or hidden */
     }
   }
   try {
-    const p = readFileSync("/proc/" + pid + "/stat", "utf8");
+    const p = await readFile("/proc/" + pid + "/stat", "utf8");
     const close = p.lastIndexOf(")");
     if (close > 0) {
       const rest = p.slice(close + 2).trim().split(/\s+/);
@@ -138,7 +140,7 @@ export function readDetail(pid: number, opts: { withEnv?: boolean } = {}): ProcD
     }
   } catch { /* ignore */ }
   try {
-    d.fdCount = readdirSync("/proc/" + pid + "/fd").length;
+    d.fdCount = (await readdir("/proc/" + pid + "/fd")).length;
   } catch {
     d.fdCount = null;
   }
@@ -146,9 +148,9 @@ export function readDetail(pid: number, opts: { withEnv?: boolean } = {}): ProcD
 }
 
 /** Best-effort uid of a process (null when unreadable). */
-export function uidOf(pid: number): number | null {
+export async function uidOf(pid: number): Promise<number | null> {
   try {
-    const status = readFileSync("/proc/" + pid + "/status", "utf8");
+    const status = await readFile("/proc/" + pid + "/status", "utf8");
     const m = /^Uid:\s*(\d+)/m.exec(status);
     return m ? Number(m[1]) : null;
   } catch {
@@ -157,9 +159,9 @@ export function uidOf(pid: number): number | null {
 }
 
 /** Cheap existence + starttime check used for cache keys. */
-export function procStart(pid: number): number | null {
+export async function procStart(pid: number): Promise<number | null> {
   try {
-    const line = readFileSync("/proc/" + pid + "/stat", "utf8");
+    const line = await readFile("/proc/" + pid + "/stat", "utf8");
     const close = line.lastIndexOf(")");
     if (close < 0) return null;
     const rest = line.slice(close + 2).trim().split(/\s+/);
