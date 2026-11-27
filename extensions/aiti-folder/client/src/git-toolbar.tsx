@@ -419,6 +419,7 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
               <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} style={{ accentColor: "var(--accent)", margin: 0 }} />
               {ct("git.amend")}
             </label>
+            <span style={{ flex: 1 }} />
             <button type="button" onClick={() => void (async () => {
               const h = await pickWorkItemHeader();
               if (h) setMessage((m) => prependHeader(h, m, "\n\n"));
@@ -427,7 +428,6 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
                 background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
               {ct("git.wiPick")}
             </button>
-            <span style={{ flex: 1 }} />
             {aiAvail ? (
               <button type="button" disabled={aiBusy || checked.size === 0} onClick={() => void genMessage()} title={ct("git.aiMessageTitle")}
                 style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: aiBusy || checked.size === 0 ? "not-allowed" : "pointer",
