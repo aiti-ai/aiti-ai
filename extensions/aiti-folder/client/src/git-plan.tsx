@@ -13,6 +13,7 @@ import { apiUrl } from "./host-shim";
 import { ct } from "./comp-i18n";
 import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
 import type { FolderGit } from "./git-toolbar";
+import { pickWorkItemHeader, prependHeader } from "./wi-pick";
 
 interface PlanGroupEdit { key: string; message: string; files: string[]; note?: string }
 
@@ -205,6 +206,10 @@ export function CommitPlanDialog(p: { root: string; git: FolderGit; onClose: () 
                     <input value={g.message} onChange={(e) => setGroups((prev) => prev ? prev.map((x, xi) => xi === gi ? { ...x, message: e.target.value } : x) : prev)}
                       placeholder={ct("git.commitPlaceholder")}
                       style={{ flex: 1, minWidth: 0, height: 24, boxSizing: "border-box" as const, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", fontSize: 11, fontFamily: "var(--font-mono)", padding: "0 7px", outline: "none" }} />
+                    <button type="button" title={ct("git.wiPickTitle")} onClick={() => void (async () => {
+                      const h = await pickWorkItemHeader();
+                      if (h) setGroups((prev) => prev ? prev.map((x, xi) => xi === gi ? { ...x, message: prependHeader(h, x.message, " ") } : x) : prev);
+                    })()} style={{ ...planIconBtn(), color: "var(--text-muted)", fontSize: 12, fontWeight: 600 }}>#</button>
                     {result && gi < result.completed ? <span title="committed" style={{ color: "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>✓</span> : null}
                     {g.note ? <span title={g.note} style={{ fontSize: 10, flexShrink: 0, color: "var(--text-dim)", maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.note.startsWith("✓") ? "" : "⚠ "}{g.note}</span> : null}
                   </div>

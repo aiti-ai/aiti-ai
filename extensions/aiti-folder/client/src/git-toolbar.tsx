@@ -20,6 +20,7 @@ import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
 // initialization", measured 2026-11-24).
 import { BranchPanel, BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
 import { CommitPlanDialog } from "./git-plan";
+import { pickWorkItemHeader, prependHeader } from "./wi-pick";
 
 export interface FolderGitRefs {
   current: string | null;
@@ -418,6 +419,14 @@ export function CommitDialog(p: { root: string; dirtyFiles: { xy: string; path: 
               <input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} style={{ accentColor: "var(--accent)", margin: 0 }} />
               {ct("git.amend")}
             </label>
+            <button type="button" onClick={() => void (async () => {
+              const h = await pickWorkItemHeader();
+              if (h) setMessage((m) => prependHeader(h, m, "\n\n"));
+            })()} title={ct("git.wiPickTitle")}
+              style={{ height: 20, padding: "0 8px", borderRadius: 5, fontSize: 10.5, cursor: "pointer",
+                background: "var(--bg-hover)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+              {ct("git.wiPick")}
+            </button>
             <span style={{ flex: 1 }} />
             {aiAvail ? (
               <button type="button" disabled={aiBusy || checked.size === 0} onClick={() => void genMessage()} title={ct("git.aiMessageTitle")}
