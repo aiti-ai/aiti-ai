@@ -131,7 +131,7 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
 
   // 入口恒为票据文件本身：站内链接由 shim 改道到 dock（不在此框架里导航），
   // 所以 shim 报回的 docRel 只作面包屑显示——回流进 src 会自己刷自己
-  const servedSrc = mode === "served" && abs ? previewUrl(abs, "", { scripts, v: bust }) : "";
+  const servedSrc = mode === "served" && abs ? previewUrl(abs, "", { scripts, v: bust, restore: scrollRatioRef.current }) : "";
   const src = mode === "fast" ? fastDoc : servedSrc;
 
   // 换文档 = 上一份的报错/装载状态作废

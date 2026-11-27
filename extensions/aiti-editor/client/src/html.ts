@@ -70,12 +70,17 @@ export function absBase(base: string, from: string): string {
  * `scripts=false` → `?noscript=1`（服务端剥作者脚本，见 preview/preview-serve.ts 的 servePreviewDoc）；
  * `v` = 刷新破缓存计数。
  */
-export function previewUrl(base: string, rel: string, opts: { scripts: boolean; v?: number }): string {
+export function previewUrl(base: string, rel: string, opts: { scripts: boolean; v?: number; restore?: number }): string {
   const root = String(base || "");
   const path = root + String(rel || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
   const qs: string[] = [];
   if (!opts.scripts) qs.push("noscript=1");
   if (typeof opts.v === "number" && opts.v >= 0) qs.push("v=" + opts.v);
+  // Served documents are opaque-origin: the parent cannot read their scroll, so the reading
+  // position travels as a query param and the injected shim restores it on load (plan §3.4).
+  if (typeof opts.restore === "number" && isFinite(opts.restore) && opts.restore > 0) {
+    qs.push("restore=" + Math.min(1, opts.restore).toFixed(4));
+  }
   return path + (qs.length ? (path.indexOf("?") >= 0 ? "&" : "?") + qs.join("&") : "");
 }
 

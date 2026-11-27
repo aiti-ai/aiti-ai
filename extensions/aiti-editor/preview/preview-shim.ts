@@ -59,6 +59,10 @@ export function buildPreviewShim(opts: PreviewShimOpts): string {
     "if(BASE&&BASE.charAt(0)==='/'){try{BASE=new URL(BASE,document.baseURI||location.href).href;}catch(e){}}",
     "if(BASE&&BASE.charAt(BASE.length-1)!=='/')BASE+='/';",
     "var REST=" + restoreRatio + ";",
+    // Server-injected (served mode) shim cannot know the client's position: the parent appends
+    // ?restore=<0..1> to the preview URL and we pick it up here. Fast-mode srcdoc has no query,
+    // so it keeps the build-time value.
+    "if(!(REST>0)){try{var _rm=/[?&]restore=([0-9]*\\.?[0-9]+)/.exec(String(location.search||''));if(_rm){REST=Math.min(1,Math.max(0,parseFloat(_rm[1])||0));}}catch(e){}}",
     "var SENT=0, CAP=60;",
     "function short(s){ s=String(s==null?'':s); return s.length>240?s.slice(0,240)+'…':s; }",
     "function safe(x){ if(typeof x==='string')return x; try{return JSON.stringify(x);}catch(e){ try{return String(x);}catch(e2){return '[unprintable]';} } }",

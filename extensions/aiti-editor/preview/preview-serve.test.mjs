@@ -359,15 +359,25 @@ function runShim(opts, env = {}) {
     error: () => { originals.error++; },
     warn: () => { originals.warn++; },
   };
+  const scrolled = [];
   const sandbox = {
     URL,
     parent: { postMessage: (m) => msgs.push(m) },
     console: consoleStub,
-    location: { href: env.locationHref || (ORIGIN + "/dev/app/page") },
+    location: {
+      href: env.locationHref || (ORIGIN + "/dev/app/page"),
+      search: env.locationSearch || "",
+    },
+    // Scroll plumbing (reading-position restore): the harness exposes what the shim reads/writes.
+    innerHeight: env.innerHeight === undefined ? 800 : env.innerHeight,
+    scrollY: env.scrollY === undefined ? 0 : env.scrollY,
+    scrollTo: (x, y) => { scrolled.push({ x, y }); },
+    setTimeout: (fn) => { fn(); },  // scroll reporting is throttled by a timer; run it inline here
     document: {
       readyState: env.readyState || "complete",
       title: env.title === undefined ? "示例页" : env.title,
       baseURI: env.baseURI === undefined ? PREVIEW_BASE + "index.html" : env.baseURI,
+      scrollingElement: { scrollHeight: env.scrollHeight === undefined ? 0 : env.scrollHeight },
       addEventListener: (t, fn) => { (listeners.document[t] = listeners.document[t] || []).push(fn); },
     },
   };
@@ -395,7 +405,7 @@ function runShim(opts, env = {}) {
     return prevented;
   };
   const of = (type) => msgs.filter((m) => m.type === type);
-  return { msgs, of, fire, anchor, click, consoleStub, originals };
+  return { msgs, of, fire, anchor, click, consoleStub, originals, scrolled, sandbox };
 }
 
 /** 除装载 ready 外的全部上报（「什么都不发」类断言用）。 */
@@ -532,4 +542,39 @@ test("previewBaseFromSegments：截到 ticket 为止并补尾斜杠（<base> 与
   const segs = ["api", "extensions", "aiti-editor", "preview", "tk9", "assets", "a.css"];
   assert.equal(previewBaseFromSegments(segs, 4), "/api/extensions/aiti-editor/preview/tk9/");
   assert.equal(previewBaseFromSegments(["preview", "tk"], 1), "/preview/tk/");
+});
+
+// ── Reading-position restore (plan §3.4): served docs are opaque-origin, so the ratio arrives
+//    as a query param; fast-mode srcdoc passes it at build time. ──
+
+test("shim: served document restores the reading position from ?restore=", () => {
+  const h = runShim({ base: PREVIEW_BASE, docRel: "" }, {
+    locationHref: PREVIEW_BASE,
+    locationSearch: "?v=3&restore=0.25",
+    scrollHeight: 2400, innerHeight: 800,   // max scroll = 1600 → 0.25 → 400
+  });
+  assert.deepEqual(h.scrolled, [{ x: 0, y: 400 }]);
+});
+
+test("shim: fast-mode build-time ratio still wins when the document has no query", () => {
+  const h = runShim({ base: PREVIEW_BASE, docRel: "", restoreRatio: 0.5 }, {
+    scrollHeight: 2000, innerHeight: 1000,  // max scroll = 1000 → 500
+  });
+  assert.deepEqual(h.scrolled, [{ x: 0, y: 500 }]);
+});
+
+test("shim: malformed / out-of-range restore is clamped or ignored", () => {
+  const bad = runShim({ base: PREVIEW_BASE, docRel: "" }, { locationSearch: "?restore=abc", scrollHeight: 2000, innerHeight: 1000 });
+  assert.deepEqual(bad.scrolled, []);
+  const over = runShim({ base: PREVIEW_BASE, docRel: "" }, { locationSearch: "?restore=7", scrollHeight: 2000, innerHeight: 1000 });
+  assert.deepEqual(over.scrolled, [{ x: 0, y: 1000 }]);
+});
+
+test("shim: reports the current scroll ratio for the next rebuild", () => {
+  const h = runShim({ base: PREVIEW_BASE, docRel: "" }, { scrollHeight: 2000, innerHeight: 1000, scrollY: 500 });
+  h.sandbox.scrollY = 750;
+  h.fire("window", "scroll", {});
+  const msg = h.of(PREVIEW_MSG.scroll).pop();
+  assert.ok(msg, "scroll report missing");
+  assert.equal(msg.ratio, 0.75);
 });
