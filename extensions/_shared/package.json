@@ -50,6 +50,7 @@
     "./soffice-locate": "./soffice-locate.ts",
     "./soffice-panel": "./soffice-panel.ts",
     "./sync-dir": "./sync-dir.mjs",
+    "./sync-ext-icons": "./sync-ext-icons.mjs",
     "./task-list": "./task-list.ts",
     "./ui-dialogs": "./ui-dialogs.ts",
     "./icons/*": "./icons/*",

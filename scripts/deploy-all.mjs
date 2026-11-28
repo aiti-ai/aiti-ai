@@ -45,8 +45,9 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
+import { syncExtIcons } from "../extensions/_shared/sync-ext-icons.mjs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -261,43 +262,30 @@ function computeChanged(state, head) {
 
 // ---------- icon sync ----------
 /**
- * Copy the SVG icon an extension declares into its deployed directories.
+ * Copy every SVG icon an extension references into its deployed directories.
  *
  * `icon: "icons/<name>.svg"` points at the shared line-icon library (extensions/_shared/icons),
- * `icon: "icon.svg"` at a file shipped inside the extension. Extensions used to copy these from
- * their own tools/deploy.mjs; doing it here guarantees every deployed tree has the file even when
- * a per-extension script forgot it (a missing asset renders as a blank/fallback icon).
+ * `icon: "icon.svg"` at a file shipped inside the extension. References live in the manifest
+ * `ui.<slot>[]` declarations and in client registrations (evaluated strings inside the built
+ * client bundle), so the scan covers index.ts + client/src + dist — the previous version only
+ * looked at the extension-level `icon:` field and missed every item-level icon (deployed trees
+ * drifted into 404s). Per-extension deploy scripts carried an empty placeholder for this step;
+ * doing it here guarantees every deployed tree has the files.
  */
 function syncDeclaredIcons(extName) {
-  const srcDir = join(PI_WEB_EXT, extName);
-  const indexPath = join(srcDir, "index.ts");
-  if (!existsSync(indexPath)) return;
-  const m = readFileSync(indexPath, "utf8").match(/^\s*icon:\s*["']([^"']+\.svg)["']/m);
-  if (!m) return;
-  const iconPath = m[1];
-  // Optimizable source order: the extension's own copy first, then the shared library.
-  // An extension may ship `icons/<name>.svg` itself (its own artwork under the same relative
-  // path the host serves) and only fall back to _shared/icons/<name>.svg when it does not.
-  const candidates = iconPath.startsWith("icons/")
-    ? [join(srcDir, iconPath), join(PI_WEB_EXT, "_shared", "icons", iconPath.slice("icons/".length))]
-    : [join(srcDir, iconPath)];
-  const libPath = candidates.find((c) => existsSync(c));
-  if (!libPath) {
-    console.log(`[icons] ${extName}: 声明的图标找不到（扩展目录与共享库都没有）${iconPath}（跳过）`);
-    return;
-  }
-  const dests = (process.env.HOME || process.env.USERPROFILE)
-    ? [
-        join(process.env.HOME || process.env.USERPROFILE, ".pi", "web", "extensions", extName, "icons"),
-        join(process.env.HOME || process.env.USERPROFILE, ".pi", "web-dev", "extensions", extName, "icons"),
-      ]
-    : [];
-  for (const dest of dests) {
-    try {
-      mkdirSync(dest, { recursive: true });
-      copyFileSync(libPath, join(dest, iconPath.split("/").pop()));
-    } catch { /* best effort: a missing icon must never fail a deploy */ }
-  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (!home) return;
+  const result = syncExtIcons({
+    root: join(PI_WEB_EXT, extName),
+    extId: extName,
+    sharedIconDir: join(PI_WEB_EXT, "_shared", "icons"),
+    targets: [
+      join(home, ".pi", "web", "extensions", extName),
+      join(home, ".pi", "web-dev", "extensions", extName),
+    ],
+    log: (m) => console.log("[icons] " + m),
+  });
+  if (result.copied.length) console.log(`[icons] ${extName}: ${result.copied.length} icon file(s) synced`);
 }
 
 // ---------- 执行 ----------
