@@ -266,7 +266,7 @@ test("handle 队列行为：v4 steer 注入 + followUp 分流 + queueManage + st
   assert.ok(allRevs.every((r, i) => i === 0 || r > allRevs[i - 1]), "rev strictly increases throughout");
   assert.equal(quFinal.rev, l2.rev + 6, "final rev is continuous with the mid-run snapshot");
 
-  // user bubbles settle (visibility contract): turn 1 (runTurn) / inserted + queued items (v4 steer's steerQueued) / follow-up (runTurn) // cjk-ok-next
+  // user bubbles settle (visibility contract): turn 1 (runTurn) / inserted + queued items (v4 steer's steerQueued) / follow-up (runTurn)
   const userTexts = events
     .filter((e) => e.type === "message_end" && e.message?.role === "user")
     .map((e) => (Array.isArray(e.message.content) ? e.message.content.find((b) => b.type === "text")?.text ?? "" : String(e.message.content ?? "")));
