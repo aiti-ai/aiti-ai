@@ -335,9 +335,9 @@ function TabOverview() {
     return () => { alive = false; };
   }, [state.curInstance, running]);
   const stat = (label: string, value: any, color?: string) => (
-    <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, minWidth: 120 }}>
+    <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
       <span style={{ fontSize: 11, color: C.muted }}>{label}</span>
-      <span style={{ fontSize: 18, fontWeight: 700, color: color || C.text }}>{value == null ? "-" : String(value)}</span>
+      <span style={{ fontSize: 18, fontWeight: 600, color: color || C.text, fontVariantNumeric: "tabular-nums" }}>{value == null ? "-" : String(value)}</span>
     </div>
   );
   return (
@@ -356,8 +356,8 @@ function TabOverview() {
           {running && <button style={btnStyle} disabled={state.busy} title={t("自动重启（保留 pid）")} onClick={() => ccAction("restart-cc", t("重启"))}><Ic size={13} paths={ICON.refresh} />{t("自重启")}</button>}
         </span>
       </div>
-      {/* 状态指标 */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {/* stat figures — equal-track grid so rows end flush on narrow panels */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: 8 }}>
         {stat(t("项目"), projects.length)}
         {stat(t("渠道"), Object.keys(platforms).length)}
         {stat(t("机器人"), botStat.count)}

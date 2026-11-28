@@ -208,10 +208,16 @@ function WizSelect({ value, options, onChange, width = 240, disabled = false }: 
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [flip, setFlip] = useState(false); // open right-aligned near the viewport edge
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
+    // small screens: the trigger may sit near the right edge — flip the popup to
+    // right-aligned so it never runs off-screen (plain mousemove never closes it;
+    // only outside pointerdown / Escape do)
+    const r = rootRef.current?.getBoundingClientRect();
+    if (r) setFlip(r.right + (width || 240) > window.innerWidth - 8 && r.left >= (width || 240));
     const close = (e: Event) => {
       const t = e.target as HTMLElement | null;
       if (t && (rootRef.current?.contains(t) || listRef.current?.contains(t))) return;
@@ -221,7 +227,7 @@ function WizSelect({ value, options, onChange, width = 240, disabled = false }: 
     document.addEventListener("pointerdown", close, true);
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", esc); };
-  }, [open]);
+  }, [open, width]);
   const cur = options.find((o) => o.value === value);
   return (
     <div ref={rootRef} data-wiz-select style={{ position: "relative", flex: "0 0 auto" }}>
@@ -232,7 +238,7 @@ function WizSelect({ value, options, onChange, width = 240, disabled = false }: 
       </button>
       {open && (
         <div ref={listRef}
-          style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, width, maxHeight: 260, overflowY: "auto", background: "var(--panel-bg,#ffffff)", border: "1px solid var(--border,#d4d4d8)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4 }}>
+          style={{ position: "absolute", top: "calc(100% + 4px)", ...(flip ? { right: 0 } : { left: 0 }), zIndex: 30, width, maxHeight: 260, overflowY: "auto", background: "var(--panel-bg,#ffffff)", border: "1px solid var(--border,#d4d4d8)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4 }}>
           {options.map((o) => (
             <button key={o.value} type="button" onClick={() => { onChange(o.value); setOpen(false); }}
               style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", fontSize: 12, borderRadius: 6, border: "none", cursor: "pointer", background: o.value === value ? "rgba(99,102,241,0.14)" : "transparent", color: o.value === value ? "#4f46e5" : "inherit" }}>

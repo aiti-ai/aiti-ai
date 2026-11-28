@@ -80,6 +80,19 @@ function ReadyQr({ url, hint, t, size = 220 }: { url: string; hint?: string; t: 
 
 export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: Props) {
   const { t } = useI18n();
+  // small screens (phone fullscreen): stack the QR column above Bot Channels
+  // instead of squeezing both into one row — measured on the row itself so it
+  // also reacts to a narrowed float on desktop
+  const twoColRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = twoColRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 720));
+    ro.observe(el);
+    setNarrow(el.clientWidth < 720);
+    return () => ro.disconnect();
+  }, []);
   const [reco, setReco] = useState<Reco | null>(null);
   const [view, setView] = useState<View>("loading");
   const [candidate, setCandidate] = useState<RecoCandidate | null>(null);
@@ -382,7 +395,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
           <button type="button" onClick={onClose} aria-label="close" style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>✕</button>
         </div>
 
-        <div style={{ display: "flex", alignItems: "stretch" }}>
+        <div ref={twoColRef} style={{ display: "flex", alignItems: "stretch", flexDirection: narrow ? "column" : "row" }}>
           <div style={{ flex: 1, minWidth: 0, padding: "12px 14px 14px", fontSize: 12, color: "var(--text)" }}>
           {/* QR source switch (§3.1 v3): service entry / current page / exposed */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
@@ -642,7 +655,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
           )}
           </div>
           {botsAvail && (
-            <div style={{ width: 340, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: "12px 12px 14px", background: "var(--bg-elevated, rgba(127,127,127,0.04))", display: "flex", flexDirection: "column" }}>
+            <div style={{ ...(narrow ? { borderTop: "1px solid var(--border)" } : { width: 340, flexShrink: 0, borderLeft: "1px solid var(--border)" }), padding: "12px 12px 14px", background: "var(--bg-elevated, rgba(127,127,127,0.04))", display: "flex", flexDirection: "column" }}>
               <BotChannelsColumn />
             </div>
           )}
