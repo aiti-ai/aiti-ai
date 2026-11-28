@@ -188,6 +188,7 @@ async function buildVncUrl(instId?: string): Promise<string> {
   const api = new URL(apiUrl("/x"), location.origin); // apiUrl 是相对路径（含 basePath）
   const basePath = api.pathname.endsWith("/x") ? api.pathname.slice(0, -2) : "";
   const wsPath = (basePath + "/aiti-ui-env/vnc/" + d.token + "/ws").replace(/^\/+/, "");
+  // url-path-ok-next — `path` is the noVNC websocket path, not a local filesystem path.
   const query = "autoconnect=true&resize=scale&lang=" + encodeURIComponent(currentLocale()) + "&path=" + encodeURIComponent(wsPath);
   // view.html = 查看外壳（旋转/双指捏合缩放，直连 RFB 无 iframe）；query 原样透传
   return location.origin + basePath + "/aiti-ui-env/vnc/" + d.token + "/view.html?" + query;

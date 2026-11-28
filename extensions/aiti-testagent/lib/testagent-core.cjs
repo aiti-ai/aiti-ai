@@ -543,6 +543,8 @@ function downloadFile(opts) {
   const bp = opts.basePath !== undefined ? opts.basePath : DEFAULT_BASEPATH;
   const base = String(opts.baseOverride || "").replace(/\/$/, "") || (port ? `http://127.0.0.1:${port}` : currentBase());
   const prefix = bp && bp !== "/" ? (bp.startsWith("/") ? bp : "/" + bp) : "";
+  // `remotePath` addresses the remote test agent's own HTTP API (a machine across the tunnel);
+  // this URL never reaches this host's access log.                              url-path-ok-next
   const u = new URL(base + prefix + "/api/download?path=" + encodeURIComponent(remotePath) + (opts.meta ? "&meta=1" : ""));
   const headers = opts.headers || {};
   return new Promise((resolve) => {

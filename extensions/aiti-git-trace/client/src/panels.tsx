@@ -402,11 +402,11 @@ function FileDiffBox(props: { root: string; sid: string; base: string; target: s
   useEffect(() => {
     let dead = false;
     setSt({ loading: true });
-    const q = "/file-diff?root=" + encodeURIComponent(props.root)
-      + "&session=" + encodeURIComponent(props.sid || "")
-      + "&base=" + encodeURIComponent(props.base) + "&target=" + encodeURIComponent(props.target)
-      + "&path=" + encodeURIComponent(props.path);
-    apiGet(q).then((r: any) => {
+    // POST: root/path (absolute filesystem paths) travel in the JSON body, not the URL —
+    // access logs record URLs only.
+    apiPost("/file-diff", {
+      root: props.root, session: props.sid || "", base: props.base, target: props.target, path: props.path,
+    }).then((r: any) => {
       if (dead) return;
       if (r && r.ok) setSt({ loading: false, text: r.text || "", truncated: !!r.truncated, total: r.total || 0 });
       else setSt({ loading: false, error: (r && r.error) || "diff failed" });

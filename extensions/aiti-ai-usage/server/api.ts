@@ -538,6 +538,15 @@ export async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response 
     void runtime().syncAll().catch((e) => console.error("[aiti-ai-usage] 手动 sync 失败:", e));
     return json({ ok: true });
   }
+  // catalog accepts POST too: cwd (an absolute path) travels in the JSON body, never in a
+  // URL that access logs record. The other read endpoints stay GET (none carries a path);
+  // the GET form is kept for the compatibility window.
+  if (req.method === "POST" && head === "catalog") {
+    const body = (await req.json().catch(() => ({}))) as { cwd?: unknown };
+    const sp = new URLSearchParams(ctx.searchParams);
+    if (typeof body.cwd === "string" && body.cwd) sp.set("cwd", body.cwd);
+    return catalog(sp);
+  }
   if (req.method !== "GET") return null;
   const sp = ctx.searchParams;
   switch (head) {

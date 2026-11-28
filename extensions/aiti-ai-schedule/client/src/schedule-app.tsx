@@ -763,6 +763,8 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
   useEffect(() => {
     if (!project) return;
     setSessions(null);
+    // `project` is a cc-connect project identifier (e.g. "aiti-ai"), not a local filesystem
+    // path; the request is proxied to the cc-connect service, not the filesystem.  url-path-ok-next
     fetch(API("/cc/sessions?project=" + encodeURIComponent(project))).then((r) => r.json()).then((d) => {
       if (d.ok) setSessions(d.sessions || []);
       else setErr(String(d.error || t("cc.sessErr")));

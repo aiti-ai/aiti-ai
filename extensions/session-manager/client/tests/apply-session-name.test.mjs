@@ -75,12 +75,16 @@ let archRows = [];
 /** 非空时 scoped 请求（URL 带 project=）用它应答——模拟「本项目只含全表一部分行」。 */
 let scopedRows = null;
 let revSeq = 0;
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   if (u.includes("/api/agent/running")) return new Response(JSON.stringify({ runningSessionIds: [] }), { status: 200 });
   if (u.includes("/sessions")) {
     revSeq += 1;
-    const scoped = u.includes("project=") && scopedRows !== null ? scopedRows : null;
+    // 2026-11-28: the scoped channel posts now — project travels in the JSON body (keeps the
+    // absolute path out of URLs); the legacy GET form still reads it from the query string.
+    let bodyProject;
+    try { bodyProject = JSON.parse(String(init && init.body ? init.body : "{}")).project; } catch { /* non-JSON */ }
+    const scoped = (bodyProject || u.includes("project=")) && scopedRows !== null ? scopedRows : null;
     // 全量响应无 etag 条件——每次 refresh 都真实应用（覆盖路径即本测试目标）
     return new Response(JSON.stringify({
       sessions: scoped ?? liveRows,

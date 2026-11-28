@@ -79,14 +79,18 @@ const rowOf = (id, projectRaw = PROJECT_RAW) => ({
   id, cwd: projectRaw, projectKey: projectRaw, modified: "2026-11-20T00:00:00Z", messageCount: 1, firstMessage: id,
 });
 
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   calls.push(u);
   if (u.includes("/api/agent/running")) {
     return new Response(JSON.stringify({ runningSessionIds: [], sessionListVersion: 0 }), { status: 200 });
   }
   if (u.includes("/sessions")) {
-    const project = new URL(u, "http://x").searchParams.get("project");
+    // 2026-11-28: the scoped channel posts now — project travels in the JSON body (keeps the
+    // absolute path out of URLs); the legacy GET form still reads it from the query string.
+    let bodyProject;
+    try { bodyProject = JSON.parse(String(init && init.body ? init.body : "{}")).project; } catch { /* non-JSON */ }
+    const project = bodyProject ?? new URL(u, "http://x").searchParams.get("project");
     const live = project ? SERVER.live.filter((r) => norm(r.projectKey ?? r.cwd) === norm(project)) : SERVER.live;
     const body = { sessions: live, archived: project ? [] : SERVER.archived, rev: "R" + (++etagSeq) };
     return new Response(JSON.stringify(body), { status: 200, headers: { etag: `"R${etagSeq}"` } });

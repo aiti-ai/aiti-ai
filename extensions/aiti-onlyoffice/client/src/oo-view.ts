@@ -85,8 +85,14 @@ export function renderOnlyofficeView(host: any, ctx: { filePath: string; cwd?: s
   let editor: any = null;
 
   (async () => {
-    const q = new URLSearchParams({ filePath: ctx.filePath, ...(ctx.cwd ? { cwd: ctx.cwd } : {}) });
-    const d = await fetch(apiUrl("/api/extensions/aiti-onlyoffice/config?" + q.toString()), { cache: "no-store" }).then((r) => r.json());
+    // POST: filePath/cwd are absolute paths — they travel in the JSON body, never in a URL
+    // (access logs record URLs). The GET query form stays for the compatibility window.
+    const d = await fetch(apiUrl("/api/extensions/aiti-onlyoffice/config"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filePath: ctx.filePath, ...(ctx.cwd ? { cwd: ctx.cwd } : {}) }),
+      cache: "no-store",
+    }).then((r) => r.json());
     if (dead) return;
     if (!d?.ok) throw new Error(d?.error || "config 获取失败");
     const DocsAPI = await loadDocsApi((window as any).__aitiOnlyofficeDsPublicUrl || new URL(apiUrl("/"), location.href).origin || "");

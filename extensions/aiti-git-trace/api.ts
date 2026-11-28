@@ -171,16 +171,21 @@ export async function handleApi(req, ctx, env) {
       return json({ ok: true, session: sid, entryIds, ...r });
     }
 
-    if (p[0] === "file-diff" && req.method === "GET") {
+    // file-diff: POST carries root/session/base/target/path in the JSON body so filesystem
+    // paths never reach a URL/access log; the GET query form stays for the compatibility
+    // window (old dist clients still in the wild).
+    if (p[0] === "file-diff" && (req.method === "GET" || req.method === "POST")) {
       const q = ctx.searchParams || new URLSearchParams();
-      const root = String(q.get("root") || "");
+      const body = req.method === "POST" ? await readBody(req) : {};
+      const pick = (k: string) => String((body as Record<string, unknown>)[k] ?? q.get(k) ?? "");
+      const root = pick("root");
       if (!root || !storeOk(root)) return json({ ok: false, error: "该仓没有 trace store（.aiti-trace 不存在）" }, 400);
       if (!(await allowRoot(root))) return json({ ok: false, error: "root 不在允许范围（allowed-roots 拒绝）" }, 403);
-      const sid = sanitizeSession(q.get("session") || "default");
-      const base = String(q.get("base") || ""), target = String(q.get("target") || "");
+      const sid = sanitizeSession(pick("session") || "default");
+      const base = pick("base"), target = pick("target");
       if (!base || !target) return json({ ok: false, error: "缺少 base/target" }, 400);
-      const path = String(q.get("path") || "");
-      const maxLines = parseInt(q.get("maxLines") || "", 10) || undefined;
+      const path = pick("path");
+      const maxLines = parseInt(pick("maxLines"), 10) || undefined;
       const r = await fileDiffText(root, sid, base, target, path, maxLines); // 坏 ref → throw → 400
       return json({ ok: true, session: sid, root, base, target, path, ...r });
     }

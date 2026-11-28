@@ -37,6 +37,10 @@ import {
   ensureMonacoExtras,
 } from "./monaco-setup";
 
+// url-filepath-ok-file: every URL below goes through ticketedEditorPath(), which replaces
+// ?filePath= with /t/<short-ticket>/<endpoint> before the request leaves the page — the
+// filesystem path never enters a URL (see host-shim.ts). The literals here are the
+// pre-rewrite API signatures, so the gate cannot see the substitution.
 const api = (p: string, init?: RequestInit) => ticketedEditorPath(p).then((pp) => fetch(editorBase() + pp, { cache: "no-store", ...init }));
 
 // 实时徽标脉冲动画（注入一次）

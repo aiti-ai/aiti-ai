@@ -448,7 +448,22 @@ function searchEndpoint(ctx: ExtApiCtx): Response {
   return json({ q, model, role, archived, hits });
 }
 
-async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Response> {
+async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request, body?: Record<string, unknown> | null): Promise<Response> {
+  // ── Request parameter source (2026-11-28): POST body first, GET query as fallback ──
+  // Background: the access log must not carry local absolute paths (plan
+  // docs/pi-web-url-filepath-leak-fix-plan.md). The scoped channel (carrying
+  // project=<absolute path>) moves to POST + JSON body; the full/incremental
+  // channels (fmt/since/refresh, no paths) keep GET and their 304/patch semantics.
+  // The GET shape stays during the compatibility window.
+  const pick = (name: string): string | null => {
+    const raw = body?.[name];
+    if (typeof raw === "string" && raw) return raw;
+    // JSON bodies carry numbers for fmt/refresh ({"fmt":2}) — normalize, otherwise the
+    // scoped request would silently fall back to the legacy fat payload.
+    if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+    if (raw === true) return "1";
+    return ctx.searchParams.get(name);
+  };
   const core = ctx.core;
   // 请求驱动自愈（非轮询：没有 GET 就没有动作；内部 in-flight/节流防抖）：
   //   1) 索引 sync（60s 节流）：新站位文件/新 pi 会话尽快入索引（此前只有 startup/
@@ -464,11 +479,11 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // 全部是同步 fs/sqlite 扫描，纯 void 化不让出循环、TTFB 照旧背全程；后台写库后
   // rev/ETag 变化由既有 since/If-None-Match 增量通道自然拉新（严格前进才写，无风暴）。
   setImmediate(() => { void refreshLiveExtTimestamps(ctx.configDir, runtime(ctx.configDir).index).catch(() => {}); });
-  const forceRefresh = req ? new URL(req.url).searchParams.get("refresh") === "1" : false;
+  const forceRefresh = pick("refresh") === "1";
   // ── 通道拆分（方案 §2 B2）：project=<key> 作用域模式 ──
   // 装配前按项目过滤 live 行（key 归一化同客户端 workspaceKeyOf），全链路在小子集上跑；
   // 作用域模式不读写全量装配 memo、不启用 since/patch（scoped 载荷本就小，永远回全量 scoped）。
-  const projectParam = ctx.searchParams.get("project");
+  const projectParam = pick("project");
   const projectFilter = projectParam ? normalizeWorkspaceKeyServer(projectParam) : null;
   const scoped = projectFilter != null;
   const liveAll = await core.listSessions(forceRefresh ? { refresh: true } : undefined);
@@ -806,8 +821,7 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // 行组装与指纹，不碰请求参数）。
   const coldStart = Date.now() - (globalThis as { __smBootAt?: number }).__smBootAt! < 60_000;
   const sinceHeader = req?.headers.get("x-sm-since");
-  const since = (sinceHeader ? sinceHeader.replace(/"/g, "") : null)
-    || (req?.url ? new URL(req.url, "http://x").searchParams.get("since") : null);
+  const since = (sinceHeader ? sinceHeader.replace(/"/g, "") : null) || pick("since");
   const revSnapshots = ((globalThis as { __smRevSnapshots?: Map<string, Map<string, string>> }).__smRevSnapshots ??= new Map());
   revSnapshots.set(etagBare, rowRevs);
   // 环形裁剪（最新 10 个）；当前 rev 永不裁
@@ -816,9 +830,16 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
     if (oldest === undefined || oldest === etagBare) break;
     revSnapshots.delete(oldest);
   }
-  // 304：If-None-Match 或 since 命中当前 rev
-  if (req?.headers.get("if-none-match") === etag || (since && since === etagBare)) {
+  const isPost = req?.method === "POST";
+  // 304: If-None-Match or since hits the current rev
+  // POST does not go through 304 (returning 304 for POST is unreliable spec-wise and through
+  // intermediaries): answers 200 {unchanged:true} instead, and the client recognizes both
+  // shapes (the scoped channel in store.ts). The full channel is still GET → 304 unchanged.
+  if (!isPost && (req?.headers.get("if-none-match") === etag || (since && since === etagBare))) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
+  }
+  if (isPost && req?.headers.get("if-none-match") === etag) {
+    return json({ unchanged: true, rev: etagBare }, 200, { ETag: etag });
   }
   // patch 形态：since 在缓冲内且 ≠ 当前 rev；抖动保护（rm>30%）时置空降级到全量出口
   //（与冷启动/缓冲过期同一出口，fmt=2 形态全路径一致）。作用域模式不启用 patch
@@ -842,14 +863,14 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
       // fmt=2 紧凑传输编码（payload 方案 §9.4；映射约定见 payload.ts）——只发生在
       // 响应出口，rev/rowRev 指纹与行语义不变；无 fmt 参数走旧形态（旧消费方零改动）。
       // 注意：只放 patch.up 一份行（不可 ...enc 展开——会把 sessions 顶层多带一份致响应翻倍）。
-      if (ctx.searchParams.get("fmt") === "2") {
+      if (pick("fmt") === "2") {
         const enc = encodeSessionsV2(up);
         return json({ rev: etagBare, fmt: enc.fmt, cwds: enc.cwds, patch: { up: enc.sessions, rm } }, 200, { ETag: etag });
       }
       return json({ rev: etagBare, patch: { up, rm } }, 200, { ETag: etag });
     }
   }
-  if (ctx.searchParams.get("fmt") === "2") {
+  if (pick("fmt") === "2") {
     const enc = encodeSessionsV2(sessions as Record<string, unknown>[], archived as Record<string, unknown>[]);
     return json({ ...enc, rev: etagBare, archiveAgents: archiveCapableAgents() }, 200, { ETag: etag });
   }
@@ -1278,7 +1299,10 @@ export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null
     case "doc-list":
       return docListEndpoint(ctx);
     case "sessions":
-      return mergedSessionsEndpoint(ctx, req);
+      // Dual-track: the POST body carries project/fmt/refresh/since (paths never enter the
+      // URL); GET stays during the compatibility window.
+      if (req.method !== "GET" && req.method !== "POST") return json({ error: "method not allowed" }, 405);
+      return mergedSessionsEndpoint(ctx, req, body);
     case "workspaces":
       return workspacesEndpoint(ctx, req);
     case "archive":

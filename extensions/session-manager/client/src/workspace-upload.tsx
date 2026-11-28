@@ -80,11 +80,14 @@ export function UploadDialog(props: UploadWorkspaceProps) {
     if (!file || !dir || busy) return;
     setError("");
     const xhr = new XMLHttpRequest();
-    const url = apiUrl(
-      `/api/extensions/session-manager/workspace/upload?name=${encodeURIComponent(file.name)}&dir=${encodeURIComponent(dir)}`,
-    );
+    // Package name and target directory ride in request headers, not a query string:
+    // the body is the raw archive stream, and a query would put the absolute path into
+    // every access log that sees this request.
+    const url = apiUrl("/api/extensions/session-manager/workspace/upload");
     xhr.open("POST", url);
     xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.setRequestHeader("x-sm-upload-name", encodeURIComponent(file.name));
+    xhr.setRequestHeader("x-sm-target-dir", encodeURIComponent(dir));
     xhr.upload.onprogress = (ev) => {
       if (ev.lengthComputable && ev.total > 0) setPercent(Math.round((ev.loaded / ev.total) * 100));
     };

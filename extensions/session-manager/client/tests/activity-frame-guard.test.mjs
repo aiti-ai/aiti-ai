@@ -149,10 +149,14 @@ test("live frame for a live id → content refresh applies", () => {
  */
 test("dock-scoped prune: live marker survives the full landing until the scoped landing", async () => {
   // full landing first: row removed from sessions/archived, still in projectSessions
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     if (u.includes("/api/agent/running")) return new Response(JSON.stringify({ runningSessionIds: [] }), { status: 200 });
-    if (u.includes("project=")) {
+    // 2026-11-28: the scoped channel posts now — project travels in the JSON body (keeps the
+    // absolute path out of URLs); the legacy GET form still reads it from the query string.
+    let bodyProject;
+    try { bodyProject = JSON.parse(String(init && init.body ? init.body : "{}")).project; } catch { /* non-JSON */ }
+    if (bodyProject || u.includes("project=")) {
       // scoped landing AFTER the server filtered the row: payload without dock-x
       return new Response(JSON.stringify({ sessions: [], archived: [], rev: "rp1" }), { status: 200, headers: { etag: '"rp1"' } });
     }

@@ -49,7 +49,12 @@ function renderTags(host: HTMLElement, path: string, tags: Array<{ key: string; 
 
 async function refresh(host: HTMLElement, path: string): Promise<void> {
   try {
-    const d = await api("/file-tags?path=" + encodeURIComponent(path));
+    // POST: path is an absolute filesystem path — it travels in the body, not the URL.
+    const d = await api("/file-tags/read", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
     renderTags(host, path, Array.isArray(d?.tags) ? d.tags : []);
   } catch {
     host.textContent = "";

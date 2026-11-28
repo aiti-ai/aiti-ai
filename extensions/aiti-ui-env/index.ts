@@ -1221,7 +1221,7 @@ export default {
         const token = inst?.token || "";
         // 统一前缀：查看页与 WS 都在 <token>/ 实例前缀下（页内相对资源自动同前缀，路由零歧义）
         const wsPath = "aiti-ui-env/vnc/" + token + "/ws";
-        const path = "/aiti-ui-env/vnc/" + token + "/vnc.html?autoconnect=true&resize=scale&path=" + encodeURIComponent(wsPath);
+        const path = "/aiti-ui-env/vnc/" + token + "/vnc.html?autoconnect=true&resize=scale&path=" + encodeURIComponent(wsPath); // url-path-ok: noVNC websocket path, token-scoped, not a filesystem path
         return new Response(JSON.stringify({ ok: true, path, token, ttlS: Math.round(env.VNC_SESSION_TTL_MS / 1000) }), { status: 200, headers });
       }
 
@@ -1576,6 +1576,7 @@ export default {
                 message: r.message,
                 needPassword: act === "start" && !m.vncPassword(),
                 passwordSet: !!m.vncPassword(),
+                // url-path-ok-next — noVNC websocket path, token-scoped, not a filesystem path
                 viewPath: token ? "/aiti-ui-env/vnc/" + token + "/view.html?autoconnect=true&resize=scale&path=aiti-ui-env%2Fvnc%2F" + token + "%2Fws" : "",
                 note: "viewPath 无目标地址：页面/WS/静态资源全在 <token>/ 实例前缀下（首段即实例 token，无旧路径兼容）。view.html = 查看外壳（工具条旋转 0/90/180/270 + 放大缩小 + 触屏双指捏合缩放/平移，直连 noVNC RFB 无 iframe；<token>/vnc.html 原生页直访亦可）。URL 路径段是实例真随机 token（代表该实例/端口，定期轮换；旧 token 宽限期内仍可开）。打开：① 先在本机浏览器开 pi-web 🖥️ 面板点「打开」建立 30min HttpOnly cookie ② 访问 <站点根><viewPath>（带 basePath 的实例别忘了前缀，如 /dev…）。无实例时 viewPath 为空，先 action:start。",
               }, null, 2) }] };

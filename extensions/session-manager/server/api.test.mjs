@@ -959,3 +959,76 @@ test("recently-removed tombstone: just-archived id stays out of the live bucket 
     await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
   }
 });
+
+// ── 2026-11-28: scoped channel moved to POST (keeps the path out of URLs) ─────
+// Plan docs/pi-web-url-filepath-leak-fix-plan.md §5. The POST body carries project/fmt/
+// refresh; POST never answers 304 (answered as 200 {unchanged:true}); the legacy GET form and
+// the full channel's 304 keep their semantics.
+const postCtx = (dir, searchParams = new URLSearchParams()) => ({
+  configDir: cfgOf(dir),
+  path: ["sessions"],
+  searchParams,
+  core: {
+    async listSessions() {
+      const now = "2026-11-28T00:00:00.000Z";
+      return [
+        { id: "p1", path: "/w/p1.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: now, modified: now, messageCount: 1, firstMessage: "a", lastMessage: "b" },
+        { id: "p2", path: "/w/p2.jsonl", cwd: "/home/x/other", projectRoot: "/home/x/other", projectKey: "/home/x/other", created: now, modified: now, messageCount: 1, firstMessage: "c", lastMessage: "d" },
+      ];
+    },
+    async getRunningSessionIds() { return []; },
+  },
+});
+
+test("sessions POST：fmt=2 数字形态仍走紧凑编码（防静默退回胖载荷）", async () => {
+  globalThis.__smBootAt = Date.now() - 61_000;
+  const dir = mkdtempSync(join(tmpdir(), "sm-post-fmt-"));
+  try {
+    const res = await api(req("http://x/api/extensions/session-manager/sessions", "POST", { fmt: 2, project: "/home/x/proj" }), postCtx(dir));
+    assert.equal(res.status, 200);
+    const d = await res.json();
+    assert.equal(d.fmt, 2, "POST body 的 fmt:2（数字）必须生效——否则退回旧胖载荷");
+    assert.ok(Array.isArray(d.cwds), "紧凑编码必带 cwds 枚举表");
+    assert.deepEqual(d.sessions.map((r) => r.id), ["p1"], "project 过滤照旧（只回该项目行）");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
+test("sessions POST：If-None-Match 命中回 200 {unchanged:true}（不用 304）", async () => {
+  globalThis.__smBootAt = Date.now() - 61_000;
+  const dir = mkdtempSync(join(tmpdir(), "sm-post-cond-"));
+  try {
+    const first = await api(req("http://x/api/extensions/session-manager/sessions", "POST", { fmt: 2, project: "/home/x/proj" }), postCtx(dir));
+    assert.equal(first.status, 200);
+    const etag = first.headers.get("etag");
+    assert.ok(etag, "响应带 ETag");
+    const second = await api(new Request("http://x/api/extensions/session-manager/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "if-none-match": etag },
+      body: JSON.stringify({ fmt: 2, project: "/home/x/proj" }),
+    }), postCtx(dir));
+    assert.equal(second.status, 200, "POST 不返回 304（规范/中间层上都不可靠）");
+    const d = await second.json();
+    assert.equal(d.unchanged, true);
+    assert.ok(d.rev, "unchanged 响应仍带 rev");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
+test("sessions GET：兼容形态与 304 语义不变（全量通道靠它）", async () => {
+  globalThis.__smBootAt = Date.now() - 61_000;
+  const dir = mkdtempSync(join(tmpdir(), "sm-get-cond-"));
+  try {
+    const url = "http://x/api/extensions/session-manager/sessions?fmt=2";
+    const first = await api(req(url, "GET"), postCtx(dir, new URLSearchParams("fmt=2")));
+    assert.equal(first.status, 200);
+    const etag = first.headers.get("etag");
+    assert.ok(etag);
+    const second = await api(new Request(url, { headers: { "if-none-match": etag } }), postCtx(dir, new URLSearchParams("fmt=2")));
+    assert.equal(second.status, 304, "GET 的条件请求必须仍是 304");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});

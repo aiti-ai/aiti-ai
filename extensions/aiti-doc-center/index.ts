@@ -1064,7 +1064,7 @@ const ext = {
         const d = id > 0 ? (db as DatabaseSync).prepare("SELECT id, root, relpath FROM docs WHERE id=?").get(id) as any : null;
         if (!d) return json({ ok: false, error: "not found" }, 404);
         let body: any = {};
-        try { body = await req.json(); } catch { /* 无 body 容忍 */ }
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
         const add = Array.isArray(body?.add) ? body.add.map(String) : [];
         const remove = Array.isArray(body?.remove) ? body.remove.map(String) : [];
         const abs = d.root + "/" + d.relpath;
@@ -1076,21 +1076,32 @@ const ext = {
           return json({ ok: false, error: String(e?.message ?? e) }, 500);
         }
       }
-      // ── M6-B file-tags：非 md 文件手工 tag（编辑器顶栏 🏷 入口的数据源）──
-      // GET /file-tags?path= —— 现有 tag（全来源；未登记返回空数组）
-      if (req.method === "GET" && p[0] === "file-tags") {
-        const path = String(sp.get("path") ?? "").trim();
+      const fileTagsRead = (rawPath: string): Response => {
+        const path = rawPath.trim();
         if (!path) return json({ ok: false, error: "需要 path" }, 400);
         const d = db ? findDocByAbsPath(db, path) : null;
         const tags = d && db
           ? (db.prepare("SELECT tg.key, tg.display, dt.source FROM doc_tags dt JOIN tags tg ON tg.id = dt.tag_id WHERE dt.doc_id=? ORDER BY tg.key").all(d.id) as any[])
           : [];
         return json({ ok: true, path, docId: d?.id ?? null, kind: d?.kind ?? null, tags });
+      };
+      // M6-B file-tags: manual tags on non-md files (data source for the editor top bar 🏷 entry)
+      // GET /file-tags?path= — existing tags (all sources; unregistered → empty array)
+      // GET form kept for the compat window; clients use POST /file-tags/read {path}
+      // (absolute path in the body, out of the URL / access log). The route uses a
+      // subpath so it does not fight the write branch below for the same body.
+      if (req.method === "GET" && p[0] === "file-tags" && p.length === 1) {
+        return fileTagsRead(String(sp.get("path") ?? ""));
+      }
+      if (req.method === "POST" && p[0] === "file-tags" && p[1] === "read") {
+        let body: any = {};
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
+        return fileTagsRead(String(body?.path ?? ""));
       }
       // POST /file-tags {path, tags:[key…]} —— 登记（非 md → kind='file'）+ 加 db 来源 tag
       if (req.method === "POST" && p[0] === "file-tags") {
         let body: any = {};
-        try { body = await req.json(); } catch { /* 无 body 容忍 */ }
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
         const path = String(body?.path ?? "").trim();
         const tagsIn = Array.isArray(body?.tags) ? body.tags.map(String).filter(Boolean) : [];
         if (!path || !tagsIn.length) return json({ ok: false, error: "需要 path 与 tags" }, 400);
@@ -1113,7 +1124,7 @@ const ext = {
       // DELETE /file-tags {path, tags:[key…]} —— 删 db tag（纯 DB 操作；kind='file' 删光即软删退出索引）
       if (req.method === "DELETE" && p[0] === "file-tags") {
         let body: any = {};
-        try { body = await req.json(); } catch { /* 无 body 容忍 */ }
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
         const path = String(body?.path ?? "").trim();
         const tagsIn = Array.isArray(body?.tags) ? body.tags.map(String).filter(Boolean) : [];
         if (!path || !tagsIn.length) return json({ ok: false, error: "需要 path 与 tags" }, 400);
@@ -1131,7 +1142,7 @@ const ext = {
       // ── M5：tag 批量重命名（front-matter 写回 + DB 迁移；inline/path 来源仅迁 DB，不改文件）──
       if (req.method === "POST" && p[0] === "tags" && p[1] === "rename") {
         let body: any = {};
-        try { body = await req.json(); } catch { /* 无 body 容忍 */ }
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
         const oldKey = String(body?.key ?? "").trim();
         const nt = normalizeTag(String(body?.newKey ?? ""));
         if (!oldKey || !nt) return json({ ok: false, error: "需要 key 与合法 newKey" }, 400);
@@ -1206,7 +1217,7 @@ const ext = {
       }
       if (req.method === "POST" && p[0] === "scan") {
         let body: any = {};
-        try { body = await req.json(); } catch { /* 无 body 容忍 */ }
+        try { body = await req.json(); } catch { /* tolerate a missing body */ }
         if (body?.replay) {
           // 同步占锁防 backfillTick 抢跑（reload 后启动 tick 会先到）；跑完释放，busy 时如实告知
           if (backfillState.running || !db) return json({ ok: false, error: "backfill busy，稍后重试" }, 409);

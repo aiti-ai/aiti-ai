@@ -87,8 +87,12 @@ globalThis.fetch = (url, init = {}) => {
   if (u.includes("/api/agent/running")) {
     return Promise.resolve(new Response(JSON.stringify({ runningSessionIds: [] }), { status: 200 }));
   }
-  const project = new URL(u, "http://x").searchParams.get("project") ?? "";
-  requests.push({ project, headers: { ...(init.headers ?? {}) } });
+  // 2026-11-28: the scoped channel posts now — project (an absolute path) travels in the JSON
+  // body, never in the URL. The legacy GET form still reads the query; this mock accepts both.
+  let bodyProject;
+  try { bodyProject = JSON.parse(String(init && init.body ? init.body : "{}")).project; } catch { /* non-JSON */ }
+  const project = bodyProject ?? new URL(u, "http://x").searchParams.get("project") ?? "";
+  requests.push({ project, method: String(init.method || "GET"), headers: { ...(init.headers ?? {}) } });
   return new Promise((resolve) => {
     pendingFetch.set(project, resolve);
   });

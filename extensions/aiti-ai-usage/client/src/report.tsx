@@ -116,6 +116,19 @@ async function apiGet(path: string): Promise<any> {
   return res.json();
 }
 
+/** POST variant: absolute paths (cwd) travel in the JSON body, never in a URL — access
+ *  logs record URLs, so a query string would leak the folder. */
+async function apiPost(path: string, body: unknown): Promise<any> {
+  const res = await fetch(apiUrl(`/api/extensions/aiti-ai-usage${path}`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 // ---------------------------------------------------------------- 样式常量
 
 const card = {
@@ -297,7 +310,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
   );
 }
 
-function useFetch<T>(path: string | null, deps: unknown[]): { data: T | null; err: string; reload: () => void } {
+function useFetch<T>(path: string | null, deps: unknown[], postBody?: unknown): { data: T | null; err: string; reload: () => void } {
   const [data, setData] = useState<T | null>(null);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
@@ -305,7 +318,7 @@ function useFetch<T>(path: string | null, deps: unknown[]): { data: T | null; er
     if (!path) return;
     let alive = true;
     setErr("");
-    apiGet(path)
+    (postBody === undefined ? apiGet(path) : apiPost(path, postBody))
       .then((d) => { if (alive) setData(d); })
       .catch((e) => { if (alive) setErr(e?.message ?? String(e)); });
     return () => { alive = false; };
@@ -1962,7 +1975,8 @@ function CatalogTab() {
       return typeof v === "string" && v ? v : "";
     } catch { return ""; }
   })();
-  const { data, err, reload } = useFetch<any>("/catalog" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : ""), []);
+  // POST: cwd travels in the JSON body (paths must stay out of URLs / access logs).
+  const { data, err, reload } = useFetch<any>("/catalog", [], { cwd: cwd || undefined });
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [openSrv, setOpenSrv] = useState<string | null>(null);
   const cat = data && data.ok !== false ? data : null;

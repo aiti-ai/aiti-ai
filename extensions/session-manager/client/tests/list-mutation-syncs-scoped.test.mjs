@@ -93,11 +93,16 @@ let etagSeq = 0;
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   const method = String((init && init.method) || "GET");
-  calls.push({ url: u, method });
+  // 2026-11-28: the scoped channel posts now — project (an absolute path) travels in the JSON
+  // body, never in the URL. The legacy GET form still reads the query; both record bodyProject
+  // so assertions can classify a scoped request either way.
+  let bodyProject;
+  try { bodyProject = JSON.parse(String(init && init.body ? init.body : "{}")).project; } catch { /* non-JSON */ }
+  calls.push({ url: u, method, bodyProject });
   const search = new URL(u, "http://x").search;
   if (u.includes("/api/agent/running")) return json({ runningSessionIds: [] });
-  if (u.includes("/sessions?") && method === "GET") {
-    const project = new URLSearchParams(search).get("project");
+  if ((u.includes("/sessions?") && method === "GET") || (u.endsWith("/sessions") && method === "POST")) {
+    const project = bodyProject ?? new URLSearchParams(search).get("project");
     const live = project ? SERVER.live.filter((r) => r.projectKey === project) : SERVER.live;
     const archived = project ? SERVER.archived.filter((r) => r.projectKey === project) : SERVER.archived;
     // Payload is snapshotted at request time (pre-mutation state); holdScoped lets a test
@@ -147,6 +152,11 @@ let holdScoped = null;
 const rowOf = (id) => ({ id, cwd: "/wa", projectKey: PROJECT, modified: "2026-09-22T00:00:00Z", messageCount: 1 });
 
 /** 让 refreshListChannels 里 void 掉的两次刷新都落地（宏任务队列排空若干轮）。 */
+/** A scoped-channel request: POST with project in the body (the shape since 2026-11-28), or the
+ *  legacy GET with project in the query string. */
+const isScopedCall = (c) => (c.method === "POST" && c.url.endsWith("/sessions") && !!c.bodyProject)
+  || (c.method === "GET" && c.url.includes("project="));
+
 async function settle() {
   for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
 }
@@ -159,9 +169,9 @@ test("前置：scoped 未拉过（dock 未挂载）→ 写操作不多打 scoped
   await settle();
   await hideExtSession("x1", true);
   await settle();
-  assert.ok(calls.some((c) => c.url.includes("/sessions?fmt=2") && !c.url.includes("project=")),
-    "全量通道照旧刷新");
-  assert.equal(calls.filter((c) => c.url.includes("project=")).length, 0,
+  assert.ok(calls.some((c) => c.method === "GET" && c.url.includes("/sessions?fmt=2") && !c.url.includes("project=")),
+    "全量通道照旧刷新（GET，URL 不含路径）");
+  assert.equal(calls.filter(isScopedCall).length, 0,
     "无 scoped 目标时不该凭空发 scoped 请求");
 });
 
@@ -178,7 +188,7 @@ test("dock 已挂载：从列表移除后 scoped 列表落地即无该行", asyn
   assert.equal(await hideExtSession("e1", true), true);
   await settle();
 
-  assert.ok(calls.some((c) => c.url.includes("project=")),
+  assert.ok(calls.some(isScopedCall),
     "必须刷 scoped 通道（dock 渲染源）——修复前只刷全量，行残留到手动刷新");
   assert.deepEqual(store.projectSessions.map((r) => r.id), [], "scoped 落地后 dock 行消失");
   assert.ok(!store.sessions.some((r) => r.id === "e1"), "全量 live 桶同步无该行");
@@ -195,7 +205,7 @@ test("dock 已挂载：pi 会话归档同样移出 dock 行", async () => {
   const r = await archiveSession("p1");
   await settle();
   assert.equal(r.ok, true);
-  assert.ok(calls.some((c) => c.url.includes("project=")), "归档也要刷 scoped");
+  assert.ok(calls.some(isScopedCall), "归档也要刷 scoped");
   assert.deepEqual(store.projectSessions.map((x) => x.id), []);
 });
 
@@ -208,7 +218,7 @@ test("dock 已挂载：彻底删除（core DELETE）同样移出 dock 行", asyn
   calls = [];
   assert.equal(await deleteLiveSession("d1"), null);
   await settle();
-  assert.ok(calls.some((c) => c.url.includes("project=")), "删除也要刷 scoped");
+  assert.ok(calls.some(isScopedCall), "删除也要刷 scoped");
   assert.deepEqual(store.projectSessions.map((x) => x.id), []);
 });
 
@@ -225,7 +235,7 @@ test("dock 已挂载：恢复把行放回 scoped 列表（反向残留）", asyn
   calls = [];
   assert.equal(await restoreSession("r1"), true);
   await settle();
-  assert.ok(calls.some((c) => c.url.includes("project=")), "恢复也要刷 scoped");
+  assert.ok(calls.some(isScopedCall), "恢复也要刷 scoped");
   assert.ok(store.sessions.some((x) => x.id === "r1"), "全量 live 桶回到该行了");
 });
 
@@ -244,7 +254,7 @@ test("scoped 在途旧请求不吞 force 对齐：删除后补拉一次，ghost 
   holdScoped = new Promise((r) => { release = r; });
   const stale = refreshProjectSessions(PROJECT);
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); // ensure the stale fetch was issued (held)
-  assert.ok(calls.some((c) => c.url.includes("project=")), "前置：stale scoped 请求已发出");
+  assert.ok(calls.some(isScopedCall), "前置：stale scoped 请求已发出");
   // Step 2: the delete completes while the stale request is still in flight (store channel: DELETE + force alignment)
   const del = deleteLiveSession("g1");
   await settle(); // DELETE lands; the force alignment hits the held in-flight stale request
@@ -254,7 +264,7 @@ test("scoped 在途旧请求不吞 force 对齐：删除后补拉一次，ghost 
   await settle(); // the force-chain follow-up lands
   holdScoped = null;
 
-  const scopedCalls = calls.filter((c) => c.url.includes("project="));
+  const scopedCalls = calls.filter(isScopedCall);
   assert.ok(scopedCalls.length >= 2,
     `删除的 force 对齐不得合流进写前在途请求（须补拉一次），实际 scoped 请求数=${scopedCalls.length}`);
   assert.deepEqual(store.projectSessions.map((x) => x.id), [], "补拉落地后 ghost 离开 scoped 桶（dock 渲染源干净）");

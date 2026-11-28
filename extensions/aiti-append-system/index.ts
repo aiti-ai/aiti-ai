@@ -113,9 +113,13 @@ export default {
       if (req.method === "OPTIONS") return new Response(null, { status: 204 });
       const home = await ctx.core.getHomeDir();
 
-      // GET /files?cwd= → 两份文件现状（内容 + 存在性 + 大小/修改时间）
-      if (p[0] === "files" && p.length === 1 && req.method === "GET") {
-        const cwd = ctx.searchParams.get("cwd") || "";
+      // GET|POST /files → the state of two files (content + existence + size/mtime)
+      //   POST body {cwd}: cwd is an absolute path; it goes in the body so it
+      //   stays out of the access log (GET query kept for the compat window)
+      if (p[0] === "files" && p.length === 1 && (req.method === "GET" || req.method === "POST")) {
+        const cwd = (req.method === "POST"
+          ? String((await req.json().catch(() => ({})) as { cwd?: unknown }).cwd ?? "")
+          : ctx.searchParams.get("cwd")) || "";
         let project: FileInfo | { error: string; path?: string } = { error: "当前页面没有项目（无 cwd）" };
         if (cwd) {
           if (cwdAllowed(cwd)) project = readInfo(projectPath(cwd));

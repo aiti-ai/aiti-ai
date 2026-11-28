@@ -136,12 +136,16 @@ export default {
         return json({ ok: true, enabled, available, publicUrl, message: !enabled ? "功能未开启（扩展管理器 → aiti-onlyoffice → 功能）" : !available ? "DocumentServer 不可达（scripts/onlyoffice-up.sh 启动）" : "" });
       }
 
-      // GET /config?filePath=… → JWT 签名的 DocEditor config
-      if (last === "config" && req.method === "GET") {
+      // GET|POST /config → JWT-signed DocEditor config.
+      //   POST body {filePath, cwd}: both are absolute paths, so they travel in the body and
+      //   never in a URL/access log. The GET query form stays for the compatibility window
+      //   (old dist clients still run it).
+      if (last === "config" && (req.method === "GET" || req.method === "POST")) {
         if (!featureBool(ctx, "onlyoffice.enabled", false)) return json({ ok: false, error: "OnlyOffice 功能未开启" }, 403);
         if (!(await healthcheck(dsUrl))) return json({ ok: false, error: "DocumentServer 不可达" }, 503);
-        const filePath = url.searchParams.get("filePath") || "";
-        const cwd = url.searchParams.get("cwd") || undefined;
+        const body = req.method === "POST" ? await req.json().catch(() => ({})) : null;
+        const filePath = String((body && body.filePath) || url.searchParams.get("filePath") || "");
+        const cwd = (body && typeof body.cwd === "string" && body.cwd) || url.searchParams.get("cwd") || undefined;
         const target = resolveAllowedWriteRoot(filePath, cwd);
         const docType = documentTypeOf(filePath);
         if (!target) return json({ ok: false, error: "路径不在白名单内" }, 400);

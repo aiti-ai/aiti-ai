@@ -85,7 +85,13 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch(apiUrl("/api/models/enabled" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : "")), { cache: "no-store" })
+    // POST: the folder travels in the JSON body — query strings land in access logs.
+    fetch(apiUrl("/api/models/enabled"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cwd ? { cwd } : {}),
+      cache: "no-store",
+    })
       .then((r) => srvFix(r.json()))
       .then((d: EnabledView & { error?: string }) => {
         if (deadRef.current) return;

@@ -930,13 +930,22 @@ const projectSessionsEtagByKey = new Map<string, string>();
  *  taken at issue time — the force-chain follow-up therefore reads the latest etag/resident
  *  key left by the previous landing, which is the correct semantics. */
 function fetchProjectSessionsOnce(k: string, refresh: boolean): Promise<void> {
-  const url = apiUrl("/api/extensions/session-manager/sessions?fmt=2&project=" + encodeURIComponent(k)
-    + (refresh ? "&refresh=1" : ""));
+  // POST: project (workspace key = absolute path) travels in the JSON body, never in the
+  // URL/access log. Plan docs/pi-web-url-filepath-leak-fix-plan.md §5. Full/incremental
+  // channels stay GET (no path in the URL).
+  const url = apiUrl("/api/extensions/session-manager/sessions");
   // If-None-Match 仅当驻留行就是本 key（行与 etag 同源；跨 key 304 死锁根因）
   const etag = !refresh && store.projectSessionsKey === k ? projectSessionsEtagByKey.get(k) : undefined;
   const req = (async () => {
     try {
-      const res = await fetch(url, { headers: etag ? { "if-none-match": etag } : undefined });
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(etag ? { "if-none-match": etag } : {}),
+        },
+        body: JSON.stringify({ fmt: 2, project: k, ...(refresh ? { refresh: 1 } : {}) }),
+      });
       if (res.status === 304) {
         // 只可能发生在驻留行同 key（etag 发送条件）——行保持，仅记 etag
         const next = res.headers.get("etag");
@@ -944,7 +953,14 @@ function fetchProjectSessionsOnce(k: string, refresh: boolean): Promise<void> {
         return;
       }
       if (!res.ok) return;
-      const d = await res.json() as { fmt?: number; cwds?: unknown; sessions?: unknown; rev?: string };
+      const d = await res.json() as { unchanged?: boolean; fmt?: number; cwds?: unknown; sessions?: unknown; rev?: string };
+      const nextEtag = res.headers.get("etag");
+      if (d.unchanged === true) {
+        // POST-channel equivalent of 304 (returning 304 for POST is unreliable spec-wise
+        // and through intermediaries): content unchanged, keep the resident row.
+        if (nextEtag) projectSessionsEtagByKey.set(k, nextEtag);
+        return;
+      }
       const v2cwds = d.fmt === 2 && Array.isArray(d.cwds) ? d.cwds as string[] : null;
       if (d.fmt === 2 && !v2cwds) return; // 坏响应防御（与全量通道同 stance）
       if (k !== projectSessionsTarget) return; // 已切目标：丢弃迟到响应，不覆盖新行
@@ -953,7 +969,6 @@ function fetchProjectSessionsOnce(k: string, refresh: boolean): Promise<void> {
       store.projectSessionsKey = k;
       reconcileLocalNames("scoped"); // 乐观改名套回（dock 渲染本源；只套本桶，不 purge）
       prunePendingRemovals(); // scoped landing is a bucket change too: clear converged markers (else they linger until the TTL fuse misreports "still processing")
-      const nextEtag = res.headers.get("etag");
       if (nextEtag) projectSessionsEtagByKey.set(k, nextEtag);
       emit();
     } catch { /* keep last */ } finally {

@@ -148,7 +148,12 @@ function renderAAS(props, face) {
 
   const load = useCallback(async () => {
     try {
-      const r = await api("/files?cwd=" + encodeURIComponent(cwd));
+      // POST: cwd is an absolute path — it travels in the JSON body, not the URL.
+      const r = await api("/files", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error || "读取失败");
       setInfo(d);
