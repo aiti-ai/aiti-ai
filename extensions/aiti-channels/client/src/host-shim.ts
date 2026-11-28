@@ -24,6 +24,13 @@ export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;
 }
 
+/** ensureMaterialized shim (host ctx; lazy extensions materialize their client
+ *  services on demand). Returns null when the host lacks the capability. */
+export function ensureMaterialized(extId: string): Promise<void> | null {
+  const c = _ctx as any;
+  return typeof c?.ensureMaterialized === "function" ? Promise.resolve(c.ensureMaterialized(extId)) : null;
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;

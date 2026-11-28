@@ -8,6 +8,7 @@
  * degrades to a one-line hint and never blocks the tab.
  */
 import { useEffect, useRef, useState } from "react";
+import { apiUrl } from "../host-shim";
 
 const UPD = "/api/extensions/aiti-updater";
 
@@ -49,11 +50,17 @@ export function SvcManagerCard({ t, onChanged }: { t: (k: string, params?: Recor
   const [pf, setPf] = useState<any | null>(null);
   const [pfOpen, setPfOpen] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Re-arm on effect re-run: React StrictMode (dev) runs effect → cleanup →
+  // effect, and without the re-assignment alive stays false forever, so every
+  // successful poll drops its result and the card freezes on its loading state.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const poll = async () => {
     try {
-      const r = await fetch(`${UPD}/run-status`, { signal: AbortSignal.timeout(5000) });
+      const r = await fetch(apiUrl(`${UPD}/run-status`), { signal: AbortSignal.timeout(5000) });
       if (!r.ok) throw new Error(String(r.status));
       const j = (await r.json()) as RunStatus;
       if (alive.current) { setSt(j); setAvail(true); }
@@ -78,7 +85,7 @@ export function SvcManagerCard({ t, onChanged }: { t: (k: string, params?: Recor
 
   const sourcePage = () => ({ url: window.location.href.split("?tk=")[0], title: document.title });
   const post = async (path: string, body?: unknown) => {
-    const r = await fetch(`${UPD}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(apiUrl(`${UPD}${path}`), { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((j as any).error || `HTTP ${r.status}`);
     return j;
@@ -137,8 +144,10 @@ export function SvcManagerCard({ t, onChanged }: { t: (k: string, params?: Recor
           </span>
         ) : null}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {/* Upgrade hidden when the version compare says up to date (operator rule) */}
-          {isSvc && !up ? (
+          {/* Update hidden unless the version compare POSITIVELY says an update exists:
+              versions data missing (no npmCheck configured) must not render a button
+              that can only fail — same rule as the upgrade panel (operator rule) */}
+          {isSvc && up === false ? (
             <button style={primary} disabled={busy !== null}
               onClick={() => act("upgrade", async () => {
                 const j = await post("/launch", { source: sourcePage() }) as any;
@@ -154,7 +163,7 @@ export function SvcManagerCard({ t, onChanged }: { t: (k: string, params?: Recor
             <button style={primaryOutline()} disabled={busy !== null} onClick={async () => {
               setBusy("preflight"); setMsg(null);
               try {
-                const r = await fetch(`${UPD}/register-preflight`).then((x) => x.json());
+                const r = await fetch(apiUrl(`${UPD}/register-preflight`)).then((x) => x.json());
                 setPf(r); setPfOpen(true);
               } catch (e) { setMsg(t("services.svcFailed") + ": " + String((e as Error).message).slice(0, 120)); }
               finally { setBusy(null); }

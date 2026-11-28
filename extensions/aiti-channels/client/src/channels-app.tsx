@@ -16,8 +16,12 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { apiUrl, t } from "./host-shim";
-import { openFloat, closePanel, usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { present, closePanel, usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
+import { TabBots, RemoteView } from "./bots";
+import { TabCron, TabProviders, TabSkills, TabSystem, ProjectDetailPanel } from "./mgmt-tabs";
+import { TabChat } from "./chat";
+import { qrDataUrl } from "./qr";
 
 const API = (p: string) => apiUrl(p);
 export const CHANNELS_KEY = "aiti-channels:panel";
@@ -49,24 +53,32 @@ const state: Record<string, any> = {
 };
 const listeners = new Set<() => void>();
 function notify() { for (const l of listeners) l(); }
-function setState(patch: Record<string, unknown>) {
+function rawSetState(patch: Record<string, unknown>) {
   if ("open" in patch) {
     const { open, ...rest } = patch;
-    if (open) openFloat(CHANNELS_KEY); else closePanel(CHANNELS_KEY);
+    // F1: toolbar open is a forced float — no dock states exist for this panel anymore
+    if (open) present(CHANNELS_KEY, "float"); else closePanel(CHANNELS_KEY);
     patch = rest;
     if (Object.keys(patch).length === 0) return;
   }
   Object.assign(state, patch); notify();
 }
 
+/** exported: bots.tsx cross-view tab switches (openBotsNew) go through the same state machine,
+ *  with legacy v2 tab keys normalized onto the six-tab IA */
+export function setState(patch: Record<string, unknown>) {
+  if (typeof patch.tab === "string") patch = { ...patch, tab: normalizeTab(patch.tab) };
+  rawSetState(patch);
+}
+
 // lucide 图标 path（与系统内建线条图标同风格）
-const Ic = ({ size, paths }: { size: number; paths: string[] }) => (
+export const Ic = ({ size, paths }: { size: number; paths: string[] }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {paths.map((d, i) => <path key={i} d={d} />)}
   </svg>
 );
-const ICON: Record<string, string[]> = {
+export const ICON: Record<string, string[]> = {
   home: ["m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10"],
   package: ["m7.5 4.27 9 5.15", "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z", "M3.3 7 12 12l8.7-5", "M12 22V12"],
   fileEdit: ["M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z", "M14 2v4a2 2 0 0 0 2 2h4", "M10.4 12.6a2 2 0 0 1 3 3L8 21l-4 1 1-4Z"],
@@ -85,6 +97,13 @@ const ICON: Record<string, string[]> = {
   settings: ["M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"],
   wrench: ["M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"],
   x: ["M18 6 6 18", "m6 6 12 12"],
+  bot: ["M4 8h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z", "M12 2v4", "M9 4h6", "M9 14h.01", "M15 14h.01"],
+  phone: ["M2 4c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z", "M11 19h2"],
+  clock: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z", "M12 6v6l4 2"],
+  clipboard: ["M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"],
+  send: ["m22 2-7 20-4-9-9-4Z", "M22 2 11 13"],
+  mobile: ["M2 4c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z", "M11 19h2"],
+  layers: ["m12 2 10 5-10 5L2 7Z", "m2 12 10 5 10-5", "m2 17 10 5 10-5"],
 };
 
 const C = {
@@ -95,19 +114,19 @@ const C = {
   accent: "var(--accent, #6366f1)",
   bgHover: "var(--bg-hover, rgba(127,127,127,0.08))",
 };
-const btnStyle = {
+export const btnStyle = {
   padding: "5px 12px", background: C.bgHover, border: C.border, borderRadius: 8,
   color: C.text, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
 };
-function chip(bg: string, fg: string) {
+export function chip(bg: string, fg: string) {
   return { fontSize: 10, padding: "2px 8px", borderRadius: 10, background: bg, color: fg, whiteSpace: "nowrap", flexShrink: 0 };
 }
-const cardStyle = {
+export const cardStyle = {
   background: "var(--bg-elevated, #ffffff)", border: C.border, borderRadius: 12,
   padding: "12px 14px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
 };
-const inp = { padding: "7px 10px", border: "1px solid var(--border, rgba(127,127,127,0.2))", borderRadius: 8, fontSize: 13, background: "var(--bg-elevated, #fff)", color: "var(--text, #111)", outline: "none", flex: 1, minWidth: 120 };
-const sectionTitle = { fontSize: 13, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 };
+export const inp = { padding: "7px 10px", border: "1px solid var(--border, rgba(127,127,127,0.2))", borderRadius: 8, fontSize: 13, background: "var(--bg-elevated, #fff)", color: "var(--text, #111)", outline: "none", flex: 1, minWidth: 120 };
+export const sectionTitle = { fontSize: 13, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 };
 
 // ---------- 数据 ----------
 async function refreshStatus() {
@@ -186,7 +205,7 @@ async function op(action: string, label: string) {
   } catch (e: any) { setState({ busy: false, error: `${label}${t("失败：")}` + e.message }); }
 }
 /** 触发 cc-connect reload（热应用）或 restart（自动重启） */
-async function ccAction(action: string, label: string) {
+export async function ccAction(action: string, label: string) {
   setState({ busy: true, error: null, msg: null });
   try {
     const r = await fetch(API(`/api/extensions/aiti-channels/${action}`), { method: "POST" });
@@ -204,35 +223,76 @@ async function ccAction(action: string, label: string) {
 }
 
 // ---------- Tab 定义 ----------
-const TABS: [string, string, string][] = [
-  ["overview", "home", t("总览")],
-  ["install", "package", t("安装")],
-  ["config", "fileEdit", t("配置")],
-  ["projects", "folder", t("项目")],
-  ["channels", "plug", t("渠道")],
-  ["sessions", "msg", t("会话")],
-  ["msglog", "scroll", t("消息")],
-  ["log", "list", t("日志")],
-  ["original", "monitor", t("原版")],
-];
+// t() runs at RENDER time (a module-level const would evaluate before __setCtx,
+// leaving every nav label stuck on the raw zh key in any locale).
+function TABS(): [string, string, string][] {
+  // v3 IA: six tabs (plan §3.1). Install/Config/Log live inside System; Cron/
+  // Providers/Skills inside Automation; Sessions/MsgLog inside Chat; Projects/
+  // Channels content is absorbed by bot rows. "remote" stays reachable
+  // (overview card + renderTab) but is intentionally not in the nav.
+  return [
+    ["overview", "home", t("总览")],
+    ["bots", "bot", t("机器人")],
+    ["chat", "msg", t("对话")],
+    ["automate", "clock", t("自动化")],
+    ["system", "settings", t("系统")],
+    ["original", "monitor", t("原版")],
+  ];
+}
+
+/** Legacy tab keys (v2 15-tab IA) map onto the six-tab homes so stale state,
+ *  quick links and docs deep-links keep working. */
+const LEGACY_TAB: Record<string, string> = {
+  install: "system", config: "system", log: "system",
+  projects: "bots", channels: "bots",
+  sessions: "chat", msglog: "chat",
+  cron: "automate", providers: "automate", skills: "automate",
+};
+function normalizeTab(tab: string): string {
+  return LEGACY_TAB[tab] || tab;
+}
 
 // ---------- Tab 内容 ----------
 function renderTab() {
   switch (state.tab) {
     case "overview": return <TabOverview />;
-    case "install": return <TabInstall />;
-    case "config": return <TabConfig />;
-    case "projects": return <TabProjects />;
-    case "channels": return <TabChannels />;
-    case "sessions": return <TabSessions />;
-    case "msglog": return <TabMsgLog />;
-    case "log": return <TabLog />;
+    case "bots": return <TabBots instance={state.curInstance} />;
+    case "remote": return <RemoteView />;
+    case "chat": return <TabChatView />;
+    case "automate": return <TabAutomateView />;
+    case "system": return <TabSystemView />;
     case "original": return <TabOriginal />;
-    default: return null;
+    default: return <TabOverview />;
   }
 }
 
 // ---------- 🏠 总览 ----------
+
+/** State-driven onboarding (plan §3.2): the next step follows the instance's real
+ *  state — install → start → wizard (no bots) → channel diagnostics → ready
+ *  (phone QR + chat). Replaces the v2 static four-step copy. */
+function Onboarding({ running, installed, botCount, bound, connected }: { running: boolean; installed: boolean; botCount: number; bound: number; connected: string[] }) {
+  const step = !installed ? 0 : !running ? 1 : botCount === 0 ? 2 : bound === 0 ? 3 : 4;
+  const STEPS: Array<{ label: string; hint: string; cta: string; go: () => void }> = [
+    { label: t("安装实例"), hint: t("cc-connect 尚未安装——装好后才能托管 IM 渠道。"), cta: t("去安装"), go: () => setState({ tab: "system" }) },
+    { label: t("启动实例"), hint: t("实例已安装但未运行——启动后 IM 渠道才会连上。"), cta: t("启动"), go: () => { void ccAction("start", t("启动")); } },
+    { label: t("创建第一个机器人"), hint: t("向导五步：命名 → 选平台 → 凭据 → 生效 → 验证，全程不换 tab。"), cta: t("打开向导"), go: () => openWizard() },
+    { label: t("连接平台"), hint: t("机器人已建但还没有平台连上（绑定为 0）——去机器人 tab 完成扫码/绑定。"), cta: t("机器人诊断"), go: () => setState({ tab: "bots" }) },
+    { label: t("全就绪"), hint: t("手机扫码远程控制，或直接进对话。"), cta: t("手机接入"), go: () => setState({ tab: "remote" }) },
+  ];
+  const cur = STEPS[step];
+  return (
+    <div style={{ fontSize: 12, lineHeight: 1.8, background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#4f46e5" }}>{`${t("下一步")}（${step + 1}/5）`}</span>
+        <span style={{ fontWeight: 700 }}>{cur.label}</span>
+        <button style={{ ...btnStyle, marginLeft: "auto", background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} onClick={cur.go}>{cur.cta}</button>
+      </div>
+      <div style={{ fontSize: 11, color: C.muted }}>{cur.hint}</div>
+    </div>
+  );
+}
+
 function TabOverview() {
   const s = state.status || {};
   const running = !!s.running;
@@ -241,6 +301,39 @@ function TabOverview() {
   projects.forEach((p: any) => (p.platforms || []).forEach((pl: any) => { platforms[pl.type] = (platforms[pl.type] || 0) + 1; }));
   const inst = state.install || {};
   const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
+  // Dashboard stat: bound bot count (bots aggregate; mgmt sessions_count sum when reachable)
+  const [botStat, setBotStat] = useState<{ count: number; sessions: number | null; bound: number }>({ count: 0, sessions: null, bound: 0 });
+  // Dashboard extras: uptime / connected platforms / recent sessions (mgmt /status + per-project sessions)
+  const [dash, setDash] = useState<{ uptime: string | null; connected: string[]; recent: Array<{ project: string; name: string; updated_at: string }> }>({ uptime: null, connected: [], recent: [] });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(API(`/api/extensions/aiti-channels/bots?instance=${encodeURIComponent(state.curInstance)}`), { cache: "no-store" });
+        const d = await r.json();
+        if (!alive || !d.ok) return;
+        const bots = [...(d.bots || []), ...(d.configOnly || [])];
+        const sess = bots.reduce((n: number, b: any) => n + (typeof b.sessions_count === "number" ? b.sessions_count : 0), 0);
+        setBotStat({ count: bots.length, sessions: bots.some((b: any) => typeof b.sessions_count === "number") ? sess : null, bound: bots.filter((b: any) => b.bound).length });
+      } catch { /* ignore */ }
+      if (!running) return;
+      try {
+        const st = await fetch(API(`/api/extensions/aiti-channels/mgmt/status?instance=${encodeURIComponent(state.curInstance)}`), { cache: "no-store" }).then((x) => x.json()).then((x) => (x && x.data ? x.data : x));
+        const up = Number(st?.uptime_seconds ?? 0);
+        const fmt = (s: number) => (s >= 86400 ? `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h` : s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : `${Math.floor(s / 60)}m`);
+        const recent: Array<{ project: string; name: string; updated_at: string }> = [];
+        for (const pj of ((s.cfg && s.cfg.projects) || []).slice(0, 4).map((p: any) => p.name)) {
+          try {
+            const sr = await fetch(API(`/api/extensions/aiti-channels/mgmt/projects/${encodeURIComponent(pj)}/sessions?instance=${encodeURIComponent(state.curInstance)}`), { cache: "no-store" }).then((x) => x.json()).then((x) => (x && x.data ? x.data : x));
+            for (const ss of (sr?.sessions || []).slice(0, 3)) recent.push({ project: pj, name: ss.name || ss.chat_name || ss.session_key, updated_at: ss.updated_at || "" });
+          } catch { /* project unreachable */ }
+        }
+        recent.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+        if (alive) setDash({ uptime: up > 0 ? fmt(up) : null, connected: Array.isArray(st?.connected_platforms) ? st.connected_platforms : [], recent: recent.slice(0, 5) });
+      } catch { /* instance down */ }
+    })();
+    return () => { alive = false; };
+  }, [state.curInstance, running]);
   const stat = (label: string, value: any, color?: string) => (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, minWidth: 120 }}>
       <span style={{ fontSize: 11, color: C.muted }}>{label}</span>
@@ -267,16 +360,32 @@ function TabOverview() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {stat(t("项目"), projects.length)}
         {stat(t("渠道"), Object.keys(platforms).length)}
-        {stat(t("会话"), state.sessions.length)}
+        {stat(t("机器人"), botStat.count)}
+        {stat(t("Bot 会话"), botStat.sessions ?? state.sessions.length)}
+        {stat(t("运行时长"), running ? (dash.uptime || "-") : "-")}
+        {stat(t("已连平台"), running ? dash.connected.length : "-")}
         {stat(t("消息记录"), state.msgLog.length)}
         {stat(t("端口"), running ? (s.port9820 ? "9820" : "-") : "-")}
       </div>
+      {/* recent sessions (cross-project) */}
+      {dash.recent.length > 0 && (
+        <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={sectionTitle}>{t("最近会话")}</div>
+          {dash.recent.map((r2, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+              <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{r2.project}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.muted }}>{r2.name}</span>
+              <span style={{ fontSize: 10, color: C.muted }}>{(r2.updated_at || "").replace("T", " ").slice(0, 16)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {/* 安装状态摘要 */}
       {inst && (
         <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 12, fontWeight: 700 }}><Ic size={12} paths={ICON.package} />{t("版本")}</span>
-          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", inst.current ? C.accent : "var(--danger, #ef4444)")}>{`当前 ${inst.current || t("未安装")}`}</span>
-          {inst.latest && <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{`最新 ${inst.latest}`}</span>}
+          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", inst.current ? C.accent : "var(--danger, #ef4444)")}>{`${t("当前")} ${inst.current || t("未安装")}`}</span>
+          {inst.latest && <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{`${t("最新")} ${inst.latest}`}</span>}
           {inst.needUpdate && <span style={{ fontSize: 11, color: "#ea580c" }}><Ic size={12} paths={ICON.upRight} />{t("有新版本")}</span>}
           <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => setState({ tab: "install" })}>{t("去安装")}</button>
         </div>
@@ -284,9 +393,11 @@ function TabOverview() {
       {/* 快捷入口 */}
       <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={sectionTitle}>{t("快捷操作")}</div>
+        <Onboarding running={running} installed={!!(inst && (inst as any).currentVersion)} botCount={botStat.count} bound={botStat.bound} connected={dash.connected} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[["sessions", "msg", t("发消息")], ["msglog", "scroll", t("消息日志")], ["config", "fileEdit", t("编辑配置")], ["original", "monitor", t("打开管理台")]].map(([k, icon, l]) =>
+          {[["projects", "folder", t("新建项目")], ["bots", "bot", t("机器人管理")], ["chat", "msg", t("聊天")], ["sessions", "msg", t("发消息")], ["msglog", "scroll", t("消息日志")], ["config", "fileEdit", t("编辑配置")], ["original", "monitor", t("打开管理台")]].map(([k, icon, l]) =>
             <button key={k} style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={() => setState({ tab: k })}>{l}</button>)}
+          <button style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={openRemote}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.mobile} />{t("移动端远程控制")}</span></button>
         </div>
       </div>
       {/* 配置摘要 */}
@@ -479,6 +590,8 @@ function TabConfig() {
       if (!d.ok || !dd.qr_url) { setState({ busy: false, setupWiz: { platform: sch.wizard, status: "error", err: d.error || dd.error || t("begin 失败（实例未运行？）") } }); return; }
       const interval = Math.max((Number(dd.interval) || 5) * 1000, 3000);
       setState({ busy: false, setupWiz: { platform: sch.wizard, status: "pending", qrUrl: dd.qr_url, deviceCode: dd.device_code, err: null } });
+      // QR image for the wizard (link stays as the scan-fallback)
+      try { const img = await qrDataUrl(dd.qr_url, { size: 140 }); const w: any = state.setupWiz; if (w && w.status === "pending") setState({ setupWiz: { ...w, qrImg: img } }); } catch { /* qrcode unavailable → link only */ }
       const tick = async () => {
         try {
           const pr = await fetch(API(`/api/extensions/aiti-channels/setup/${sch.wizard}/poll`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ device_code: wizDevice.current }) });
@@ -627,10 +740,13 @@ function TabConfig() {
                     {!wizHere || wizHere.status === "done" || wizHere.status === "error" || wizHere.status === "begin" ? (
                       <button style={{ ...btnStyle, alignSelf: "flex-start", color: "#0ea5e9", border: "1px solid rgba(14,165,233,0.3)" }} disabled={state.busy} onClick={() => startWiz(pi, pli)}>{t("扫码授权（自动获取 AppID/Secret）")}</button>
                     ) : wizHere.status === "pending" ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
-                        <a href={wizHere.qrUrl} target="_blank" rel="noreferrer" style={{ color: "#0ea5e9" }}>{t("打开授权页并扫码确认")}</a>
-                        <span style={{ color: C.muted }}>{t("等待授权中…完成后凭证自动填入")}</span>
-                        <button style={{ ...btnStyle, padding: "2px 8px" }} onClick={stopWiz}>{t("取消")}</button>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 11 }}>
+                        {wizHere.qrImg && <img src={wizHere.qrImg} alt="QR" width={140} height={140} style={{ borderRadius: 8, background: "#fff" }} />}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <a href={wizHere.qrUrl} target="_blank" rel="noreferrer" style={{ color: "#0ea5e9" }}>{t("无法扫码？打开授权页")}</a>
+                          <span style={{ color: C.muted }}>{t("等待授权中…完成后凭证自动填入")}</span>
+                          <button style={{ ...btnStyle, padding: "2px 8px", alignSelf: "flex-start" }} onClick={stopWiz}>{t("取消")}</button>
+                        </div>
                       </div>
                     ) : null}
                     {wizHere?.status === "done" && <div style={{ fontSize: 10, color: "#16a34a" }}>{t("授权成功，凭证已自动填入上方字段")}</div>}
@@ -650,6 +766,21 @@ function TabConfig() {
         <button style={btnStyle} disabled={state.busy} onClick={genAndSave}><Ic size={13} paths={ICON.save} />{t("仅生成配置")}</button>
         <button style={btnStyle} onClick={() => setState({ tab: "log" })}><Ic size={13} paths={ICON.list} />{t("查看日志")}</button>
       </div>
+      {/* current config reality: actual projects already in this instance's config.toml */}
+      {(() => {
+        const cur = ((state.status?.cfg?.projects) || []);
+        if (!cur.length) return null;
+        return (
+          <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>{t("config 当前实际项目")}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {cur.map((p: any) => <span key={p.name} style={chip("rgba(34,197,94,0.14)", "#16a34a")}>{`${p.name} (${(p.platforms || []).length})`}</span>)}
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.6 }}>{t("上方表单只用于【整份重新生成】config.toml（批量初始化场景）；日常单个项目的增改请走 项目 tab（新建/详情）或 机器人 tab（扫码/Token 接平台）——它们经 cc-connect 官方 API 增量写入并热应用，不覆盖整份配置。")}</div>
+            <button style={{ ...btnStyle, alignSelf: "flex-start" }} onClick={() => setState({ tab: "projects" })}>{t("去项目 tab 管理单个项目 →")}</button>
+          </div>
+        );
+      })()}
       <div style={{ ...cardStyle, fontSize: 11, color: C.muted, lineHeight: 1.7 }}>{t("表单化配置：填好项目/平台/凭据 → 生成 config.toml（自动备份）→ 启动实例。每个实例独立 config/dataDir/socket/端口，互不影响。钉钉接入需在钉钉开放平台建应用（Stream 模式，AppKey/AppSecret/AgentId）。")}</div>
     </div>
   );
@@ -658,18 +789,75 @@ function TabConfig() {
 // ---------- 🗂 项目 ----------
 function TabProjects() {
   const projects = (state.status && state.status.cfg && state.status.cfg.projects) || [];
+  const [manage, setManage] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState<{ name: string; agent: string; workDir: string; type: string; fields: Record<string, string> }>({ name: "", agent: "piweb", workDir: "", type: "telegram", fields: {} });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const sch = platformSchema(form.type);
+  const create = async () => {
+    if (!form.name.trim()) { setErr(t("需要项目名")); return; }
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(API(`/api/extensions/aiti-channels/bot-create-token?instance=${encodeURIComponent(state.curInstance)}`), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: form.name.trim(), type: form.type, options: form.fields, work_dir: form.workDir.trim() || undefined, agent_type: form.agent || "piweb" }),
+      });
+      const d = await r.json();
+      if (!d.ok && d.status !== 201) { setErr(d.error || `HTTP ${r.status}`); setBusy(false); return; }
+      setBusy(false);
+      setState({ msg: t("项目已创建（reload 热应用）") });
+      setCreating(false);
+      setForm({ name: "", agent: "piweb", workDir: "", type: "telegram", fields: {} });
+      await ccAction("reload-cc", "reload");
+      await refreshStatus();
+    } catch (e: any) { setBusy(false); setErr(e.message); }
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={sectionTitle}><Ic size={12} paths={ICON.folder} />{t(" 项目（") + projects.length + "）"}</div>
-      {projects.length === 0 && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>{t("无项目 — 到 📝配置 添加 [[projects]]")}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={sectionTitle}><Ic size={12} paths={ICON.folder} />{t(" 项目（") + projects.length + "）"}</div>
+        <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{t("使用流程：新建项目 → 接平台（机器人 tab 扫码/Token）→ 聊天/会话交互")}</span>
+        <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} onClick={() => setCreating(!creating)}>{creating ? t("收起") : "＋ " + t("新建项目")}</button>
+      </div>
+      {creating && (
+        <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input placeholder={t("项目名")} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
+            <input placeholder="agent_type（缺省 piweb = pi-web 会话）" value={form.agent} onChange={(e) => setForm({ ...form, agent: e.target.value })} style={inp} />
+            <input placeholder={t("work_dir（工作目录，可后补）")} value={form.workDir} onChange={(e) => setForm({ ...form, workDir: e.target.value })} style={inp} />
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.muted }}>{t("首个平台（可选——之后也可在机器人 tab 扫码/填 token 接入）")}</span>
+            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, fields: {} })} style={{ ...inp, flex: "0 0 200px", cursor: "pointer" }}>
+              {PLATFORM_SCHEMAS.map((p) => <option key={p.type} value={p.type}>{p.type}</option>)}
+            </select>
+          </div>
+          {sch && sch.fields.filter((f) => f.required).map((f) => (
+            <div key={f.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: C.muted, flex: "0 0 220px" }}>{`${f.label}${f.required ? " *" : ""}`}</span>
+              <input type={f.secret ? "password" : "text"} placeholder={f.ph || ""} value={form.fields[f.key] || ""}
+                onChange={(e) => setForm({ ...form, fields: { ...form.fields, [f.key]: e.target.value } })} style={inp} />
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button style={{ ...btnStyle, background: "rgba(99,102,241,0.16)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.4)" }} disabled={busy} onClick={() => void create()}>{t("创建项目（add-platform + reload 热应用）")}</button>
+            <button style={btnStyle} onClick={() => setCreating(false)}>{t("取消")}</button>
+            {(form.type === "feishu" || form.type === "lark" || form.type === "weixin") && <span style={{ fontSize: 11, color: "#d97706", alignSelf: "center" }}>{t("扫码接入更顺：到 机器人 tab 新建机器人")}</span>}
+          </div>
+        </div>
+      )}
+      {projects.length === 0 && !creating && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>{t("暂无项目 — 点右上「新建项目」，或到 机器人 tab 扫码直建")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {projects.map((p: any) => (
           <div key={p.name} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</span>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{p.agentType || "agent"}</span>
-              <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{`会话 ${p.sessions_count ?? "-"}`}</span>
+              <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{`${t("会话")} ${p.sessions_count ?? "-"}`}</span>
+              <button style={{ ...btnStyle, padding: "4px 10px" }} onClick={() => setManage(manage === p.name ? null : p.name)}>{manage === p.name ? t("收起管理") : t("管理")}</button>
             </div>
+            {manage === p.name && <ProjectDetailPanel instance={state.curInstance} project={p.name} onClose={() => setManage(null)} />}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {(p.platforms || []).map((pl: any) => <span key={pl.type} style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{pl.type}</span>)}
               {(p.platforms || []).length === 0 && <span style={{ fontSize: 11, color: C.muted }}>{t("(无平台)")}</span>}
@@ -681,6 +869,7 @@ function TabProjects() {
           </div>
         ))}
       </div>
+      {err && <div style={{ fontSize: 12, color: "#ea580c" }}>{t("失败：") + err}</div>}
     </div>
   );
 }
@@ -688,30 +877,75 @@ function TabProjects() {
 // ---------- 🔌 渠道 ----------
 function TabChannels() {
   const projects = (state.status && state.status.cfg && state.status.cfg.projects) || [];
-  const agg: Record<string, any> = {};
-  projects.forEach((p: any) => (p.platforms || []).forEach((pl: any) => {
-    const k = pl.type;
-    agg[k] = agg[k] || { type: k, projects: [], count: 0 };
-    agg[k].projects.push(p.name);
-    agg[k].count += 1;
-  }));
-  const icon: Record<string, string> = { dingtalk: "🐜", feishu: "🪽", wechat: "💬", slack: "🪟", telegram: "✈️", discord: "🎮", lark: "🪽" };
-  const list = Object.values(agg);
+  // Per-project platform health (mgmt GET /projects/{name} — connected/degraded,
+  // Issue #1618) + allow_from editing (PATCH platform_allow_from). Falls back to
+  // config-only rows when the instance is down.
+  const [health, setHealth] = useState<Record<string, Array<{ type: string; connected: boolean; degraded?: boolean; degraded_reason?: string }>>>({});
+  const [allowFrom, setAllowFrom] = useState<Record<string, Record<string, string>>>({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const h: Record<string, any> = {};
+      const af: Record<string, any> = {};
+      for (const p of projects) {
+        try {
+          const r = await fetch(API(`/api/extensions/aiti-channels/mgmt/projects/${encodeURIComponent(p.name)}?instance=${encodeURIComponent(state.curInstance)}`), { cache: "no-store" });
+          const d = await r.json();
+          const det = d && d.data ? d.data : d;
+          if (det && Array.isArray(det.platforms)) {
+            h[p.name] = det.platforms.map((x: any) => ({ type: x.type, connected: !!x.connected, degraded: !!x.degraded, degraded_reason: x.degraded_reason || x.reason || "" }));
+            af[p.name] = det.platform_allow_from || det.allow_from || {};
+          }
+        } catch { /* instance down → config-only display */ }
+      }
+      if (alive) { setHealth(h); setAllowFrom(af); }
+    })();
+    return () => { alive = false; };
+  }, [state.curInstance, projects.map((p: any) => p.name).join(",")]);
+  const editAllow = (pj: string, type: string) => {
+    const cur = (allowFrom[pj] || {})[type] || "";
+    const v = window.prompt(`${t("白名单 allow_from")}（${pj} / ${type}；${t("空=不限，逗号分隔")}）`, cur);
+    if (v === null) return;
+    (async () => {
+      try {
+        const body = { platform_allow_from: { ...(allowFrom[pj] || {}), [type]: v.trim() } };
+        const r = await fetch(API(`/api/extensions/aiti-channels/mgmt/projects/${encodeURIComponent(pj)}?instance=${encodeURIComponent(state.curInstance)}`), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        setState({ msg: r.ok ? `${t("已保存 allow_from（")}${pj}/${type}）` : null, error: r.ok ? null : `${t("保存失败")} HTTP ${r.status}` });
+        setAllowFrom({ ...allowFrom, [pj]: { ...(allowFrom[pj] || {}), [type]: v.trim() } });
+      } catch (e: any) { setState({ error: t("保存失败：") + e.message }); }
+    })();
+  };
+  const icon: Record<string, string> = { dingtalk: "🐜", feishu: "🪽", wechat: "💬", weixin: "💬", slack: "🪟", telegram: "✈️", discord: "🎮", lark: "🪽" };
+  const pairs: Array<{ pj: string; type: string }> = [];
+  projects.forEach((p: any) => (p.platforms || []).forEach((pl: any) => pairs.push({ pj: p.name, type: pl.type })));
+  const hOf = (pj: string, type: string) => (health[pj] || []).find((x) => x.type === type);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={sectionTitle}>{`${t("渠道（")}${list.length}）`}</div>
-      {list.length === 0 && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>{t("未配置平台 — 到 📝配置 在 [[projects.platforms]] 添加")}</div>}
+      <div style={sectionTitle}>{`${t("渠道（")}${pairs.length}）`}</div>
+      {pairs.length === 0 && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>{t("未配置平台 — 到 📝配置 在 [[projects.platforms]] 添加")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {list.map((c: any) => (
-          <div key={c.type} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 18 }}>{icon[c.type] || "🔗"}</span>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>{c.type}</span>
-            <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{`${c.count} 个接入`}</span>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{c.projects.join("、")}</span>
-          </div>
-        ))}
+        {pairs.map(({ pj, type }) => {
+          const h = hOf(pj, type);
+          const af = (allowFrom[pj] || {})[type];
+          return (
+            <div key={`${pj}/${type}`} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 18 }}>{icon[type] || "🔗"}</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{type}</span>
+              <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{pj}</span>
+              {h ? (
+                h.degraded
+                  ? <span style={chip("rgba(245,158,11,0.18)", "#d97706")} title={h.degraded_reason || ""}>{t("degraded")}</span>
+                  : <span style={chip("rgba(34,197,94,0.15)", "#16a34a")}>{t("connected")}</span>
+              ) : <span style={chip("rgba(127,127,127,0.12)", C.muted)}>{t("（实例未运行，无健康数据）")}</span>}
+              {af !== undefined && af !== "" && <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{`${t("白名单")}: ${String(af).slice(0, 24)}`}</span>}
+              <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                <button style={btnStyle} onClick={() => editAllow(pj, type)}>{t("白名单")}</button>
+              </span>
+            </div>
+          );
+        })}
       </div>
-      <div style={{ ...cardStyle, fontSize: 11, color: C.muted, lineHeight: 1.7 }}>{t("渠道接入（钉钉/飞书/微信…）在 cc-connect 配置 [projects] 的 platforms 里定义（app_id/secret/bot 等）。出站发消息走 socket API，接入细节见原版管理台 🖥️。")}</div>
+      <div style={{ ...cardStyle, fontSize: 11, color: C.muted, lineHeight: 1.7 }}>{t("渠道接入（钉钉/飞书/微信…）在 cc-connect 配置 [projects] 的 platforms 里定义（app_id/secret/bot 等）。健康/白名单经 management API 实时读取，出站发消息走 socket API，接入细节见原版管理台 🖥️。")}</div>
     </div>
   );
 }
@@ -748,7 +982,7 @@ function TabSessions() {
       {sessions.length === 0 && <div style={{ ...cardStyle, textAlign: "center", color: C.muted, fontSize: 12 }}>{t("无活跃会话（IM 里给机器人发消息激活）")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sessions.map((s: any, i: number) => (
-          <div key={s.session_key || i} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
+          <div key={`${i}:${s.project || ""}:${s.session_key || ""}`} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
             onClick={() => setState({ sendForm: { ...f, project: s.project || f.project, session_key: s.session_key || "" } })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{s.project || "-"}</span>
@@ -762,6 +996,20 @@ function TabSessions() {
                 {`↪ ${typeof s.last_message === "string" ? s.last_message : (s.last_message && s.last_message.content) || ""}`}
               </div>
             )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button style={{ ...btnStyle, padding: "3px 8px", color: "#dc2626" }}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const sid = s.session_key || s.id || "";
+                  if (!s.project || !sid || !window.confirm(`${t("删除会话")} ${sid}？`)) return;
+                  setState({ busy: true });
+                  try {
+                    const r = await fetch(API(`/api/extensions/aiti-channels/mgmt/projects/${encodeURIComponent(s.project)}/sessions/${encodeURIComponent(sid)}?instance=${encodeURIComponent(state.curInstance)}`), { method: "DELETE" });
+                    setState({ busy: false, msg: r.ok ? t("会话已删除") : null, error: r.ok ? null : `${t("删除失败")} HTTP ${r.status}` });
+                    await refreshSessions();
+                  } catch (e2: any) { setState({ busy: false, error: t("删除失败：") + e2.message }); }
+                }}>{t("删")}</button>
+            </div>
           </div>
         ))}
       </div>
@@ -832,9 +1080,92 @@ function TabOriginal() {
   );
 }
 
+
+// ---------- v3 six-tab composite views (reuse components, no rewrites) ----------
+/** ③ Chat = live chat stream + session management (delete/outbound) + message log */
+function TabChatView() {
+  const projects: string[] = ((state.status?.cfg?.projects) || []).map((p: any) => p.name);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <TabChat instance={state.curInstance} projects={projects} />
+      <TabSessions />
+      <TabMsgLog />
+    </div>
+  );
+}
+
+/** ④ Automation = Cron + Providers + Skills (vertical stack, components reused as-is) */
+function TabAutomateView() {
+  const projects: string[] = ((state.status?.cfg?.projects) || []).map((p: any) => p.name);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <TabCron instance={state.curInstance} />
+      <TabProviders instance={state.curInstance} projects={projects} />
+      <TabSkills instance={state.curInstance} />
+    </div>
+  );
+}
+
+/** ⑤ System = install / settings / bulk config generation (with warnings) / instance log (segmented) */
+function TabSystemView() {
+  const [seg, setSeg] = useState<string>("install");
+  const [adopting, setAdopting] = useState(false);
+  const [adoptMsg, setAdoptMsg] = useState<string | null>(null);
+  const st: any = state.status || {};
+  // Adopt: an external process (manual systemd unit / nohup, no runtime.json)
+  // running → stop it, then restart under proc-runner (transient unit, cgroup
+  // tree-kill, panel-managed lifecycle). The button only shows for that shape.
+  const adoptable = !!st.running && !st.runner;
+  const adopt = async () => {
+    if (!window.confirm(t("接管会把当前外部进程停止，再由面板托管启动（短暂断线）。继续？"))) return;
+    setAdopting(true); setAdoptMsg(null);
+    try {
+      const stop = await fetch(API(`/api/extensions/aiti-channels/stop?instance=${encodeURIComponent(state.curInstance)}`), { method: "POST" }).then((r) => r.json());
+      if (!stop.ok) { setAdoptMsg(t("停止失败：") + (stop.error || "")); setAdopting(false); return; }
+      await new Promise((r) => setTimeout(r, 800));
+      const start = await fetch(API(`/api/extensions/aiti-channels/start?instance=${encodeURIComponent(state.curInstance)}`), { method: "POST" }).then((r) => r.json());
+      setAdoptMsg(start.ok ? t("已接管（面板托管 systemd 单元）。") : t("启动失败：") + (start.error || ""));
+      if (start.ok) await refreshStatus();
+    } catch (e: any) { setAdoptMsg(t("启动失败：") + e.message); }
+    setAdopting(false);
+  };
+  const adoptCard = (st.running || st.runner) ? (
+    <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12, fontWeight: 700 }}>{t("进程托管")}</span>
+      <span style={{ fontSize: 11, color: C.muted }}>
+        {st.runner ? t("面板托管（systemd transient unit，cgroup 树杀）") : st.running ? t("外部进程（手工 systemd unit / nohup），面板不管理其生命周期") : t("未运行")}
+      </span>
+      {adoptable && <button style={{ ...btnStyle, marginLeft: "auto", background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={adopting} onClick={() => void adopt()}>{adopting ? t("接管中…") : t("接管到面板托管")}</button>}
+      {adoptMsg && <span style={{ fontSize: 11, color: adoptMsg.indexOf(t("失败")) >= 0 ? "#ea580c" : "#16a34a" }}>{adoptMsg}</span>}
+    </div>
+  ) : null;
+  const SEGS: [string, string][] = [["install", t("安装")], ["settings", t("设置")], ["config", t("配置生成")], ["log", t("日志")]];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {SEGS.map(([k, label]) => (
+          <button key={k} onClick={() => setSeg(k)}
+            style={{ ...btnStyle, ...(seg === k ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>{label}</button>
+        ))}
+      </div>
+      {seg === "install" && <>{adoptCard}<TabInstall /></>}
+      {seg === "settings" && <>{adoptCard}<TabSystem instance={state.curInstance} /></>}
+      {seg === "config" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12, lineHeight: 1.7, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: 10, padding: "10px 12px", color: "#92400e" }}>
+            {"⚠️ " + t("批量生成工具：整份重写 config.toml，会覆盖手工/向导做的修改。日常加机器人用机器人 tab 的向导；这里只用于多实例批量装机。")}
+          </div>
+          <TabConfig />
+        </div>
+      )}
+      {seg === "log" && <TabLog />}
+    </div>
+  );
+}
+
 // ---------- 导航 ----------
 function NavButtons({ vertical }: { vertical: boolean }) {
-  return (state.nav === "left" ? TABS : TABS).map(([k, icon, label]) => {
+  return (state.nav === "left" ? TABS() : TABS()).map(([k, icon, label]) => {
     const active = state.tab === k;
     return (
       <button
@@ -855,20 +1186,47 @@ function TopBar() {
   const s = state.status || {};
   const running = !!s.running;
   const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
+  // M6: narrow containers fold the lifecycle buttons (stop/restart/reload/
+  // auto-restart/refresh) into a ⋯ menu — they sit next to ✕ and invites
+  // mis-taps when the float is squeezed (94vw on small screens).
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 600));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const lifecycle = (
+    <>
+      {!running
+        ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", t("启动"))}><Ic size={13} paths={ICON.play} />{t("启动")}</button>
+        : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", t("停止"))}>{t("停止")}</button>}
+      {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", t("重启"))}>{t("重启")}</button>}
+      <button style={btnStyle} disabled={state.busy} title={t("热应用 config.toml（POST /api/v1/reload）")} onClick={() => ccAction("reload-cc", "reload")}>reload</button>
+      {running && <button style={btnStyle} disabled={state.busy} title={t("自动重启（进程替换保留 pid）")} onClick={() => ccAction("restart-cc", t("重启"))}>{t("自重启")}</button>}
+      <button style={btnStyle} disabled={state.loading} onClick={() => { refreshStatus(); refreshSessions(); refreshMsgLog(); refreshInstall(); }}>⟳</button>
+    </>
+  );
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
+    <div ref={hostRef} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
       <span title={running ? t("运行中") : t("未运行")} style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
       <span style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.msg} />{t("IM 渠道 & cc-connect")}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{s.version || ""}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{running ? `pid ${s.pid || ""}` : t("未运行")}</span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {!running
-          ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", t("启动"))}><Ic size={13} paths={ICON.play} />{t("启动")}</button>
-          : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", t("停止"))}>{t("停止")}</button>}
-        {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", t("重启"))}>{t("重启")}</button>}
-        <button style={btnStyle} disabled={state.busy} title={t("热应用 config.toml（POST /api/v1/reload）")} onClick={() => ccAction("reload-cc", "reload")}>reload</button>
-        {running && <button style={btnStyle} disabled={state.busy} title={t("自动重启（进程替换保留 pid）")} onClick={() => ccAction("restart-cc", t("重启"))}>{t("自重启")}</button>}
-        <button style={btnStyle} disabled={state.loading} onClick={() => { refreshStatus(); refreshSessions(); refreshMsgLog(); refreshInstall(); }}>⟳</button>
+        {narrow ? (
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            <button style={btnStyle} title={t("实例操作")} onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
+            {menuOpen && (
+              <span style={{ position: "absolute", top: "110%", right: 0, zIndex: 20, display: "flex", flexDirection: "column", gap: 4, background: "var(--bg, #fff)", border: C.border, borderRadius: 10, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)" }}>
+                {lifecycle}
+              </span>
+            )}
+          </span>
+        ) : lifecycle}
         <button style={{ ...btnStyle, padding: "4px 10px" }} onClick={() => setState({ open: false })}>✕</button>
       </span>
       {(state.error || state.msg) && <div style={{ width: "100%", fontSize: 11, color: state.error ? "var(--danger, #ef4444)" : "#16a34a" }}>{state.error || state.msg}</div>}
@@ -879,11 +1237,9 @@ function TopBar() {
 // ---------- Panel shell (float / left / right faces) ----------
 function ChannelsPanel({ face = "float" }: { face?: string }) {
   const st = usePresent(CHANNELS_KEY);
-  const open = face === "float" ? st === "floating"
-    : face === "right" ? st === "docked:right-panel"
-      : isSidebarDockState(st);
-  if (!open) return null;
-  const floating = face === "float";
+  // F1: the only face is floating — dock faces retired with their registrations
+  if (face !== "float" || st !== "floating") return null;
+  const floating = true;
   // Docked narrow containers always use the bottom nav bar (132px side nav eats too much width).
   const leftNav = floating && state.nav === "left";
   const content = (
@@ -909,22 +1265,22 @@ function ChannelsPanel({ face = "float" }: { face?: string }) {
   if (floating) {
     return (
       <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
-        <div style={panelBox(state)} data-ext-float="1" data-ext-float-key={CHANNELS_KEY} data-ext-float-dock={`${sidebarZoneOf(CHANNELS_KEY)} right-panel`} data-ext-float-dock-default={sidebarZoneOf(CHANNELS_KEY)} data-ext-float-w={1100} data-ext-float-h={760} data-ext-float-min-w={480} data-ext-float-min-h={360} data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
+        <div style={panelBox(state)} data-ext-float="1" data-ext-float-key={CHANNELS_KEY} data-ext-float-w={1100} data-ext-float-h={760} data-ext-float-min-w={480} data-ext-float-min-h={360} data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
           {content}
         </div>
       </div>
     );
   }
-  const zones = [sidebarZoneOf(CHANNELS_KEY), "right-panel"];
-  const inner = <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: C.panelBg, overflow: "hidden" }}>{content}</div>;
-  if (face === "right") {
-    return <DockBody itemKey={CHANNELS_KEY} zone="right-panel" title={t("it.aiti-channels-panel.label")} chrome="tab" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
-  }
-  return <DockBody itemKey={CHANNELS_KEY} title={t("it.aiti-channels-panel.label")} icon="message-circle" chrome="section" kind="dockable" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
+  return null;
 }
 
 function panelBox(_s: Record<string, unknown>) {
   return { width: "min(1100px, 94vw)", height: "min(760px, 90vh)", maxWidth: "94vw", maxHeight: "90vh", display: "flex", flexDirection: "column", background: C.panelBg, overflow: "hidden", borderRadius: 12 };
+}
+
+/** F2: remote is a panel tab now — open the panel straight onto it */
+function openRemote() {
+  setState({ tab: "remote", open: true, error: null, msg: null });
 }
 
 // ---------- register 辅助（entry.tsx 调用；matchMedia 导航模式监听与手写版同位） ----------
@@ -976,7 +1332,14 @@ function SubscribedPanel({ face }: { face?: string }) {
   return <ChannelsPanel face={face} />;
 }
 
+/** Host slot entry (dialogs render): the host hands the current session so the
+ *  mobile deep link can carry ?session=<id> (F6). */
+let hostSession: { id?: string } | null = null;
+export function getHostSessionId(): string {
+  return (hostSession && hostSession.id) || "";
+}
 export function ChannelsPanelComp() { return <SubscribedPanel face="float" />; }
-export function ChannelsPanelSlot() { return <SubscribedPanel face="float" />; }
-export function ChannelsDockLeft() { return <SubscribedPanel face="left" />; }
-export function ChannelsDockRight() { return <SubscribedPanel face="right" />; }
+export function ChannelsPanelSlot({ currentSession }: { currentSession?: { id?: string } | null } = {}) {
+  hostSession = currentSession || null;
+  return <SubscribedPanel face="float" />;
+}

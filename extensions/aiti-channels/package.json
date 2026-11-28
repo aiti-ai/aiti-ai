@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-channels",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "IM channel integration + a full frontend shell for cc-connect — hosts the cc-connect process, overview/projects/channels/sessions panels, and a socket API for outbound messaging",
   "displayNameI18n": {
     "en": "IM Channels"
@@ -17,6 +17,7 @@
     "deploy": "node tools/deploy.mjs"
   },
   "devDependencies": {
+    "qrcode": "^1.5.4",
     "vite": "^6.4.3"
   },
   "_comment_build": "client/src/*.tsx 经 vite lib mode 打包为 client/aiti-channels-client.mjs（模板 templates/ext-jsx-client）",
@@ -33,7 +34,7 @@
     "justget": "^0.2.4",
     "yauzl": "^2.10.0"
   },
-  "contentHash": "3c74f8733e6f19e0",
+  "contentHash": "4f05478089633a98",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

@@ -1,14 +1,21 @@
 /**
- * aiti-channels · cc-connect 进程托管 + 状态探测 + socket API 客户端
+ * aiti-channels · cc-connect process hosting + status probing + socket API client
  *
- * 生命周期归 aiti（不做 systemd）：start/stop/restart 由本扩展管理，
- * pid 文件 + 日志文件落在 dataDir。启动 = setsid 脱离终端；停止 = 精确 pid
- * （严禁模糊 pkill）。探活 = 进程存活 + 9820 TCP + api.sock HTTP 三路。
+ * Lifecycle owned by aiti (start/stop/restart managed here; no always-on unit
+ * management UI, but Linux defaults to a systemd-run transient unit — the
+ * proc-runner three-kind matrix, see lib/proc-runner.ts). Linux (user manager
+ * reachable) = systemd-run user unit `aiti-cc-<id>` (immune to pi-web restarts;
+ * stop = systemctl --user stop, cgroup-wide kill with graceful timeout);
+ * macOS/containers = plain detached (historical path); Windows =
+ * Win32_Process.Create + taskkill tree-kill. The active regime is recorded in
+ * <dataDir>/runtime.json; instances started by the old setsid+pid-file path
+ * keep working (dual regime in probe) and switch on the next restart. Never
+ * fuzzy-pkill. Probe = process alive + management TCP + api.sock HTTP.
  *
- * cc-connect 对外通道（2026-08 实测）：
- *   - Unix socket API（~/.cc-connect/run/api.sock）：POST /send（文本/文件）、GET /sessions
- *   - management API（9820）：web UI + /api/v1/*
- *   - bridge WS（9810）：Chat 实时
+ * cc-connect outward channels (2026-08 verified):
+ *   - Unix socket API (~/.cc-connect/run/api.sock): POST /send (text/file), GET /sessions
+ *   - management API (9820): web UI + /api/v1/*
+ *   - bridge WS (9810): live chat
  */
 import { spawn } from "node:child_process";
 import { execFileAsync } from "@aiti-ai/ext-shared/exec-async"; // 性能红线：ps 探测不阻塞事件循环
@@ -19,8 +26,9 @@ import * as net from "node:net";
 import * as http from "node:http";
 import { readConfigFile } from "./config.ts";
 import { managedBin } from "./installer.ts";
+import * as proc from "./proc-runner.ts";
 
-export const LIB_VERSION = "0.1.6";
+export const LIB_VERSION = "0.1.8"; // bump: proc-runner regime (reload swaps the globalThis-cached manager namespace)
 
 const IS_WIN = platform() === "win32";
 
@@ -162,10 +170,47 @@ function socketRequest<T = any>(
   apiPath: string,
   body?: unknown,
   timeoutMs = 10000,
+  /** cc-connect api_addr patch: TCP listen addr ("127.0.0.1:9375") — dials host:port
+   *  instead of the unix/pipe socketPath. Set from config api_addr (Windows reachable). */
+  tcpAddr?: string,
 ): Promise<{ status: number; data: T }> {
   return new Promise((resolve, reject) => {
+    // cc-connect api_addr patch（2026-11-28）：api_addr 配置时走 TCP——Windows 上
+    // AF_UNIX 管名 libuv 拨不通（见 2026-09-18 实测），TCP 是我们 patch 进上游的可达通道。
+    if (tcpAddr) {
+      const at = tcpAddr.lastIndexOf(":");
+      const host = at > 0 ? tcpAddr.slice(0, at) : "127.0.0.1";
+      const port = Number(at > 0 ? tcpAddr.slice(at + 1) : 0) || 0;
+      const bodyStr = body === undefined ? null : JSON.stringify(body);
+      const req = http.request(
+        {
+          host,
+          port,
+          path: apiPath,
+          method,
+          timeout: timeoutMs,
+          headers: bodyStr ? { "content-type": "application/json", "content-length": Buffer.byteLength(bodyStr) } : {},
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            let data = text as unknown as T;
+            try { data = JSON.parse(text); } catch { /* keep raw */ }
+            resolve({ status: res.statusCode || 0, data });
+          });
+        },
+      );
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("tcp api 请求超时")); });
+      if (bodyStr) req.write(bodyStr);
+      req.end();
+      return;
+    }
     // Windows 已知缺口（2026-09-18 真机实测 v1.5.0）：上游 api 只监听 AF_UNIX，Node/libuv 拨不通
-    // （EACCES；libuv 的 socketPath 在 win 是命名管语义），且无 api_addr/TCP 开关。待上游或走 bridge WS 逆向。
+    // （EACCES；libuv 的 socketPath 在 win 是命名管语义）。已通过 api_addr patch（cc-connect win-api-addr
+    // 分支）解锁 TCP 通道——配置 api_addr 后走上方 TCP 分支。
     if (!fs.existsSync(sockPath)) return reject(new Error(`api.sock 不存在：${sockPath}${IS_WIN ? "（Windows：cc-connect api 仅 AF_UNIX，Node 无法连接——已知缺口，见 windows-compat 方案 §6.1）" : ""}`));
     const bodyStr = body === undefined ? null : JSON.stringify(body);
     const req = http.request(
@@ -182,6 +227,7 @@ function socketRequest<T = any>(
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
           let data = text as unknown as T;
+          try { data = JSON.parse(text); } catch { /* keep raw */ }
           try { data = JSON.parse(text); } catch { /* keep raw */ }
           resolve({ status: res.statusCode || 0, data });
         });
@@ -203,8 +249,9 @@ export type SendOptions = {
   mimeType?: string;
 };
 
-/** 发消息（文本/文件）。filePath 存在时按文件发送（读 base64 → FileAttachment JSON）。 */
-export async function sendMessage(opts: SendOptions & { sock?: string }): Promise<any> {
+/** 发消息（文本/文件）。filePath 存在时按文件发送（读 base64 → FileAttachment JSON）。
+ *  tcpAddr = config api_addr（cc-connect api_addr patch）→ TCP 通道（Windows 可达）。 */
+export async function sendMessage(opts: SendOptions & { sock?: string; tcpAddr?: string }): Promise<any> {
   const sock = opts.sock || DEFAULTS.sock;
   const body: any = { project: opts.project, session_key: opts.sessionKey, message: opts.message };
   if (opts.filePath && fs.existsSync(opts.filePath)) {
@@ -215,11 +262,11 @@ export async function sendMessage(opts: SendOptions & { sock?: string }): Promis
       Data: data,
     };
   }
-  return socketRequest(sock, "POST", "/send", body);
+  return socketRequest(sock, "POST", "/send", body, 10000, opts.tcpAddr);
 }
 
-export async function listSessions(sock?: string): Promise<any> {
-  return socketRequest(sock || DEFAULTS.sock, "GET", "/sessions");
+export async function listSessions(sock?: string, tcpAddr?: string): Promise<any> {
+  return socketRequest(sock || DEFAULTS.sock, "GET", "/sessions", undefined, 10000, tcpAddr);
 }
 
 // ---------- 托管（start / stop / restart） ----------
@@ -231,6 +278,13 @@ export async function status(m: ManagerOpts) {
   const pidFile = readPidFile(m.dataDir);
   const running = await findRunning(config);
   const pid = running ? running.pid : pidFile && pidAlive(pidFile) ? pidFile : null;
+  // Runner regime: runtime.json (what WE started last) + systemd unit liveness.
+  // An instance started by the old setsid path has no runtime.json → regime null.
+  const runtime = proc.readRuntime(m.dataDir);
+  let unitActive = false;
+  if (runtime?.runner === "systemd-run" && runtime.unit) {
+    unitActive = await proc.unitBusy(runtime.unit, proc.userManagerEnv(typeof process.getuid === "function" ? process.getuid() : undefined));
+  }
 
   return {
     bin,
@@ -244,6 +298,9 @@ export async function status(m: ManagerOpts) {
     port9820: false,
     port9810: false,
     sockAlive: false,
+    runner: runtime?.runner || null,
+    unit: runtime?.unit || null,
+    unitActive,
     cfg: readConfigFile(config),
   };
 }
@@ -291,20 +348,74 @@ export async function start(m: ManagerOpts): Promise<{ ok: boolean; pid?: number
 
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.mkdirSync(m.dataDir, { recursive: true });
-  const logFd = fs.openSync(logFile, "a");
-  const child = spawn(bin, ["-config", config], {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: { ...process.env },
-    windowsHide: true, // win32：detached 控制台程序默认开新窗（服务上下文可见闪烁）——压掉
-  });
-  child.unref();
-  fs.closeSync(logFd);
-  writePidFile(m.dataDir, child.pid || 0);
-  return { ok: true, pid: child.pid, note: `已启动（pid ${child.pid}），日志 ${logFile}` };
+
+  // Runner dispatch (decided once per start): systemd-run transient unit when
+  // the user manager answers (immune to pi-web restarts, cgroup-wide stop),
+  // plain/cim otherwise (historical paths). Every failure degrades to plain —
+  // starting must never regress because the fancier runner hiccuped.
+  const probe = await proc.probeRunner();
+  const unit = proc.unitNameFor(instanceIdOfDataDir(m.dataDir));
+  try {
+    if (probe.kind === "systemd-run") {
+      if (await proc.unitBusy(unit, probe.env)) {
+        return { ok: false, error: `单元 ${unit} 已被占用（unitBusy）`, note: "上次启动可能未完全退出；稍后重试或先 stop" };
+      }
+      await proc.launchSystemd({ bin, config, logFile, unit, env: probe.env });
+      proc.writeRuntime(m.dataDir, { runner: "systemd-run", unit, startedAt: new Date().toISOString() });
+      console.log(`[aiti-channels] started via systemd-run unit ${unit} (${probe.detail})`);
+      return { ok: true, note: `已启动（systemd 单元 ${unit}，免疫 pi-web 重启），日志 ${logFile}` };
+    }
+    if (probe.kind === "windows-cim") {
+      const r = await proc.launchWindowsCim({ bin, config, logFile, unit, env: probe.env });
+      proc.writeRuntime(m.dataDir, { runner: "windows-cim", pid: r.launcherPid, startedAt: new Date().toISOString() });
+      if (r.launcherPid) writePidFile(m.dataDir, r.launcherPid);
+      console.log(`[aiti-channels] started via Win32_Process.Create (${probe.detail})`);
+      return { ok: true, pid: r.launcherPid, note: `已启动（Win32_Process.Create，pid ${r.launcherPid ?? "?"}），日志 ${logFile}` };
+    }
+  } catch (e: any) {
+    console.warn(`[aiti-channels] runner ${probe.kind} failed, degrading to plain: ${e.message}`);
+  }
+  const r = await proc.launchPlain({ bin, config, logFile, unit, env: probe.env });
+  proc.writeRuntime(m.dataDir, { runner: "plain", pid: r.pid, startedAt: new Date().toISOString() });
+  writePidFile(m.dataDir, r.pid);
+  return { ok: true, pid: r.pid, note: `已启动（pid ${r.pid}，plain detached），日志 ${logFile}` };
+}
+
+/** Instance id from its dataDir: the registry maps id→dataDir 1:1, so match
+ *  back (default instance ~/.cc-connect included); unknown dirs fall back to a
+ *  sanitized dirname (only affects the systemd unit name, nothing functional). */
+function instanceIdOfDataDir(dataDir: string): string {
+  for (const inst of listInstances()) {
+    if (path.resolve(inst.dataDir) === path.resolve(dataDir)) return inst.id;
+  }
+  const base = path.basename(dataDir.replace(/[\\/]+$/, "")) || "default";
+  return base.replace(/^\.cc-connect-?/i, "") || "default";
 }
 
 export async function stop(m: ManagerOpts): Promise<{ ok: boolean; error?: string; note?: string }> {
+  // systemd regime first (runtime.json): systemctl stop is cgroup-wide and
+  // graceful; pid paths below stay as the fallback / other-regime handler.
+  const runtime = proc.readRuntime(m.dataDir);
+  if (runtime?.runner === "systemd-run" && runtime.unit) {
+    const env = proc.userManagerEnv(typeof process.getuid === "function" ? process.getuid() : undefined);
+    if (await proc.unitBusy(runtime.unit, env)) {
+      await proc.stopUnitAndWait(runtime.unit, env);
+      // belt & braces: the unit is stopping — give it a moment, then verify
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 300));
+        if (!(await proc.unitBusy(runtime.unit, env))) break;
+      }
+      const still = await findRunning(resolveConfig(m));
+      if (!still) {
+        proc.clearRuntime(m.dataDir);
+        return { ok: true, note: `已停止（systemd 单元 ${runtime.unit}，cgroup 树杀）` };
+      }
+      // unit stopped but a stray process matches (started outside the unit) — fall through to pid stop
+    } else {
+      proc.clearRuntime(m.dataDir);
+    }
+  }
+
   const running = await findRunning(resolveConfig(m));
   const pid = running ? running.pid : readPidFile(m.dataDir);
   if (!pid || !pidAlive(pid)) {
@@ -315,6 +426,7 @@ export async function stop(m: ManagerOpts): Promise<{ ok: boolean; error?: strin
     // lessons §0.2 样板：taskkill /T /F 树杀；无优雅退出（flush 丢与否取决于上游），note 里注明
     try {
       await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], { timeoutMs: 8000 });
+      proc.clearRuntime(m.dataDir);
       return { ok: true, note: `已树杀（pid ${pid}，Windows taskkill 强杀，无优雅退出）` };
     } catch (e: any) {
       return { ok: false, error: e.message };
@@ -324,10 +436,14 @@ export async function stop(m: ManagerOpts): Promise<{ ok: boolean; error?: strin
     process.kill(pid, "SIGTERM");
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 300));
-      if (!pidAlive(pid)) return { ok: true, note: `已停止（pid ${pid}）` };
+      if (!pidAlive(pid)) {
+        proc.clearRuntime(m.dataDir);
+        return { ok: true, note: `已停止（pid ${pid}）` };
+      }
     }
     process.kill(pid, "SIGKILL");
     await new Promise((r) => setTimeout(r, 300));
+    proc.clearRuntime(m.dataDir);
     return { ok: true, note: `已强制停止（pid ${pid}）` };
   } catch (e: any) {
     return { ok: false, error: e.message };
@@ -403,13 +519,18 @@ export type ChannelInstance = {
   dataDir: string;  // cc-connect data dir（socket/log 隔离）
   bin?: string;
   logFile?: string; // 缺省 <dataDir>/cc-connect.log
+  /** Optional fixed ACP TCP port (see acp-server.acpTcpPort; unset = derived
+   *  on Windows, TCP off on POSIX). Persisted in instances.json. */
+  acpTcpPort?: number;
 };
 
 function instancesFile(): string {
   return path.join(getDataDir(), "instances.json");
 }
 
-/** 实例列表：默认实例（现有 ~/.config/cc-connect.toml）+ 用户自建实例。 */
+/** Instance list: the default instance (existing ~/.config/cc-connect.toml)
+ *  plus user-created ones. A stored default entry in instances.json (e.g. an
+ *  acpTcpPort override) merges into the default instance. */
 export function listInstances(): ChannelInstance[] {
   const def: ChannelInstance = {
     id: "default",
@@ -420,7 +541,10 @@ export function listInstances(): ChannelInstance[] {
   try {
     const raw = fs.readFileSync(instancesFile(), "utf8");
     const list = JSON.parse(raw);
-    return [def, ...(Array.isArray(list) ? list : [])];
+    const stored = Array.isArray(list) ? list : [];
+    const defOverride = stored.find((i: ChannelInstance) => i.id === "default");
+    if (defOverride) Object.assign(def, { ...defOverride, id: "default", name: defOverride.name || def.name });
+    return [def, ...stored.filter((i: ChannelInstance) => i.id !== "default")];
   } catch {
     return [def];
   }
@@ -430,16 +554,36 @@ export function resolveInstance(id: string): ChannelInstance | null {
   return listInstances().find((i) => i.id === id) || null;
 }
 
+/** Raw registry file entries (no default-instance merge). */
+function storedInstances(): ChannelInstance[] {
+  try {
+    const list = JSON.parse(fs.readFileSync(instancesFile(), "utf8"));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
 export function saveInstance(inst: ChannelInstance) {
-  const list = listInstances().filter((i) => i.id !== "default");
-  const idx = list.findIndex((i) => i.id === inst.id);
-  if (idx >= 0) list[idx] = inst; else list.push(inst);
+  // operate on the RAW file list — listInstances() merges the default entry,
+  // writing that merged view back would resurrect/duplicate it; drop only the
+  // entry being saved (a stored default override must survive other saves)
+  const list = storedInstances().filter((i) => i.id !== inst.id);
+  if (inst.id === "default") {
+    // default exists outside the registry file; store only the override fields
+    const defOnly: ChannelInstance = { id: "default", name: inst.name, config: inst.config, dataDir: inst.dataDir };
+    if (Number.isFinite(inst.acpTcpPort) && Number(inst.acpTcpPort) > 0) defOnly.acpTcpPort = Number(inst.acpTcpPort);
+    list.unshift(defOnly);
+  } else {
+    list.push(inst);
+  }
   fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(instancesFile(), JSON.stringify(list, null, 2));
 }
 
 export function deleteInstance(id: string) {
-  const list = listInstances().filter((i) => i.id !== "default" && i.id !== id);
+  // raw file list: keeps a stored default override intact
+  const list = storedInstances().filter((i) => i.id !== id);
   fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(instancesFile(), JSON.stringify(list, null, 2));
 }

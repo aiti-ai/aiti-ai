@@ -36,11 +36,18 @@ export type ConfigForm = {
   dataDir: string;
   language?: string;
   logLevel?: string;
+  /** cc-connect api_addr patch: TCP listen addr for the internal API server
+   *  (e.g. "127.0.0.1:9375") — the reachable transport on Windows. Empty = unix socket. */
+  apiAddr?: string;
   management?: { enabled: boolean; port: number; token?: string };
   bridge?: { enabled: boolean; port: number; token?: string };
   projects: ProjectForm[];
-  /** agent=piweb 时必填：连接器与 ACP socket 路径（index.ts 从 acp-server 取） */
-  acp?: { connector: string; socketPath: string };
+  /** Required for agent=piweb: connector bin + ACP socket paths (from acp-server).
+   *  socketPath = primary endpoint — tcp://127.0.0.1:<port> when TCP is on
+   *  (Windows native chain), else the legacy pipe/unix path;
+   *  connectorSocket = legacy pipe/unix path always (the connector is a plain
+   *  Node client and dials whatever path it is given). */
+  acp?: { connector: string; socketPath: string; connectorSocket?: string };
 };
 
 const tq = (s?: string | number) => (s === undefined || s === "" ? "" : JSON.stringify(String(s)));
@@ -50,6 +57,7 @@ const has = (s?: string) => s !== undefined && s !== "";
 export function renderConfig(form: ConfigForm): string {
   const L: string[] = [];
   L.push(`data_dir = ${tq(form.dataDir || "")}`);
+  if (has(form.apiAddr)) L.push(`api_addr = ${tq(form.apiAddr)}`); // cc-connect api_addr patch：TCP 传输（Windows 可达）
   L.push(`language = ${tq(form.language || "zh")}`);
   L.push("");
   // AITI 统一行为：外部 agent 新启动即带 aiti MCP 工具直连浏览器桥——
@@ -65,21 +73,25 @@ export function renderConfig(form: ConfigForm): string {
     if (p.agent === "piweb") {
       if (!form.acp?.connector || !form.acp?.socketPath) throw new Error("agent=piweb 需要 acp.connector / acp.socketPath");
       if (p.piwebNative) {
-        // 原生路径：cc-connect 内建 ACP client net.Dial("unix") 直连 pi-web ACP socket，
-        // 链路里没有任何子进程（display_name 仍标注 AITI 便于 IM 侧识别）
+        // native path: the cc-connect built-in ACP client dials the pi-web ACP
+        // endpoint directly — unix socket on POSIX, tcp://127.0.0.1:<port> on
+        // Windows (parsed by cc-connect piweb.go) — no subprocess in the chain;
+        // display_name still tags AITI so IM users can tell the agent apart
         L.push(`    type = "piweb"`);
         L.push("    [projects.agent.options]");
         if (has(p.work_dir)) L.push(`      work_dir = ${tq(p.work_dir)}`);
         L.push(`      socket = ${tq(form.acp.socketPath)}`);
         L.push(`      display_name = "AITI Agent"`);
       } else {
-        // 兜底路径：cc-connect 现成 type=acp + 我们的薄连接器，
-        // 真 agent（pi-web 会话）在 pi-web 进程内，归 aiti 管（不改 cc-connect 任何文件）
+        // fallback path: stock type=acp + our thin connector; the real agent
+        // (the pi-web session) lives inside the pi-web process, owned by aiti
+        // (zero cc-connect file changes); the connector is Node-side so it
+        // keeps dialing the legacy pipe/unix path
         L.push(`    type = "acp"`);
         L.push("    [projects.agent.options]");
         if (has(p.work_dir)) L.push(`      work_dir = ${tq(p.work_dir)}`);
         L.push(`      command = "node"`);
-        L.push(`      args = [${tq(form.acp.connector)}, "--socket", ${tq(form.acp.socketPath)}]`);
+        L.push(`      args = [${tq(form.acp.connector)}, "--socket", ${tq(form.acp.connectorSocket || form.acp.socketPath)}]`);
         L.push(`      display_name = "AITI Agent"`);
       }
     } else {
