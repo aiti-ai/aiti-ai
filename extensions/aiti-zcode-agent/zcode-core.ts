@@ -591,11 +591,6 @@ export async function fetchCodingPlanQuotaLimit(
   return (await res.json()) as Record<string, unknown>;
 }
 
-/** Thousands separator, ≤2 decimals (display strings only). */
-function fmtQuotaNum(n: number): string {
-  return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(n);
-}
-
 type QuotaLimitBucket = {
   type?: unknown;
   unit?: unknown;
@@ -608,23 +603,25 @@ type QuotaLimitBucket = {
 };
 
 /**
- * quota/limit payload → agent-manager quota view (unified display contract, qoder quotaFromUsage shape).
+ * quota/limit payload → unified quota view (agent-manager quota view contract, qoder quotaFromUsage shape).
  * Bucket semantics verified against desktop 4.0.0 UI selectors (IB(limits,type,unit,number)):
  *   TOKENS_LIMIT unit=3 number=5 → five-hour window; TOKENS_LIMIT unit=6 → weekly window;
  *   TIME_LIMIT unit=5 number=1 → monthly credits (usage=total / currentValue=used / remaining).
- * display lists token windows (worst first) + monthly remaining; remaining/total/unit carry the
- * monthly credits for the consumer's numeric fallback. Pure function (no IO), for unit tests.
+ * Bucket names are STABLE KEYS (five_hour / weekly / monthly_credits) — consumers translate via
+ * their i18n tables (providerUsage.bucket.* / badge.bucket.* / am.quota.pkg.*), mirroring qoder
+ * (which sends user_quota / add_on_quota / org_resource_package keys).
+ * Headline fields (remaining/used/total/usedPercent/unit/expiresAt) = the BINDING bucket (highest
+ * usedPercent, i.e. lowest remaining ratio) so every surface leads with the tightest constraint.
+ * Token windows are share buckets (x/100, unit "%"); the monthly bucket keeps real counts.
+ * Pure function (no IO), for unit tests.
  */
 export function quotaLimitToQuotaView(payload: Record<string, unknown>, now = Date.now()): Record<string, unknown> {
   const data = payload?.data as { limits?: unknown; level?: unknown } | undefined;
   const buckets: QuotaLimitBucket[] = Array.isArray(data?.limits) ? (data.limits as QuotaLimitBucket[]) : [];
   const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-  const labelOf = (b: QuotaLimitBucket): string => {
-    if (b.type === "TOKENS_LIMIT") {
-      const u = num(b.unit);
-      return u === 3 ? "5小时窗口" : u === 6 ? "周窗口" : `窗口 unit=${u ?? "?"}`;
-    }
-    return "月度额度";
+  const keyOf = (b: QuotaLimitBucket): string => {
+    if (b.type === "TOKENS_LIMIT") return num(b.unit) === 3 ? "five_hour" : "weekly";
+    return "monthly_credits";
   };
 
   if (!buckets.length) {
@@ -632,7 +629,7 @@ export function quotaLimitToQuotaView(payload: Record<string, unknown>, now = Da
   }
 
   const packages = buckets.map((b) => {
-    const base: Record<string, unknown> = { name: labelOf(b) };
+    const base: Record<string, unknown> = { name: keyOf(b) };
     const used = num(b.currentValue);
     const total = num(b.usage);
     const remaining = num(b.remaining);
@@ -646,43 +643,40 @@ export function quotaLimitToQuotaView(payload: Record<string, unknown>, now = Da
     return base;
   });
 
-  const tokenWindows = buckets.filter((b) => b.type === "TOKENS_LIMIT" && num(b.percentage) !== undefined);
-  let worst: { pct: number; reset?: number } | null = null;
-  for (const b of tokenWindows) {
-    const pct = num(b.percentage) ?? 0;
-    if (!worst || pct > worst.pct) worst = { pct, reset: num(b.nextResetTime) };
+  // Binding bucket = highest usedPercent across all buckets (lowest remaining ratio).
+  let binding: { pkg: Record<string, unknown>; pct: number } | null = null;
+  for (const pkg of packages) {
+    const pct = num(pkg.usedPercent);
+    if (pct !== undefined && (!binding || pct > binding.pct)) binding = { pkg, pct };
   }
-  const monthly = buckets.find((b) => b.type === "TIME_LIMIT");
   const level = typeof data?.level === "string" && data.level.trim() ? data.level.trim() : null;
-
-  const parts = tokenWindows
-    .slice()
-    .sort((a, b) => (num(b.percentage) ?? 0) - (num(a.percentage) ?? 0))
-    .map((b) => `${labelOf(b)}已用 ${fmtQuotaNum(num(b.percentage) ?? 0)}%`);
-  const monthlyRemaining = monthly ? num(monthly.remaining) : undefined;
-  if (monthlyRemaining !== undefined) parts.push(`月度额度剩余 ${fmtQuotaNum(monthlyRemaining)} 次`);
 
   const view: Record<string, unknown> = {
     available: true,
-    display: parts.length ? `额度 ${parts.join(" · ")}` : "额度",
-    unit: "次",
+    unit: "%",
     packages,
     fetchedAt: now,
   };
-  if (worst) {
-    view.usedPercent = worst.pct;
-    if (worst.reset !== undefined) view.expiresAt = worst.reset;
-  }
-  if (monthlyRemaining !== undefined) {
-    view.remaining = monthlyRemaining;
-    const monthlyTotal = monthly ? num(monthly.usage) : undefined;
-    if (monthlyTotal !== undefined) view.total = monthlyTotal;
-    const monthlyUsed = monthly ? num(monthly.currentValue) : undefined;
-    if (monthlyUsed !== undefined) view.used = monthlyUsed;
+  if (binding) {
+    const pkg = binding.pkg;
+    const isShare = num(pkg.remaining) === undefined;
+    view.usedPercent = binding.pct;
+    if (num(pkg.nextResetTime) !== undefined) view.expiresAt = num(pkg.nextResetTime);
+    if (isShare) {
+      // Token window: express remaining as the remaining share (x/100).
+      view.remaining = Math.round(100 - binding.pct);
+      view.total = 100;
+      view.used = binding.pct;
+    } else {
+      if (num(pkg.remaining) !== undefined) view.remaining = num(pkg.remaining);
+      if (num(pkg.total) !== undefined) view.total = num(pkg.total);
+      if (num(pkg.used) !== undefined) view.used = num(pkg.used);
+      view.unit = "credits";
+    }
   }
   if (level) {
     view.plan = level;
-    view.note = `等级 ${level}`;
+    view.note = level;
   }
   return view;
 }

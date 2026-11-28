@@ -43,7 +43,11 @@ function quotaText(t, q) {
 /** Quota tooltip (per-package breakdown + updated at). t is injected by the caller. */
 function quotaTitle(t, q) {
   const pkgs = (q.packages ?? []).map((p, i) => {
-    const name = p.name ?? t("am.quota.pkgN", { n: i + 1 });
+    const raw = p.name ?? t("am.quota.pkgN", { n: i + 1 });
+    // Package names are stable backend keys (qoder user_quota…, zcode five_hour…) — translate via i18n, fall back to the raw name.
+    const nameKey = `am.quota.pkg.${raw}`;
+    const translated = t(nameKey);
+    const name = !translated || translated === nameKey ? raw : translated;
     if (p.remaining !== undefined && p.total !== undefined) return t("am.quota.pkgRemainingOf", { name, remaining: fmtNum(p.remaining), total: fmtNum(p.total), unit: p.unit ?? q.unit ?? "" }).trim();
     if (p.usedPercent !== undefined) return t("am.quota.pkgUsed", { name, pct: fmtNum(p.usedPercent) });
     if (p.remaining !== undefined) return t("am.quota.pkgRemaining", { name, remaining: fmtNum(p.remaining), unit: p.unit ?? q.unit ?? "" }).trim();

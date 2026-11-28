@@ -108,7 +108,11 @@ function QuotaRow(props: { sessionId: string }) {
   if (usage.credits?.remaining !== undefined) parts.push(tOr("badge.quota.remaining", "{remaining} {unit} left").replace("{remaining}", fmtNum(usage.credits.remaining)).replace("{unit}", unit));
   else if (usage.credits?.usedPercent !== undefined) parts.push(tOr("badge.quota.usedPercent", "{pct}% used").replace("{pct}", fmtNum(Math.round(usage.credits.usedPercent))));
   for (const b of usage.buckets ?? []) {
-    if (b.remaining !== undefined && b.total !== undefined) parts.push(`${b.name} ${fmtNum(b.remaining)}/${fmtNum(b.total)}`);
+    // Bucket names are stable backend keys (qoder user_quota…, zcode five_hour…) — translate via i18n, fall back to the raw name.
+    const key = `badge.bucket.${b.name}`;
+    const translated = t(key);
+    const name = !translated || translated === key ? b.name : translated;
+    if (b.remaining !== undefined && b.total !== undefined) parts.push(`${name} ${fmtNum(b.remaining)}/${fmtNum(b.total)}`);
   }
   if (parts.length === 0) return null;
   const exceeded = usage.quotaExceeded === true;
