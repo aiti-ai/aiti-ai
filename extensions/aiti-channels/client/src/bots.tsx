@@ -18,7 +18,7 @@ import { apiUrl, t, extSvc, ensureMaterialized } from "./host-shim";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { qrDataUrl } from "./qr";
 import { buildDeepLink } from "../../lib/deep-link.ts";
-import { btnStyle, cardStyle, inp, sectionTitle, chip, setState as setStatePub, getHostSessionId } from "./channels-app";
+import { btnStyle, cardStyle, inp, sectionTitle, chip, setState as setStatePub, getHostSessionId, Ic, ICON } from "./channels-app";
 import { ProjectDetailPanel } from "./mgmt-tabs";
 
 const API = (p: string) => apiUrl(p);
@@ -323,7 +323,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
             <div style={{ display: "flex", gap: 8 }}>
               <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
                 disabled={busy || wiz?.phase === "scanning"} onClick={() => void setup(platform, base.project.trim(), base.workDir.trim())}>
-                {wiz?.phase === "scanning" ? t("Waiting for scan confirmation…") : "📱 " + t("Scan & create")}
+                {wiz?.phase === "scanning" ? t("Waiting for scan confirmation…") : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.mobile} />{t("Scan & create")}</span>}
               </button>
               <button style={btnStyle} onClick={() => setStep(2)}>{t("上一步")}</button>
             </div>
@@ -382,7 +382,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
           <div style={{ fontSize: 12, color: "#6b7280" }}>{t("验证步：向新项目发一条测试消息（mgmt send；新项目需先在 IM 里激活一次会话）。")}</div>
           <div style={{ display: "flex", gap: 8 }}>
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
-              onClick={() => void sendTest()}>{busy ? t("Sending…") : "📤 " + t("发测试消息")}</button>
+              onClick={() => void sendTest()}>{busy ? t("Sending…") : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.send} />{t("发测试消息")}</span>}</button>
             <button style={btnStyle} onClick={() => { setStatePub({ tab: "chat" }); }}>{t("去对话 tab 实时看")}</button>
             <button style={btnStyle} onClick={() => { stopWiz(); onClose(); }}>{t("完成")}</button>
           </div>
@@ -584,7 +584,7 @@ export function RemoteView() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 18 }}>{"📱"}</span>
+        <span style={{ display: "inline-flex" }}><Ic size={18} paths={ICON.mobile} /></span>
         <div>
           <div style={{ fontSize: 14, fontWeight: 700 }}>{t("移动端远程控制")}</div>
           <div style={{ fontSize: 11.5, color: "#6b7280", marginTop: 2 }}>{t("扫码或在手机上打开链接，远程控制此工作台。")}</div>
@@ -594,12 +594,12 @@ export function RemoteView() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
         {/* left: scan to open */}
         <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{"📱 " + t("扫码连接")}</div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.mobile} />{t("扫码连接")}</span></div>
           <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("用手机相机扫码，在移动端打开此工作台（登录后接管当前会话）。")}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: 8, background: "#22c55e" }} />
             <span style={{ fontSize: 12 }}>{(sessionId ? t("携带当前会话") : t("工作台首页")) + " · " + t("扫码或复制链接")}</span>
-            <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={copy}>{"📋 " + t("复制链接")}</button>
+            <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={copy}>{<Ic size={13} paths={ICON.clipboard} /> }</button>
           </div>
           <div style={{ background: "#fff", borderRadius: 12, width: 216, height: 216, margin: "8px auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {qr ? <img src={qr} alt="QR" width={188} height={188} style={{ borderRadius: 6 }} /> : <span style={{ color: "#9ca3af", fontSize: 11 }}>{t("二维码生成中…")}</span>}
@@ -609,7 +609,7 @@ export function RemoteView() {
         </div>
         {/* right: bot channel */}
         <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{"🤖 " + t("用机器人通道")}</div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.bot} />{t("用机器人通道")}</span></div>
           <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("连接一个聊天机器人，适合长时移动接入。")}</div>
           {quick.map((p) => (
             <div key={p} style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--bg-hover, rgba(127,127,127,0.06))", borderRadius: 10, padding: "8px 10px" }}>
@@ -624,7 +624,7 @@ export function RemoteView() {
           <div style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.6, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 8, padding: "6px 8px" }}>
             {t("通道来源：所有渠道经 cc-connect 走官方平台 API；微信扫码页出现 OpenClaw 字样 = 与 OpenClaw 插件共用的 ilink 网关——属预期行为。")}
           </div>
-          <button style={{ ...btnStyle, marginTop: "auto" }} onClick={() => openBotsNew()}>{"🤖 " + t("机器人管理")}</button>
+          <button style={{ ...btnStyle, marginTop: "auto" }} onClick={() => openBotsNew()}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.bot} />{t("机器人管理")}</span></button>
         </div>
       </div>
     </div>

@@ -72,13 +72,13 @@ export function setState(patch: Record<string, unknown>) {
 }
 
 // lucide 图标 path（与系统内建线条图标同风格）
-const Ic = ({ size, paths }: { size: number; paths: string[] }) => (
+export const Ic = ({ size, paths }: { size: number; paths: string[] }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {paths.map((d, i) => <path key={i} d={d} />)}
   </svg>
 );
-const ICON: Record<string, string[]> = {
+export const ICON: Record<string, string[]> = {
   home: ["m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10"],
   package: ["m7.5 4.27 9 5.15", "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z", "M3.3 7 12 12l8.7-5", "M12 22V12"],
   fileEdit: ["M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z", "M14 2v4a2 2 0 0 0 2 2h4", "M10.4 12.6a2 2 0 0 1 3 3L8 21l-4 1 1-4Z"],
@@ -100,6 +100,9 @@ const ICON: Record<string, string[]> = {
   bot: ["M4 8h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z", "M12 2v4", "M9 4h6", "M9 14h.01", "M15 14h.01"],
   phone: ["M2 4c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z", "M11 19h2"],
   clock: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z", "M12 6v6l4 2"],
+  clipboard: ["M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"],
+  send: ["m22 2-7 20-4-9-9-4Z", "M22 2 11 13"],
+  mobile: ["M2 4c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z", "M11 19h2"],
   layers: ["m12 2 10 5-10 5L2 7Z", "m2 12 10 5 10-5", "m2 17 10 5 10-5"],
 };
 
@@ -394,7 +397,7 @@ function TabOverview() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[["projects", "folder", t("新建项目")], ["bots", "bot", t("机器人管理")], ["chat", "msg", t("聊天")], ["sessions", "msg", t("发消息")], ["msglog", "scroll", t("消息日志")], ["config", "fileEdit", t("编辑配置")], ["original", "monitor", t("打开管理台")]].map(([k, icon, l]) =>
             <button key={k} style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={() => setState({ tab: k })}>{l}</button>)}
-          <button style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={openRemote}>{"📱 " + t("移动端远程控制")}</button>
+          <button style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={openRemote}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.mobile} />{t("移动端远程控制")}</span></button>
         </div>
       </div>
       {/* 配置摘要 */}
@@ -1106,6 +1109,36 @@ function TabAutomateView() {
 /** ⑤ System = install / settings / bulk config generation (with warnings) / instance log (segmented) */
 function TabSystemView() {
   const [seg, setSeg] = useState<string>("install");
+  const [adopting, setAdopting] = useState(false);
+  const [adoptMsg, setAdoptMsg] = useState<string | null>(null);
+  const st: any = state.status || {};
+  // Adopt: an external process (manual systemd unit / nohup, no runtime.json)
+  // running → stop it, then restart under proc-runner (transient unit, cgroup
+  // tree-kill, panel-managed lifecycle). The button only shows for that shape.
+  const adoptable = !!st.running && !st.runner;
+  const adopt = async () => {
+    if (!window.confirm(t("接管会把当前外部进程停止，再由面板托管启动（短暂断线）。继续？"))) return;
+    setAdopting(true); setAdoptMsg(null);
+    try {
+      const stop = await fetch(API(`/api/extensions/aiti-channels/stop?instance=${encodeURIComponent(state.curInstance)}`), { method: "POST" }).then((r) => r.json());
+      if (!stop.ok) { setAdoptMsg(t("停止失败：") + (stop.error || "")); setAdopting(false); return; }
+      await new Promise((r) => setTimeout(r, 800));
+      const start = await fetch(API(`/api/extensions/aiti-channels/start?instance=${encodeURIComponent(state.curInstance)}`), { method: "POST" }).then((r) => r.json());
+      setAdoptMsg(start.ok ? t("已接管（面板托管 systemd 单元）。") : t("启动失败：") + (start.error || ""));
+      if (start.ok) await refreshStatus();
+    } catch (e: any) { setAdoptMsg(t("启动失败：") + e.message); }
+    setAdopting(false);
+  };
+  const adoptCard = (st.running || st.runner) ? (
+    <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12, fontWeight: 700 }}>{t("进程托管")}</span>
+      <span style={{ fontSize: 11, color: C.muted }}>
+        {st.runner ? t("面板托管（systemd transient unit，cgroup 树杀）") : st.running ? t("外部进程（手工 systemd unit / nohup），面板不管理其生命周期") : t("未运行")}
+      </span>
+      {adoptable && <button style={{ ...btnStyle, marginLeft: "auto", background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={adopting} onClick={() => void adopt()}>{adopting ? t("接管中…") : t("接管到面板托管")}</button>}
+      {adoptMsg && <span style={{ fontSize: 11, color: adoptMsg.indexOf(t("失败")) >= 0 ? "#ea580c" : "#16a34a" }}>{adoptMsg}</span>}
+    </div>
+  ) : null;
   const SEGS: [string, string][] = [["install", t("安装")], ["settings", t("设置")], ["config", t("配置生成")], ["log", t("日志")]];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1115,8 +1148,8 @@ function TabSystemView() {
             style={{ ...btnStyle, ...(seg === k ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>{label}</button>
         ))}
       </div>
-      {seg === "install" && <TabInstall />}
-      {seg === "settings" && <TabSystem instance={state.curInstance} />}
+      {seg === "install" && <>{adoptCard}<TabInstall /></>}
+      {seg === "settings" && <>{adoptCard}<TabSystem instance={state.curInstance} /></>}
       {seg === "config" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 12, lineHeight: 1.7, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: 10, padding: "10px 12px", color: "#92400e" }}>
@@ -1153,20 +1186,47 @@ function TopBar() {
   const s = state.status || {};
   const running = !!s.running;
   const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
+  // M6: narrow containers fold the lifecycle buttons (stop/restart/reload/
+  // auto-restart/refresh) into a ⋯ menu — they sit next to ✕ and invites
+  // mis-taps when the float is squeezed (94vw on small screens).
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 600));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const lifecycle = (
+    <>
+      {!running
+        ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", t("启动"))}><Ic size={13} paths={ICON.play} />{t("启动")}</button>
+        : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", t("停止"))}>{t("停止")}</button>}
+      {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", t("重启"))}>{t("重启")}</button>}
+      <button style={btnStyle} disabled={state.busy} title={t("热应用 config.toml（POST /api/v1/reload）")} onClick={() => ccAction("reload-cc", "reload")}>reload</button>
+      {running && <button style={btnStyle} disabled={state.busy} title={t("自动重启（进程替换保留 pid）")} onClick={() => ccAction("restart-cc", t("重启"))}>{t("自重启")}</button>}
+      <button style={btnStyle} disabled={state.loading} onClick={() => { refreshStatus(); refreshSessions(); refreshMsgLog(); refreshInstall(); }}>⟳</button>
+    </>
+  );
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
+    <div ref={hostRef} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
       <span title={running ? t("运行中") : t("未运行")} style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
       <span style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.msg} />{t("IM 渠道 & cc-connect")}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{s.version || ""}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{running ? `pid ${s.pid || ""}` : t("未运行")}</span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {!running
-          ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", t("启动"))}><Ic size={13} paths={ICON.play} />{t("启动")}</button>
-          : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", t("停止"))}>{t("停止")}</button>}
-        {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", t("重启"))}>{t("重启")}</button>}
-        <button style={btnStyle} disabled={state.busy} title={t("热应用 config.toml（POST /api/v1/reload）")} onClick={() => ccAction("reload-cc", "reload")}>reload</button>
-        {running && <button style={btnStyle} disabled={state.busy} title={t("自动重启（进程替换保留 pid）")} onClick={() => ccAction("restart-cc", t("重启"))}>{t("自重启")}</button>}
-        <button style={btnStyle} disabled={state.loading} onClick={() => { refreshStatus(); refreshSessions(); refreshMsgLog(); refreshInstall(); }}>⟳</button>
+        {narrow ? (
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            <button style={btnStyle} title={t("实例操作")} onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
+            {menuOpen && (
+              <span style={{ position: "absolute", top: "110%", right: 0, zIndex: 20, display: "flex", flexDirection: "column", gap: 4, background: "var(--bg, #fff)", border: C.border, borderRadius: 10, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)" }}>
+                {lifecycle}
+              </span>
+            )}
+          </span>
+        ) : lifecycle}
         <button style={{ ...btnStyle, padding: "4px 10px" }} onClick={() => setState({ open: false })}>✕</button>
       </span>
       {(state.error || state.msg) && <div style={{ width: "100%", fontSize: 11, color: state.error ? "var(--danger, #ef4444)" : "#16a34a" }}>{state.error || state.msg}</div>}
