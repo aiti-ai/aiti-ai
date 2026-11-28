@@ -1,12 +1,12 @@
 /**
- * aiti-proc-tree · client panel (dock summary + floating tree + detail drawer).
+ * aiti-proc-tree · client panel (dock tree + floating tree + detail drawer).
  *
  * Lifecycle discipline (same as aiti-sysmon): sampling runs only while the panel
  * is visible — the dock block collapsed or the browser tab hidden stops the loop.
  * The server holds no timers; the client cadence is the only sampling driver.
  */
 import { useEffect, useMemo, useState, useRef, apiUrl, t, extFeatures, onFeatureChange, getExtService, ensureMaterialized } from "./host-shim";
-import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present } from "@aiti-ai/ext-shared/ext-float-dock";
+import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present, useDockHeaderState, useDockHeaderStateOf, type DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 import { uiAlert, uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 import { fmtBytes, fmtCpu, fmtDuration } from "../../core.ts";
 
@@ -605,8 +605,7 @@ function Field(props: { k: string; v: string; extra?: any }) {
 
 // ---------------------------------------------------------------- main app
 
-function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
-  const embedded = props.embedded === true;
+function ProcTreeApp() {
   const compact = useCompact();
   const features = extFeatures();
   const [intervalSec, setIntervalSec] = useState<number>(() => num(features.interval, 2, 1, 30));
@@ -635,7 +634,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
     return off;
   }, []);
 
-  const enabled = props.enabledOverride !== false && !paused;
+  const enabled = !paused;
   const { data, error } = useSnapshot(enabled, intervalSec, limit);
 
   // First data arrival: expand depth 0 and 1 once so the tree is not a flat list.
@@ -759,10 +758,9 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
   };
 
   const body = (
-    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: embedded ? "auto" : "100%", minHeight: 0 }}>
-      {embedded ? null : (
-        <div
-          data-ext-float-drag="1"
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div
+        data-ext-float-drag="1"
           style={{
             display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
             height: 36, padding: "0 8px 0 12px",
@@ -782,8 +780,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
             onClick={() => { try { present(PT_KEY, "close"); } catch { /* ignore */ } }}
             style={{ width: 26, height: 26, padding: 0, border: "none", borderRadius: 6, background: "none", color: "var(--text-muted,var(--text-dim,#888))", cursor: "pointer", fontSize: 13, flexShrink: 0 }}
           >✕</button>
-        </div>
-      )}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px solid var(--border,#333)", flexWrap: "wrap" }}>
         <input
           value={search}
@@ -800,7 +797,7 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
         </button>
       </div>
 
-      <div style={{ flex: embedded ? "0 0 auto" : 1, overflow: "auto", minHeight: 0 }}>
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         {error ? <div style={{ padding: 8, color: "#d4574e", fontSize: 11 }}>{t("错误")} · {error}</div> : null}
         {!data && !error ? <div style={{ padding: 10, color: "var(--text-dim,#888)", fontSize: 11 }}>{t("加载中")}</div> : null}
         {data && data.nodes.length === 0 ? <div style={{ padding: 10, color: "var(--text-dim,#888)", fontSize: 11 }}>{t("空")}</div> : null}
@@ -878,47 +875,189 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
     </div>
   );
 
-  if (!embedded) return body;
-  // Dock summary: totals + top processes, plus an explicit "open panel" action.
+  return body;
+}
+
+// ---------------------------------------------------------------- dock face
+
+/** External-link glyph for the dock header "open floating panel" action. */
+function OpenFloatIcon() {
   return (
-    <div style={{ fontSize: 11 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 2px 6px" }}>
-        <span style={{ fontWeight: 600 }}>{t("子进程管理")}</span>
-        <button type="button" onClick={() => present(PT_KEY, "float")} style={{ marginLeft: "auto", fontSize: 10, padding: "1px 6px", borderRadius: 4 }}>
-          {t("详情")}
-        </button>
-      </div>
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+/** Compact dock row: indent + expander + kind dot + label + CPU. Read-only —
+ *  the detail drawer and kill actions live in the floating panel; clicking a
+ *  row opens it (nothing destructive sits behind a dock glance). */
+function DockRow(props: { node: ProcNode; depth: number; expanded: Set<number>; toggle: (pid: number) => void; hasChildren: boolean; onOpen: () => void }) {
+  const { node, depth, expanded, toggle, hasChildren, onOpen } = props;
+  const [hover, setHover] = useState(false);
+  const open = expanded.has(node.pid);
+  const dim = node.state === "Z" || node.state === "zombie";
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={onOpen}
+      title={node.label + " · PID " + node.pid}
+      style={{
+        display: "flex", alignItems: "center", gap: 5, padding: "2px 8px 2px " + (4 + depth * 12) + "px",
+        background: hover ? "var(--bg-hover,rgba(127,127,127,0.08))" : "transparent",
+        cursor: "pointer", fontSize: 11, minHeight: 22,
+      }}
+    >
+      {hasChildren ? <Triangle open={open} onClick={(e: any) => { e.stopPropagation(); toggle(node.pid); }} /> : <span style={{ width: 14, flexShrink: 0 }} />}
+      <Dot color={kindColor(node.kind)} title={node.kind} />
+      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: dim ? 0.55 : 1 }}>
+        {node.label}
+        {node.instance === "detached" ? <span style={{ marginLeft: 4, fontSize: 9, color: "var(--text-dim,#888)" }}>detached</span> : null}
+        {node.attached ? <span style={{ marginLeft: 4, fontSize: 9, color: "var(--text-dim,#888)" }}>attached</span> : null}
+        {node.instance === "external" ? <span style={{ marginLeft: 4, fontSize: 9, color: "var(--text-dim,#888)" }}>ext</span> : null}
+      </span>
+      <span style={{ width: 40, textAlign: "right", flexShrink: 0, fontVariantNumeric: "tabular-nums", color: (node.cpu || 0) >= 70 ? "#d4574e" : "var(--text-dim,#9aa0a6)" }}>{fmtCpu(node.cpu)}</span>
+    </div>
+  );
+}
+
+/** Dock face content: stats line + the full tree in compact form (grouped,
+ *  indented, scrollable — the same tree the floating panel shows, minus the
+ *  toolbar and per-row actions). Reports the process total to the dock header
+ *  (count badge). Sampling runs only while mounted, so collapsing the block
+ *  stops the loop (no commands registered → collapse unmounts the content). */
+function DockSummary(props: { enabled: boolean; onOpenFloat: () => void }) {
+  const features = extFeatures();
+  const intervalSec = num(features.interval, 2, 1, 30);
+  const limit = num(features.limit, 200, 0, 2000);
+  const { data, error } = useSnapshot(props.enabled, intervalSec, limit);
+
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expandedOnce, setExpandedOnce] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  // First data arrival: expand depth 0 and 1 once (same defaults as the float face).
+  useEffect(() => {
+    if (!data || expandedOnce) return;
+    const byPid = new Map(data.nodes.map((n) => [n.pid, n]));
+    const roots = data.nodes.filter((n) => !n.parentPid || !byPid.has(n.parentPid));
+    const next = new Set<number>();
+    for (const root of roots) {
+      if (root.hasChildren) next.add(root.pid);
+      for (const child of data.nodes) {
+        if (child.parentPid === root.pid && child.hasChildren) next.add(child.pid);
+      }
+    }
+    setExpanded(next);
+    setExpandedOnce(true);
+  }, [data, expandedOnce]);
+
+  // Header count badge (the face reads this state via useDockHeaderStateOf).
+  useDockHeaderState(PT_KEY, data ? { total: data.stats.total } : null);
+
+  const index = useMemo(() => buildIndex(data ? data.nodes : []), [data]);
+  const groups = useMemo<Group[]>(() => {
+    const map = new Map<string, Group>();
+    for (const root of sortNodes(index.roots, "name", 1)) {
+      const g = groupOf(root);
+      if (!map.has(g.key)) map.set(g.key, { key: g.key, label: g.label, roots: [] });
+      map.get(g.key)!.roots.push(root);
+    }
+    const order = ["host", "terminal", "agent", "subagent", "tunnel", "other"];
+    return order.map((k) => map.get(k)).filter(Boolean) as Group[];
+  }, [index]);
+
+  const toggle = (pid: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
+  };
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const renderChildren = (parent: ProcNode, depth: number): any[] => {
+    const kids = sortNodes(index.children.get(parent.pid) || [], "name", 1);
+    const out: any[] = [];
+    for (const kid of kids) {
+      out.push(<DockRow key={kid.pid} node={kid} depth={depth} expanded={expanded} toggle={toggle} hasChildren={Boolean(index.children.get(kid.pid)?.length)} onOpen={props.onOpenFloat} />);
+      if (expanded.has(kid.pid)) out.push(...renderChildren(kid, depth + 1));
+    }
+    return out;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, fontSize: 11 }}>
+      {error ? <div style={{ padding: "4px 8px", color: "#d4574e", fontSize: 10 }}>{t("错误")} · {error}</div> : null}
       {data ? (
-        <div style={{ display: "flex", gap: 8, color: "var(--text-dim,#888)", flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "5px 8px 6px", color: "var(--text-dim,#888)", flexWrap: "wrap" }}>
           <span>{data.stats.total} {t("个进程")}</span>
           <span>CPU {fmtCpu(data.stats.cpu)}</span>
           <span>{t("内存")} {fmtBytes(data.stats.mem)}</span>
+          {data.sampling.approxCpu ? <span title="ps pcpu is a lifetime average">≈</span> : null}
+          {data.sampling.firstTick ? <span>{t("首轮采样中，CPU 将在下一轮显示")}</span> : null}
+          {data.sampling.truncated ? <span title={String(data.sampling.limit)}>{t("已截断", { n: data.sampling.limit })}</span> : null}
+          {props.enabled ? null : <span>{t("已暂停")}</span>}
         </div>
+      ) : !error ? (
+        <div style={{ padding: "5px 8px 6px", color: "var(--text-dim,#888)" }}>{t("加载中")}</div>
       ) : null}
-      {data ? sortNodes(index.roots, "cpu", -1).slice(0, 4).map((n) => (
-        <div key={n.pid} style={{ display: "flex", alignItems: "center", gap: 5, padding: "1px 0" }}>
-          <Dot color={kindColor(n.kind)} />
-          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.label}</span>
-          <span style={{ color: "var(--text-dim,#888)" }}>{fmtCpu(n.cpu)}</span>
-        </div>
-      )) : null}
-
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {data && data.nodes.length === 0 ? <div style={{ padding: "4px 8px", color: "var(--text-dim,#888)" }}>{t("空")}</div> : null}
+        {data && data.nodes.length > 0 ? groups.map((g) => {
+          const gcollapsed = collapsedGroups.has(g.key);
+          return (
+            <div key={g.key}>
+              <div onClick={() => toggleGroup(g.key)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 8px", fontSize: 10, color: "var(--text-dim,#888)", background: "color-mix(in srgb, currentColor 4%, transparent)", cursor: "pointer", userSelect: "none" }}>
+                <Triangle open={!gcollapsed} onClick={(e: any) => { e.stopPropagation(); toggleGroup(g.key); }} />
+                <strong>{t(g.label)}</strong>
+                <span>· {g.roots.length}</span>
+              </div>
+              {gcollapsed ? null : g.roots.map((root) => (
+                <div key={root.pid}>
+                  <DockRow node={root} depth={0} expanded={expanded} toggle={toggle} hasChildren={Boolean(index.children.get(root.pid)?.length)} onOpen={props.onOpenFloat} />
+                  {expanded.has(root.pid) ? renderChildren(root, 1) : null}
+                </div>
+              ))}
+            </div>
+          );
+        }) : null}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------- slot faces
 
-/** Sidebar dock face (static item id "panel"); auto-docked like the Tasks block. */
+/** Sidebar dock face (static item id "panel"); auto-docked like the Tasks block.
+ *  Header keeps the unified chrome (title + count badge + ⋮ menu); the "open
+ *  floating panel" action is a declarative header button. Content = compact
+ *  full tree (DockSummary) — no duplicate in-body title row. */
 export function ProcTreeDockFace() {
   const st = usePresent(PT_KEY);
   const open = isSidebarDockState(st);
   const collapsed = useBlockCollapsed(PT_KEY)[0];
+  const headerState = useDockHeaderStateOf(PT_KEY);
+  const total = typeof headerState.total === "number" ? headerState.total : undefined;
+  const actions: DockHeaderAction[] = [
+    { id: "open-float", title: t("打开完整面板"), icon: <OpenFloatIcon />, visibility: "always", onClick: () => { try { present(PT_KEY, "float"); } catch { /* ignore */ } } },
+  ];
   if (!open) return null;
   return (
     <DockBody itemKey={PT_KEY} title={t("子进程管理")} icon={{ url: ptIconUrl() }} chrome="section" kind="dockable"
-      zones={[sidebarZoneOf(PT_KEY)]} defaultZone={sidebarZoneOf(PT_KEY)}>
-      <ProcTreeApp embedded enabledOverride={!collapsed} />
+      count={total}
+      zones={[sidebarZoneOf(PT_KEY)]} defaultZone={sidebarZoneOf(PT_KEY)}
+      headerActions={actions}>
+      <DockSummary enabled={!collapsed} onOpenFloat={() => { try { present(PT_KEY, "float"); } catch { /* ignore */ } } } />
     </DockBody>
   );
 }

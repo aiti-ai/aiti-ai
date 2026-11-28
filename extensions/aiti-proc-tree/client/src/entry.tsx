@@ -10,7 +10,7 @@
  */
 import { __setCtx } from "./host-shim";
 import {
-  present, presentState, sidebarZoneOf, seedDockDefault, seedBlockCollapsedDefault,
+  present, presentState, onPresentChange, sidebarZoneOf, seedDockDefault, seedBlockCollapsedDefault,
   declareDockZones, readBlockDismissed, FLOAT_INSTALLED_EVENT,
 } from "@aiti-ai/ext-shared/ext-float-dock";
 import { ProcTreeDockFace, ProcTreePage, PT_KEY, ptIconUrl } from "./app";
@@ -80,6 +80,41 @@ export default function register(ctx: Record<string, any>) {
   if (typeof ctx.registerExtService === "function") {
     try { ctx.registerExtService("aiti-proc-tree.open", openPanel); } catch { /* old host */ }
   }
+
+  // Float roundtrip: the dock face's header button hands the block to the floating
+  // panel; when that float is closed (✕) the docked block must come back — a
+  // dock-resident block should not vanish because its expanded float was closed.
+  // The last docked zone is remembered (init + every docked transition); only the
+  // floating→closed path restores. Closing the dock block itself (⋮ close, prev
+  // state docked) keeps the platform's dismiss semantics.
+  // Subscription caveat: the present machine lives in aiti-float (window.__piweFloat);
+  // it may install AFTER this register — a watcher subscribed before that lands in
+  // the fallback store and never sees real transitions. Re-read + re-subscribe on
+  // FLOAT_INSTALLED_EVENT (same rebind pattern as the header-store hooks).
+  let prevPresent: string = "closed";
+  let returnDock: string | null = null;
+  let unsubPresent: (() => void) | null = null;
+  const presentRoundtrip = (d: { key: string; state: string }) => {
+    if (d.key !== PT_KEY) return;
+    const prev = prevPresent;
+    prevPresent = d.state;
+    if (d.state.startsWith("docked:")) { returnDock = d.state.slice("docked:".length); return; }
+    if (d.state === "closed" && prev === "floating" && returnDock) {
+      const zone = returnDock;
+      returnDock = null;
+      try { present(PT_KEY, `dock:${zone}`); } catch { /* ignore */ }
+      return;
+    }
+    if (d.state !== "floating") returnDock = null;
+  };
+  const rebindPresentWatcher = () => {
+    try { if (unsubPresent) unsubPresent(); } catch { /* ignore */ }
+    try { prevPresent = String(presentState(PT_KEY)); } catch { /* ignore */ }
+    if (prevPresent.startsWith("docked:")) returnDock = prevPresent.slice("docked:".length);
+    unsubPresent = onPresentChange(presentRoundtrip);
+  };
+  rebindPresentWatcher();
+  window.addEventListener(FLOAT_INSTALLED_EVENT, rebindPresentWatcher);
 
   try { console.log("[aiti-proc-tree] client mounted (dock + floating panel)"); } catch { /* noop */ }
 }
