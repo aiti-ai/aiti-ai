@@ -181,7 +181,7 @@ export default {
         "来源": "来源",
         "套接字 / Unit": "套接字 / Unit",
         "监听端口": "监听端口",
-        "端口": "端口",
+        "端口扫描不可用": "端口扫描不可用",
         "关闭": "关闭",
         "不可结束": "不可结束",
         "宿主进程默认禁止结束": "宿主进程默认禁止结束",
@@ -245,7 +245,7 @@ export default {
         "来源": "Source",
         "套接字 / Unit": "Socket / Unit",
         "监听端口": "Listening",
-        "端口": "Port",
+        "端口扫描不可用": "Port scan unavailable",
         "关闭": "Close",
         "不可结束": "Not killable",
         "宿主进程默认禁止结束": "Host process is protected by default",
@@ -348,7 +348,6 @@ export default {
               cpu: n.cpu,
               mem: n.mem,
               etimeMs: n.etimeMs,
-              ports: Array.isArray(n.ports) ? n.ports : undefined,
               canKill: n.canKill,
               protectedReason: n.protectedReason,
               instance: n.instance,
@@ -379,6 +378,19 @@ export default {
           });
         } catch (e: any) {
           return json({ error: String(e?.message || e) }, 500);
+        }
+      }
+
+      // On-demand TCP LISTEN lookup for the detail drawer (never in the
+      // sampling loop). Never throws; tool failures come back as a note.
+      if (action === "listen" && path[1] && method === "GET") {
+        const pid = Number(path[1]);
+        if (!Number.isFinite(pid) || pid <= 0) return json({ error: "bad pid" }, 400);
+        try {
+          const r = await sampler.listenFor(pid);
+          return json({ pid, ports: r.ports, note: r.note });
+        } catch (e: any) {
+          return json({ pid, ports: [], note: "listen lookup failed: " + String((e && (e.message || e)) || e).slice(0, 80) });
         }
       }
 
@@ -517,7 +529,7 @@ export default {
           let detail: any = snap.sampled.details.get(pid) || {};
           if (process.platform === "linux") {
             try {
-              const fresh = linuxSampler.readDetail(pid, { withEnv: true, listenMap: sampler.currentListenData() });
+              const fresh = linuxSampler.readDetail(pid, { withEnv: true });
               detail = { ...detail, ...fresh, envText: fresh.envText };
             } catch { /* keep sampled detail */ }
           }
@@ -539,7 +551,6 @@ export default {
               state: detail.state || node.state || "",
               etimeMs: detail.etimeMs == null ? node.etimeMs : detail.etimeMs,
               fdCount: detail.fdCount == null ? null : detail.fdCount,
-              ports: Array.isArray(detail.ports) ? detail.ports : Array.isArray(node.ports) ? node.ports : [],
               env: envWhitelist(detail.envText),
             },
             parent: parent ? { pid: parent.pid, label: parent.label } : null,

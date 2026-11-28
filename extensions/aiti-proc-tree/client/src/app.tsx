@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, useRef, apiUrl, t, extFeatures, onFeatureChange, getExtService, ensureMaterialized } from "./host-shim";
 import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present } from "@aiti-ai/ext-shared/ext-float-dock";
 import { uiAlert, uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
-import { fmtBytes, fmtCpu, fmtDuration, fmtPortsCell, portOf } from "../../core.ts";
+import { fmtBytes, fmtCpu, fmtDuration } from "../../core.ts";
 
 export const PT_KEY = "aiti-proc-tree:panel";
 
@@ -32,7 +32,6 @@ interface ProcNode {
   cpu: number | null;
   mem: number | null;
   etimeMs: number | null;
-  ports?: string[];
   cmd?: string;
   canKill: boolean;
   protectedReason?: string;
@@ -132,7 +131,7 @@ function groupOf(node: ProcNode): { key: string; label: string } {
   return { key: "other", label: "其它" };
 }
 
-type SortKey = "name" | "pid" | "cpu" | "mem" | "etime" | "port";
+type SortKey = "name" | "pid" | "cpu" | "mem" | "etime";
 
 /** Windows Task Manager semantics: click a header to sort, click again to flip;
  *  name/pid start ascending, numeric columns start descending. */
@@ -141,11 +140,6 @@ function sortNodes(list: ProcNode[], key: SortKey, dir: 1 | -1): ProcNode[] {
     if (key === "cpu") return n.cpu == null ? -1 : n.cpu;
     if (key === "mem") return n.mem == null ? -1 : n.mem;
     if (key === "etime") return n.etimeMs == null ? -1 : n.etimeMs;
-    if (key === "port") {
-      const ports = n.ports || [];
-      const nums = ports.map((p) => portOf(p)).filter((v) => Number.isFinite(v) && v > 0);
-      return nums.length ? Math.min(...nums) : -1;
-    }
     return n.pid;
   };
   return list.slice().sort((a, b) => {
@@ -191,8 +185,7 @@ function matchNode(n: ProcNode, q: string): boolean {
     || n.label.toLowerCase().includes(needle)
     || (n.sessionId || "").toLowerCase().includes(needle)
     || (n.owner || "").toLowerCase().includes(needle)
-    || (n.url || "").toLowerCase().includes(needle)
-    || (n.ports || []).some((p) => String(p).toLowerCase().includes(needle));
+    || (n.url || "").toLowerCase().includes(needle);
 }
 
 /** Keep matches + their ancestor chain; roots stay in original order. */
@@ -298,14 +291,6 @@ function ProcRow(props: {
       <span style={{ width: compact ? 40 : 52, textAlign: "right", fontVariantNumeric: "tabular-nums", color: (node.cpu || 0) >= 70 ? "#d4574e" : "var(--text)" }}>{fmtCpu(node.cpu)}</span>
       <span style={{ width: compact ? 46 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtBytes(node.mem, 0) : fmtBytes(node.mem)}</span>
       <span style={{ width: compact ? 44 : 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-dim,#9aa0a6)" }}>{compact ? fmtDuration(node.etimeMs).replace(/ \d+s$/, "") : fmtDuration(node.etimeMs)}</span>
-      <span
-        title={(node.ports || []).join("\n")}
-        style={{ width: compact ? 40 : 58, textAlign: "right", fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-      >
-        {node.ports && node.ports.length
-          ? <span style={{ color: "#39c5cf" }}>{fmtPortsCell(node.ports, 1)}</span>
-          : <span style={{ color: "color-mix(in srgb, var(--text-dim,#9aa0a6) 45%, transparent)" }}>—</span>}
-      </span>
       <span style={{ width: compact ? 22 : 56, display: "flex", justifyContent: "flex-end", gap: 2, flexShrink: 0 }}>
         {/* Touch: always-visible (hover is unreliable); desktop: hover-only to keep rows calm. */}
         {compact || hover ? (
@@ -341,6 +326,22 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
     return () => { stopped = true; };
   }, [props.pid]);
   const stale = data && data.pid !== props.pid;
+
+  // Listening ports are fetched separately, on demand (one request per drawer
+  // row — zero cost in the sampling loop). Hard client-side timeout so a hung
+  // backend tool can never leave the drawer waiting forever.
+  const [listen, setListen] = useState<{ ports: string[]; note?: string } | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    setListen(null);
+    fetch(apiUrl("/api/extensions/aiti-proc-tree/listen/" + props.pid), { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((j) => { if (!stopped) setListen({ ports: Array.isArray(j.ports) ? j.ports : [], note: j.note }); })
+      .catch((e) => { if (!stopped) setListen({ ports: [], note: String(e?.message || e) }); });
+    return () => { stopped = true; ctrl.abort(); clearTimeout(timer); };
+  }, [props.pid]);
 
   const node: ProcNode | undefined = data?.node;
   const env: Record<string, string> = data?.detail?.env || {};
@@ -387,7 +388,13 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             {data.sessionName ? <Field k={t("会话")} v={data.sessionName} /> : null}
             {node?.url ? <Field k="URL" v={node.url} /> : null}
             {node?.socket ? <Field k={t("套接字 / Unit")} v={node.socket} /> : null}
-            {data.detail?.ports && data.detail.ports.length ? <Field k={t("监听端口")} v={data.detail.ports.join("  ")} /> : null}
+            {listen && listen.ports.length ? <Field k={t("监听端口")} v={listen.ports.join("  ")} /> : null}
+            {listen && !listen.ports.length && listen.note ? (
+              <div style={{ display: "flex", gap: 8, padding: "2px 0", alignItems: "baseline", flexWrap: "wrap" }}>
+                <span style={{ color: "var(--text-dim,#888)", width: 78, flexShrink: 0 }}>{t("监听端口")}</span>
+                <span style={{ wordBreak: "break-all", color: "var(--text-dim,#888)", fontSize: 10 }}>{t("端口扫描不可用")} · {listen.note}</span>
+              </div>
+            ) : null}
             {data.selfMemory ? (
               <>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
@@ -774,7 +781,6 @@ function ProcTreeApp(props: { embedded?: boolean; enabledOverride?: boolean }) {
                 ["cpu", "CPU", compact ? 40 : 52, false],
                 ["mem", compact ? t("内存").slice(0, 2) : t("内存"), compact ? 46 : 66, true],
                 ["etime", compact ? t("时长").slice(0, 1) : t("时长"), compact ? 44 : 66, true],
-                ["port", compact ? t("端口").slice(0, 1) : t("端口"), compact ? 40 : 58, true],
               ] as Array<[SortKey, string, number, boolean]>).map(([key, label, width, right]) => (
                 <span
                   key={key}

@@ -24,14 +24,15 @@ only for the visible set. Toggle `showUnknown` for a read-only stat-level list.
 
 ## Controls
 
-- Six sortable columns (name / PID / CPU / memory / age / TCP listen port;
-  click a header to sort, click again to flip). Listen ports come from
-  `/proc/net/tcp{,6}` + fd socket-inode matching on Linux, `lsof` on macOS and
-  `netstat -ano` on Windows (cached 5s, spawn-free on Linux). Search matches
-  ports too. Click any row for the detail drawer: full command line, cwd,
-  whitelisted env vars, parent/children, plus End process / End subtree
-  actions for killable nodes and Open terminal (terminals) / Open session
-  (external agents).
+- Five sortable columns (name / PID / CPU / memory / age; click a header to
+  sort, click again to flip). Click any row for the detail drawer: full
+  command line, cwd, whitelisted env vars, TCP listen ports, parent/children,
+  plus End process / End subtree actions for killable nodes and Open terminal
+  (terminals) / Open session (external agents). Listen ports are fetched on
+  demand (one `/listen/<pid>` request per drawer row, never in the sampling
+  loop): Linux reads `/proc/net/tcp{,6}` + fd socket-inode matching (spawn-free),
+  macOS `lsof`, Windows `netstat -ano` (async spawn, TTL-cached; missing tools
+  or timeouts degrade to a visible note, never a hang).
 - `✕` ends the process; `⋯` opens details. Terminal rows can open the matching
   aiti-cmd terminal (double-click), tunnel rows open the services panel.
 - Kill is guarded: same uid, protected pids (init, the extension host, the

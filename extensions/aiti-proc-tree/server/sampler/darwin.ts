@@ -102,17 +102,20 @@ export function procStart(pid: number): number | null {
 
 /**
  * TCP LISTEN sockets by pid: one async `lsof` call (spawn, no event-loop
- * blocking). Fails soft: permission/availability problems yield an empty map.
+ * blocking). Never throws — failures come back as a human-readable note so the
+ * drawer can tell the user why ports are missing (tool missing, timeout…).
  */
-export async function listenByPid(): Promise<Map<number, string[]>> {
+export async function listenByPid(): Promise<{ map: Map<number, string[]>; note?: string }> {
   try {
     const { stdout } = await exec("lsof", ["-nP", "-a", "-iTCP", "-sTCP:LISTEN"], {
       maxBuffer: 4 * 1024 * 1024,
       timeout: 8000,
     });
-    return core.parseLsofListen(String(stdout || ""));
-  } catch {
-    return new Map();
+    return { map: core.parseLsofListen(String(stdout || "")) };
+  } catch (e: any) {
+    if (e && e.code === "ENOENT") return { map: new Map(), note: "lsof not installed" };
+    if (e && (e.killed || e.signal === "SIGTERM")) return { map: new Map(), note: "lsof timed out (8s)" };
+    return { map: new Map(), note: "lsof failed: " + String((e && (e.message || e.code)) || e).slice(0, 80) };
   }
 }
 

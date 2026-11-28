@@ -21,28 +21,41 @@ let ticks = new Map<string, { utime: number; stime: number; ts: number }>();
 let firstTick = true;
 let lastScanTs = 0;
 
-// TCP LISTEN table (linux: Map<inode, "addr:port">; darwin/win32: Map<pid, string[]>).
-// Ports change rarely — a short TTL cache keeps the per-tick cost at zero and
-// bounds the lsof/netstat spawn to one call per 5s on non-Linux platforms.
-let listenCache: { ts: number; map: Map<any, any> } | null = null;
-const LISTEN_TTL_MS = 5000;
+// Non-Linux platforms collect LISTEN tables via one spawn (lsof/netstat).
+// Results — failures included — are cached, so repeated drawer opens never
+// re-spawn a failing tool more than once per TTL window.
+let implListen: { ts: number; map: Map<number, string[]>; note?: string } | null = null;
+const IMPL_LISTEN_TTL_OK = 5000;
+const IMPL_LISTEN_TTL_FAIL = 15000;
 
-async function listenData(): Promise<Map<any, any>> {
+async function implListenData(): Promise<{ map: Map<number, string[]>; note?: string }> {
   const now = Date.now();
-  if (listenCache && now - listenCache.ts < LISTEN_TTL_MS) return listenCache.map;
-  let map: Map<any, any>;
-  try {
-    map = platform === "linux" ? await linux.readListenTable() : await impl.listenByPid();
-  } catch {
-    map = new Map();
+  if (implListen && now - implListen.ts < (implListen.note ? IMPL_LISTEN_TTL_FAIL : IMPL_LISTEN_TTL_OK)) {
+    return implListen;
   }
-  listenCache = { ts: now, map };
-  return map;
+  try {
+    const r = await impl.listenByPid();
+    implListen = { ts: now, map: r.map, note: r.note };
+  } catch (e: any) {
+    // listenByPid never throws on the known platforms; belt-and-suspenders for
+    // unexpected shapes — report as a note instead of breaking the endpoint.
+    implListen = { ts: now, map: new Map(), note: "listen scan failed: " + String((e && (e.message || e)) || e).slice(0, 80) };
+  }
+  return implListen;
 }
 
-/** Cached listen table for one-off lookups (node detail endpoint). */
-export function currentListenData(): Map<any, any> {
-  return listenCache && listenCache.map.size ? listenCache.map : new Map();
+/**
+ * On-demand LISTEN lookup for one pid (detail drawer endpoint). Never runs in
+ * the sampling loop; never throws — callers get ports and/or a note.
+ */
+export async function listenFor(pid: number): Promise<{ ports: string[]; note?: string }> {
+  if (platform === "linux") {
+    const r = await linux.listenPortsFor(pid);
+    return { ports: r.ports, note: r.note };
+  }
+  const { map, note } = await implListenData();
+  const ports = map.get(pid);
+  return { ports: Array.isArray(ports) ? ports : [], note };
 }
 
 /** Clock ticks per second (Linux 100; other platforms unused). */
@@ -75,7 +88,6 @@ export async function sample(opts: {
   approxCpu: boolean;
 }> {
   const now = Date.now();
-  const listen = await listenData();
 
   if (platform === "linux") {
     let raw: Map<number, any>;
@@ -94,7 +106,7 @@ export async function sample(opts: {
     const readResults = await Promise.all(
       readIds.map(async (pid) => {
         const p = raw.get(pid)!;
-        const d: any = await linux.readDetail(pid, { withEnv: preview.seeds.has(pid), listenMap: listen });
+        const d: any = await linux.readDetail(pid, { withEnv: preview.seeds.has(pid) });
         const key = pid + ":" + p.starttime;
         const prev = ticks.get(key);
         const dt = lastScanTs ? now - lastScanTs : 0;
@@ -123,8 +135,6 @@ export async function sample(opts: {
     for (const pid of preview.visible) {
       const d = scanned.details.get(pid);
       if (!d) continue;
-      const ports = listen.get(pid);
-      if (Array.isArray(ports) && ports.length) d.ports = ports;
       details.set(pid, d);
     }
     const wasFirst = firstTick;
@@ -144,8 +154,6 @@ export async function sample(opts: {
     const p = scanned.raw.get(pid);
     const d: any = scanned.details.get(pid);
     if (!p || !d) continue;
-    const ports = listen.get(pid);
-    if (Array.isArray(ports) && ports.length) d.ports = ports;
     const key = pid + ":" + p.starttime;
     const prev = ticks.get(key);
     d.cpu = prev && dtW > 0 && dtW <= 60_000 ? core.cpuPercent(prev, p, dtW, WIN_HZ) : null;
@@ -165,7 +173,7 @@ export function reset(): void {
   ticks = new Map();
   firstTick = true;
   lastScanTs = 0;
-  listenCache = null;
+  implListen = null;
 }
 
 const TICKS_FILE = "sampler-ticks.json";
