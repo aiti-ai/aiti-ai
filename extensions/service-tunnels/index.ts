@@ -14,6 +14,7 @@
  */
 import { getServiceTunnels, maybeExposeSelf, initExposeInjectFile, restoreExposeInject } from "./server/integration.ts";
 import { mergeLibCatalog } from "./server/i18n.ts";
+import { identifyPort, tunnelSupportsTcp } from "service-tunnels";
 import { join } from "node:path";
 import { handleApi } from "./server/api.ts";
 import { serviceTunnelsMiddleware } from "./server/middleware.ts";
@@ -64,6 +65,39 @@ export default {
                 state: t.running ? "running" : "stopped",
               }));
             } catch { return []; }
+          },
+          /**
+           * Identity of one local listen port, for the process-tree drawer:
+           * tunnel-config alignment (name/type/protocol/url when a tunnel's
+           * local `target` is this port) + a loopback protocol probe
+           * (http/https/tcp, cached by the lib 5min/30s, ~900ms worst case,
+           * loopback-only, no-op under SERVICE_TUNNELS_NO_PORT_IDENTITY=1).
+           * Best-effort by contract: returns undefined when nothing is known.
+           */
+          portInfo: async (port: number): Promise<any> => {
+            const p = Number(port);
+            if (!Number.isFinite(p) || p <= 0) return undefined;
+            let tunnel: any;
+            try {
+              const cfg = st.tunnels.configs().find((c: any) => Number(c.target) === p);
+              if (cfg) {
+                const info = st.tunnels.list().find((t: any) => t.name === cfg.name);
+                tunnel = {
+                  name: String(cfg.name || ""),
+                  type: String(cfg.type || ""),
+                  protocol: String(cfg.protocol || (tunnelSupportsTcp(cfg.type) ? "tcp" : "http") || ""),
+                  url: info?.url || undefined,
+                  running: Boolean(info?.running),
+                };
+              }
+            } catch { /* registry unavailable */ }
+            let probe: any;
+            try {
+              const id = await identifyPort(p);
+              if (id) probe = { protocol: id.protocol, title: id.title, status: id.status, server: id.server };
+            } catch { /* probe is best-effort */ }
+            if (!tunnel && !probe) return undefined;
+            return { tunnel, probe };
           },
         });
       } catch { /* old host without services */ }

@@ -32,7 +32,9 @@ only for the visible set. Toggle `showUnknown` for a read-only stat-level list.
   demand (one `/listen/<pid>` request per drawer row, never in the sampling
   loop): Linux reads `/proc/net/tcp{,6}` + fd socket-inode matching (spawn-free),
   macOS `lsof`, Windows `netstat -ano` (async spawn, TTL-cached; missing tools
-  or timeouts degrade to a visible note, never a hang).
+  or timeouts degrade to a visible note, never a hang). When service-tunnels is
+  installed, each port also carries an identity tag: tunnel alignment (name /
+  type / protocol / url) plus a loopback probe (http/https/tcp + page title).
 - `✕` ends the process; `⋯` opens details. Terminal rows can open the matching
   aiti-cmd terminal (double-click), tunnel rows open the services panel.
 - Kill is guarded: same uid, protected pids (init, the extension host, the

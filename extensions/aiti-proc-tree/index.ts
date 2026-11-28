@@ -383,12 +383,43 @@ export default {
 
       // On-demand TCP LISTEN lookup for the detail drawer (never in the
       // sampling loop). Never throws; tool failures come back as a note.
+      // When service-tunnels is available, each port gains an identity tag:
+      // tunnel alignment (name/type/protocol/url) + a loopback protocol probe
+      // (http/https/tcp + page title) — see service-tunnels.procs.portInfo.
       if (action === "listen" && path[1] && method === "GET") {
         const pid = Number(path[1]);
         if (!Number.isFinite(pid) || pid <= 0) return json({ error: "bad pid" }, 400);
         try {
           const r = await sampler.listenFor(pid);
-          return json({ pid, ports: r.ports, note: r.note });
+          let enrich: ((port: number) => Promise<any>) | null = null;
+          try {
+            const svc = ctx?.services?.get?.("service-tunnels.procs");
+            if (svc && typeof svc.portInfo === "function") enrich = svc.portInfo.bind(svc);
+          } catch { /* service not materialized — plain port list */ }
+          const ports = await Promise.all(
+            (r.ports || []).map(async (entry: string) => {
+              const port = Number(core.portOf(entry)) || 0;
+              const item: any = { addr: entry, port };
+              if (enrich) {
+                try {
+                  const tag = await enrich(port);
+                  if (tag?.tunnel) {
+                    item.tunnel = tag.tunnel.name || undefined;
+                    item.tunnelType = tag.tunnel.type || undefined;
+                    item.tunnelProtocol = tag.tunnel.protocol || undefined;
+                    item.tunnelUrl = tag.tunnel.url || undefined;
+                  }
+                  if (tag?.probe) {
+                    item.protocol = tag.probe.protocol || undefined;
+                    item.title = tag.probe.title || undefined;
+                    item.server = tag.probe.server || undefined;
+                  }
+                } catch { /* tagging is best-effort */ }
+              }
+              return item;
+            }),
+          );
+          return json({ pid, ports, note: r.note });
         } catch (e: any) {
           return json({ pid, ports: [], note: "listen lookup failed: " + String((e && (e.message || e)) || e).slice(0, 80) });
         }
