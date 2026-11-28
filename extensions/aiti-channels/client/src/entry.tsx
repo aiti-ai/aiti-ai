@@ -10,6 +10,8 @@
  */
 import { __setCtx } from "./host-shim";
 import { CHANNELS_KEY, ChannelsPanelSlot, setupNavMediaQuery, openFromToolbar } from "./channels-app";
+import { openBotsNew } from "./bots";
+import { regSvc } from "./host-shim";
 
 export default function register(ctx: Record<string, unknown>) {
   // Must run before any JSX component renders (host-shim holds ctx at module level)
@@ -32,4 +34,11 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("dialogs", [
     { id: "aiti-channels-panel", render: ChannelsPanelSlot },
   ]);
+
+  // Cross-extension UI service (DI plan P2): lets other extensions (e.g.
+  // service-tunnels' phone card Bot Channels column) open this panel straight
+  // onto the bots tab, wizard preselected for the platform when given.
+  regSvc("aiti-channels.ui", {
+    openBots: (platform?: string) => openBotsNew(platform),
+  });
 }

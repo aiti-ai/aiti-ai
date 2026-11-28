@@ -64,6 +64,45 @@ type LocalSessionFactory = {
   ): Promise<{ session: WrapperLike; realSessionId: string }>;
 };
 
+/** Phase B: non-local backend sessions (ACP: claude-code etc.) through the
+ *  session-provider hosting layer. The seam is installed by pi-web's
+ *  rpc-manager (cross-realm globalThis, same pattern as the local factory). */
+type ChannelsBackendFactory = {
+  providers(): Array<{ type: string; label: string; available?: boolean }>;
+  create(opts: { providerType: string; cwd?: string; model?: { provider: string; id: string } }): Promise<unknown>;
+  get(id: string): Promise<unknown>;
+};
+
+function backendFactory(): ChannelsBackendFactory | null {
+  return ((globalThis as Record<string, unknown>).__piChannelsBackendFactory as ChannelsBackendFactory) ?? null;
+}
+
+/** Adapt an external-backend session handle (AcpHandle-shaped: prompt/subscribe/
+ *  abort/alive/isRunning/respondPermission/id) to the bridge's WrapperLike —
+ *  the AcpHandle's event contract (message_update/message_end/permission_request/
+ *  agent_settled) is exactly what attach() translates (reserved since v2). */
+function handleAsWrapper(handle: {
+  id: string;
+  subscribe(listener: (ev: Record<string, unknown>) => void): () => void;
+  prompt(text: string): Promise<void>;
+  abort(): Promise<void>;
+  alive(): boolean;
+  isRunning(): boolean;
+  respondPermission(requestId: string, decision: unknown): Promise<boolean>;
+}): WrapperLike {
+  return {
+    sessionId: handle.id,
+    onEvent: (l: Listener) => handle.subscribe(l as never),
+    send: async (command: Record<string, unknown>) => {
+      if (command.type === "prompt") await handle.prompt(String(command.message ?? ""));
+      else if (command.type === "abort") await handle.abort();
+    },
+    isAlive: () => handle.alive(),
+    isRunning: () => handle.isRunning(),
+    respondPermission: (requestId: string, decision: unknown) => handle.respondPermission(requestId, decision),
+  } as WrapperLike;
+}
+
 type Listener = (event: Record<string, unknown>) => void;
 
 /** AgentSessionWrapper 我们用到的面（结构化，不 import 宿主类型——扩展惯例） */
@@ -102,6 +141,7 @@ export type BridgedSessionInfo = {
   piSessionId: string;
   sessionFile: string;
   cwd: string;
+  backend?: string;
   createdAt: string;
 };
 
@@ -265,11 +305,32 @@ function attach(runtime: RuntimeSession, wrapper: WrapperLike) {
       if (delta) { runtime.emittedText = true; emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: delta } }); }
       return;
     }
-    // message_end fallback：本轮没经 delta 流式（reasoning 模型等）→ 发完整文本作单 chunk
+    // message_end fallback：本轮没经 delta 流式（reasoning 模型等）→ 发完整文本作单 chunk。
+    // 另：backend 会话（AcpHandle）的工具调用也经 message_end 进来（assistant.toolCall
+    // 块 / toolResult 消息）→ 映射为 ACP tool_call / tool_call_update 帧（IM 显示进度）。
     if (type === "message_end") {
       if (!runtime.emittedText) {
         const text = messageEndText(ev);
         if (text) { runtime.emittedText = true; emit({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } }); }
+      }
+      // backend tool-call blocks → ACP tool_call frames
+      const msg = ev.message as { role?: string; content?: Array<Record<string, unknown>> } | undefined;
+      for (const block of (msg?.content || []) as Array<Record<string, unknown>>) {
+        if (block.type !== "toolCall") continue;
+        const toolCallId = String(block.toolCallId ?? "");
+        const toolName = String(block.toolName ?? "tool");
+        const rawInput = block.input as Record<string, unknown> | undefined;
+        const inputText = rawInput ? JSON.stringify(rawInput).slice(0, 400) : "";
+        emit({ sessionUpdate: "tool_call", toolCallId, title: toolName, kind: KIND_MAP.find(([re]) => re.test(toolName))?.[1] || "other", content: { type: "content", content: [{ type: "text", text: inputText }] } });
+      }
+      const role = (msg?.role || "").toLowerCase();
+      if (role === "toolresult") {
+        const toolCallId = String((msg as Record<string, unknown>).toolCallId ?? "");
+        if (toolCallId) {
+          const isError = !!(msg as Record<string, unknown>).isError;
+          const outText = ((msg?.content || []) as Array<{ text?: string }>).map((c) => c.text || "").join("").slice(0, 2000);
+          emit({ sessionUpdate: "tool_call_update", toolCallId, status: isError ? "failed" : "completed", content: { type: "content", content: [{ type: "text", text: outText.slice(0, 600) }] } });
+        }
       }
       return;
     }
@@ -352,11 +413,55 @@ export function getRuntime(acpSessionId: string): RuntimeSession | undefined {
 }
 
 /** session/new：新建 pi-web 会话（cwd 必须存在） */
-export async function createSession(cwd: string): Promise<RuntimeSession> {
+export async function createSession(
+  cwd: string,
+  sessionOpts?: {
+    initialModel?: { provider: string; modelId: string };
+    thinkingLevel?: string;
+    /** non-local backend (session-provider type, e.g. "aiti-acp-agent/claude-code") */
+    backend?: string;
+  },
+): Promise<RuntimeSession> {
   if (!cwd || !fs.existsSync(cwd)) throw new Error(`cwd 不存在：${cwd}`);
+  // ── Phase B: non-local backend → session-provider hosting layer ──
+  const bf = backendFactory();
+  if (sessionOpts?.backend && bf) {
+    const handle = (await bf.create({
+      providerType: sessionOpts.backend,
+      cwd,
+      model: sessionOpts.initialModel ? { provider: sessionOpts.initialModel.provider, id: sessionOpts.initialModel.modelId } : undefined,
+    })) as Parameters<typeof handleAsWrapper>[0];
+    const wrapper = handleAsWrapper(handle);
+    const info: BridgedSessionInfo = {
+      acpSessionId: randomUUID(),
+      piSessionId: handle.id,
+      sessionFile: "",
+      cwd,
+      createdAt: new Date().toISOString(),
+      backend: sessionOpts.backend,
+    };
+    const runtime: RuntimeSession = { info, wrapper, unsubscribe: null, emit: null, permissionAsk: null, settle: null, aborted: false, emittedText: false };
+    attach(runtime, wrapper);
+    rt().sessions.set(info.acpSessionId, runtime);
+    writeRegistry([...readRegistry().filter((x) => x.acpSessionId !== info.acpSessionId), info]);
+    console.log(`[aiti-channels][acp] backend session (cwd=${cwd.slice(0, 40)}): backend=${sessionOpts.backend} id=${handle.id.slice(0, 12)}`);
+    return runtime;
+  }
   const f = factory();
   const tempKey = `__acp__${randomUUID()}`;
-  const { session: wrapper } = await f.start(tempKey, "", cwd, {});
+  // per-cwd model preference (wizard model picker defaults) → startRpcSession
+  // options; allowInitialModelFallback so a retired model never blocks creation
+  const startOpts: { initialModel?: { provider: string; modelId: string }; thinkingLevel?: string; allowInitialModelFallback?: boolean } = {};
+  const model = sessionOpts?.initialModel;
+  if (model) {
+    startOpts.initialModel = model;
+    startOpts.allowInitialModelFallback = true;
+  }
+  if (sessionOpts?.thinkingLevel) startOpts.thinkingLevel = sessionOpts.thinkingLevel;
+  if (Object.keys(startOpts).length) {
+    console.log(`[aiti-channels][acp] session model options applied (cwd=${cwd.slice(0, 40)}): ${JSON.stringify(startOpts)}`);
+  }
+  const { session: wrapper } = await f.start(tempKey, "", cwd, startOpts);
   const sessionFile = wrapper?.inner?.sessionManager?.getSessionFile?.() ?? "";
   const info: BridgedSessionInfo = {
     acpSessionId: randomUUID(),
@@ -378,6 +483,18 @@ export async function reattach(acpSessionId: string): Promise<RuntimeSession> {
   if (existing && existing.wrapper?.isAlive()) return existing;
   const info = readRegistry().find((x) => x.acpSessionId === acpSessionId);
   if (!info) throw new Error(`unknown session: ${acpSessionId}`);
+  // backend-mode session: reattach through the hosting layer's handle store
+  if (info.backend) {
+    const bf = backendFactory();
+    if (!bf) throw new Error("backend factory not installed (pi-web restart needed)");
+    const handle = (await bf.get(info.piSessionId)) as Parameters<typeof handleAsWrapper>[0] | null;
+    if (!handle || !handle.alive()) throw new Error(`backend session gone: ${info.piSessionId}`);
+    const wrapper = handleAsWrapper(handle);
+    const runtime: RuntimeSession = { info, wrapper, unsubscribe: null, emit: null, permissionAsk: null, settle: null, aborted: false, emittedText: false };
+    attach(runtime, wrapper);
+    rt().sessions.set(info.acpSessionId, runtime);
+    return runtime;
+  }
   // 用真实 piSessionId 作 registry key：UI 已打开同一会话时直接复用其 wrapper
   const f = factory();
   const { session: wrapper } = await f.start(info.piSessionId, info.sessionFile, undefined, {});

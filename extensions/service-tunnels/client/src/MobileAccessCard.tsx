@@ -16,6 +16,7 @@ import { qrDataUrl, downloadQrPng } from "./qr";
 import { FaceCaptureModal } from "./face-capture";
 import { MOBILE_KEY, REMEMBER_KEY, tierParams, confirmNeeded, pickCandidate, pickTunnelTool, resolveReadyUrl, upgradeToPageProto, faceSelectable, schemeKey, appendQuery, launchUrlSafe, exposeToUrls, loadSourceMemory, saveSourceMemory, pageReachability, type Source, type MobileLaunch, type Reco, type RecoCandidate } from "./mobile-logic";
 import { NoAuthBadge } from "./dialog/shared";
+import { BotChannelsColumn } from "./bot-channels";
 
 // ---------------------------------------------------------------------------
 // 组件
@@ -94,6 +95,16 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
   const [toast, setToast] = useState("");
   const recoRef = useRef<Reco | null>(null);
   const aliveRef = useRef(true);
+  // Bot Channels column: shown only when aiti-channels responds (graceful
+  // absence → the card stays the original 400px single column)
+  const [botsAvail, setBotsAvail] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch(apiUrl("/api/extensions/aiti-channels/bots"), { cache: "no-store", signal: AbortSignal.timeout(6000) })
+      .then((r) => { if (alive) setBotsAvail(r.ok); })
+      .catch(() => { if (alive) setBotsAvail(false); });
+    return () => { alive = false; };
+  }, []);
 
   // —— QR source switch (sources-and-service plan §3.1, v3: entry/page/ports) ——
   // link only appears when launched with {url}; a bare open applies memory
@@ -353,11 +364,11 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
       <div
         data-ext-float="1"
         data-ext-float-key={MOBILE_KEY}
-        data-ext-float-w={400}
+        data-ext-float-w={740}
         data-ext-float-autoh="1"
         data-ext-float-full="1"
         style={{
-          width: 400, maxWidth: "calc(100vw - 16px)", maxHeight: "min(86vh, 780px)", overflow: "auto",
+          width: 740, maxWidth: "calc(100vw - 16px)", maxHeight: "min(86vh, 780px)", overflow: "auto",
           background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10,
           boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
         }}
@@ -371,7 +382,8 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
           <button type="button" onClick={onClose} aria-label="close" style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>✕</button>
         </div>
 
-        <div style={{ padding: "12px 14px 14px", fontSize: 12, color: "var(--text)" }}>
+        <div style={{ display: "flex", alignItems: "stretch" }}>
+          <div style={{ flex: 1, minWidth: 0, padding: "12px 14px 14px", fontSize: 12, color: "var(--text)" }}>
           {/* QR source switch (§3.1 v3): service entry / current page / exposed */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             {(["entry", "page", "ports"] as Source[]).map((s) => (
@@ -626,6 +638,12 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
               <div style={{ fontWeight: 600, textAlign: "center" }}>{launch?.title || t("mobile.linkTitle")}</div>
               <ReadyQr url={safeLaunchUrl} hint={t("mobile.qrHint")} t={t} />
+            </div>
+          )}
+          </div>
+          {botsAvail && (
+            <div style={{ width: 268, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: "12px 12px 14px", background: "var(--bg-elevated, rgba(127,127,127,0.04))", display: "flex", flexDirection: "column" }}>
+              <BotChannelsColumn />
             </div>
           )}
         </div>

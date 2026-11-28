@@ -47,6 +47,60 @@ function dataDir(): string {
   return _dataDir || path.join(homedir(), ".pi", "web", "data", "aiti-channels", "cache");
 }
 
+/** Per-cwd session model/thinking preferences (same defaults as the wizard model picker).
+ *  state-layer file (user intent — survives cache clears); index.ts injects the
+ *  real stateDir path via setPrefsPath() at load. Read failures degrade silently
+ *  to the pi-web default model. */
+let _prefsPath = "";
+export function setPrefsPath(p: string) { _prefsPath = p || ""; }
+export type SessionModelPref = { backend?: string; provider: string; modelId: string; thinkingLevel?: string };
+export function writeSessionModelPref(entry: { cwd: string; backend?: string; provider: string; modelId: string; thinkingLevel?: string }): void {
+  if (!_prefsPath || !entry.cwd) throw new Error("prefs path not configured");
+  let map: Array<Record<string, unknown>> = [];
+  try { map = JSON.parse(fs.readFileSync(_prefsPath, "utf8")); } catch { /* fresh */ }
+  if (!Array.isArray(map)) map = [];
+  map = map.filter((e) => e?.cwd !== entry.cwd);
+  map.push({
+    cwd: entry.cwd,
+    ...(entry.backend ? { backend: entry.backend } : {}),
+    provider: entry.provider,
+    modelId: entry.modelId,
+    ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}),
+    updatedAt: new Date().toISOString(),
+  });
+  fs.mkdirSync(path.dirname(_prefsPath), { recursive: true });
+  fs.writeFileSync(_prefsPath, JSON.stringify(map, null, 2));
+}
+
+export function clearSessionModelPref(cwd: string): void {
+  if (!_prefsPath || !cwd) return;
+  let map: Array<Record<string, unknown>> = [];
+  try { map = JSON.parse(fs.readFileSync(_prefsPath, "utf8")); } catch { return; }
+  if (!Array.isArray(map)) return;
+  const next = map.filter((e) => e?.cwd !== cwd);
+  if (next.length !== map.length) {
+    fs.mkdirSync(path.dirname(_prefsPath), { recursive: true });
+    fs.writeFileSync(_prefsPath, JSON.stringify(next, null, 2));
+  }
+}
+
+export function readSessionModelPref(cwd: string): SessionModelPref | null {
+  if (!_prefsPath || !cwd) return null;
+  try {
+    const map = JSON.parse(fs.readFileSync(_prefsPath, "utf8"));
+    const pref = (Array.isArray(map) ? map : []).find((e: { cwd?: string }) => e?.cwd === cwd);
+    if (pref && pref.provider && pref.modelId) {
+      return {
+        ...(pref.backend ? { backend: String(pref.backend) } : {}),
+        provider: String(pref.provider),
+        modelId: String(pref.modelId),
+        thinkingLevel: pref.thinkingLevel ? String(pref.thinkingLevel) : undefined,
+      };
+    }
+  } catch { /* missing/corrupt → no pref */ }
+  return null;
+}
+
 /** 连接器稳定路径：部署后固定在 prod 扩展目录（config.toml cmd 用；cc-connect 与 dev/prod 共享） */
 export function connectorBin(): string {
   return path.join(homedir(), ".pi", "web", "extensions", "aiti-channels", "bin", "aiti-acp-connector.mjs");
@@ -283,7 +337,16 @@ class AcpConnection {
         }
         case "session/new": {
           const cwd = String(p.cwd || "");
-          const runtime = await bridge.createSession(cwd);
+          // per-cwd model/backend preference (wizard picker, state file) → session options
+          const runtime = await bridge.createSession(cwd, (() => {
+            const pref = readSessionModelPref(cwd);
+            if (!pref) return undefined;
+            return {
+              ...(pref.backend ? { backend: pref.backend } : {}),
+              initialModel: { provider: pref.provider, modelId: pref.modelId },
+              thinkingLevel: pref.thinkingLevel,
+            };
+          })());
           console.log(`[aiti-channels][acp] session/new ${this.instanceId}: acp=${runtime.info.acpSessionId.slice(0, 8)} pi=${runtime.info.piSessionId.slice(0, 12)} cwd=${cwd}`);
           this.respond(id, { sessionId: runtime.info.acpSessionId });
           break;

@@ -1,45 +1,46 @@
 /**
- * ext-session-usage —— 外部 agent 会话 → token 用量行 的共享纯函数解析层。
+ * ext-session-usage — shared pure-function parsing layer: external agent sessions → token usage rows.
  *
- * 权威源：pi-web-ext/_shared/ext-session-usage.ts（改动后同步到各扩展副本——按
- * cursor-cli-store.ts 先例：_shared 为唯一权威，aiti-ai-usage / session-manager
- * 各留副本或直接引用）。
+ * Authoritative source: pi-web-ext/_shared/ext-session-usage.ts (after changes, sync to the per-extension
+ * copies — following the cursor-cli-store.ts precedent: _shared is the sole authority; aiti-ai-usage /
+ * session-manager keep copies or reference it directly).
  *
- * 覆盖源（P0，wire 形状均本机 2026-09 实测钉死，见 docs/aiti-ai-usage-ext-agent-token-ingest-plan.md §2.2）：
+ * Covered sources (P0; wire shapes all pinned by local measurement 2026-09, see
+ * docs/aiti-ai-usage-ext-agent-token-ingest-plan.md §2.2):
  *   - claude   Claude Code      ~/.claude/projects/<cwd>/<sid>.jsonl
  *                               message.usage.{input_tokens, output_tokens,
  *                                 cache_creation_input_tokens, cache_read_input_tokens} + message.model
- *   - qodercn  QoderCN          ~/.qoder-cn/projects/<cwd>/<sid>.jsonl（CC 同构 fork，1.1.44 逐键一致）
- *                               message.model + message.usage.credits（Qoder 自有积分单位、非金额）；
- *                               token 恒 0（Qoder 不落盘计费 token）
+ *   - qodercn  QoderCN          ~/.qoder-cn/projects/<cwd>/<sid>.jsonl (CC-isomorphic fork, key-identical at 1.1.44)
+ *                               message.model + message.usage.credits (Qoder's own credit unit, not money);
+ *                               tokens always 0 (Qoder does not persist billing tokens)
  *   - codebuddy CodeBuddy Code  ~/.codebuddy/projects/<cwd>/<sid>.jsonl
  *                               providerData.rawUsage.{prompt_tokens, completion_tokens, total_tokens,
  *                                 cache_read_input_tokens, cache_creation_input_tokens,
  *                                 completion_tokens_details.reasoning_tokens} + providerData.model
- *   - zcode    ZCode            ~/.zcode/cli/db/db.sqlite（readOnly 直读，禁整库复制——2026-09-12 拷贝风暴教训）
+ *   - zcode    ZCode            ~/.zcode/cli/db/db.sqlite (readOnly direct read; never copy the whole db — lesson of the 2026-09-12 copy storm)
  *                               message.data JSON: tokens{total,input,output,reasoning,cache{read,write}}
  *                                 + modelID + providerID + cost
  *
- * P1 model-only 三源（token/成本恒 0——源不落盘计费数据；会话级 model/provider 归因，报表按
- * totalTokens=0 标注「token 无数据」）：
- *   - codex    Codex CLI        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl 的 turn_context/message.model
- *   - opencode OpenCode         ~/.local/share/opencode/storage/message/<sid>/msg_*.json 的 modelID/providerID
- *   - cursor   Cursor CLI       ~/.cursor/ai-tracking/ai-code-tracking.db ai_code_hashes.model（最新一条）
+ * P1 model-only three sources (tokens/cost always 0 — the source persists no billing data; session-level
+ * model/provider attribution; reports mark "no token data" on totalTokens=0):
+ *   - codex    Codex CLI        turn_context/message.model of ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+ *   - opencode OpenCode         modelID/providerID of ~/.local/share/opencode/storage/message/<sid>/msg_*.json
+ *   - cursor   Cursor CLI       ~/.cursor/ai-tracking/ai-code-tracking.db ai_code_hashes.model (newest row)
  *
- * 噪音过滤（防零数据源污染报表）：
- *   - Qoder 0.1.24 国际版 usage 恒 0 且无 model/credits → 不产出行（官方不写 token/model）；
- *   - ZCode timeline_event 类消息 tokens 恒 0 且 cost 0 → 不产出行。
+ * Noise filtering (keeps zero-data sources from polluting reports):
+ *   - Qoder 0.1.24 international edition: usage always 0 with no model/credits → no row produced (officially writes no token/model);
+ *   - ZCode timeline_event-class messages: tokens always 0 and cost 0 → no row produced.
  *
- * 格式回归测试：pi-web-ext/_shared/ext-session-usage.test.mjs（fixture 钉死 wire 假设）。
+ * Format regression test: pi-web-ext/_shared/ext-session-usage.test.mjs (fixtures pin the wire assumptions).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-// ---------------------------------------------------------------- 类型
+// ---------------------------------------------------------------- Types
 
-/** 统一用量行（agent 维度归因；credits 为 Qoder 系独立积分，非金额）。 */
+/** Unified usage row (agent-dimension attribution; credits is the Qoder family's independent credit unit, not money). */
 export interface ExtUsageRow {
   agent: string;
   sid: string;
@@ -56,7 +57,7 @@ export interface ExtUsageRow {
   credits: number;
 }
 
-/** 会话引用：path 为物理文件或 "db#session:<id>" 虚拟路径；rev = 源侧版本（time_updated ms）。 */
+/** Session reference: path is a physical file or the virtual "db#session:<id>" path; rev = source-side version (time_updated ms). */
 export interface ExtSessionRef {
   agent: string;
   sid: string;
@@ -67,15 +68,15 @@ export interface ExtSessionRef {
 export interface ExtUsageSource {
   id: string;
   label: string;
-  /** roots 任一存在 → 源已安装。 */
+  /** any root existing → source installed. */
   probe(): boolean;
-  /** 枚举会话（zcode db 短暂不可读时允许抛错，调用方 catch 静默跳过本轮）。 */
+  /** enumerates sessions (may throw while the zcode db is briefly unreadable; the caller catches and silently skips the round). */
   list(): ExtSessionRef[];
-  /** 解析一个会话 → 用量行（空数组 = 无可摄入数据）。 */
+  /** parses one session → usage rows (empty array = nothing ingestible). */
   parse(ref: ExtSessionRef): ExtUsageRow[];
 }
 
-// ---------------------------------------------------------------- 工具
+// ---------------------------------------------------------------- Utilities
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -98,17 +99,17 @@ function listProjectJsonls(root: string): Array<{ sid: string; path: string }> {
   return out;
 }
 
-/** provider 归一（无显式 providerID 的源按 agent 身份 + 模型名前缀推断）。 */
+/** provider normalization (sources without an explicit providerID are inferred from agent identity + model-name prefix). */
 export function inferProvider(agent: string, model: string): string {
   const m = (model || "").toLowerCase();
   if (m.startsWith("glm")) return "zhipu";
   if (m.startsWith("qmodel")) return "qoder";
   if (m.startsWith("claude")) return "anthropic";
-  if (m.includes("/")) return m.split("/")[0]!.trim() || agent; // codex 的 nvidia/xxx
+  if (m.includes("/")) return m.split("/")[0]!.trim() || agent; // codex's nvidia/xxx
   return agent;
 }
 
-// ---------------------------------------------------------------- claude-like 家族（claude / qodercn）
+// ---------------------------------------------------------------- claude-like family (claude / qodercn)
 
 function numUsage(u: Record<string, unknown>): { input: number; output: number; cacheRead: number; cacheWrite: number; credits: number } {
   return {
@@ -120,8 +121,8 @@ function numUsage(u: Record<string, unknown>): { input: number; output: number; 
   };
 }
 
-/** CC / QoderCN / Qoder 同构 jsonl → 用量行。
- *  噪音过滤：usage 存在但全部字段 0 且无 model 且无 credits 的行（Qoder 0.1.24 空计费）不产出。 */
+/** CC / QoderCN / Qoder isomorphic jsonl → usage rows.
+ *  Noise filter: rows whose usage exists but is all-zero with no model and no credits (Qoder 0.1.24 empty billing) produce nothing. */
 export function parseClaudeLikeSession(agent: string, filePath: string, sid: string): ExtUsageRow[] {
   let raw: string;
   try { raw = readFileSync(filePath, "utf8"); } catch { return []; }
@@ -136,8 +137,8 @@ export function parseClaudeLikeSession(agent: string, filePath: string, sid: str
     if (!u || typeof u !== "object") continue;
     const { input, output, cacheRead, cacheWrite, credits } = numUsage(u);
     const model = typeof m.model === "string" ? m.model : "";
-    if (model === "<synthetic>") continue; // aiti e2e 测试占位模型，非真实使用
-    if (!input && !output && !cacheRead && !cacheWrite && !credits && !model) continue; // 空计费噪音
+    if (model === "<synthetic>") continue; // aiti e2e test placeholder model, not real usage
+    if (!input && !output && !cacheRead && !cacheWrite && !credits && !model) continue; // empty-billing noise
     const ts = Date.parse(String(e.timestamp ?? ""));
     if (!Number.isFinite(ts) || ts <= 0) continue;
     rows.push({
@@ -146,7 +147,7 @@ export function parseClaudeLikeSession(agent: string, filePath: string, sid: str
       model: model || "?",
       input, output, cacheRead, cacheWrite,
       reasoning: 0,
-      totalTokens: input + output, // CC 的 total 不含 cache；cache 单独列展示
+      totalTokens: input + output, // CC's total excludes cache; cache shown as its own column
       costTotal: 0,
       credits,
     });
@@ -154,9 +155,9 @@ export function parseClaudeLikeSession(agent: string, filePath: string, sid: str
   return rows;
 }
 
-// ---------------------------------------------------------------- CodeBuddy Code（腾讯 cbc）
+// ---------------------------------------------------------------- CodeBuddy Code (Tencent cbc)
 
-/** cbc jsonl → 用量行（token 在 providerData.rawUsage，OpenAI 兼容字段名）。 */
+/** cbc jsonl → usage rows (tokens live in providerData.rawUsage, OpenAI-compatible field names). */
 export function parseCodebuddySession(filePath: string, sid: string): ExtUsageRow[] {
   let raw: string;
   try { raw = readFileSync(filePath, "utf8"); } catch { return []; }
@@ -176,7 +177,7 @@ export function parseCodebuddySession(filePath: string, sid: string): ExtUsageRo
     const reasoning = num(ru.completion_tokens_details?.reasoning_tokens);
     const model = typeof pd.model === "string" && pd.model ? pd.model
       : typeof pd.requestModelId === "string" ? pd.requestModelId : "";
-    // cbc timestamp 是数字 epoch 毫秒
+    // cbc timestamp is a numeric epoch in milliseconds
     const ts = num(e.timestamp);
     if (!ts) continue;
     rows.push({
@@ -186,31 +187,31 @@ export function parseCodebuddySession(filePath: string, sid: string): ExtUsageRo
       model: model || "?",
       input, output, cacheRead, cacheWrite, reasoning,
       totalTokens: num(ru.total_tokens) || (input + output),
-      costTotal: 0, // cbc 的 rawUsage.credit 是账号余额语义，非本轮单价 × token
+      costTotal: 0, // cbc's rawUsage.credit is account-balance semantics, not this turn's unit price × tokens
       credits: 0,
     });
   }
   return rows;
 }
 
-// ---------------------------------------------------------------- ZCode（智谱，SQLite 直读）
+// ---------------------------------------------------------------- ZCode (Zhipu, SQLite direct read)
 
 function openZcodeDb(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true });
-    try { db.exec("PRAGMA busy_timeout = 2000"); } catch { /* pragma 不支持时忽略 */ }
+    try { db.exec("PRAGMA busy_timeout = 2000"); } catch { /* ignored when pragma unsupported */ }
     return db;
   } catch {
     return null;
   }
 }
 
-/** zcode message.data JSON → 用量行（禁整库复制，readOnly 直读）。
- *  ⚠ tokens 语义（2026-09 本机实测钉死）：`input`/`cache.read` 是**会话级累积值**
- *  （逐条单调递增，含历史 context），`output` 是单轮值，`reasoning` 单轮。
- *  摄入必须按会话内顺序对 input/cacheRead 做差分（当前 − 上一条 = 本轮增量），
- *  output/reasoning 直取；total = input增 + output（cache 单独列，不并入 total 防双计）。 */
+/** zcode message.data JSON → usage rows (whole-db copy forbidden; readOnly direct read).
+ *  ⚠ token semantics (pinned by local measurement 2026-09): `input`/`cache.read` are **session-level cumulative values**
+ *  (monotonically increasing per row, including historical context), `output` is per-turn, `reasoning` per-turn.
+ *  Ingestion must diff input/cacheRead in in-session order (current − previous = this turn's increment);
+ *  output/reasoning are taken as-is; total = input increment + output (cache stays in its own column, kept out of total to avoid double counting). */
 export function parseZcodeSession(dbPath: string, sid: string): ExtUsageRow[] {
   const db = openZcodeDb(dbPath);
   if (!db) return [];
@@ -231,14 +232,14 @@ export function parseZcodeSession(dbPath: string, sid: string): ExtUsageRow[] {
       const cacheRead = num(t.cache?.read), cacheWrite = num(t.cache?.write);
       const cost = num(d.cost);
       const rawInput = num(t.input);
-      // 差分：input/cacheRead 为会话累积（窗口重置时当前 < 上一条 → 取当前）
+      // diff: input/cacheRead are session-cumulative (on window reset current < previous → take current)
       const input = rawInput >= prevInput ? rawInput - prevInput : rawInput;
       const cacheReadInc = cacheRead >= prevCacheRead ? cacheRead - prevCacheRead : cacheRead;
       if (rawInput > 0) prevInput = rawInput;
       if (cacheRead > 0) prevCacheRead = cacheRead;
-      if (!input && !output && !reasoning && !cacheReadInc && !cacheWrite && !cost) continue; // timeline_event 噪音
-      // 3.16.3 起新版只写 modelId/providerId（旧版双写 modelID/providerID 两种键）——双键兼容；
-      // provider 归一与 session-manager zcode adapter 对齐（builtin:/account: 前缀、-coding-plan/-start-plan 后缀）
+      if (!input && !output && !reasoning && !cacheReadInc && !cacheWrite && !cost) continue; // timeline_event noise
+      // from 3.16.3 the new build writes only modelId/providerId (older builds wrote both modelID/providerID keys) — both keys supported;
+      // provider normalization aligns with the session-manager zcode adapter (builtin:/account: prefixes, -coding-plan/-start-plan suffixes)
       const model = typeof d.modelId === "string" ? d.modelId : typeof d.modelID === "string" ? d.modelID : "";
       const rawProvider = typeof d.providerId === "string" ? d.providerId : typeof d.providerID === "string" ? d.providerID : "";
       const provider = rawProvider.replace(/^(?:builtin|account):/, "").replace(/-(?:coding|start)-plan$/, "") || "zcode";
@@ -251,7 +252,7 @@ export function parseZcodeSession(dbPath: string, sid: string): ExtUsageRow[] {
         model: model || "?",
         input, output, cacheRead: cacheReadInc, cacheWrite, reasoning,
         totalTokens: num(t.total) > 0
-          // 官方 total 也是累积：差分 same 方式（无上一条 total 时取 total 本身）
+          // the official total is cumulative too: diffed the same way (when no previous total exists, take the total itself)
           ? (prevTotal !== null && num(t.total) >= prevTotal ? num(t.total) - prevTotal : num(t.total))
           : (input + output + reasoning + cacheReadInc + cacheWrite),
         costTotal: cost,
@@ -265,22 +266,22 @@ export function parseZcodeSession(dbPath: string, sid: string): ExtUsageRow[] {
   }
 }
 
-// ---------------------------------------------------------------- 源工厂
+// ---------------------------------------------------------------- Source factory
 
-/** 枚举 ~/.claude 或 ~/.qoder-cn 的 projects（claude-like 结构）。 */
+/** Enumerates ~/.claude or ~/.qoder-cn projects (claude-like structure). */
 function listClaudeLikeProjects(projectsRoot: string, agent: string): ExtSessionRef[] {
   return listProjectJsonls(projectsRoot).map(({ sid, path }) => ({ agent, sid, path }));
 }
 
-/** 枚举 ~/.codebuddy/projects。 */
+/** Enumerates ~/.codebuddy/projects. */
 function listCodebuddyProjects(projectsRoot: string): ExtSessionRef[] {
   return listProjectJsonls(projectsRoot).map(({ sid, path }) => ({ agent: "codebuddy", sid, path }));
 }
 
-// ---------------------------------------------------------------- P1 model-only 家族（codex / opencode / cursor）
+// ---------------------------------------------------------------- P1 model-only family (codex / opencode / cursor)
 
-/** model-only 行骨架：token/成本全 0（源不落盘计费数据）——会话级 model/provider 归因用；
- *  报表层按 totalTokens=0 标注「token 无数据」，不进 token 汇总口径。 */
+/** model-only row skeleton: tokens/cost all 0 (the source persists no billing data) — for session-level model/provider attribution;
+ *  the report layer marks "no token data" on totalTokens=0 and keeps it out of token totals. */
 function modelOnlyRow(agent: string, sid: string, ts: number, model: string, provider?: string): ExtUsageRow {
   return {
     agent, sid, ts,
@@ -291,7 +292,7 @@ function modelOnlyRow(agent: string, sid: string, ts: number, model: string, pro
   };
 }
 
-/** Codex：~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl —— turn_context/message 行的 model 字段（首个即启动模型）。 */
+/** Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl — the model field of turn_context/message rows (the first is the launch model). */
 export function parseCodexModelOnly(filePath: string, sid: string): ExtUsageRow[] {
   let model = "";
   let ts = 0;
@@ -306,7 +307,7 @@ export function parseCodexModelOnly(filePath: string, sid: string): ExtUsageRow[
           if (typeof d.timestamp === "string") ts = Date.parse(d.timestamp) || ts;
           break;
         }
-      } catch { /* 跳坏行 */ }
+      } catch { /* skip bad line */ }
     }
     if (!ts) ts = statSync(filePath).mtimeMs;
   } catch { return []; }
@@ -332,14 +333,14 @@ function listCodexSessions(root: string): ExtSessionRef[] {
   return out;
 }
 
-/** OpenCode：storage/session/<proj>/ses_*.json（元数据）+ storage/message/<proj>/msg_*.json（modelID/providerID）。 */
+/** OpenCode: storage/session/<proj>/ses_*.json (metadata) + storage/message/<proj>/msg_*.json (modelID/providerID). */
 export function parseOpencodeModelOnly(root: string, sessionJsonPath: string, sid: string): ExtUsageRow[] {
   try {
     const sess = JSON.parse(readFileSync(sessionJsonPath, "utf8")) as {
       projectID?: unknown; time?: { updated?: unknown; created?: unknown };
     };
     void sess;
-    const msgDir = join(root, "storage", "message", sid); // 实测：message 按会话分目录（storage/message/<sid>/msg_*.json）
+    const msgDir = join(root, "storage", "message", sid); // measured: message directories are per session (storage/message/<sid>/msg_*.json)
     if (!existsSync(msgDir)) return [];
     let best: { ts: number; modelID: string; providerID: string } | null = null;
     for (const name of readdirSync(msgDir)) {
@@ -377,7 +378,7 @@ function listOpencodeSessions(root: string): ExtSessionRef[] {
   return out;
 }
 
-/** Cursor CLI：~/.cursor/ai-tracking/ai-code-tracking.db（readOnly 直读）——ai_code_hashes.model 按会话最新一条。 */
+/** Cursor CLI: ~/.cursor/ai-tracking/ai-code-tracking.db (readOnly direct read) — ai_code_hashes.model, newest row per session. */
 function openCursorDb(dbPath: string): DatabaseSync | null {
   if (!existsSync(dbPath)) return null;
   try {
@@ -411,14 +412,14 @@ function listCursorSessions(dbPath: string): ExtSessionRef[] {
 }
 
 export interface ExtUsageSourceEnv {
-  /** 测试隔离口：覆盖各源默认根目录（对齐 AITI_ZCODE_HOME 先例）。 */
-  claudeHome?: string;          // 默认 ~/.claude
-  qodercnHome?: string;         // 默认 ~/.qoder-cn
-  codebuddyHome?: string;       // 默认 ~/.codebuddy
-  zcodeHome?: string;           // 默认 ~/.zcode
-  codexHome?: string;           // 默认 ~/.codex（A11 P1 model-only）
-  opencodeHome?: string;        // 默认 ~/.local/share/opencode
-  cursorHome?: string;          // 默认 ~/.cursor
+  /** Test isolation hook: overrides each source's default root (aligned with the AITI_ZCODE_HOME precedent). */
+  claudeHome?: string;          // default ~/.claude
+  qodercnHome?: string;         // default ~/.qoder-cn
+  codebuddyHome?: string;       // default ~/.codebuddy
+  zcodeHome?: string;           // default ~/.zcode
+  codexHome?: string;           // default ~/.codex (A11 P1 model-only)
+  opencodeHome?: string;        // default ~/.local/share/opencode
+  cursorHome?: string;          // default ~/.cursor
 }
 
 export function builtinExtUsageSources(env: ExtUsageSourceEnv = {}): ExtUsageSource[] {
@@ -478,24 +479,24 @@ export function builtinExtUsageSources(env: ExtUsageSourceEnv = {}): ExtUsageSou
         return parseZcodeSession(dbPath || zcodeDbPath(), ref.sid);
       },
     },
-    // ── P1 model-only 三源（token 恒 0：源不落盘计费数据；会话级 model/provider 归因）──
+    // ── P1 model-only three sources (tokens always 0: the source persists no billing data; session-level model/provider attribution) ──
     {
       id: "codex",
-      label: "Codex CLI（model-only）",
+      label: "Codex CLI (model-only)",
       probe: () => existsSync(codexRoot()),
       list: () => listCodexSessions(codexRoot()),
       parse: (ref) => parseCodexModelOnly(ref.path, ref.sid),
     },
     {
       id: "opencode",
-      label: "OpenCode（model-only）",
+      label: "OpenCode (model-only)",
       probe: () => existsSync(opencodeRoot()),
       list: () => listOpencodeSessions(opencodeRoot()),
       parse: (ref) => parseOpencodeModelOnly(opencodeRoot(), ref.path, ref.sid),
     },
     {
       id: "cursor",
-      label: "Cursor CLI（model-only）",
+      label: "Cursor CLI (model-only)",
       probe: () => existsSync(cursorDbPath()),
       list: () => listCursorSessions(cursorDbPath()),
       parse: (ref) => {

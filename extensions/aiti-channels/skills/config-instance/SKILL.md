@@ -4,7 +4,7 @@ title: AI 帮我配置 cc-connect 实例 / 项目 / 平台
 title.en: "AI: configure a cc-connect instance/project/platform"
 placeholder: 配置一个钉钉项目（如：新建实例 atest，加钉钉项目，agent 用 claudecode）
 placeholder.en: "Configure a DingTalk project (e.g. create instance atest, add a DingTalk project, agent = claudecode)"
-summary: 从表单生成 config.toml——配置实例的 management/bridge 端口、项目（agent/工作目录/平台凭据）
+summary: 从表单生成 config.toml——配置实例的 management/bridge 端口、项目（agent/工作目录/模型/平台凭据）
 summary.en: "Generate config.toml from the form — configure an instance's management/bridge ports and projects (agent/workdir/platform credentials)"
 outputs:
   format: json-obj
@@ -14,7 +14,7 @@ outputs:
     logLevel: 日志级别（如 debug/info，可选）
     management: 管理端口配置 {enabled, port, token}
     bridge: 桥端口配置 {enabled, port, token}
-    projects: 项目数组 [{name, agent, work_dir, platforms:[{type, client_id, client_secret, agent_id}]}]
+    projects: 项目数组 [{name, agent, work_dir, model, platforms:[{type, client_id, client_secret, agent_id}]}]
 action:
   type: api
   method: POST
@@ -38,6 +38,10 @@ action:
 2. **项目名、agent 类型、work_dir 必须来自用户输入**，缺失时追问，不要编造路径或名字。
 3. **端口/token**：用户指定了就用用户的；用户没指定端口时，可参考现有实例占用给建议值（如现有用 9820/9810，则建议 9821/9811），但**必须在 `note` 里注明「端口/token 为我建议值，请确认」**。token 是平台内部 Web UI 登录令牌（非第三方凭据），可随机生成并说明。
 4. **不确定/缺失的字段 → 输出 JSON 里留空或省略，并在 `note` 列出缺失项让用户补**，绝不替用户编值。
+
+## Model 选项
+
+CLI agent（claudecode/codex/cursor/gemini/opencode/qoder/pi/iflow/kimi）支持 `model` 选项（agent options 的 `model = "..."`）——向导/面板会展示。用户指定了就传入 `projects[].model`，没指定就省略（用 CLI 默认）。piweb 类型模型走面板偏好，不在此配置。
 
 ## 步骤
 

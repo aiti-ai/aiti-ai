@@ -5624,6 +5624,21 @@ function getRunningListeners(): Set<(ids: string[]) => void> {
 export function installLocalSessionFactory(): void {
   const g = globalThis as Record<string, unknown>;
   if (!g.__piLocalSessionFactory) g.__piLocalSessionFactory = { start: startRpcSession };
+  // Phase B (channels bridge): non-local backend sessions (ACP: claude-code etc.)
+  // through the session-provider hosting layer. Dynamic import defers the
+  // rpc-manager ↔ session/index cycle. Cross-realm visible (same globalThis).
+  g.__piChannelsBackendFactory = {
+    providers: () =>
+      listProviders().map((p) => ({ type: p.type, label: p.label, available: p.available ?? true })),
+    create: async (opts: { providerType: string; cwd?: string; model?: { provider: string; id: string } }) => {
+      const m = await import("./session/index.ts");
+      return m.createSessionHandle({ providerType: opts.providerType, cwd: opts.cwd, model: opts.model });
+    },
+    get: async (id: string) => {
+      const m = await import("./session/index.ts");
+      return m.getHandle(id);
+    },
+  };
 }
 
 // Installed at module load (idempotent): loading this module in any realm

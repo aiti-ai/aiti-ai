@@ -13,7 +13,7 @@
  * OpenClaw openclaw-weixin plugin — the scan confirm page will show OpenClaw
  * branding, which is EXPECTED; both the list row and the wizard say so.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiUrl, t, extSvc, ensureMaterialized } from "./host-shim";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { qrDataUrl } from "./qr";
@@ -86,6 +86,9 @@ function useScanWizard(instance: string, onDone: () => void) {
   const pendingWorkDir = useRef<string>("");
   const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } };
   useEffect(() => stop, []);
+  /** stop polling AND clear the QR display state — a switched/abandoned scan
+   *  must not keep rendering its stale QR + "waiting" rows */
+  const reset = () => { stop(); setWiz(null); };
   const setup = async (platform: string, project: string, workDir: string) => {
     stop();
     pendingWorkDir.current = workDir;
@@ -141,7 +144,7 @@ function useScanWizard(instance: string, onDone: () => void) {
     setWiz({ phase: "done", platform });
     onDone();
   };
-  return { wiz, setup, stop };
+  return { wiz, setup, stop, reset };
 }
 function workDirOf(): string | undefined {
   // default = current workbench cwd when the page URL carries ?cwd= (restored
@@ -172,11 +175,32 @@ export function openBotsNew(platform?: string) {
 
 export type WizardPrefill = { platform?: string; skipPlatform?: boolean; project?: string; workDir?: string; agentType?: string };
 
-const WIZ_AGENTS = ["piweb", "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"];
+/** agent types that need extra options the wizard does not collect (acp needs
+ *  a connector command); hidden from the wizard dropdown, cc-connect still
+ *  supports them via hand-written config */
+const NON_WIZARD_AGENTS = new Set(["acp"]);
+/** the default agent, kept first in the dropdown */
+const PREFERRED_AGENT = "piweb";
 
 /** Bot wizard — the single creation path (plan §3.2): basics → platform → credentials → apply → verify,
  *  no tab switching; the apply action (reload vs restart) is driven by the creation
  *  path, not guessed by the user. */
+/** top-level thinkingLevels map from /api/models ("provider:modelId" → levels) */
+let thinkingLevelsTop: Record<string, string[]> = {};
+
+/** per-CLI model naming hints (free-text model field for non-piweb agents) */
+const CLI_MODEL_HINT: Record<string, string> = {
+  claudecode: "e.g. claude-opus-4-5 / claude-sonnet-4-5",
+  codex: "e.g. gpt-5.2-codex / gpt-5.1-codex-mini",
+  cursor: "e.g. composer-1 / claude-sonnet-4-5",
+  gemini: "e.g. gemini-3-pro / gemini-3-flash",
+  opencode: "provider-qualified, see the CLI's model list",
+  qoder: "e.g. qwen3.8-max",
+  iflow: "e.g. glm-5.3",
+  kimi: "e.g. kimi-k2.8",
+  pi: "e.g. GLM-5.3-Flash / claude-opus-4-5",
+};
+
 function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; prefill: WizardPrefill; onDone: () => void; onClose: () => void }) {
   const [step, setStep] = useState(1);
   const [base, setBase] = useState({ project: prefill.project || "", workDir: prefill.workDir || "", agentType: prefill.agentType || "piweb" });
@@ -186,8 +210,99 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
   const [err, setErr] = useState<string | null>(null);
   const [apply, setApply] = useState<{ kind: "reload" | "restart"; done: boolean } | null>(null);
   const [verify, setVerify] = useState<{ state: "" | "ok" | "warn" | "error"; detail: string } | null>(null);
+  // Model selector (same as the new-session dialog): options from /api/models,
+  // persisted per work_dir via model-pref-set; the IM session starts with the
+  // picked model (initialModel).
+  const [modelList, setModelList] = useState<Array<{ id: string; name: string; provider: string; providerName?: string }>>([]);
+  const [modelSel, setModelSel] = useState<string>(""); // "provider:modelId" or "" = follow pi-web default
+  const [thinkingSel, setThinkingSel] = useState<string>("");
+  // non-piweb agents: free-text model (each CLI has its own model naming)
+  const [cliModel, setCliModel] = useState("");
+  const [modelPrefsLoaded, setModelPrefsLoaded] = useState(false);
+  // Phase B: pi-web session backends (Backend dropdown, same as new-session)
+  const [backends, setBackends] = useState<Array<{ type: string; label: string }>>([]);
+  const [backendSel, setBackendSel] = useState<string>(""); // "" = pi-local (in-process, as-is)
+  const thinkingLevelsForSel: string[] = (() => {
+    if (!modelSel) return [];
+    const key = modelSel.replace(":", "/");
+    const tl = thinkingLevelsTop[key];
+    return Array.isArray(tl) ? tl : [];
+  })();
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cwd = workDirOf() || "";
+        // POST form: cwd travels in the JSON body, never in the URL/access log.
+        const r = await fetch(apiUrl("/api/models"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cwd ? { cwd } : {}), cache: "no-store" });
+        const d = await r.json();
+        if (!alive) return;
+        setModelList(Array.isArray(d.modelList) ? d.modelList : []);
+        setThinkingLevelsTop(d.thinkingLevels && typeof d.thinkingLevels === "object" ? d.thinkingLevels : {});
+        // prefill from the stored pref for this wizard's work_dir (if already set)
+        const wd = (base.workDir || cwd || "").trim();
+        if (wd) {
+          const pr = await fetch(API("/api/extensions/aiti-channels/model-pref-get"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: wd }), cache: "no-store" }).then((x) => x.json()).catch(() => null);
+          if (alive && pr?.ok && pr.pref) {
+            if (pr.pref.backend) setBackendSel(pr.pref.backend);
+            setModelSel(`${pr.pref.provider}:${pr.pref.modelId}`);
+            if (pr.pref.thinkingLevel) setThinkingSel(pr.pref.thinkingLevel);
+          }
+        }
+        setModelPrefsLoaded(true);
+      } catch { if (alive) setModelPrefsLoaded(true); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  // Phase B: pi-web session backends for the Backend dropdown — standalone effect:
+  // a failure only empties this dropdown (= Pi local only), it does not affect the models fetch
+  const fetchBackends = useCallback(async () => {
+    try {
+      const r = await fetch(apiUrl("/api/session-backends"), { cache: "no-store" });
+      const d = await r.json();
+      if (Array.isArray(d.providers)) setBackends(d.providers.map((p: any) => ({ type: p.type, label: p.label || p.type })));
+    } catch { /* endpoint unreachable → dropdown stays Pi-local-only */ }
+  }, []);
+  useEffect(() => { void fetchBackends(); }, [fetchBackends]);
+
+  // agent list: dynamic from cc-connect (bot-meta /agents) — never drifts from
+  // the running binary's supported set; acp (needs connector args) is filtered
+  const [agentList, setAgentList] = useState<string[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(API(`/api/extensions/aiti-channels/bot-meta?instance=${encodeURIComponent(instance)}`), { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const agents: string[] = Array.isArray(d.agents) ? d.agents : [];
+        const rest = agents.filter((a) => a !== PREFERRED_AGENT && !NON_WIZARD_AGENTS.has(a)).sort();
+        setAgentList([PREFERRED_AGENT, ...rest]);
+      })
+      .catch(() => { if (alive) setAgentList([PREFERRED_AGENT, "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"]); });
+    return () => { alive = false; };
+  }, [instance]);
+
+  // aiti-folder is a lazy extension — its client service registers only after
+  // its own UI first loads, so the button is ALWAYS shown and the click
+  // ensures materialization first (F6 pattern); if the service is still absent
+  // (extension not deployed/disabled) the manual path input remains the way.
+  const pickWorkDir = async () => {
+    const get = () => extSvc<{ directory?: (p?: { initialPath?: string }) => Promise<string | null> }>("aiti-folder.pick");
+    let svc = get();
+    if (!svc || typeof svc.directory !== "function") {
+      const mat = ensureMaterialized("aiti-folder");
+      if (!mat) return;
+      await mat;
+      svc = get();
+      if (!svc || typeof svc.directory !== "function") return;
+    }
+    try {
+      const picked = await svc.directory({ initialPath: base.workDir || undefined });
+      if (picked) setBase((b) => ({ ...b, workDir: picked }));
+    } catch { /* cancelled */ }
+  };
   // scan path: onDone fires after setup/save → the instance needs a restart to connect
-  const { wiz, setup, stop: stopWiz } = useScanWizard(instance, () => { onDone(); setApply({ kind: "restart", done: false }); setStep(4); });
+  const { wiz, setup, stop: stopWiz, reset: resetWiz } = useScanWizard(instance, () => { onDone(); setApply({ kind: "restart", done: false }); setStep(4); });
   const sch = platform ? platformSchema(platform) : null;
   const scanning = platform ? SCAN_PLATFORMS.includes(platform) : false;
 
@@ -196,7 +311,14 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
     try {
       const r = await fetch(API(`/api/extensions/aiti-channels/bot-create-token?instance=${encodeURIComponent(instance)}`), {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project: base.project.trim(), type: platform, options: fields, work_dir: base.workDir.trim() || undefined, agent_type: base.agentType }),
+        body: JSON.stringify({
+          project: base.project.trim(), type: platform, options: fields,
+          work_dir: base.workDir.trim() || undefined, agent_type: base.agentType,
+          // non-piweb agents: model → the server's surgical config append writes
+          // a full agent block (type + model + platform)
+          ...(base.agentType !== "piweb" && (cliModel.trim() || (base.agentType === "pi" && modelSel)) ? { model: cliModel.trim() || modelSel.split(":").pop() } : {}),
+          ...(base.agentType === "pi" && thinkingSel ? { thinking: thinkingSel } : {}),
+        }),
       });
       const d = await r.json();
       if (!d.ok && d.status !== 201) { setErr(d.error || `HTTP ${r.status}`); setBusy(false); return; }
@@ -245,6 +367,21 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
     </span>
   );
 
+  /** persist backend + model/thinking selection for this bot's cwd (called on Next) */
+  const saveModelPref = async () => {
+    const cwd = base.workDir.trim() || workDirOf() || "";
+    if (!cwd) return;
+    try {
+      if (base.agentType === "piweb" && (modelSel || backendSel)) {
+        // backend alone (no model) is valid: the backend's own default model applies
+        const [provider, modelId] = modelSel ? modelSel.split(":") : [backendSel, "default"];
+        await fetch(API("/api/extensions/aiti-channels/model-pref-set"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd, backend: backendSel || undefined, provider, modelId, thinkingLevel: thinkingSel }) });
+      } else if (base.agentType === "piweb") {
+        await fetch(API("/api/extensions/aiti-channels/model-pref-clear"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd }) });
+      }
+    } catch { /* pref save is best-effort — the wizard continues either way */ }
+  };
+
   return (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10, borderColor: "rgba(99,102,241,0.35)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -256,7 +393,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
           <StepDot n={4} label={t("生效")} />
           <StepDot n={5} label={t("验证")} />
         </div>
-        <button style={{ ...btnStyle }} onClick={() => { stopWiz(); onClose(); }}>{t("取消")}</button>
+        <button style={{ ...btnStyle }} onClick={() => { resetWiz(); onClose(); }}>{t("取消")}</button>
       </div>
       {err && <div style={{ fontSize: 12, color: "#ea580c" }}>{t("Failed: ") + err}</div>}
 
@@ -266,14 +403,57 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
             <input placeholder={t("Bot name (= cc-connect project name)")} value={base.project} onChange={(e) => setBase({ ...base, project: e.target.value })} style={inp} />
             <input placeholder={t("work_dir (defaults to the current workspace)")} value={base.workDir} onChange={(e) => setBase({ ...base, workDir: e.target.value })} style={inp} />
             <select value={base.agentType} onChange={(e) => setBase({ ...base, agentType: e.target.value })} style={{ ...inp, flex: "0 0 170px", cursor: "pointer" }}>
-              {WIZ_AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+              {(agentList || [PREFERRED_AGENT, "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"]).map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
+              onClick={() => void pickWorkDir()}>{t("选择工作目录…")}</button>
+            <span style={{ fontSize: 11, color: "#6b7280" }}>{t("或直接输入路径")}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {base.agentType === "piweb" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                {t("Backend")}
+                <select value={backendSel} onFocus={() => { if (backends.length === 0) void fetchBackends(); }} onChange={(e) => { setBackendSel(e.target.value); setModelSel(""); }} style={{ ...inp, flex: "0 0 240px", cursor: "pointer" }}>
+                  <option value="">{t("Pi 本地进程（默认）")}</option>
+                  {backends.map((b) => <option key={b.type} value={b.type}>{b.label}</option>)}
+                </select>
+              </label>
+            )}
+            {base.agentType === "piweb" || base.agentType === "pi" ? (
+              <>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                  {t("Model")}
+                  <select value={modelSel} onChange={(e) => { setModelSel(e.target.value); if (!e.target.value) setThinkingSel(""); }} style={{ ...inp, flex: "0 0 240px", cursor: "pointer" }}>
+                    <option value="">{base.agentType === "piweb" ? t("跟随 pi-web 默认") : t("跟随 pi CLI 默认")}</option>
+                    {modelList.map((m) => (
+                      <option key={`${m.provider}:${m.id}`} value={base.agentType === "pi" ? m.id : `${m.provider}:${m.id}`}>{`${m.providerName || m.provider} — ${m.name}`}</option>
+                    ))}
+                  </select>
+                </label>
+                {modelSel && thinkingLevelsForSel.length > 0 && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                    {t("Thinking")}
+                    <select value={thinkingSel} onChange={(e) => setThinkingSel(e.target.value)} style={{ ...inp, flex: "0 0 140px", cursor: "pointer" }}>
+                      <option value="">{t("默认")}</option>
+                      {thinkingLevelsForSel.map((lv) => <option key={lv} value={lv}>{lv}</option>)}
+                    </select>
+                  </label>
+                )}
+              </>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                {t("Model")}
+                <input value={cliModel} onChange={(e) => setCliModel(e.target.value)} placeholder={CLI_MODEL_HINT[base.agentType] || t("模型名以 CLI 自身的命名为准")} style={{ ...inp, flex: "0 0 240px" }} />
+              </label>
+            )}
           </div>
           <div style={{ fontSize: 11, color: "#6b7280" }}>{t("机器人名 = cc-connect 项目名（1:1）。work_dir 留空 = 当前工作区。")}</div>
           <div style={{ display: "flex", gap: 8 }}>
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
               disabled={!base.project.trim()}
-              onClick={() => setStep(prefill.skipPlatform ? 4 : 2)}>{prefill.skipPlatform ? t("下一步（纯项目，跳过平台）") : t("下一步：选平台")}</button>
+              onClick={() => { void saveModelPref(); setStep(prefill.skipPlatform ? 4 : 2); }}>{prefill.skipPlatform ? t("下一步（纯项目，跳过平台）") : t("下一步：选平台")}</button>
           </div>
         </div>
       )}
@@ -283,7 +463,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
           <div style={{ fontSize: 11, color: "#6b7280" }}>{t("扫码直建（确认页显示 OpenClaw 字样属预期）")}：</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {SCAN_PLATFORMS.map((p) => (
-              <button key={p} onClick={() => { setPlatform(p); setStep(3); }}
+              <button key={p} onClick={() => { resetWiz(); setPlatform(p); setStep(3); }}
                 style={{ ...btnStyle, ...(platform === p ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>
                 {pfIcon(p) + " " + pfName(p)}
               </button>
@@ -292,15 +472,15 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
           <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>{t("Token 表单平台")}：</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {PLATFORM_SCHEMAS.filter((p) => !SCAN_PLATFORMS.includes(p.type)).map((p) => (
-              <button key={p.type} onClick={() => { setPlatform(p.type); setFields({}); setStep(3); }}
+              <button key={p.type} onClick={() => { resetWiz(); setPlatform(p.type); setFields({}); setStep(3); }}
                 style={{ ...btnStyle, fontSize: 11, ...(platform === p.type ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>
                 {pfIcon(p.type) + " " + pfName(p.type)}
               </button>
             ))}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button style={btnStyle} onClick={() => { setPlatform(null); setStep(4); }}>{t("跳过（纯项目创建）")}</button>
-            <button style={btnStyle} onClick={() => setStep(1)}>{t("上一步")}</button>
+            <button style={btnStyle} onClick={() => { resetWiz(); setPlatform(null); setStep(4); }}>{t("跳过（纯项目创建）")}</button>
+            <button style={btnStyle} onClick={() => { resetWiz(); setStep(1); }}>{t("上一步")}</button>
           </div>
         </div>
       )}
@@ -339,7 +519,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
               <div style={{ display: "flex", gap: 8 }}>
                 <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
                   disabled={busy} onClick={() => void createTokenBot()}>{t("Create (add-platform; applies after restart)")}</button>
-                <button style={btnStyle} onClick={() => setStep(2)}>{t("上一步")}</button>
+                <button style={btnStyle} onClick={() => { resetWiz(); setStep(2); }}>{t("上一步")}</button>
               </div>
             </>
           )}
@@ -384,7 +564,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
               onClick={() => void sendTest()}>{busy ? t("Sending…") : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.send} />{t("发测试消息")}</span>}</button>
             <button style={btnStyle} onClick={() => { setStatePub({ tab: "chat" }); }}>{t("去对话 tab 实时看")}</button>
-            <button style={btnStyle} onClick={() => { stopWiz(); onClose(); }}>{t("完成")}</button>
+            <button style={btnStyle} onClick={() => { resetWiz(); onClose(); }}>{t("完成")}</button>
           </div>
           {verify && (
             <div style={{ fontSize: 12, lineHeight: 1.7, borderRadius: 8, padding: "8px 10px", color: verify.state === "ok" ? "#16a34a" : verify.state === "warn" ? "#92400e" : "#ea580c", background: verify.state === "ok" ? "rgba(34,197,94,0.1)" : verify.state === "warn" ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.08)", border: `1px solid ${verify.state === "ok" ? "rgba(34,197,94,0.3)" : verify.state === "warn" ? "rgba(245,158,11,0.3)" : "rgba(239,68,68,0.3)"}` }}>
@@ -414,7 +594,6 @@ export function TabBots({ instance }: { instance: string }) {
   );
   wizardAutoOpen = false;
   const [manageProj, setManageProj] = useState<string | null>(null);
-  const { wiz, setup, stop: stopWiz } = useScanWizard(instance, () => { void reload(); });
 
   const reload = async () => {
     try {
@@ -440,7 +619,7 @@ export function TabBots({ instance }: { instance: string }) {
   };
 
   const startCreate = (type?: string, opts?: { skipPlatform?: boolean }) => {
-    setSel(null); stopWiz();
+    setSel(null);
     setWizard(type ? { platform: type } : { skipPlatform: !!opts?.skipPlatform });
   };
 
@@ -463,7 +642,7 @@ export function TabBots({ instance }: { instance: string }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {bots.length === 0 && <div style={{ ...cardStyle, color: "#6b7280", fontSize: 12 }}>{t("No bots yet — click “New bot” to start")}</div>}
         {bots.map((b) => (
-          <div key={b.name} onClick={() => { setSel(sel === b.name ? null : b.name); setCreating(false); stopWiz(); }}
+          <div key={b.name} onClick={() => { setSel(sel === b.name ? null : b.name); setWizard(null); }}
             style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", ...(sel === b.name ? { border: "1px solid #6366f1" } : {}) }}>
             <span style={{ fontSize: 16 }}>{pfIcon(b.platforms[0] || "")}</span>
             <span style={{ fontSize: 13, fontWeight: 700 }}>{b.name}</span>
@@ -480,7 +659,7 @@ export function TabBots({ instance }: { instance: string }) {
 
       {/* create / wizard — five steps, single creation path (plan §3.2) */}
       {wizard && (
-        <BotWizard instance={instance} prefill={wizard} onDone={() => void reload()} onClose={() => { setWizard(null); stopWiz(); }} />
+        <BotWizard instance={instance} prefill={wizard} onDone={() => void reload()} onClose={() => setWizard(null)} />
       )}
 
       {/* detail (selected bot) */}
@@ -496,7 +675,7 @@ export function TabBots({ instance }: { instance: string }) {
                 </div>
               </div>
               <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
-                onClick={() => { setCreating(true); setForm({ project: selBot.name, type: selBot.platforms.find((p) => SCAN_PLATFORMS.includes(p)) || "feishu", workDir: selBot.work_dir || "", fields: {} }); }}>
+                onClick={() => { setSel(null); setWizard({ project: selBot.name, platform: selBot.platforms.find((p) => SCAN_PLATFORMS.includes(p)) || "feishu", workDir: selBot.work_dir || "" }); }}>
                 {"▣ " + t("Rescan")}
               </button>
             </div>

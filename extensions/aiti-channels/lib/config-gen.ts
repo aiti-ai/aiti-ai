@@ -22,6 +22,7 @@ export type ProjectForm = {
   agent?: string;      // claudecode / codex / cursor / gemini / qoder / opencode / piweb
   work_dir?: string;
   mode?: string;       // agent 运行模式（default / full_auto 等）
+  model?: string;      // agent 模型（CLI agents 读 opts["model"]；piweb 走 per-cwd 偏好）
   /**
    * agent=piweb 专用：true = 原生 type=piweb（cc-connect 内建 ACP client 直连
    * Unix socket，无连接器进程；需 cc-connect 支持该 agent type 的版本）。
@@ -98,6 +99,7 @@ export function renderConfig(form: ConfigForm): string {
       L.push(`    type = ${tq(p.agent || "claudecode")}`);
       L.push("    [projects.agent.options]");
       if (has(p.mode)) L.push(`      mode = ${tq(p.mode)}`);
+      if (has(p.model)) L.push(`      model = ${tq(p.model)}`);
       if (has(p.work_dir)) L.push(`      work_dir = ${tq(p.work_dir)}`);
     }
     for (const pl of p.platforms || []) {
