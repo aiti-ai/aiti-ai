@@ -364,11 +364,11 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
       <div
         data-ext-float="1"
         data-ext-float-key={MOBILE_KEY}
-        data-ext-float-w={740}
+        data-ext-float-w={860}
         data-ext-float-autoh="1"
         data-ext-float-full="1"
         style={{
-          width: 740, maxWidth: "calc(100vw - 16px)", maxHeight: "min(86vh, 780px)", overflow: "auto",
+          width: 860, maxWidth: "calc(100vw - 16px)", maxHeight: "min(86vh, 780px)", overflow: "auto",
           background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10,
           boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
         }}
@@ -642,7 +642,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: P
           )}
           </div>
           {botsAvail && (
-            <div style={{ width: 268, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: "12px 12px 14px", background: "var(--bg-elevated, rgba(127,127,127,0.04))", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: 340, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: "12px 12px 14px", background: "var(--bg-elevated, rgba(127,127,127,0.04))", display: "flex", flexDirection: "column" }}>
               <BotChannelsColumn />
             </div>
           )}

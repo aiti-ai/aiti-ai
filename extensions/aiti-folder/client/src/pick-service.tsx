@@ -5,8 +5,7 @@
  * Promise<string | null>. The browser is mounted once through the dialogs slot and
  * portaled to <body> so float panels (transform/overflow) cannot clip it.
  */
-import { useEffect, useState } from "react";
-import { createPortal } from "./host-shim";
+import { useState, useEffect } from "react";
 import { DirectoryPicker } from "./directory-picker";
 
 interface PickRequest {
@@ -45,23 +44,21 @@ export function PickHost() {
     listeners.add(l);
     return () => { listeners.delete(l); };
   }, []);
-  // no active request → render nothing at all: keeping the portal wrapper
-  // mounted with inset:0 leaves an invisible full-screen overlay that swallows
-  // every click on the page after Cancel/Select (the "picker cannot be closed"
-  // stuck report). pointer-events:none below is belt-and-braces for the same
-  // failure mode during the request→settle transition.
+  // no active request → render nothing at all: keeping any wrapper mounted
+  // leaves an invisible full-screen layer over the page (the "picker cannot be
+  // closed / nothing clickable" stuck report).
   if (!request) return null;
+  // DirectoryPicker portals its own overlay to <body> — render it bare here.
+  // The old centering wrapper (pointerEvents:auto, inset:0) became an EMPTY
+  // full-screen shield stacked ABOVE the portaled backdrop (higher z-index):
+  // the dialog was visible but every click landed on the shield — nothing
+  // clickable, Cancel dead.
   const initialPath = request.initialPath;
-  return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 2147483600, pointerEvents: "none" }}>
-      <div style={{ position: "absolute", pointerEvents: "auto", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <DirectoryPicker
-          initialPath={initialPath}
-          onSelect={(p: string) => settle(p)}
-          onCancel={() => settle(null)}
-        />
-      </div>
-    </div>,
-    document.body,
+  return (
+    <DirectoryPicker
+      initialPath={initialPath}
+      onSelect={(p: string) => settle(p)}
+      onCancel={() => settle(null)}
+    />
   );
 }

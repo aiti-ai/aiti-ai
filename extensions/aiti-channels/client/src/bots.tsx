@@ -14,7 +14,7 @@
  * branding, which is EXPECTED; both the list row and the wizard say so.
  */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { apiUrl, t, extSvc, ensureMaterialized } from "./host-shim";
+import { apiUrl, t, extSvc, ensureMaterialized, hostCwd } from "./host-shim";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { qrDataUrl } from "./qr";
 import { buildDeepLink } from "../../lib/deep-link.ts";
@@ -147,12 +147,19 @@ function useScanWizard(instance: string, onDone: () => void) {
   return { wiz, setup, stop, reset };
 }
 function workDirOf(): string | undefined {
-  // default = current workbench cwd when the page URL carries ?cwd= (restored
-  // tabs strip cwd from the URL); otherwise leave undefined (cc-connect default)
+  // default = the host's current workbench cwd (dialogs slot props), falling
+  // back to ?cwd= in the page URL; otherwise undefined (cc-connect default)
   try {
-    const cwd = new URLSearchParams(window.location.search).get("cwd");
-    return cwd || undefined;
+    const hc = hostCwd();
+    if (hc) return hc;
+    return new URLSearchParams(window.location.search).get("cwd") || undefined;
   } catch { return undefined; }
+}
+
+/** auto project name from a work_dir + platform: "<basename>-<platform>" */
+function autoProjectName(workDir: string, platform?: string | null): string {
+  const base = workDir.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "bot";
+  return platform ? `${base}-${platform}` : base;
 }
 
 // ---------- TabBots ----------
@@ -188,6 +195,56 @@ const PREFERRED_AGENT = "piweb";
 /** top-level thinkingLevels map from /api/models ("provider:modelId" → levels) */
 let thinkingLevelsTop: Record<string, string[]> = {};
 
+/** Custom wizard dropdown. Native <select> popups die on any React re-render
+ *  landing while they are open (Chromium dismisses the popup when the option
+ *  list or the controlled value changes under it — the user sees "moved the
+ *  mouse and it closed"). This popup is plain DOM: it survives every re-render
+ *  and closes only on an outside pointerdown or Escape — never on mouse move. */
+function WizSelect({ value, options, onChange, width = 240, disabled = false }: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+  width?: number;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (rootRef.current?.contains(t) || listRef.current?.contains(t))) return;
+      setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const cur = options.find((o) => o.value === value);
+  return (
+    <div ref={rootRef} data-wiz-select style={{ position: "relative", flex: "0 0 auto" }}>
+      <button type="button" disabled={disabled} onClick={() => setOpen((o) => !o)}
+        style={{ ...inp, width, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, textAlign: "left" }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{cur?.label || "\u2014"}</span>
+        <span style={{ color: "#6b7280", fontSize: 10, flexShrink: 0 }}>▾</span>
+      </button>
+      {open && (
+        <div ref={listRef}
+          style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, width, maxHeight: 260, overflowY: "auto", background: "var(--panel-bg,#ffffff)", border: "1px solid var(--border,#d4d4d8)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)", padding: 4 }}>
+          {options.map((o) => (
+            <button key={o.value} type="button" onClick={() => { onChange(o.value); setOpen(false); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", fontSize: 12, borderRadius: 6, border: "none", cursor: "pointer", background: o.value === value ? "rgba(99,102,241,0.14)" : "transparent", color: o.value === value ? "#4f46e5" : "inherit" }}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** per-CLI model naming hints (free-text model field for non-piweb agents) */
 const CLI_MODEL_HINT: Record<string, string> = {
   claudecode: "e.g. claude-opus-4-5 / claude-sonnet-4-5",
@@ -202,8 +259,14 @@ const CLI_MODEL_HINT: Record<string, string> = {
 };
 
 function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; prefill: WizardPrefill; onDone: () => void; onClose: () => void }) {
-  const [step, setStep] = useState(1);
-  const [base, setBase] = useState({ project: prefill.project || "", workDir: prefill.workDir || "", agentType: prefill.agentType || "piweb" });
+  // basics prefill: explicit prefill > host/URL cwd auto-fill. When a platform
+  // was preselected (phone-card chip / remote Configure handoff) and a work
+  // dir is available, the wizard opens straight on the credentials step —
+  // the user only fills the platform token, nothing else to re-select.
+  const autoWorkDir = prefill.workDir || workDirOf() || "";
+  const autoProject = prefill.project || (autoWorkDir ? autoProjectName(autoWorkDir, prefill.platform) : "");
+  const [step, setStep] = useState(prefill.platform && autoWorkDir ? 3 : 1);
+  const [base, setBase] = useState({ project: autoProject, workDir: autoWorkDir, agentType: prefill.agentType || "piweb" });
   const [platform, setPlatform] = useState<string | null>(prefill.platform || null);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -308,6 +371,13 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
 
   const createTokenBot = async () => {
     setBusy(true); setErr(null);
+    // required-field gate: the config-append path bypasses cc-connect's own
+    // validation, and a restart with an invalid platform block takes the whole
+    // instance down (every healthy project with it) — validate here AND on the
+    // server before anything is written.
+    const sch = platformSchema(platform);
+    const missing = (sch?.fields || []).filter((f) => f.required && !(fields[f.key] || "").trim()).map((f) => f.label);
+    if (missing.length) { setErr(t("必填字段未填：") + missing.join(", ")); setBusy(false); return; }
     try {
       const r = await fetch(API(`/api/extensions/aiti-channels/bot-create-token?instance=${encodeURIComponent(instance)}`), {
         method: "POST", headers: { "content-type": "application/json" },
@@ -360,12 +430,20 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
     setBusy(false);
   };
 
-  const StepDot = ({ n, label }: { n: number; label: string }) => (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: step === n ? 700 : 500, color: step === n ? "#4f46e5" : "#6b7280" }}>
-      <span style={{ width: 16, height: 16, borderRadius: 8, background: step === n ? "#6366f1" : "rgba(127,127,127,0.15)", color: step === n ? "#fff" : "#6b7280", fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span>
-      {label}
-    </span>
-  );
+  // step navigation: 1-2 free; 3 needs a platform picked; 4-5 only exist after
+  // the create call succeeded (apply state). Dots + back buttons share this gate.
+  const canGoTo = (n: number) => (n <= 2 ? true : n === 3 ? !!platform : !!apply);
+  const StepDot = ({ n, label }: { n: number; label: string }) => {
+    const clickable = canGoTo(n);
+    return (
+      <button type="button" disabled={!clickable} onClick={() => { if (clickable) setStep(n); }}
+        title={clickable ? undefined : t("创建后可回跳")}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: step === n ? 700 : 500, color: step === n ? "#4f46e5" : clickable ? "#374151" : "#9ca3af", background: "none", border: "none", cursor: clickable ? "pointer" : "default", padding: "2px 4px", borderRadius: 6 }}>
+        <span style={{ width: 16, height: 16, borderRadius: 8, background: step === n ? "#6366f1" : clickable ? "rgba(99,102,241,0.18)" : "rgba(127,127,127,0.15)", color: step === n ? "#fff" : clickable ? "#4f46e5" : "#9ca3af", fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span>
+        {label}
+      </button>
+    );
+  };
 
   /** persist backend + model/thinking selection for this bot's cwd (called on Next) */
   const saveModelPref = async () => {
@@ -402,58 +480,53 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input placeholder={t("Bot name (= cc-connect project name)")} value={base.project} onChange={(e) => setBase({ ...base, project: e.target.value })} style={inp} />
             <input placeholder={t("work_dir (defaults to the current workspace)")} value={base.workDir} onChange={(e) => setBase({ ...base, workDir: e.target.value })} style={inp} />
-            <select value={base.agentType} onChange={(e) => setBase({ ...base, agentType: e.target.value })} style={{ ...inp, flex: "0 0 170px", cursor: "pointer" }}>
-              {(agentList || [PREFERRED_AGENT, "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"]).map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
+            <WizSelect width={170} value={base.agentType} onChange={(v) => setBase({ ...base, agentType: v })}
+              options={(agentList || [PREFERRED_AGENT, "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"]).map((a) => ({ value: a, label: a }))} />
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
               onClick={() => void pickWorkDir()}>{t("选择工作目录…")}</button>
             <span style={{ fontSize: 11, color: "#6b7280" }}>{t("或直接输入路径")}</span>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {base.agentType === "piweb" && (
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
                 {t("Backend")}
-                <select value={backendSel} onFocus={() => { if (backends.length === 0) void fetchBackends(); }} onChange={(e) => { setBackendSel(e.target.value); setModelSel(""); }} style={{ ...inp, flex: "0 0 240px", cursor: "pointer" }}>
-                  <option value="">{t("Pi 本地进程（默认）")}</option>
-                  {backends.map((b) => <option key={b.type} value={b.type}>{b.label}</option>)}
-                </select>
-              </label>
+                <WizSelect value={backendSel} onChange={(v) => { setBackendSel(v); setModelSel(""); }}
+                  options={[{ value: "", label: t("Pi 本地进程（默认）") }, ...backends.map((b) => ({ value: b.type, label: b.label }))]} />
+              </span>
             )}
             {base.agentType === "piweb" || base.agentType === "pi" ? (
               <>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
                   {t("Model")}
-                  <select value={modelSel} onChange={(e) => { setModelSel(e.target.value); if (!e.target.value) setThinkingSel(""); }} style={{ ...inp, flex: "0 0 240px", cursor: "pointer" }}>
-                    <option value="">{base.agentType === "piweb" ? t("跟随 pi-web 默认") : t("跟随 pi CLI 默认")}</option>
-                    {modelList.map((m) => (
-                      <option key={`${m.provider}:${m.id}`} value={base.agentType === "pi" ? m.id : `${m.provider}:${m.id}`}>{`${m.providerName || m.provider} — ${m.name}`}</option>
-                    ))}
-                  </select>
-                </label>
+                  <WizSelect value={modelSel} onChange={(v) => { setModelSel(v); if (!v) setThinkingSel(""); }}
+                    options={[{ value: "", label: base.agentType === "piweb" ? t("跟随 pi-web 默认") : t("跟随 pi CLI 默认") }, ...modelList.map((m) => ({ value: base.agentType === "pi" ? m.id : `${m.provider}:${m.id}`, label: `${m.providerName || m.provider} — ${m.name}` }))]} />
+                </span>
                 {modelSel && thinkingLevelsForSel.length > 0 && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
                     {t("Thinking")}
-                    <select value={thinkingSel} onChange={(e) => setThinkingSel(e.target.value)} style={{ ...inp, flex: "0 0 140px", cursor: "pointer" }}>
-                      <option value="">{t("默认")}</option>
-                      {thinkingLevelsForSel.map((lv) => <option key={lv} value={lv}>{lv}</option>)}
-                    </select>
-                  </label>
+                    <WizSelect width={140} value={thinkingSel} onChange={(v) => setThinkingSel(v)}
+                      options={[{ value: "", label: t("默认") }, ...thinkingLevelsForSel.map((lv) => ({ value: lv, label: lv }))]} />
+                  </span>
                 )}
               </>
             ) : (
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280" }}>
                 {t("Model")}
                 <input value={cliModel} onChange={(e) => setCliModel(e.target.value)} placeholder={CLI_MODEL_HINT[base.agentType] || t("模型名以 CLI 自身的命名为准")} style={{ ...inp, flex: "0 0 240px" }} />
-              </label>
+              </span>
             )}
           </div>
           <div style={{ fontSize: 11, color: "#6b7280" }}>{t("机器人名 = cc-connect 项目名（1:1）。work_dir 留空 = 当前工作区。")}</div>
           <div style={{ display: "flex", gap: 8 }}>
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
-              disabled={!base.project.trim()}
-              onClick={() => { void saveModelPref(); setStep(prefill.skipPlatform ? 4 : 2); }}>{prefill.skipPlatform ? t("下一步（纯项目，跳过平台）") : t("下一步：选平台")}</button>
+              disabled={!base.project.trim() || busy}
+              onClick={() => {
+                if (prefill.skipPlatform) { void createTokenBot(); return; }
+                void saveModelPref();
+                setStep(2);
+              }}>{prefill.skipPlatform ? t("创建纯项目") : t("下一步：选平台")}</button>
           </div>
         </div>
       )}
@@ -518,7 +591,7 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
               ))}
               <div style={{ display: "flex", gap: 8 }}>
                 <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
-                  disabled={busy} onClick={() => void createTokenBot()}>{t("Create (add-platform; applies after restart)")}</button>
+                  disabled={busy} onClick={() => void createTokenBot()}>{t("Create (applies after restart)")}</button>
                 <button style={btnStyle} onClick={() => { resetWiz(); setStep(2); }}>{t("上一步")}</button>
               </div>
             </>
@@ -560,11 +633,12 @@ function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; p
       {step === 5 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>{t("验证步：向新项目发一条测试消息（mgmt send；新项目需先在 IM 里激活一次会话）。")}</div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
               onClick={() => void sendTest()}>{busy ? t("Sending…") : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICON.send} />{t("发测试消息")}</span>}</button>
             <button style={btnStyle} onClick={() => { setStatePub({ tab: "chat" }); }}>{t("去对话 tab 实时看")}</button>
             <button style={btnStyle} onClick={() => { resetWiz(); onClose(); }}>{t("完成")}</button>
+            <button style={btnStyle} onClick={() => setStep(4)}>{t("上一步")}</button>
           </div>
           {verify && (
             <div style={{ fontSize: 12, lineHeight: 1.7, borderRadius: 8, padding: "8px 10px", color: verify.state === "ok" ? "#16a34a" : verify.state === "warn" ? "#92400e" : "#ea580c", background: verify.state === "ok" ? "rgba(34,197,94,0.1)" : verify.state === "warn" ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.08)", border: `1px solid ${verify.state === "ok" ? "rgba(34,197,94,0.3)" : verify.state === "warn" ? "rgba(245,158,11,0.3)" : "rgba(239,68,68,0.3)"}` }}>

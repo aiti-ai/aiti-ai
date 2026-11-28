@@ -6,7 +6,7 @@
  * aiti-channels 缺席 → 整栏隐藏。
  */
 import { useState, useEffect } from "react";
-import { useI18n, apiUrl, extSvc } from "./host-shim";
+import { useI18n, apiUrl, extSvc, ensureMaterialized } from "./host-shim";
 
 type BotRow = { name: string; platforms: string[]; bound: boolean };
 
@@ -42,12 +42,20 @@ export function BotChannelsColumn() {
     return () => { alive = false; };
   }, []);
 
-  /** open aiti-channels panel with the wizard preselected for this platform */
-  const openBots = (platform?: string) => {
-    const svc = extSvc<{ openBots?: (platform?: string) => void }>("aiti-channels.ui");
+  /** open the aiti-channels panel (Bots tab, wizard preselected for platform).
+   *  aiti-channels is a LAZY extension — its client service only registers after
+   *  its UI first loads, so always materialize before the lookup or the click
+   *  silently does nothing (the "chips unclickable" report). */
+  const openBots = async (platform?: string) => {
+    let svc = extSvc<{ openBots?: (platform?: string) => void }>("aiti-channels.ui");
+    if (!svc || typeof svc.openBots !== "function") {
+      const mat = ensureMaterialized("aiti-channels");
+      if (mat) { try { await mat; } catch { /* materialization failure → svc stays empty */ } }
+      svc = extSvc<{ openBots?: (platform?: string) => void }>("aiti-channels.ui");
+    }
     if (svc && typeof svc.openBots === "function") { svc.openBots(platform); return; }
-    // fallback: dispatch the present command (panel opens but no tab control)
-    try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key: "aiti-channels:panel", mode: "float" } })); } catch { /* ignore */ }
+    // aiti-channels truly absent (not installed) → tell the user instead of a dead click
+    setErr(t("mobile.botsNeedChannels"));
   };
 
   const doAddPlatform = async (project: string, platform: string) => {
@@ -76,14 +84,17 @@ export function BotChannelsColumn() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{t("mobile.botChannels")}</div>
+      <button type="button" onClick={() => void openBots()}
+        style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}>
+        {t("mobile.botChannels")}
+      </button>
       {err && <div style={{ fontSize: 11, color: "#ef4444", wordBreak: "break-all" }}>{err}</div>}
       {msg && <div style={{ fontSize: 11, color: "#16a34a" }}>{msg}</div>}
 
       {/* bound bots */}
       {state.bots.filter((b) => b.bound).map((b) => (
         <button key={b.name} type="button" style={{ ...btn, display: "flex", alignItems: "center", gap: 6 }}
-          onClick={() => openBots()}>
+          onClick={() => void openBots()}>
           <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {b.platforms.join("/") || "—"}
             {" · "}{b.name}
@@ -97,7 +108,7 @@ export function BotChannelsColumn() {
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 220, overflowY: "auto" }}>
         {state.platforms.map((p) => (
           <button key={p} type="button" style={{ ...chip }}
-            onClick={() => openBots(p)}>{p}</button>
+            onClick={() => void openBots(p)}>{p}</button>
         ))}
       </div>
 

@@ -15,6 +15,7 @@ import * as manager from "./lib/manager.js";
 import * as installer from "./lib/installer.js";
 import { renderConfig } from "./lib/config-gen.js";
 import { readConfigFile } from "./lib/config.js";
+import { platformSchema } from "./lib/platform-schema.js";
 import { readCardModes, setCardMode } from "./lib/bot-edit.js";
 import { deriveAdminUrl } from "./lib/admin-url.js";
 import * as chatRelay from "./lib/chat-relay.js";
@@ -399,7 +400,7 @@ export default {
         "关联机器人": "Link bot",
         "关闭": "Close",
         "创建": "Create",
-        "创建（add-platform，重启后生效）": "Create (add-platform; applies after restart)",
+        "创建（重启后生效）": "Create (applies after restart)",
         "创建全局 Provider": "Create global provider",
         "删": "Del",
         "删除全局 Provider": "Delete global provider",
@@ -468,6 +469,7 @@ export default {
         "机器人名称（=cc-connect 项目名）": "Bot name (= cc-connect project name)",
         "机器人回复颗粒度": "Reply granularity",
         "机器人已创建（restart-cc 重启实例后连上平台）": "Bot created (restart-cc to connect the platform)",
+        "必填字段未填：": "Required fields missing: ",
         "机器人管理": "Bot management",
         "标准回复": "Standard",
         "模型（/projects/{name}/models）": "Models (/projects/{name}/models)",
@@ -496,6 +498,9 @@ export default {
         "移动端远程控制": "Mobile remote control",
         "选择工作目录…": "Pick workspace directory…",
         "或直接输入路径": "or type a path directly",
+        "跟随 pi CLI 默认": "Follow the pi CLI default",
+        "Backend": "Backend",
+        "Pi 本地进程（默认）": "Pi local process (default)",
         "Model": "Model",
         "跟随 pi-web 默认": "Follow the pi-web default",
         "Thinking": "Thinking",
@@ -527,7 +532,7 @@ export default {
         "Confirm bot deletion": "Confirm bot deletion",
         "Confirm project deletion": "Confirm project deletion",
         "Create": "Create",
-        "Create (add-platform; applies after restart)": "Create (add-platform; applies after restart)",
+        "Create (applies after restart)": "Create (applies after restart)",
         "Create global provider": "Create global provider",
         "Created": "Created",
         "Cron jobs": "Cron jobs",
@@ -651,6 +656,8 @@ export default {
         "Token 表单平台": "Token-form platforms",
         "跳过（纯项目创建）": "Skip (pure project)",
         "上一步": "Back",
+        "创建后可回跳": "Available after the bot is created",
+        "创建纯项目": "Create pure project",
         "纯项目创建：项目写入 config 后需一次 reload 热应用。": "Pure project: after it lands in the config one reload hot-applies it.",
         "已生效。": "Applied.",
         "凭据已保存——需要重启实例让平台连上（restart_required）。": "Credentials saved — restart the instance so the platform connects (restart_required).",
@@ -783,6 +790,9 @@ export default {
       "对话": "对话",
       "自动化": "自动化",
       "cc-connect 运行日志": "cc-connect 运行日志",
+      "跟随 pi CLI 默认": "跟随 pi CLI 默认",
+      "Backend": "后端",
+      "Pi 本地进程（默认）": "Pi 本地进程（默认）",
       "Model": "模型",
       "跟随 pi-web 默认": "跟随 pi-web 默认",
       "Thinking": "思考级别",
@@ -821,7 +831,7 @@ export default {
       "Confirm bot deletion": "确认删除机器人",
       "Confirm project deletion": "确认删除项目",
       "Create": "创建",
-      "Create (add-platform; applies after restart)": "创建（add-platform；重启后生效）",
+      "Create (applies after restart)": "创建（重启后生效）",
       "Create global provider": "新建全局 Provider",
       "Created": "已创建",
       "Cron jobs": "定时任务",
@@ -1156,7 +1166,7 @@ export default {
       // wizard model prefs: state layer (user intent — not wiped by cache clears)
       const stateRoot = (ctx as Record<string, unknown> & { stateDir?: string }).stateDir as string
         || path.join(path.dirname(cacheRoot), "state");
-      acp.setPrefsPath(path.join(stateRoot, "acp-session-prefs.json"));
+      acp.setConfigPath(manager.DEFAULTS.config);
       // P3：ACP server 随 pi-web 常驻（每实例一个 Unix socket；cc-connect 连接器连这里）。
       // globalThis 单例——reload 复用已有 server，socket 不中断。
       void acp.ensureAll(m.listInstances().map((i: any) => i.id));
@@ -1271,6 +1281,7 @@ export default {
               agent: x.agent || "piweb",
               work_dir: x.work_dir ? String(x.work_dir) : "",
               mode: x.mode ? String(x.mode) : "",
+              model: x.model ? String(x.model) : "",
               // 原生 piweb agent（type=piweb 直连）；缺省走 type=acp+连接器兜底
               piwebNative: !!x.piwebNative,
               platforms: Array.isArray(x.platforms) ? x.platforms.map((y: any) => ({
@@ -1375,7 +1386,9 @@ export default {
         const b = await parseBody(req);
         const project = String(b.project || "").trim();
         const type = String(b.type || "").trim();
-        if (!project || !type) return json({ ok: false, error: "需要 project + type" }, 400);
+        // pure project (no platform): allowed — appends a bare [[projects]] block
+        const pureProject = !type;
+        if (!project) return json({ ok: false, error: "需要 project" }, 400);
         const st = await m.probe(mOpts);
         if (!st.running) return json({ ok: false, error: "实例未运行：先启动实例（add-platform 需要 management API）" }, 409);
         // piweb + add-platform is a broken combination: cc-connect's
@@ -1385,24 +1398,48 @@ export default {
         // live incident). Route piweb creates through a surgical config append
         // with the full agent block; non-piweb agents keep add-platform.
         const agentType = String(b.agent_type || "piweb");
-        if (agentType === "piweb") {
+        // CLI agents expose a native opts["model"] too — a creation request with
+        // an explicit model goes through the same surgical append (full agent
+        // block with model), so no agent type is stuck on the default model.
+        const piwebCreate = agentType === "piweb";
+        const cliModelSet = agentType !== "piweb" && typeof b.model === "string" && b.model.trim();
+        const piModelSet = agentType === "pi" && typeof b.model === "string" && b.model.trim();
+        if (pureProject || piwebCreate || cliModelSet || piModelSet) {
+          // pure project / piweb / explicit-model creates all go through the
+          // surgical config append: add-platform cannot express agent options
+          // (piweb socket / CLI model / pi thinking), and a pure project has no
+          // platform for add-platform to attach to at all
           const cfgPath = mOpts.config || manager.DEFAULTS.config;
           let raw = "";
           try { raw = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf8") : ""; } catch (e: any) { return json({ ok: false, error: "读 config 失败：" + e.message }, 500); }
           if (raw.includes(`name = ${JSON.stringify(project)}`)) return json({ ok: false, error: `项目已存在：${project}` }, 409);
           if (!raw.trim()) return json({ ok: false, error: "config.toml 为空：先在面板生成/初始化实例配置" }, 409);
-          const primary = acp.primaryEndpoint(instId);
+          // required-field gate (server side of the wizard's client check): the
+          // config append bypasses cc-connect's validation, and a restart with an
+          // invalid platform block takes the whole instance down — refuse to write
+          // when a schema-required option is missing/empty.
+          if (!pureProject) {
+            const sch = platformSchema(type);
+            const opts = (b.options && typeof b.options === "object" ? b.options : {}) as Record<string, unknown>;
+            const missing = (sch?.fields || []).filter((f) => f.required && !String(opts[f.key] ?? "").trim()).map((f) => f.label);
+            if (missing.length) return json({ ok: false, error: `必填字段未填：${missing.join(", ")}` }, 400);
+          }
           const esc = (v: string) => JSON.stringify(v);
-          const block = [
-            "",
-            "[[projects]]",
-            `  name = ${esc(project)}`,
-            "  [projects.agent]",
-            '    type = "piweb"',
-            "    [projects.agent.options]",
-            ...(b.work_dir ? [`      work_dir = ${esc(String(b.work_dir))}`] : []),
-            `      socket = ${esc(acp.acpSocketPath(instId))}`,
-            `      display_name = "AITI Agent"`,
+          const agentOptions: string[] = [];
+          if (b.work_dir) agentOptions.push(`      work_dir = ${esc(String(b.work_dir))}`);
+          if (piwebCreate && !pureProject) {
+            agentOptions.push(`      socket = ${esc(acp.acpSocketPath(instId))}`);
+            agentOptions.push(`      display_name = "AITI Agent"`);
+          } else if (piwebCreate && pureProject) {
+            // pure piweb project: keep the socket binding so the project is
+            // immediately usable when a platform is added later
+            agentOptions.push(`      socket = ${esc(acp.acpSocketPath(instId))}`);
+          } else {
+            if (cliModelSet) agentOptions.push(`      model = ${esc(b.model.trim())}`);
+            if (piModelSet) agentOptions.push(`      model = ${esc(b.model.trim())}`);
+            if (piModelSet && typeof b.thinking === "string" && b.thinking.trim()) agentOptions.push(`      thinking = ${esc(b.thinking.trim())}`);
+          }
+          const platformLines = pureProject ? [] : [
             "",
             "  [[projects.platforms]]",
             `    type = ${esc(type)}`,
@@ -1410,6 +1447,16 @@ export default {
             ...Object.entries((b.options && typeof b.options === "object" ? b.options : {}) as Record<string, unknown>)
               .filter(([, v]) => v !== undefined && v !== null && String(v) !== "")
               .map(([k, v]) => `      ${k} = ${esc(String(v))}`),
+          ];
+          const block = [
+            "",
+            "[[projects]]",
+            `  name = ${esc(project)}`,
+            "  [projects.agent]",
+            `    type = ${esc(agentType)}`,
+            "    [projects.agent.options]",
+            ...agentOptions,
+            ...platformLines,
             "",
           ].join("\n");
           fs.copyFileSync(cfgPath, cfgPath + ".bak-" + Date.now());
@@ -1428,9 +1475,13 @@ export default {
             ok: true,
             status: rl.status,
             data: rl.data,
-            restart_required: rl.status !== 200,
+            // a NEW project is only loaded at process start — cc-connect's reload
+            // refreshes existing projects but never adds new ones (verified: reload
+            // with the new block on disk still lists only pre-existing projects),
+            // so a restart is always required here regardless of reload status
+            restart_required: true,
             via: "config-append",
-            note: rl.status === 200 ? "项目已写入并热应用（reload）" : "项目已写入 config；reload 失败（实例未运行？），重启实例后生效",
+            note: "项目已写入 config；重启实例后生效（reload 不加载新项目）",
           });
         }
         const r = await mgmtApi(mOpts, "POST", `projects/${encodeURIComponent(project)}/add-platform`, {
@@ -1555,29 +1606,48 @@ export default {
 
       // per-cwd session model preference (wizard model picker defaults)
       if (action === "model-pref-get") {
-        const cwd = String(ctx.searchParams?.get("cwd") || "");
+        // POST form preferred: cwd travels in the JSON body, never in the URL/access log.
+        let cwd = String(ctx.searchParams?.get("cwd") || "");
+        if (req.method === "POST") {
+          const b = await parseBody(req);
+          cwd = String(b.cwd || "");
+        }
         return json({ ok: true, cwd, pref: acp.readSessionModelPref(cwd) });
       }
+      // per-project model in cc-connect config.toml (canonical location —
+      // surgical TOML edit of the project's agent options, not a sidecar file)
       if (action === "model-pref-set" && req.method === "POST") {
         const b = await parseBody(req);
         const cwd = String(b.cwd || "").trim();
-        const provider = String(b.provider || "").trim();
-        const modelId = String(b.modelId || "").trim();
+        const model = String(b.model || "").trim();
         const thinkingLevel = String(b.thinkingLevel || "").trim();
         if (!cwd) return json({ ok: false, error: "需要 cwd" }, 400);
-        if (!provider || !modelId) return json({ ok: false, error: "需要 provider + modelId（清除偏好请用 model-pref-clear）" }, 400);
+        if (!model) return json({ ok: false, error: "需要 model" }, 400);
         try {
-          acp.writeSessionModelPref({ cwd, provider, modelId, thinkingLevel: thinkingLevel || undefined });
-          return json({ ok: true, cwd, pref: { provider, modelId, thinkingLevel: thinkingLevel || undefined } });
-        } catch (e: any) { return json({ ok: false, error: e.message }, 500); }
-      }
-      if (action === "model-pref-clear" && req.method === "POST") {
-        const b = await parseBody(req);
-        const cwd = String(b.cwd || "").trim();
-        if (!cwd) return json({ ok: false, error: "需要 cwd" }, 400);
-        try {
-          acp.clearSessionModelPref(cwd);
-          return json({ ok: true, cwd });
+          const cfgPath = mOpts.config || manager.DEFAULTS.config;
+          let raw = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf8") : "";
+          if (!raw.trim()) return json({ ok: false, error: "config.toml 为空" }, 409);
+          // find the project block by cwd match and add/update model in agent options
+          const cfg = readConfigFile(cfgPath);
+          if (!cfg?.projects) return json({ ok: false, error: "config.toml 无 projects" }, 409);
+          const proj = (cfg.projects as Array<Record<string, unknown>>).find((p) => (p.agent as Record<string, unknown>)?.work_dir === cwd || p.work_dir === cwd);
+          if (!proj) return json({ ok: false, error: `未找到 work_dir = ${cwd} 的项目` }, 404);
+          const projName = String(proj.name);
+          // surgical: insert/update model in the project's agent options block
+          const lines = raw.split("\n");
+          let inBlock = false, blockStart = -1;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(`name = ${JSON.stringify(projName)}`)) { inBlock = true; continue; }
+            if (inBlock && lines[i].match(/^\s*model\b/)) { lines.splice(i, 1); break; }
+            if (inBlock && /^\s*\[projects\.(agent\.options|platforms)/.test(lines[i])) {
+              lines.splice(i, 0, `    model = ${JSON.stringify(model)}`); blockStart = i; break;
+            }
+            if (inBlock && lines[i].startsWith("[[projects")) { lines.splice(i, 0, `    model = ${JSON.stringify(model)}`); blockStart = i; break; }
+          }
+          if (blockStart < 0) { for (let i = lines.length - 1; i >= 0; i--) { if (lines[i].includes(`name = ${JSON.stringify(projName)}`)) { lines.splice(i + 1, 0, `    model = ${JSON.stringify(model)}`); break; } } }
+          fs.copyFileSync(cfgPath, cfgPath + ".bak-model-" + Date.now());
+          fs.writeFileSync(cfgPath, lines.join("\n"), "utf8");
+          return json({ ok: true, cwd, model, note: "已写入 config.toml agent options（reload 热应用）" });
         } catch (e: any) { return json({ ok: false, error: e.message }, 500); }
       }
 
@@ -1705,18 +1775,15 @@ export default {
 
       // 触发 cc-connect 自动重启（POST /api/v1/restart，进程替换保留 pid）
       if (action === "restart-cc" && req.method === "POST") {
-        const cfg = readConfigFile(mOpts.config || manager.DEFAULTS.config);
-        const port = (cfg && cfg.management && cfg.management.port) || 9820;
-        const token = (cfg && cfg.management && cfg.management.token) || "";
+        // unit-level restart via our manager (stop transient unit cgroup-wide,
+        // then systemd-run a fresh one). Do NOT use cc-connect's own
+        // /api/v1/restart: its self-restart re-execs inside the transient unit,
+        // systemd sees the main PID exit and kills the whole cgroup — the
+        // replacement process dies with it and the instance stays down.
         try {
-          const r = await fetch(`http://127.0.0.1:${port}/api/v1/restart`, {
-            method: "POST",
-            headers: token ? { authorization: `Bearer ${token}` } : {},
-            signal: AbortSignal.timeout(10000),
-          });
-          const d = await r.json().catch(() => null);
-          return json({ ok: r.ok, status: r.status, data: d });
-        } catch (e: any) { return json({ ok: false, error: "restart 请求失败：" + e.message }, 500); }
+          const r = await manager.restart(mOpts);
+          return json({ ok: r.ok, ...r });
+        } catch (e: any) { return json({ ok: false, error: "restart 失败：" + e.message }, 500); }
       }
 
       // 安装状态：当前版本 / 最新版本 / 可更新 / 下载源

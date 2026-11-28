@@ -46,48 +46,34 @@ export function setDataDir(d: string) { _dataDir = d || ""; }
 function dataDir(): string {
   return _dataDir || path.join(homedir(), ".pi", "web", "data", "aiti-channels", "cache");
 }
+let _configPath = "";
+export function setConfigPath(p: string) { _configPath = p || ""; }
+function configPath(): string {
+  return _configPath || path.join(homedir(), ".config", "cc-connect.toml");
+}
 
 /** Per-cwd session model/thinking preferences (same defaults as the wizard model picker).
  *  state-layer file (user intent — survives cache clears); index.ts injects the
  *  real stateDir path via setPrefsPath() at load. Read failures degrade silently
  *  to the pi-web default model. */
-let _prefsPath = "";
-export function setPrefsPath(p: string) { _prefsPath = p || ""; }
-export type SessionModelPref = { provider: string; modelId: string; thinkingLevel?: string };
-export function writeSessionModelPref(entry: { cwd: string; provider: string; modelId: string; thinkingLevel?: string }): void {
-  if (!_prefsPath || !entry.cwd) throw new Error("prefs path not configured");
-  let map: Array<Record<string, unknown>> = [];
-  try { map = JSON.parse(fs.readFileSync(_prefsPath, "utf8")); } catch { /* fresh */ }
-  if (!Array.isArray(map)) map = [];
-  map = map.filter((e) => e?.cwd !== entry.cwd);
-  map.push({ cwd: entry.cwd, provider: entry.provider, modelId: entry.modelId, ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}), updatedAt: new Date().toISOString() });
-  fs.mkdirSync(path.dirname(_prefsPath), { recursive: true });
-  fs.writeFileSync(_prefsPath, JSON.stringify(map, null, 2));
-}
-
-export function clearSessionModelPref(cwd: string): void {
-  if (!_prefsPath || !cwd) return;
-  let map: Array<Record<string, unknown>> = [];
-  try { map = JSON.parse(fs.readFileSync(_prefsPath, "utf8")); } catch { return; }
-  if (!Array.isArray(map)) return;
-  const next = map.filter((e) => e?.cwd !== cwd);
-  if (next.length !== map.length) {
-    fs.mkdirSync(path.dirname(_prefsPath), { recursive: true });
-    fs.writeFileSync(_prefsPath, JSON.stringify(next, null, 2));
-  }
-}
-
-export function readSessionModelPref(cwd: string): SessionModelPref | null {
-  if (!_prefsPath || !cwd) return null;
+function projectAgentOptsFor(cwd: string, configPath: string): { backend?: string; model?: string; thinking?: string } | undefined {
   try {
-    const map = JSON.parse(fs.readFileSync(_prefsPath, "utf8"));
-    const pref = (Array.isArray(map) ? map : []).find((e: { cwd?: string }) => e?.cwd === cwd);
-    if (pref && pref.provider && pref.modelId) {
-      return { provider: String(pref.provider), modelId: String(pref.modelId), thinkingLevel: pref.thinkingLevel ? String(pref.thinkingLevel) : undefined };
+    const cfg = JSON.parse(JSON.stringify(readConfigFile(configPath)));
+    for (const p of (cfg?.projects || []) as Array<Record<string, unknown>>) {
+      const opts = (p.agent || {}) as Record<string, unknown>;
+      const wd = String(opts.work_dir || "");
+      if (wd && (cwd === wd || cwd.startsWith(wd + "/"))) {
+        const m = typeof opts.model === "string" ? opts.model : undefined;
+        const b = typeof opts.backend === "string" ? opts.backend : undefined;
+        const t = typeof opts.thinking === "string" ? opts.thinking : undefined;
+        if (m || b || t) return { model: m, backend: b, thinking: t };
+        return undefined;
+      }
     }
-  } catch { /* missing/corrupt → no pref */ }
-  return null;
+  } catch { /* config unreadable → no opts */ }
+  return undefined;
 }
+
 
 /** 连接器稳定路径：部署后固定在 prod 扩展目录（config.toml cmd 用；cc-connect 与 dev/prod 共享） */
 export function connectorBin(): string {
@@ -325,11 +311,20 @@ class AcpConnection {
         }
         case "session/new": {
           const cwd = String(p.cwd || "");
-          // per-cwd model preference (wizard picker, state file) → session options
-          const runtime = await bridge.createSession(cwd, (() => {
-            const pref = readSessionModelPref(cwd);
-            return pref ? { initialModel: { provider: pref.provider, modelId: pref.modelId }, thinkingLevel: pref.thinkingLevel } : undefined;
-          })());
+          // per-project agent options from TOML (canonical — cc-connect config.toml
+          // [projects.agent.options]: model, backend, thinking)
+          const agentOpts = projectAgentOptsFor(cwd, configPath());
+          const runtime = await bridge.createSession(cwd, agentOpts ? {
+            ...(agentOpts.backend ? { backend: agentOpts.backend } : {}),
+            ...(agentOpts.model ? (() => {
+              if (agentOpts.model.includes("/")) {
+                const [provider, ...rest] = agentOpts.model.split("/");
+                return { initialModel: { provider, modelId: rest.join("/") } };
+              }
+              return { initialModel: { provider: "", modelId: agentOpts.model } };
+            })() : {}),
+            ...(agentOpts.thinking ? { thinkingLevel: agentOpts.thinking } : {}),
+          } : undefined);
           console.log(`[aiti-channels][acp] session/new ${this.instanceId}: acp=${runtime.info.acpSessionId.slice(0, 8)} pi=${runtime.info.piSessionId.slice(0, 12)} cwd=${cwd}`);
           this.respond(id, { sessionId: runtime.info.acpSessionId });
           break;

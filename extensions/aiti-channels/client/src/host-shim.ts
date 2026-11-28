@@ -19,6 +19,13 @@
 let _ctx: Record<string, unknown> | null = null;
 export function __setCtx(ctx: Record<string, unknown>): void { _ctx = ctx; }
 
+// Current workbench cwd handed by the host via the dialogs slot props
+// (currentSession.cwd). The bot wizard uses it to prefill work_dir so the
+// phone-card platform chips can open the wizard fully prefilled.
+let _hostCwd: string | null = null;
+export function setHostCwd(cwd?: string | null): void { _hostCwd = cwd || null; }
+export function hostCwd(): string | null { return _hostCwd; }
+
 /** DI 方案 P2：跨扩展客户端服务读取（ctx.getExtService 的 shim 封装；提供方懒加载/缺席 → undefined，消费方必须降级） */
 export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;

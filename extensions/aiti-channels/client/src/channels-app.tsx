@@ -15,7 +15,7 @@
  * ——与手写版一致（configForm 等跨 tab 状态保留语义不变），仅渲染层 h() → JSX。
  */
 import { useState, useEffect, useRef } from "react";
-import { apiUrl, t } from "./host-shim";
+import { apiUrl, t, setHostCwd } from "./host-shim";
 import { present, closePanel, usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { TabBots, RemoteView } from "./bots";
@@ -1339,7 +1339,11 @@ export function getHostSessionId(): string {
   return (hostSession && hostSession.id) || "";
 }
 export function ChannelsPanelComp() { return <SubscribedPanel face="float" />; }
-export function ChannelsPanelSlot({ currentSession }: { currentSession?: { id?: string } | null } = {}) {
+export function ChannelsPanelSlot({ currentSession, newSessionCwd }: { currentSession?: { id?: string; cwd?: string } | null; newSessionCwd?: string | null } = {}) {
   hostSession = currentSession || null;
+  // carry the current workbench cwd for the bot wizard prefill (phone-card
+  // platform chips → wizard fully prefilled, no re-selection); precedence:
+  // active session cwd > workbench new-session target cwd
+  setHostCwd(currentSession?.cwd || newSessionCwd || null);
   return <SubscribedPanel face="float" />;
 }

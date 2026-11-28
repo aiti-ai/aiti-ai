@@ -18,6 +18,12 @@ export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;
 }
 
+/** 懒扩展物化 shim（host ctx.ensureMaterialized）：调服务前先确保提供方客户端已加载。 */
+export function ensureMaterialized(extId: string): Promise<void> | null {
+  const c = _ctx as any;
+  return typeof c?.ensureMaterialized === "function" ? Promise.resolve(c.ensureMaterialized(extId)) : null;
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;
