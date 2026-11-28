@@ -1,17 +1,17 @@
 /**
- * _shared/reload-instances.mjs · pi-web 双实例热重载（各扩展 deploy.mjs 共用）
+ * _shared/reload-instances.mjs · pi-web dual-instance hot reload (shared by every extension deploy.mjs)
  *
- * dev 3001 / 生产 3002；端口可经 AITI_DEV_PORT / AITI_PROD_PORT 覆盖；
- * basePath 双 env（AITI_DEV_BASE_PATH / AITI_PROD_BASE_PATH）按机器设值，
- *   推荐值不带斜杠（48：dev 与 空；155：系统级 wdev 与 win）——git-bash 启动
- *   原生程序时会把 / 开头的 env 值做 MSYS 路径转换（/wdev → D:/apps/Git/wdev）
- *   致 URL 非法；不带斜杠则不触发转换。此处自动补 /（旧 /xxx 格式仍兼容），
- *   兼容不了时提示 MSYS_NO_PATHCONV=1。
- * 避免「server 端代码改了、实例没 reload 导致跑旧逻辑」。
+ * dev 3001 / prod 3002; ports overridable via AITI_DEV_PORT / AITI_PROD_PORT;
+ * basePath dual env (AITI_DEV_BASE_PATH / AITI_PROD_BASE_PATH) is set per machine;
+ *   recommended values carry no leading slash (48: dev and empty; 155: system-level wdev and win)
+ *   — git-bash applies MSYS path conversion to env values starting with "/" when launching native
+ *   programs (/wdev → D:/apps/Git/wdev), producing an invalid URL; a slash-less value avoids the
+ *   conversion. A leading "/" is re-added here (old /xxx format still supported); if unsalvageable, MSYS_NO_PATHCONV=1 is hinted.
+ * Prevents "server code changed but the instance never reloaded, so it keeps running stale logic".
  *
- * 用法（静态 import 或顶层 await import 均可）：
+ * Usage (static import or top-level await import both fine):
  *   import { reloadInstances } from "../../_shared/reload-instances.mjs";
- *   await reloadInstances();              // 默认 "[deploy] " 前缀
+ *   await reloadInstances();              // default "[deploy] " prefix
  */
 const BASE_PATH_RE = /^\/[A-Za-z0-9._-]*$/;
 
@@ -19,13 +19,13 @@ function buildInstance(name, portEnv, portDefault, pathEnv, pathDefault) {
   const origin = `http://127.0.0.1:${process.env[portEnv] || portDefault}`;
   const raw = process.env[pathEnv];
   if (raw === undefined || raw === null || String(raw).trim() === "") return { name, base: origin + pathDefault };
-  // 自动补 /：wdev → /wdev（推荐无斜杠格式，MSYS 不转换）；/wdev → /wdev（旧格式兼容）
+  // auto-add the leading /: wdev → /wdev (recommended slash-less format, MSYS does not convert); /wdev → /wdev (old format kept working)
   const p = "/" + String(raw).trim().replace(/^\/+|\/+$/g, "");
   if (BASE_PATH_RE.test(p)) return { name, base: origin + p };
   return { name, base: null, raw };
 }
 
-/** 双实例清单（dev/prod 各 {name, base}）；reload-instances 与 reconcile-deps 等共用。 */
+/** Dual-instance list (dev/prod each {name, base}); shared by reload-instances, reconcile-deps, etc. */
 export function buildInstances() {
   return [
     buildInstance("dev", "AITI_DEV_PORT", 3001, "AITI_DEV_BASE_PATH", "/dev"),
@@ -34,15 +34,15 @@ export function buildInstances() {
 }
 
 export async function reloadInstances(prefix = "[deploy] ") {
-  // 批次合并（deploy-all 场景）：子条目部署脚本被注入 PI_WEB_DEFER_RELOAD=1 时不各自 reload，
-  // 由 deploy-all 在全部条目完成后统一执行一轮（N 条目 × 2 实例 → 2 次 POST）。
-  // 避免批量部署时的 reload 风暴（2026-09-15 实测：65 条目逐个 reload 把 dev 实例打满）。
-  // 单独跑某个扩展 deploy.mjs 不带该 env → 行为不变（部署完立即 reload）。
+  // Batch merging (deploy-all scenario): child deploy scripts run with PI_WEB_DEFER_RELOAD=1 and
+  // skip their own reload; deploy-all does one unified round after all entries finish (N × 2 → 2
+  // POSTs), avoiding a reload storm (observed 2026-09-15: 65 entries reloaded one by one saturated dev).
+  // Running one extension's deploy.mjs without the env → behavior unchanged (immediate reload).
   if (process.env.PI_WEB_DEFER_RELOAD === "1") {
     console.log(`${prefix}reload 已 defer（PI_WEB_DEFER_RELOAD=1，由 deploy-all 收尾统一执行）`);
     return;
   }
-  // 允许失败：网络异常/非 2xx/服务未启动/env 非法一律只打提示，永不 throw——不影响 deploy 退出码
+  // failure-tolerant: network errors / non-2xx / service down / invalid env only print a notice, never throw — the deploy exit code is unaffected
   for (const inst of buildInstances()) {
     if (inst.base === null) {
       const msysHint = /[\\:]/.test(inst.raw) ? "——疑似 git-bash MSYS 路径转换，用 MSYS_NO_PATHCONV=1 前缀重跑" : "";

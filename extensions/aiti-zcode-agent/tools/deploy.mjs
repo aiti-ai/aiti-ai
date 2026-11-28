@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** 部署 aiti-zcode-agent 到 ~/.pi/web{,-dev}/extensions/（默认双写；--prod 仅 prod、--dev 仅 dev；文件集须与部署树一致）。 */
+/** Deploy aiti-zcode-agent to ~/.pi/web{,-dev}/extensions/ (both by default; --prod prod-only, --dev dev-only; the file set must match the deploy tree). */
 import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-// 目标：默认双写 web + web-dev；--prod 仅 prod、--dev 仅 dev（向后兼容旧单边用法）
+// Targets: both web + web-dev by default; --prod prod-only, --dev dev-only (legacy one-sided usage kept working)
 const prod = process.argv.includes("--prod");
 const devOnly = process.argv.includes("--dev");
 const home = process.env.HOME || process.env.USERPROFILE;
@@ -15,8 +15,8 @@ const bases = [
   ...(prod ? [] : [join(home, ".pi", process.env.PI_WEB_DEV_DIR ? `web-${process.env.PI_WEB_DEV_DIR}` : "web-dev", "extensions")]),
   ...(devOnly ? [] : [join(home, ".pi", "web", "extensions")]),
 ];
-// client bundle（sessionRequestCard provider_headers 验证码卡；构建失败不阻塞 server 侧部署——
-// 卡缺席时宿主 core 兜底卡接管）
+// client bundle (sessionRequestCard provider_headers verification card; a build failure does not
+// block the server-side deploy — when the card is absent the host core fallback card takes over)
 {
   try {
     execSync("node tools/build-client.mjs", { cwd: root, stdio: "inherit" });
@@ -38,15 +38,15 @@ for (const base of bases) {
       cpSync(bundle, join(dest, "dist", "aiti-zcode-cards.mjs"));
     }
   }
-  // 登录 UI 已统一到 aiti-agent-manager（2026-09-13）：受控登录 client/弹窗不再部署
-  //（服务端 /login/* 与 .agent 描述符保留，manager 代理消费）。
+  // Login UI has been unified into aiti-agent-manager (2026-09-13): the managed-login client and
+  // dialog are no longer deployed (server /login/* and the .agent descriptor remain, consumed via the manager proxy).
   console.log(`[deploy] aiti-zcode-agent → ${dest}`);
 }
 
-// ── 共享依赖 reconcile 通知（依赖进 <webRoot>/node_modules；允许失败，永不 throw）──
+// ── shared-deps reconcile notification (deps go into <webRoot>/node_modules; failure-tolerant, never throws) ──
 await notifyReconcile();
 
-// ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
+// ── dual-instance hot reload (basePath dual env, set per machine) — failure-tolerant: service down / missing shared module only logs, deploy exit code unaffected ──
 try {
   const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
   await reloadInstances();
@@ -54,7 +54,7 @@ try {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
 }
 
-// ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
+// ── dev-pack (plan §3.2: sources + build tools + AGENTS.md delivered to the deploy dir so the AI can edit on-site) — failure-tolerant, deploy exit code unaffected ──
 try {
   const { packDevPack } = await import("../../_shared/dev-pack.mjs");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });

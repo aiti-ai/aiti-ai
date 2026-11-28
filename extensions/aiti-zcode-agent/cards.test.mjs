@@ -1,7 +1,8 @@
 /**
- * aiti-zcode-agent client 卡接线测试：entry 注册 sessionRequestCard 的 provider_headers 验证码卡，
- * meta.backend="zcode"（只有 zcode 会话认领）——「agent 扩展自带专属能力 UI」样板（去核化 §3.2）。
- * esbuild 打包 + react/jsx-runtime 桩（cards 测试同范式）。
+ * aiti-zcode-agent client card wiring test: the entry registers the sessionRequestCard
+ * provider_headers verification card with meta.backend="zcode" (only zcode sessions claim it)
+ * — the "agent extension ships its own capability UI" template (de-nucleation §3.2).
+ * esbuild bundling + react/jsx-runtime stubs (same pattern as the cards tests).
  */
 import { test, after } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -35,7 +36,7 @@ test("client entry 注册 provider_headers 卡（backend=zcode + priority 压通
   ].join("\n"));
 
   const outfile = join(dir, "bundle.mjs");
-  // 派生形态（Linux 原生 ELF / Windows 官方 .exe，或 node 直跑 JS 入口）由 esbuild-bin 收口
+  // derived variants (Linux native ELF / Windows official .exe, or running the JS entry with node) are handled by esbuild-bin
   await runEsbuild(
     join(here, "..", "aiti-float", "node_modules", "esbuild", "bin", "esbuild"),
     [

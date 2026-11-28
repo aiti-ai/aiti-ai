@@ -1,24 +1,30 @@
 /**
- * CaptchaRequestCard —— start-plan 验证码求解卡（zcode 套餐通道协议桥，自 pi-web core
- * ProviderHeadersRequestCard 外迁——谁的能力谁渲染；方案
- * docs/pi-web-agent-capability-ui-ext-plan.md §3.2，协议桥原方案 docs/aiti-zcode-startplan-captcha-bridge-plan.md §3.2）。
+ * CaptchaRequestCard — start-plan captcha challenge card (zcode plan-channel protocol bridge,
+ * migrated out of pi-web core ProviderHeadersRequestCard — the capability owner renders it;
+ * plan docs/pi-web-agent-capability-ui-ext-plan.md §3.2, original bridge plan
+ * docs/aiti-zcode-startplan-captcha-bridge-plan.md §3.2).
  *
- * 数据源：sessionRequestCard 插槽 extra（provider_headers 家族，kind="provider_headers"、
- * 注册 meta.backend="zcode"——只有 zcode 会话的验证码请求由本卡认领）。
- * 三态：
- *   1. 无感（traceless_passed，桌面同款常态）：隐藏容器 init 官方 AliyunCaptcha SDK，
- *      captchaVerifyParam 自动回传 → respond（→ respond_provider_headers 命令）。
- *   2. 交互（interactive_displayed）：SDK 自带滑块 UI 在卡片内弹出，用户完成后自动回传。
- *   3. 失败/取消：SDK 报错或用户取消 → respond error/decline，轮次人话收口。
+ * Data source: sessionRequestCard slot extra (provider_headers family, kind="provider_headers",
+ * registered meta.backend="zcode" — only captcha requests from zcode sessions are claimed here).
+ * Three phases:
+ *   1. Traceless (traceless_passed, the desktop-normal path): init the official AliyunCaptcha SDK
+ *      in a hidden container, captchaVerifyParam flows back automatically → respond
+ *      (→ respond_provider_headers command).
+ *   2. Interactive (interactive_displayed): the SDK's own slider UI pops up inside the card;
+ *      completing it flows back automatically.
+ *   3. Failure/cancel: SDK error or user cancel → respond error/decline, the turn ends with a
+ *      plain-language message.
  *
- * 合规：跑的是官方 SDK（o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js）、
- * 用户自己的浏览器会话，与桌面端用户行为同构；无签名伪造/参数重放/自动化滑块。
+ * Compliance: runs the official SDK (o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js)
+ * in the user's own browser session, isomorphic to desktop user behavior; no signature forging /
+ * parameter replay / automated slider solving.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "./host-shim";
 import type { SessionRequestCardProps } from "./types";
 
-/** 官方 SDK 脚本地址（桌面端同款，asar 实证 fX 常量）。 */
+/** Official SDK script URL (same as desktop; verified against the asar fX constant). */
 const CAPTCHA_SDK_URL = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
 
 export interface ProviderHeadersRequestInfo {
@@ -29,9 +35,10 @@ export interface ProviderHeadersRequestInfo {
   captchaConfig: { sceneId: string; prefix: string; region: string };
 }
 
-/** 官方 SDK 的全局 init 函数（脚本加载后出现）。
- * 注意：官方 V3 架构验证通过回调参数名是 `success`（入参 = captchaVerifyParam 字符串，可直接回传）；
- * 另兼容历史 `captchaVerifyCallback` 别名（对象/字符串双形态）。
+/** Global init function of the official SDK (appears after the script loads).
+ * Note: in the official V3 architecture the success-callback parameter name is `success`
+ * (its argument = the captchaVerifyParam string, ready to send back as-is);
+ * the legacy `captchaVerifyCallback` alias (object/string dual shape) is also supported.
  */
 type InitAliyunCaptcha = (config: {
   SceneId: string;
@@ -47,7 +54,8 @@ type InitAliyunCaptcha = (config: {
   getInstance: (instance: { destroy?: () => void }) => void;
 }) => void;
 
-/** 从 SDK 回调提取 captchaVerifyParam（官方 success 直传字符串；对象形态兜底兼容大小写字段）。 */
+/** Extract captchaVerifyParam from an SDK callback (official success passes a string; object shape
+ * falls back across case variants of the field name). */
 function extractCaptchaParam(p: unknown): string {
   if (typeof p === "string") return p.trim();
   if (p && typeof p === "object") {
@@ -58,7 +66,8 @@ function extractCaptchaParam(p: unknown): string {
   return "";
 }
 
-/** 挂载 SDK 脚本（单例；加载前先写全局 AliyunCaptchaConfig，V3 架构要求先于脚本设置 region/prefix）。 */
+/** Mount the SDK script (singleton; writes the global AliyunCaptchaConfig before loading —
+ * the V3 architecture requires region/prefix to be set before the script executes). */
 function loadCaptchaSdk(region: string, prefix: string): Promise<InitAliyunCaptcha> {
   const w = window as unknown as {
     initAliyunCaptcha?: InitAliyunCaptcha;
@@ -67,17 +76,18 @@ function loadCaptchaSdk(region: string, prefix: string): Promise<InitAliyunCaptc
   };
   if (w.initAliyunCaptcha) return Promise.resolve(w.initAliyunCaptcha);
   if (w.__piCaptchaSdkPromise) return w.__piCaptchaSdkPromise;
-  // V3 架构：身份标/region 必须以全局变量形式先于脚本写入（每次调用都刷新，防 config 变化不生效）
+  // V3 architecture: identity token/region must be written to globals BEFORE the script
+  // (refreshed on every call so config changes take effect)
   w.AliyunCaptchaConfig = { region, prefix };
   w.__piCaptchaSdkPromise = new Promise<InitAliyunCaptcha>((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${CAPTCHA_SDK_URL}"]`);
     const el = existing ?? document.createElement("script");
     const done = () => {
       if (w.initAliyunCaptcha) resolve(w.initAliyunCaptcha);
-      else reject(new Error("AliyunCaptcha.js 加载完成但 initAliyunCaptcha 缺失"));
+      else reject(new Error(t("zc.captcha.err.initMissing")));
     };
     el.addEventListener("load", done, { once: true });
-    el.addEventListener("error", () => reject(new Error("AliyunCaptcha.js 加载失败（网络不可达 o.alicdn.com）")), { once: true });
+    el.addEventListener("error", () => reject(new Error(t("zc.captcha.err.loadFailed"))), { once: true });
     if (!existing) {
       el.src = CAPTCHA_SDK_URL;
       document.head.appendChild(el);
@@ -123,22 +133,24 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
           prefix: req.captchaConfig.prefix,
           region: req.captchaConfig.region,
           mode: "popup",
-          // SDK 弹层锚点：隐藏按钮 + 卡片内容器（interactive 时 SDK 自己弹 popup）
+          // SDK popup anchors: hidden button + the card's content container (in interactive
+          // phase the SDK pops its own slider over the element)
           element: "#pi-captcha-element",
           button: "#pi-captcha-button",
-          // 官方 success 回调入参即 captchaVerifyParam 字符串（V3 架构）；直接回传
+          // Official success callback receives the captchaVerifyParam string directly (V3); send it back
           success: (captchaVerifyParam) => {
             const param = (captchaVerifyParam ?? "").trim();
             if (!cancelled) void answer({ captchaVerifyParam: param, region: req.captchaConfig.region });
           },
-          // 兼容历史 captchaVerifyCallback 别名（对象/字符串双形态）
+          // Legacy captchaVerifyCallback alias (object/string dual shape)
           captchaVerifyCallback: (p) => {
             const param = extractCaptchaParam(p);
             if (!cancelled) void answer({ captchaVerifyParam: param, region: req.captchaConfig.region });
           },
-          // 验证不通过：SDK 会自动刷新重试（官方语义），不打断流程，只留日志
+          // Verification not passed: the SDK refreshes and retries automatically (official
+          // semantics) — do not interrupt the flow, just log it
           fail: () => {
-            console.info("[aiti-zcode-agent] 安全验证未通过，SDK 自动刷新重试");
+            console.info("[aiti-zcode-agent] captcha not passed; SDK refreshes and retries automatically");
           },
           onError: (err) => {
             if (cancelled) return;
@@ -147,8 +159,10 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
           },
           getInstance: (instance) => {
             instanceRef.current = instance;
-            // popup 模式由按钮点击触发验证流：程序化触发一次——无感（智能验证）即自动回传
-            // captchaVerifyParam；高风险才弹滑块（滑块由真人完成，此处不代答）。
+            // popup mode starts the verification flow on button click: trigger it
+            // programmatically once — traceless (smart verification) returns the
+            // captchaVerifyParam automatically; only high-risk cases pop the slider
+            // (solved by the human user; never answered programmatically here).
             setTimeout(() => {
               document.getElementById("pi-captcha-button")?.click();
             }, 50);
@@ -162,7 +176,7 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
       });
     return () => {
       cancelled = true;
-      try { instanceRef.current?.destroy?.(); } catch { /* 已销毁 */ }
+      try { instanceRef.current?.destroy?.(); } catch { /* already destroyed */ }
       instanceRef.current = null;
     };
   }, [req.requestId, req.captchaConfig.sceneId, req.captchaConfig.prefix, req.captchaConfig.region, answer, retryNonce]);
@@ -187,19 +201,19 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span style={{ display: "flex", color: "var(--warn, #fbbf24)" }}><svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-        <strong style={{ fontSize: 13, color: "var(--text)" }}>套餐通道安全验证</strong>
+        <strong style={{ fontSize: 13, color: "var(--text)" }}>{t("zc.captcha.title")}</strong>
         <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
-          {req.reason === "captcha-retry" ? "重试验证" : "模型请求"}
+          {req.reason === "captcha-retry" ? t("zc.captcha.reason.retry") : t("zc.captcha.reason.modelRequest")}
         </span>
       </div>
       <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
         {phase === "error"
-          ? "验证组件加载失败，可重试。"
+          ? t("zc.captcha.msg.loadFailed")
           : phase === "interactive"
-            ? "请在下方完成安全验证（通常为滑块）。"
-            : "正在建立安全验证（通常无感通过，请稍候）…"}
+            ? t("zc.captcha.msg.interactive")
+            : t("zc.captcha.msg.verifying")}
       </div>
-      {/* 官方 SDK 挂载点：无感时不可见；interactive 时 SDK 在 element 容器弹滑块 */}
+      {/* Official SDK mount point: invisible when traceless; in interactive phase the SDK pops the slider inside the element */}
       <div id="pi-captcha-element" style={{ minHeight: phase === "interactive" ? 80 : 0 }} />
       <button id="pi-captcha-button" type="button" style={{ display: "none" }} />
       {errorText && (
@@ -213,11 +227,11 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
             onClick={() => setRetryNonce((n) => n + 1)}
             style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}
           >
-            重试
+            {t("zc.captcha.retry")}
           </button>
         )}
       </div>
-      {busy && <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>正在回传验证结果…</div>}
+      {busy && <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{t("zc.captcha.msg.responding")}</div>}
     </div>
   );
 }

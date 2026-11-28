@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * 构建 JSX client bundle（Vite lib mode → dist/aiti-session-cards.mjs）
+ * Build the JSX client bundle (Vite lib mode → dist/aiti-session-cards.mjs)
  *
- * 包装 `vite build`，确保 vite 从本扩展 node_modules 解析（扩展不依赖宿主安装）。
- * 源码：client/src/*.tsx；配置：vite.config.ts。
+ * Wraps `vite build`, ensuring vite resolves from this extension's own node_modules (no host install dependency).
+ * Sources: client/src/*.tsx; config: vite.config.ts.
  *
- * 用法：node tools/build-client.mjs
- *       npm run watch   （vite build --watch，改源码自动重建 → 配合前端 rev poller 即 HMR）
+ * Usage: node tools/build-client.mjs
+ *        npm run watch   (vite build --watch; source edits rebuild automatically → HMR with the frontend rev poller)
  */
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -16,8 +16,8 @@ import { existsSync } from "node:fs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-// Windows 上 .bin/vite（无扩展名 sh 脚本）spawn 会 status=null 静默失败；
-// 跨平台统一 node 直跑 vite.js 入口（.bin 垫片的真实目标，npm scripts 内部同做法）。
+// On Windows spawning .bin/vite (extension-less sh script) silently fails with status=null;
+// cross-platform we run the vite.js entry directly with node (the .bin shim's real target — what npm scripts do internally).
 const viteJs = resolve(root, "node_modules", "vite", "bin", "vite.js");
 const viteBin = existsSync(viteJs) ? viteJs : resolve(createRequire(import.meta.url).resolve("vite/package.json"), "..", "bin", "vite.js");
 

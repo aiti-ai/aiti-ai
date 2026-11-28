@@ -1,4 +1,4 @@
-/** 会话请求卡插槽契约（与宿主 lib/ext/types.ts 同形——扩展仓外，类型级文档；结构以宿主为准）。 */
+/** Session-request-card slot contract (mirrors the host lib/ext/types.ts — host lives in another repo, type-level doc only; the host shape is authoritative). */
 
 export interface SessionRequestAnswer {
   action: "accept" | "decline";

@@ -103,7 +103,7 @@ function zcodeCatalog(current?: { id: string; provider: string }): ExtModelEntry
   const cur = current?.id
     ? {
         ...current,
-        label: refDisplayLabel(current.id) + (isStartPlanChannel(current.id.split("/")[0]) ? " · 暂不支持" : ""),
+        label: refDisplayLabel(current.id) + (isStartPlanChannel(current.id.split("/")[0]) ? " · desktop only" : ""),
       }
     : undefined;
   return withCurrentFirst(builtin, cur);
@@ -1785,6 +1785,16 @@ export default {
     i18n: {
       "zh-CN": {
         "ext.displayName": "ZCode 会话后端",
+        "zc.captcha.title": "套餐通道安全验证",
+        "zc.captcha.reason.retry": "重试验证",
+        "zc.captcha.reason.modelRequest": "模型请求",
+        "zc.captcha.msg.loadFailed": "验证组件加载失败，可重试。",
+        "zc.captcha.msg.interactive": "请在下方完成安全验证（通常为滑块）。",
+        "zc.captcha.msg.verifying": "正在建立安全验证（通常无感通过，请稍候）…",
+        "zc.captcha.msg.responding": "正在回传验证结果…",
+        "zc.captcha.retry": "重试",
+        "zc.captcha.err.initMissing": "AliyunCaptcha.js 加载完成但 initAliyunCaptcha 缺失",
+        "zc.captcha.err.loadFailed": "AliyunCaptcha.js 加载失败（网络不可达 o.alicdn.com）",
       },
       en: {
         ...spawnFeatureI18nEn(),
@@ -1796,6 +1806,16 @@ export default {
         "feat.zcode.apiKeyOverride.desc": "Manually provides the coding-plan API key (skips desktop keychain reuse)",
         "feat.zcode.ultraGateway.desc": "app-server routes dynamically via the zcode.z.ai platform root (desktop-linked accounts)",
         "ext.displayName": "ZCode Session Backend",
+        "zc.captcha.title": "Plan channel security verification",
+        "zc.captcha.reason.retry": "Retrying verification",
+        "zc.captcha.reason.modelRequest": "Model request",
+        "zc.captcha.msg.loadFailed": "Verification component failed to load — you can retry.",
+        "zc.captcha.msg.interactive": "Please complete the security verification below (usually a slider).",
+        "zc.captcha.msg.verifying": "Setting up security verification (usually passes invisibly; please wait)…",
+        "zc.captcha.msg.responding": "Sending the verification result…",
+        "zc.captcha.retry": "Retry",
+        "zc.captcha.err.initMissing": "AliyunCaptcha.js loaded but initAliyunCaptcha is missing",
+        "zc.captcha.err.loadFailed": "Failed to load AliyunCaptcha.js (o.alicdn.com unreachable)",
         "feat.zcode.transport.desc": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server.",
         "feat.zcode.transport": "Transport channel",
         "feat.zcode.runtimePath": "Runtime path",

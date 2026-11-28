@@ -1,14 +1,14 @@
 /**
- * aiti-zcode-agent tests — wire 契约（假 runtime 桩 + 纯函数），零网络零真凭据。
+ * aiti-zcode-agent tests — wire contract (fake runtime stubs + pure functions), zero network, zero real credentials.
  *
  * Run: node --test pi-web-ext/aiti-zcode-agent/zcode-core.test.mjs
- * （node 24 原生 TS strip-types，import .ts 与 ext-model-state.test.mjs 同款）
+ * (node 24 native TS strip-types; imports .ts, same as ext-model-state.test.mjs)
  *
- * 桩机制：
- *   - runtime 桩 = node 脚本，按测试需要打印 --json 形态的 JSON / 失败退出；
- *   - 假 AppImage = shell 脚本，收到 --appimage-extract 时伪造 squashfs-root/resources/glm/zcode.cjs；
- *   - 凭据链 = AITI_ZCODE_HOME 指向临时目录 + 注入 fetchImpl；
- *   - feature = globalThis.__piWebExt.featureValue 桩。
+ * Stub mechanism:
+ *   - runtime stub = node script that prints --json-shaped JSON or exits non-zero as the test requires;
+ *   - fake AppImage = shell script that fakes squashfs-root/resources/glm/zcode.cjs on --appimage-extract;
+ *   - credential chain = AITI_ZCODE_HOME pointed at a temp dir + injected fetchImpl;
+ *   - feature = globalThis.__piWebExt.featureValue stub.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 
-// ---- 环境隔离（先于 import 被测模块设置）------------------------------------
+// ---- environment isolation (set before importing the module under test) ----
 const ROOT = mkdtempSync(join(tmpdir(), "zcode-agent-test-"));
 process.env.EXT_MODEL_STATE_DIR = join(ROOT, "ext-model-state");
 process.env.AITI_ZCODE_HOME = join(ROOT, "zcode-home");
@@ -26,7 +26,7 @@ mkdirSync(process.env.AITI_ZCODE_HOME, { recursive: true });
 
 const core = await import("./zcode-core.ts");
 
-/** 三目录对称（2026-09-13）：宿主注入 configDir = <extRoot>/config；测试给每个用例独立 extRoot 以隔离 cache/state。 */
+/** Three-dir symmetry (2026-09-13): host-injected configDir = <extRoot>/config; tests give each case its own extRoot to isolate cache/state. */
 function cfgOf(root) {
   const c = join(root, "config");
   mkdirSync(c, { recursive: true });
@@ -38,7 +38,7 @@ test.after(() => {
 });
 
 // ============================================================================
-// 纯函数：--json 解析
+// Pure functions: --json parsing
 // ============================================================================
 
 test("parseTurnOutput: 2026-09-06 实测形态（单 pretty JSON）", () => {
@@ -90,7 +90,7 @@ test("extractCliError: responseBody JSON 优先 → Error: 行 → 尾行", () =
 });
 
 // ============================================================================
-// 纯函数：模型 ref / argv / env
+// Pure functions: model ref / argv / env
 // ============================================================================
 
 test("parseModelRef + baseUrlFor: provider 表", () => {
@@ -106,7 +106,7 @@ test("buildCliArgs: mode 白名单校验 + resume + attach", () => {
   const a = core.buildCliArgs({ mode: "build", prompt: "hi" });
   assert.deepEqual(a, ["--json", "--mode", "build", "--prompt", "hi"]);
   const b = core.buildCliArgs({ mode: "yolo-ish", sessId: "sess_x", prompt: "go", attachPaths: ["/tmp/a.png"] });
-  // 非法 mode 回落 build
+  // invalid mode falls back to build
   assert.deepEqual(b, ["--json", "--mode", "build", "--resume", "sess_x", "--attach", "/tmp/a.png", "--prompt", "go"]);
 });
 
@@ -137,8 +137,8 @@ test("ZCODE_PLATFORM_BASE_URL: 平台根与 desktop 同款（引擎拉 configs/m
 });
 
 // ============================================================================
-// provider runtime 闸 env（3.17+ CLI 启动必需；桌面端同款注入，2026-11-07）
-// 真机复现：无注入 → 「无法定位 CLI ZCode Built-in Provider Config：…/glm/provider/…, /config/provider/…」
+// provider runtime gate env (required for 3.17+ CLI startup; desktop injects the same, 2026-11-07)
+// Reproduced on a real machine: without injection -> "cannot locate CLI ZCode Built-in Provider Config: .../glm/provider/..., /config/provider/..."
 // ============================================================================
 
 test("providerRuntimeEnv: 无 runtime / 文件皆缺 → 空注入（旧 CLI 行为不变）", () => {
@@ -174,7 +174,7 @@ test("providerRuntimeEnv: 无同包 → v2 runtime 刷新副本回退（精确�
   };
   mk("3.16.3");
   const v317 = mk("3.17.2");
-  const rt = join(ROOT, "appimg2", "resources", "glm", "zcode.cjs"); // 同包 config 不存在
+  const rt = join(ROOT, "appimg2", "resources", "glm", "zcode.cjs"); // no bundled config present
   assert.equal(core.providerRuntimeEnv(rt, {}, "3.17.2").ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, v317);
   assert.equal(core.providerRuntimeEnv(rt).ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, v317);
   rmSync(join(process.env.AITI_ZCODE_HOME, "v2", "runtime"), { recursive: true, force: true });
@@ -203,8 +203,8 @@ test("buildTurnEnv: runtimeCjsPath 透传注入 provider 闸 env", () => {
 });
 
 // ============================================================================
-// 3.17+ personal provider config（registry 模型注册；2026-11-07 实测配方）
-// 全部必填字段缺任一项 → CLI 整体静默 recovery 成空 registry → setModel「不存在 Model」
+// 3.17+ personal provider config (registry model registration; 2026-11-07 field-tested recipe)
+// Missing any single required field -> the CLI silently recovers to an empty registry -> setModel reports "Model not found"
 // ============================================================================
 
 test("providerConfigDocument: 3.17+ 全必填形状（group/personalModelIds/enabled/properties/optionSpecs/providerModelRules）", () => {
@@ -216,16 +216,16 @@ test("providerConfigDocument: 3.17+ 全必填形状（group/personalModelIds/ena
   });
   const rule = doc.config.providerConfigRules.providerRules[0];
   assert.equal(rule.providerId, "bigmodel");
-  assert.equal(rule.config.group, "standard-personal");                          // registry 层必填（比 zod 严）
-  assert.deepEqual(rule.config.personalModelIds, ["GLM-5.3-Flash", "GLM-5.3"]);  // 模型清单来源（builtinModelIds 被 omit）
+  assert.equal(rule.config.group, "standard-personal");                          // required at the registry layer (stricter than zod)
+  assert.deepEqual(rule.config.personalModelIds, ["GLM-5.3-Flash", "GLM-5.3"]);  // model list source (builtinModelIds gets omitted)
   assert.equal(rule.config.access.type, "zhipu-coding-plan-api-key");
   assert.equal(rule.config.api.baseUrl, "https://open.bigmodel.cn/api/anthropic");
   const m0 = doc.config.modelConfigRules.manualProviderModelRules[0];
   assert.equal(m0.modelId, "GLM-5.3-Flash");
-  assert.equal(m0.config.enabled, true);                                         // 模型可执行闸（严格 === true）
+  assert.equal(m0.config.enabled, true);                                         // model executability gate (strict === true)
   assert.equal(m0.config.properties.contextWindow, 1000000);
   assert.ok(m0.config.properties.inputFormat.supportsImage);
-  assert.deepEqual(doc.config.modelConfigRules.providerModelRules, []);          // 键必带（空数组也要）
+  assert.deepEqual(doc.config.modelConfigRules.providerModelRules, []);          // key must be present (even as an empty array)
   assert.deepEqual(m0.config.optionSpecs.reasoningLevel.values, ["disabled", "enabled"]);
   assert.equal(m0.config.optionSpecs.reasoningLevel.map, "{}");
   assert.equal(m0.config.optionSpecs.maxOutputTokens.max, 128000);
@@ -247,14 +247,14 @@ test("writeProviderConfigFile: 合并桌面 personal config（保留其它 provi
     models: [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }], defaultModelRef: "bigmodel/GLM-5.3-Flash",
     desktopPersonalPath: desktop,
   });
-  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600, "含 apiKey 必须 0600 (POSIX mode-bit semantics; Windows has no 0600)");
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600, "contains an apiKey, must be 0600 (POSIX mode-bit semantics; Windows has no 0600)");
   const doc = JSON.parse(readFileSync(file, "utf8"));
   const rules = doc.config.providerConfigRules.providerRules;
   assert.deepEqual(rules.map((r) => r.providerId).sort(), ["bigmodel", "other"]);
   const manual = doc.config.modelConfigRules.manualProviderModelRules;
   assert.deepEqual(manual.map((r) => `${r.providerId}/${r.modelId}`).sort(), ["bigmodel/GLM-5.3-Flash", "other/m1"]);
   assert.equal(doc.config.defaultModelSelection.modelId, "GLM-5.3-Flash");
-  // 同 providerId 再写：覆盖不重复
+  // rewrite with the same providerId: overwrite, no duplicate
   const file2 = core.writeProviderConfigFile({
     cacheDir: dir, providerId: "bigmodel", baseURL: "https://x2", apiKey: "sec2",
     models: [{ modelId: "GLM-5.3-Flash" }], desktopPersonalPath: desktop,
@@ -274,7 +274,7 @@ test("buildTurnEnv: personalProviderConfigFile 覆盖 ZCODE_PERSONAL_PROVIDER_CO
 });
 
 // ============================================================================
-// 凭据链路：解密 → 换 key → 缓存（注入 fetch，零网络）
+// Credential chain: decrypt -> key exchange -> cache (injected fetch, zero network)
 // ============================================================================
 
 function encryptForTest(plain, secret) {
@@ -298,7 +298,7 @@ test("humanizeZcodeError: 1113 无权益 → 人话指引（保留原始）；�
   const out = core.humanizeZcodeError(raw);
   assert.match(out, /GLM Coding Plan/);
   assert.match(out, /zcode\.apiKeyOverride/);
-  assert.ok(out.includes(raw), "保留原始错误便于排查");
+  assert.ok(out.includes(raw), "keep the original error for troubleshooting");
   assert.equal(core.humanizeZcodeError("some other failure"), "some other failure");
 });
 
@@ -322,7 +322,7 @@ function bigmodelFetchStub(expectedToken) {
       calls.push({ url, method: init.method ?? "GET", auth: init.headers?.Authorization });
       const json = (obj) => new Response(JSON.stringify(obj), { status: 200 });
       if (url.includes("getCustomerInfo")) {
-        assert.equal(init.headers.Authorization, expectedToken, "bigmodel getCustomerInfo 用裸 token 无 Bearer");
+        assert.equal(init.headers.Authorization, expectedToken, "bigmodel getCustomerInfo uses the bare token without Bearer");
         return json({ code: 200, success: true, msg: "ok", data: { organizations: [{ organizationName: "默认机构(x)", organizationId: "org-1", isDefault: true, projects: [{ projectName: "默认项目", projectId: "proj-1", isDefault: true }] }] } });
       }
       if (url.endsWith("/api_keys") && (!init.method || init.method === "GET")) {
@@ -353,20 +353,20 @@ test("ensureCredential: bigmodel 全链路（解密→换key→缓存命中不�
   assert.equal(r1.apiKey, "0ab2a777.ox00kdXX");
   assert.equal(r1.source, "fresh");
   assert.equal(stub.calls.length, 4); // info + list + create + copy
-  // 幂等缓存：第二次不打 API
+  // idempotent cache: second call hits no API
   const r2 = await core.ensureCredential({ providerId: "bigmodel", configDir, fetchImpl: stub.impl });
   assert.equal(r2.source, "cache");
   assert.equal(stub.calls.length, 4);
-  // 磁盘缓存文件 0600 且含 key（POSIX 权限语义；NTFS 无 POSIX 位，Windows 跳过该断言）
+  // disk cache file is 0600 and contains the key (POSIX permission semantics; NTFS has no POSIX bits, Windows skips this assert)
   const cacheFile = join(configDir, "zcode-api-key.json");
   assert.ok(existsSync(cacheFile));
   const cache = JSON.parse(readFileSync(cacheFile, "utf8"));
   assert.equal(cache.apiKey, "0ab2a777.ox00kdXX");
   if (process.platform !== "win32") {
     const mode = (await import("node:fs")).statSync(cacheFile).mode & 0o777;
-    assert.equal(mode, 0o600, "key 缓存 0600");
+    assert.equal(mode, 0o600, "key cache must be 0600");
   }
-  // 指纹变化（模拟桌面端重新授权）→ 重新换 key
+  // fingerprint change (simulating desktop re-auth) -> exchange the key again
   core.resetCredentialCacheForTests();
   const stub2 = bigmodelFetchStub("tok-2");
   writeFileSync(credFile, JSON.stringify({ "oauth:bigmodel:access_token": encryptForTest("tok-2", secret) }));
@@ -385,14 +385,14 @@ test("ensureCredential: 未登录 → 人话指引；override 直通", async () 
     () => core.ensureCredential({ providerId: "bigmodel", configDir, fetchImpl: async () => { throw new Error("should not fetch"); } }),
     (e) => /未登录|凭据/.test(e.message) && /apiKeyOverride/.test(e.message),
   );
-  // 通道不匹配（只有 zai token，要 bigmodel）
+  // channel mismatch (only a zai token present, bigmodel requested)
   const secret = core.deriveCredentialSecret();
   writeFileSync(join(home, "v2", "credentials.json"), JSON.stringify({ "oauth:zai:access_token": encryptForTest("ztok", secret) }));
   await assert.rejects(
     () => core.ensureCredential({ providerId: "bigmodel", configDir }),
     (e) => /不匹配/.test(e.message),
   );
-  // override 优先且不打 API
+  // override takes precedence and hits no API
   const r = await core.ensureCredential({ providerId: "bigmodel", configDir, override: "manual.key" });
   assert.deepEqual(r, { apiKey: "manual.key", providerId: "bigmodel", source: "override" });
 });
@@ -401,7 +401,7 @@ test("ensureCredential: 桌面 config.json 现成通道 key 优先（不换 key�
   const home = join(ROOT, "cred-desktop");
   process.env.AITI_ZCODE_HOME = home;
   mkdirSync(join(home, "v2"), { recursive: true });
-  // 凭据文件为空（不可解密也不影响：desktop key 在解密之前命中）
+  // credentials file is empty (undecryptable too - irrelevant: the desktop key hits before decryption)
   writeFileSync(join(home, "v2", "credentials.json"), JSON.stringify({}));
   writeFileSync(join(home, "v2", "config.json"), JSON.stringify({
     provider: {
@@ -417,10 +417,10 @@ test("ensureCredential: 桌面 config.json 现成通道 key 优先（不换 key�
     fetchImpl: async () => { throw new Error("should not fetch"); },
   });
   assert.deepEqual(r, { apiKey: "0ab2a777.ox00kdXX", providerId: "zai-coding-plan", source: "desktop" });
-  // 同通道再取 = 仍走桌面 key（实时读 config.json，不落磁盘缓存）
+  // same channel again = still the desktop key (reads config.json live, no disk cache)
   const r2 = await core.ensureCredential({ providerId: "zai-coding-plan", configDir });
   assert.equal(r2.source, "desktop");
-  // 其它通道（config.json 无 key）→ 回退原链路：凭据空 → 人话报错
+  // other channel (no key in config.json) -> falls back to the original chain: empty credentials -> human-readable error
   await assert.rejects(
     () => core.ensureCredential({ providerId: "bigmodel", configDir, fetchImpl: async () => { throw new Error("should not fetch"); } }),
     (e) => /未登录|凭据/.test(e.message),
@@ -428,7 +428,7 @@ test("ensureCredential: 桌面 config.json 现成通道 key 优先（不换 key�
 });
 
 // ============================================================================
-// runtime：版本解析 / 下载页解析 / 解压缓存
+// runtime: version parsing / download page parsing / extraction cache
 // ============================================================================
 
 test("parseAppImageVersion + compareVersions + pickLatestVersion", () => {
@@ -447,7 +447,7 @@ test("extractReleaseUrls: 官网直链提取（真实连字符形态 + \\/ 转�
     '"https:\\/\\/cdn-zcode.z.ai\\/zcode\\/electron\\/releases\\/3.11.2\\/win\\/x64\\/ZCode-3.11.2-win-x64.exe"',
   ].join("\n");
   const urls = core.extractReleaseUrls(html);
-  assert.equal(urls.length, 3, "只取 linux-x64 AppImage（含旧斜杠形态）");
+  assert.equal(urls.length, 3, "only linux-x64 AppImage entries (incl. the legacy slash form)");
   assert.ok(urls.every((u) => u.url.startsWith("https://cdn-zcode.z.ai/")));
   assert.ok(urls.some((u) => u.ver === "3.11.2"));
 });
@@ -479,7 +479,7 @@ test("resolveRuntime: 假 AppImage → --appimage-extract → 缓存（pattern �
   const emptyMount = join(ROOT, "empty-mount");
   mkdirSync(emptyMount, { recursive: true });
   const fakeApp = join(home, "ZCode-4.0.0-linux-x64.AppImage");
-  // 假 AppImage：shell 脚本伪装 runtime 的 --appimage-extract 行为
+  // fake AppImage: shell script mimicking the runtime's --appimage-extract behavior
   writeFileSync(fakeApp, `#!/bin/sh
 mkdir -p "$PWD/squashfs-root/resources/glm"
 printf '#!/usr/bin/env node\\nconsole.log("{}")\\n' > "$PWD/squashfs-root/resources/glm/zcode.cjs"
@@ -490,12 +490,12 @@ printf '#!/usr/bin/env node\\nconsole.log("{}")\\n' > "$PWD/squashfs-root/resour
   const r1 = await core.resolveRuntime({ configDir, autoDownload: false, mountScanDir: emptyMount, winInstallDirs: [], log: (m) => logs.push(m) });
   assert.equal(r1.appVersion, "4.0.0");
   assert.equal(r1.origin, "appimage");
-  assert.ok(existsSync(r1.cjsPath), "解压产物 zcode.cjs 存在");
-  // 缓存命中：删掉假 AppImage 后仍能解析（来自缓存目录）
+  assert.ok(existsSync(r1.cjsPath), "extracted zcode.cjs exists");
+  // cache hit: still resolvable after deleting the fake AppImage (served from the cache dir)
   rmSync(fakeApp);
   const r2 = await core.resolveRuntime({ configDir, autoDownload: false, mountScanDir: emptyMount, winInstallDirs: [] });
   assert.equal(r2.cjsPath, r1.cjsPath);
-  assert.ok(r2.cjsPath.includes(join(dirname(configDir), "cache", "runtime", "ZCode-4.0.0")), "缓存位于 extRoot/cache（三目录对称）");
+  assert.ok(r2.cjsPath.includes(join(dirname(configDir), "cache", "runtime", "ZCode-4.0.0")), "cache lives under extRoot/cache (three-dir symmetry)");
 });
 
 test("resolveRuntime: 全部落空 + autoDownload 关 → 人话报错", async () => {
@@ -520,7 +520,7 @@ test("isReadableFile：存在文件 true / 不存在 false / 不可读(000) fals
   const locked = join(dir, "locked.cjs");
   writeFileSync(locked, "x");
   chmodSync(locked, 0o000);
-  assert.equal(core.isReadableFile(locked), false, "stat 通过但 open 失败（断开 FUSE 挂载点同型）应判不可读");
+  assert.equal(core.isReadableFile(locked), false, "stat passes but open fails (same shape as a disconnected FUSE mount) must count as unreadable");
   chmodSync(locked, 0o644);
 });
 
@@ -535,11 +535,11 @@ test("resolveRuntime：挂载残留（stat 通过/不可读）不劫持，可读
   writeFileSync(join(good, "zcode.cjs"), "console.log('good')");
   const locked = join(broken, "zcode.cjs");
   writeFileSync(locked, "x");
-  chmodSync(locked, 0o000); // 模拟断开挂载：stat 通过、open 失败（ENOTCONN/EACCES）
+  chmodSync(locked, 0o000); // simulates a disconnected mount: stat passes, open fails (ENOTCONN/EACCES)
   const configDir = cfgOf(join(ROOT, "rt-mount-data"));
   const r = await core.resolveRuntime({ configDir, autoDownload: false, mountScanDir: mount, winInstallDirs: [] });
   assert.equal(r.origin, "mount");
-  assert.ok(r.cjsPath.includes(".mount_ZCode-GOOD"), `应跳过不可读残留、选中可读挂载，实际 ${r.cjsPath}`);
+  assert.ok(r.cjsPath.includes(".mount_ZCode-GOOD"), `should skip unreadable leftovers and pick the readable mount, got ${r.cjsPath}`);
 });
 
 test("resolveRuntime：全部挂载残留（不可读）→ 跳过挂载层落到后续来源（无缓存/AppImage → 报错）", { skip: CAN_LOCK ? false : "chmod 000 不可靠（root/win），跳过残留模拟" }, async () => {
@@ -566,7 +566,7 @@ test("windowsInstallDirs: env 注入生成 Program Files / LOCALAPPDATA 路径�
     "C:\\Users\\t\\AppData\\Local\\ZCode",
     "C:\\Users\\t\\AppData\\Local\\Programs\\ZCode",
   ]);
-  // 缺环境变量时跳过对应项
+  // missing env vars skip their corresponding entries
   assert.ok(!core.windowsInstallDirs({}).length);
 });
 
@@ -581,9 +581,9 @@ test("resolveRuntime: Windows 安装探测（resources/glm/zcode.cjs，多目录
   const r = await core.resolveRuntime({ configDir: cfgOf(join(ROOT, "rt-win")), autoDownload: false, winInstallDirs: [winOld, winNew] });
   assert.equal(r.origin, "install");
   assert.equal(r.cjsPath, join(winNew, "resources", "glm", "zcode.cjs"));
-  assert.equal(r.appVersion, "3.11.2", "多目录命中取 asar 版本最高者");
+  assert.equal(r.appVersion, "3.11.2", "multi-dir hit picks the highest asar version");
 
-  // 无 asar（或 asar 损坏）→ cjs 仍可用，版本缺省
+  // no asar (or corrupted asar) -> cjs still usable, version undefined
   const winPlain = join(ROOT, "win-plain");
   mkdirSync(join(winPlain, "resources", "glm"), { recursive: true });
   writeFileSync(join(winPlain, "resources", "glm", "zcode.cjs"), "// cli");
@@ -592,7 +592,7 @@ test("resolveRuntime: Windows 安装探测（resources/glm/zcode.cjs，多目录
   assert.equal(rp.appVersion, undefined);
 });
 
-/** 构造新格式假 asar：头部 16B + header JSON（offset 为字符串，相对 data 区）+ data 区 package.json。 */
+/** Build a new-format fake asar: 16B header + header JSON (offset as string, relative to the data region) + data region package.json. */
 function makeFakeAsar(installDir, version) {
   const pkg = JSON.stringify({ name: "zcode", version });
   const header = JSON.stringify({ files: { "package.json": { size: pkg.length, offset: "0" } } });
@@ -609,10 +609,10 @@ function makeFakeAsar(installDir, version) {
 test("detectWindowsInstallVersion: 新/旧两种 asar 格式均能解析", () => {
   const dir = join(ROOT, "detect-ver");
   mkdirSync(join(dir, "resources"), { recursive: true });
-  // 新格式（header 在头部，offset 为字符串）
+  // new format (header at the front, offset as string)
   makeFakeAsar(dir, "5.2.1");
   assert.equal(core.detectWindowsInstallVersion(dir), "5.2.1");
-  // 旧格式（header 在尾部：[data][u32 size][u32 headerSize][header JSON]，offset 为数字）
+  // old format (header at the tail: [data][u32 size][u32 headerSize][header JSON], offset as number)
   const pkg = JSON.stringify({ name: "zcode", version: "4.0.0" });
   const header = JSON.stringify({ files: { "package.json": { size: pkg.length, offset: 0 } } });
   const headerSize = header.length;
@@ -622,7 +622,7 @@ test("detectWindowsInstallVersion: 新/旧两种 asar 格式均能解析", () =>
   tail.writeUInt32LE(headerSize, 4);
   writeFileSync(join(dir, "resources", "app.asar"), Buffer.concat([Buffer.from(pkg), Buffer.from(header), tail]));
   assert.equal(core.detectWindowsInstallVersion(dir), "4.0.0");
-  // 目录无 asar → null
+  // dir without asar -> null
   const empty = join(ROOT, "detect-empty");
   mkdirSync(join(empty, "resources"), { recursive: true });
   assert.equal(core.detectWindowsInstallVersion(empty), null);
@@ -631,32 +631,32 @@ test("detectWindowsInstallVersion: 新/旧两种 asar 格式均能解析", () =>
 test("downloadAppimage: .part 原子落盘 + 小内容拒收（防半文件当缓存）", async () => {
   const { downloadAppimage } = core;
   const dest = join(ROOT, "dl", "ZCode-9.9.9-linux-x64.AppImage");
-  // 小内容（<1MB）拒收且不留 .part
+  // small content (<1MB) rejected with no .part left behind
   await assert.rejects(
     () => downloadAppimage("https://cdn.test/x", dest, async () => new Response("error page", { status: 200 })),
     /下载内容异常/,
   );
-  assert.ok(!existsSync(dest), "不落正式文件");
-  assert.ok(!existsSync(`${dest}.part`), "不残留 .part");
-  // HTTP 错误拒收
+  assert.ok(!existsSync(dest), "final file must not be written");
+  assert.ok(!existsSync(`${dest}.part`), "no .part leftover");
+  // HTTP errors rejected
   await assert.rejects(
     () => downloadAppimage("https://cdn.test/x", dest, async () => new Response("no", { status: 404 })),
     /HTTP 404/,
   );
-  // abort 信号：fetch 挂起时外部 abort → rejects 且不残留 .part
+  // abort signal: external abort while fetch hangs -> rejects with no .part leftover
   const ac = new AbortController();
   const hung = new Promise((resolve) => { ac.signal.addEventListener("abort", () => resolve(new Response("late", { status: 200 }))); });
   const p = downloadAppimage("https://cdn.test/x", dest, async () => hung, () => {}, ac.signal);
   ac.abort();
   await assert.rejects(p);
-  assert.ok(!existsSync(`${dest}.part`), "abort 后无 .part 残留");
+  assert.ok(!existsSync(`${dest}.part`), "no .part leftover after abort");
 });
 
 test("detectPlanProvider: coding-plan-cache available 状态选通道 + 缺文件回落 null", () => {
   const home = join(ROOT, "plan-home");
   process.env.AITI_ZCODE_HOME = home;
   rmSync(join(home, "v2"), { recursive: true, force: true });
-  assert.equal(core.detectPlanProvider(), null, "文件缺失 → null");
+  assert.equal(core.detectPlanProvider(), null, "missing file -> null");
   mkdirSync(join(home, "v2"), { recursive: true });
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: {
@@ -671,21 +671,21 @@ test("detectPlanProvider: coding-plan-cache available 状态选通道 + 缺文�
     } },
   }));
   assert.equal(core.detectPlanProvider(), "zai");
-  // 仅 start-plan 可用（桌面端体验套餐）：家族仍可裁决（回落同家族 base/coding-plan，不选 start-plan 本身）
+  // only start-plan available (desktop trial plan): the family is still resolvable (falls back to same-family base/coding-plan, never start-plan itself)
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: {
       "builtin:zai-start-plan": { status: "available" },
       "builtin:bigmodel-coding-plan": { status: "unavailable" },
     } },
   }));
-  assert.equal(core.detectPlanProvider(), "zai", "仅 zai-start-plan 可用 → 家族 zai（此前返回 null 会回落 bigmodel 种出目录外模型）");
+  assert.equal(core.detectPlanProvider(), "zai", "only zai-start-plan available -> family zai (a null return, as before, would fall back to bigmodel and seed out-of-catalog models)");
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: {
       "builtin:bigmodel-start-plan": { status: "available" },
       "builtin:zai-start-plan": { status: "unavailable" },
     } },
   }));
-  assert.equal(core.detectPlanProvider(), "bigmodel", "仅 bigmodel-start-plan 可用 → 家族 bigmodel");
+  assert.equal(core.detectPlanProvider(), "bigmodel", "only bigmodel-start-plan available -> family bigmodel");
 });
 
 test("动态目录: 注册表+套餐缓存（桌面端同款数据源）→ buildZcodeCatalogRefs/parseModelRef/baseUrlFor", () => {
@@ -696,8 +696,8 @@ test("动态目录: 注册表+套餐缓存（桌面端同款数据源）→ buil
   mkdirSync(join(home, "v2"), { recursive: true });
   writeFileSync(join(home, "v2", "config.json"), JSON.stringify({
     provider: {
-      // 真实桌面结构：端点写在 options.baseURL（2026-09-12 48/155 实测）；
-      // 首条保留顶层 baseURL 覆盖兼容兜底分支。
+      // real desktop structure: the endpoint lives in options.baseURL (field-tested on 48/155 machines, 2026-09-12);
+      // the first entry keeps a top-level baseURL to cover the compat fallback branch.
       "builtin:bigmodel": { name: "Bigmodel - API Key", baseURL: "https://open.bigmodel.cn/api/anthropic", models: { "GLM-5.3": {}, "GLM-5.3-Flash": {} } },
       "builtin:bigmodel-coding-plan": { name: "BigModel - Coding Plan", options: { baseURL: "https://open.bigmodel.cn/api/anthropic" }, models: { "GLM-5.3": {}, "GLM-5.3-Flash": {} } },
       "builtin:bigmodel-start-plan": { name: "BigModel - Coding Plan", options: { baseURL: "https://zcode.z.ai/api/v1/zcode-plan/anthropic" }, models: { "GLM-5.3-Flash": {} } },
@@ -712,7 +712,7 @@ test("动态目录: 注册表+套餐缓存（桌面端同款数据源）→ buil
     } },
   }));
 
-  // 注册表解析：builtin: strip + models 键集透出
+  // registry parsing: builtin: prefix stripped + models key set exposed
   const reg = core.readProviderRegistry();
   const startEntry = reg.find((p) => p.channel === "bigmodel-start-plan");
   assert.equal(startEntry?.baseURL, "https://zcode.z.ai/api/v1/zcode-plan/anthropic");
@@ -722,37 +722,37 @@ test("动态目录: 注册表+套餐缓存（桌面端同款数据源）→ buil
     ["bigmodel-coding-plan", "bigmodel-start-plan"],
   );
 
-  // 目录（2026-09-15 起不再排除）：start-plan 桌面端实据 available → 照常列出，标签带「暂不支持」提示；
-  // 未开通（unavailable）或注册表无模型不列（zai-start-plan 模型表为空 → 无条目）。
+  // catalog (no longer excluded as of 2026-09-15): start-plan with desktop-verified available -> listed as usual, label carries a "not yet supported" hint;
+  // not entitled (unavailable) or no registry models -> not listed (zai-start-plan's model table is empty -> no entry).
   const refs = core.buildZcodeCatalogRefs();
-  assert.ok(refs.some((m) => m.id === "bigmodel-start-plan/GLM-5.3-Flash" && m.label.includes("暂不支持")), "start-plan available → 照常列出并带「暂不支持」提示");
-  assert.ok(!refs.some((m) => m.id.startsWith("zai-start-plan/")), "zai-start-plan 未开通/无模型 → 不列");
+  assert.ok(refs.some((m) => m.id === "bigmodel-start-plan/GLM-5.3-Flash" && m.label.includes("desktop only")), "start-plan available -> listed as usual with the 'not yet supported' hint");
+  assert.ok(!refs.some((m) => m.id.startsWith("zai-start-plan/")), "zai-start-plan not entitled / no models -> not listed");
 
-  // 无注册表（headless 老机型）→ 回落固定词
+  // no registry (headless legacy machines) -> fall back to the fixed wording
   core.resetZcodeCatalogCacheForTests();
   writeFileSync(join(home, "v2", "config.json"), JSON.stringify({ provider: {} }));
   core.resetZcodeCatalogCacheForTests();
   const fallbackRefs = core.buildZcodeCatalogRefs();
-  assert.ok(fallbackRefs.some((m) => m.label.endsWith("(bigmodel)")), "注册表缺失 → seed 通道，标签仍=通道 id 原样");
+  assert.ok(fallbackRefs.some((m) => m.label.endsWith("(bigmodel)")), "registry missing -> seed channels, label still the raw channel id");
   core.resetZcodeCatalogCacheForTests();
-  assert.ok(!refs.some((m) => m.id.startsWith("zai")), "未开通家族（zai 无 available 套餐）→ 不展示");
-  assert.ok(!refs.some((m) => m.id === "bigmodel/GLM-5-Turbo"), "注册表权威：注册表已有的通道不再并入 seed 下架档位");
-  // 通道独立展示（零归一化）：base / coding-plan 各自出条目，标签 = 通道 id 原样（start-plan 带提示）
-  assert.ok(refs.some((m) => m.id === "bigmodel/GLM-5.3" && m.label === "GLM-5.3 (bigmodel)"), "base 通道：标签=通道 id 原样");
-  assert.ok(refs.some((m) => m.id === "bigmodel-coding-plan/GLM-5.3" && m.label === "GLM-5.3 (bigmodel-coding-plan)"), "coding-plan 通道独立收录");
+  assert.ok(!refs.some((m) => m.id.startsWith("zai")), "family without entitlement (zai has no available plan) -> not shown");
+  assert.ok(!refs.some((m) => m.id === "bigmodel/GLM-5-Turbo"), "registry is authoritative: channels present in the registry no longer merge retired seed tiers");
+  // channels displayed independently (zero normalization): base / coding-plan each get entries, label = raw channel id (start-plan with the hint)
+  assert.ok(refs.some((m) => m.id === "bigmodel/GLM-5.3" && m.label === "GLM-5.3 (bigmodel)"), "base channel: label = raw channel id");
+  assert.ok(refs.some((m) => m.id === "bigmodel-coding-plan/GLM-5.3" && m.label === "GLM-5.3 (bigmodel-coding-plan)"), "coding-plan channel listed independently");
   const codingRef = refs.find((m) => m.id === "bigmodel/GLM-5.3");
-  assert.ok(codingRef, "base 通道收录注册表模型");
-  assert.ok(new Set(refs.map((m) => m.id)).size === refs.length, "目录无重复 ref");
+  assert.ok(codingRef, "base channel includes registry models");
+  assert.ok(new Set(refs.map((m) => m.id)).size === refs.length, "catalog has no duplicate refs");
 
-  // seed 兜底：注册表缺该通道模型时并入静态 seed（headless 老机型）
+  // seed fallback: when the registry lacks a channel's models, merge in the static seed (headless legacy machines)
   core.resetZcodeCatalogCacheForTests();
   writeFileSync(join(home, "v2", "config.json"), JSON.stringify({
     provider: { "builtin:bigmodel": { name: "Bigmodel - API Key", models: {} } },
   }));
   const refsSeed = core.buildZcodeCatalogRefs();
-  assert.ok(refsSeed.some((m) => m.id === "bigmodel/GLM-5-Turbo"), "注册表无模型 → seed 兜底并入");
+  assert.ok(refsSeed.some((m) => m.id === "bigmodel/GLM-5-Turbo"), "registry has no models -> static seed merged as fallback");
 
-  // 恢复完整注册表（供下方 ref 解析/baseUrlFor 断言）
+  // restore the full registry (for the ref-parsing/baseUrlFor asserts below)
   core.resetZcodeCatalogCacheForTests();
   writeFileSync(join(home, "v2", "config.json"), JSON.stringify({
     provider: {
@@ -764,13 +764,13 @@ test("动态目录: 注册表+套餐缓存（桌面端同款数据源）→ buil
   }));
   core.resetZcodeCatalogCacheForTests();
 
-  // ref 解析：动态通道合法 + unknown 拒绝；baseUrlFor 注册表优先
+  // ref parsing: dynamic channels valid + unknown rejected; baseUrlFor prefers the registry
   assert.deepEqual(core.parseModelRef("bigmodel-start-plan/GLM-5.3-Flash"), { providerId: "bigmodel-start-plan", modelId: "GLM-5.3-Flash" });
   assert.equal(core.parseModelRef("unknown-ch/m"), null);
   assert.equal(core.baseUrlFor("bigmodel-start-plan"), "https://zcode.z.ai/api/v1/zcode-plan/anthropic");
 
-  // 默认通道家族裁决：仅 start-plan available（无可驱动通道）→ 回落家族（start-plan 本身不作默认，
-  // 但同家族 base/coding-plan 可驱动——2026-09-14 修正，此前返回 null 会在只有 zai 套餐的机器上回落 bigmodel）
+  // default-channel family resolution: only start-plan available (no driveable channel) -> fall back to the family
+  // (start-plan itself is never the default, but same-family base/coding-plan is driveable — fixed 2026-09-14; a null return used to fall back to bigmodel on zai-plan-only machines)
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: { "builtin:bigmodel-start-plan": { status: "available" } } },
   }));
@@ -792,7 +792,7 @@ test("通道级可用收紧（2026-09-15）：套餐通道自身 unavailable →
       "builtin:zai-start-plan": { name: "Z.ai - Start Plan", options: { baseURL: "https://zcode.z.ai/api/v1/zcode-plan/anthropic" }, models: {} },
     },
   }));
-  // 真机 2026-09-15 形态：仅 start-plan available，coding-plan not_entitled（429/1113 死通道）
+  // real-machine 2026-09-15 shape: only start-plan available, coding-plan not_entitled (dead channel, 429/1113)
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: {
       "builtin:zai-start-plan": { status: "available" },
@@ -801,14 +801,14 @@ test("通道级可用收紧（2026-09-15）：套餐通道自身 unavailable →
   }));
   core.resetZcodeCatalogCacheForTests();
   const refs = core.buildZcodeCatalogRefs();
-  assert.ok(!refs.some((m) => m.id.startsWith("zai-coding-plan/")), "coding-plan 通道自身 unavailable → 不列（家族连带放行会种出选中即 1113 的死通道）");
-  assert.ok(!refs.some((m) => m.id.startsWith("zai-start-plan/")), "start-plan 注册表无模型（models 空）→ 无条目");
-  assert.ok(refs.some((m) => m.id === "zai/GLM-5.3"), "base 通道（不在套餐缓存）维持家族门：家族有 available 套餐 → 仍列");
+  assert.ok(!refs.some((m) => m.id.startsWith("zai-coding-plan/")), "coding-plan channel itself unavailable -> not listed (family-level pass-through would seed a dead channel that 1113s the moment it is selected)");
+  assert.ok(!refs.some((m) => m.id.startsWith("zai-start-plan/")), "start-plan registry has no models (empty models) -> no entry");
+  assert.ok(refs.some((m) => m.id === "zai/GLM-5.3"), "base channel (absent from the plan cache) keeps the family gate: family has an available plan -> still listed");
   assert.equal(core.isChannelDriveable("zai-coding-plan"), false);
   assert.equal(core.isChannelDriveable("zai-start-plan"), false);
   assert.equal(core.isChannelDriveable("zai"), true);
 
-  // 对照组：通道自身 available → 照常列出（通道级门不误伤可用通道）
+  // control group: channel itself available -> listed as usual (the channel-level gate does not hit healthy channels)
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: {
       "builtin:zai-start-plan": { status: "available" },
@@ -816,21 +816,21 @@ test("通道级可用收紧（2026-09-15）：套餐通道自身 unavailable →
     } },
   }));
   core.resetZcodeCatalogCacheForTests();
-  assert.ok(core.buildZcodeCatalogRefs().some((m) => m.id === "zai-coding-plan/GLM-5.3-Flash"), "通道自身 available → 照常列出");
+  assert.ok(core.buildZcodeCatalogRefs().some((m) => m.id === "zai-coding-plan/GLM-5.3-Flash"), "channel itself available -> listed as usual");
 
-  // 套餐缓存缺失（headless 老机型）→ null，调用方按旧家族逻辑裁决
+  // plan cache missing (headless legacy machines) -> null, callers decide with the legacy family logic
   rmSync(join(home, "v2", "coding-plan-cache.json"));
   core.resetZcodeCatalogCacheForTests();
   assert.equal(core.isChannelDriveable("zai-coding-plan"), null);
   assert.equal(core.isChannelDriveable("zai"), null);
 
-  // 缓存在但家族内零 available → 全部不可驱动（与目录为空一致）
+  // cache present but zero available in the family -> all undriveable (consistent with an empty catalog)
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: { "builtin:zai-coding-plan": { status: "unavailable", reason: "x" } } },
   }));
   core.resetZcodeCatalogCacheForTests();
   assert.equal(core.isChannelDriveable("zai-coding-plan"), false);
-  assert.equal(core.isChannelDriveable("zai"), false, "base 通道家族门：家族无 available → false");
+  assert.equal(core.isChannelDriveable("zai"), false, "base channel family gate: no available plan in the family -> false");
 
   rmSync(join(home, "v2"), { recursive: true, force: true });
   process.env.AITI_ZCODE_HOME = prevHome;
@@ -842,7 +842,7 @@ test("fetchCaptchaConfig：client/configs 三元组提取 + disabled/缺字段 �
   const disabled = { ok: true, json: async () => ({ data: { configs: { captcha: { enabled: false, prefix: "p", region: "cn", sceneId: "s" } } } }) };
   assert.equal(await core.fetchCaptchaConfig("jwt", async () => disabled), null, "enabled:false → null");
   const noScene = { ok: true, json: async () => ({ data: { configs: { captcha: { enabled: true, prefix: "p" } } } }) };
-  assert.equal(await core.fetchCaptchaConfig("jwt", async () => noScene), null, "缺 sceneId → null");
+  assert.equal(await core.fetchCaptchaConfig("jwt", async () => noScene), null, "missing sceneId -> null");
   await assert.rejects(() => core.fetchCaptchaConfig("jwt", async () => ({ ok: false, status: 500, json: async () => ({}) })), /HTTP 500/);
 });
 
@@ -856,8 +856,8 @@ test("ensureCredential: start-plan 通道 fail-loud（override 仍直通）", as
 });
 
 test("ensureCredential: coding-plan 通道按 family 取 token（bigmodel-coding-plan → oauth:bigmodel:access_token）", async () => {
-  // 回归 2026-09-12 fix：旧逻辑查 oauth:${providerId}:access_token，coding-plan 通道拿不到 token；
-  // 修复后 channelFamily 归并到 bigmodel，复用 family 的 OAuth token 换 key。
+  // regression vs the 2026-09-12 fix: the old logic looked up oauth:${providerId}:access_token, so coding-plan channels found no token;
+  // after the fix channelFamily collapses to bigmodel, reusing the family's OAuth token for the key exchange.
   core.resetZcodeCatalogCacheForTests();
   core.resetCredentialCacheForTests();
   const home = join(ROOT, "cred-plan");
@@ -865,14 +865,14 @@ test("ensureCredential: coding-plan 通道按 family 取 token（bigmodel-coding
   mkdirSync(join(home, "v2"), { recursive: true });
   const secret = core.deriveCredentialSecret();
   const credFile = join(home, "v2", "credentials.json");
-  // 桌面端凭据按 family 存（无 bigmodel-coding-plan 专属 token）
+  // desktop credentials are stored per family (no bigmodel-coding-plan-specific token)
   writeFileSync(credFile, JSON.stringify({ "oauth:bigmodel:access_token": encryptForTest("tok-plan", secret), "oauth:active_provider": "bigmodel" }));
   const configDir = cfgOf(join(ROOT, "cred-plan-data"));
   const stub = bigmodelFetchStub("tok-plan");
   const r = await core.ensureCredential({ providerId: "bigmodel-coding-plan", configDir, fetchImpl: stub.impl });
   assert.equal(r.apiKey, "0ab2a777.ox00kdXX");
   assert.equal(r.source, "fresh");
-  assert.equal(stub.calls[0].auth, "tok-plan", "coding-plan 通道用 family(bigmodel) 的 OAuth token 换 key");
+  assert.equal(stub.calls[0].auth, "tok-plan", "coding-plan channel exchanges the key with the family (bigmodel) OAuth token");
 });
 
 test("ensureCredential: coding-plan 跨家族无 token → 人话报错（不误取别家族）", async () => {
@@ -883,7 +883,7 @@ test("ensureCredential: coding-plan 跨家族无 token → 人话报错（不误
   mkdirSync(join(home, "v2"), { recursive: true });
   const secret = core.deriveCredentialSecret();
   const credFile = join(home, "v2", "credentials.json");
-  // 已登录 bigmodel，但请求 zai-coding-plan（family=zai）→ 不误取 bigmodel 的 token
+  // logged in as bigmodel but requesting zai-coding-plan (family=zai) -> must not grab bigmodel's token
   writeFileSync(credFile, JSON.stringify({ "oauth:bigmodel:access_token": encryptForTest("tok-x", secret), "oauth:active_provider": "bigmodel" }));
   const configDir = cfgOf(join(ROOT, "cred-plan-cross-data"));
   await assert.rejects(
@@ -893,12 +893,12 @@ test("ensureCredential: coding-plan 跨家族无 token → 人话报错（不误
 });
 
 // ============================================================================
-// wire 契约：handle 每轮驱动（假 runtime 桩 + feature 桩 + override key）
+// wire contract: handle per-turn driving (fake runtime stub + feature stub + override key)
 // ============================================================================
 
 const OK_SESSION = "sess_11111111-2222-3333-4444-555555555555";
 
-/** 生成 runtime 桩：把 argv/关键 env dump 到 DUMP 文件，再打印 --json 形态输出。 */
+/** Generate a runtime stub: dump argv/key env vars to the DUMP file, then print --json-shaped output. */
 function makeStub(dir, name, { session = OK_SESSION, response = "桩回答", exitCode = 0, stderr = "", dump = null, json = true } = {}) {
   const p = join(dir, name);
   const parts = [
@@ -909,7 +909,7 @@ function makeStub(dir, name, { session = OK_SESSION, response = "桩回答", exi
       `const out = ${JSON.stringify({ sessionId: session, traceId: "t", turnId: "tn", response, usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadTokens: 64 }, projection: { contextWindow: 1000000 } })};`,
       "console.log(JSON.stringify(out, null, 2));",
     ] : []),
-    // pipe 写是异步的：必须等 flush 完再 exit，否则 stderr/stdout 被截断
+    // pipe writes are async: must wait for the flush before exiting, or stderr/stdout gets truncated
     ...(stderr
       ? [`process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(${exitCode}));`]
       : [`process.exit(${exitCode});`]),
@@ -926,11 +926,11 @@ async function setupExtension({ runtimeStub, features = {} } = {}) {
     "zcode.mode": "build",
     "zcode.model": "bigmodel/GLM-5.3",
     "zcode.apiKeyOverride": "override.key",
-    "zcode.transport": "oneshot", // handle wire 测试全部针对单发路径（app-server 通道见 zcode-appserver.test.mjs）
+    "zcode.transport": "oneshot", // all handle wire tests target the oneshot path (app-server channel covered in zcode-appserver.test.mjs)
     ...features,
   };
-  // 直接覆盖 featureValue（不展开旧对象——旧闭包会把 runtimePath 指到上一测试的桩）；
-  // 仅保留 byId（回放测试用）
+  // overwrite featureValue wholesale (do not spread the old object - its closure would point runtimePath at the previous test's stub);
+  // keep only byId (used by the replay tests)
   const prevById = globalThis.__piWebExt?.byId;
   globalThis.__piWebExt = {
     featureValue: (extId, fid) => featureMap[fid],
@@ -942,11 +942,11 @@ async function setupExtension({ runtimeStub, features = {} } = {}) {
     configDir,
     sessionProviders: { register: (p) => { registered = p; return "aiti-zcode-agent/zcode"; } },
   });
-  assert.ok(registered, "provider 已注册");
+  assert.ok(registered, "provider registered");
   assert.equal(registered.agentKey, "zcode");
   assert.equal(registered.type, "zcode");
   const staticModels = await registered.listModels();
-  assert.ok(staticModels.length > 0, "静态目录非空（目录随套餐可用性过滤，不钉具体档位——见动态目录用例）");
+  assert.ok(staticModels.length > 0, "static catalog non-empty (catalog filters by plan availability, no pinned tiers — see the dynamic catalog tests)");
   return { registered, configDir };
 }
 
@@ -959,31 +959,31 @@ test("handle wire: 首轮捕获 sessionId 换绑 + usage + 事件流 + resume �
   const { registered } = await setupExtension({ runtimeStub: stub });
 
   const handle = await registered.createSession({ cwd: ROOT });
-  assert.ok(handle.id.startsWith("zcode:new-"), `临时 id：${handle.id}`);
-  assert.equal(handle.capabilities.steer, true); // v4 网关原生 steer（desktop 同款 sendText guide，真机实测）
+  assert.ok(handle.id.startsWith("zcode:new-"), `temporary id: ${handle.id}`);
+  assert.equal(handle.capabilities.steer, true); // native steer on the v4 gateway (same sendText guide as desktop, verified on a real machine)
   assert.equal(handle.capabilities.setModel, true);
-  assert.equal(handle.model?.id, "bigmodel/GLM-5.3", "feature 默认模型种子");
+  assert.equal(handle.model?.id, "bigmodel/GLM-5.3", "feature default model seed");
 
   const events = [];
   handle.subscribe((e) => events.push(e));
   await handle.prompt("第一轮");
 
-  // 换绑：session_backend_ready + id = zcode:sess_xxx
+  // rebind: session_backend_ready + id = zcode:sess_xxx
   const rebind = events.find((e) => e.type === "session_backend_ready");
-  assert.ok(rebind, "session_backend_ready 事件");
+  assert.ok(rebind, "session_backend_ready event");
   assert.equal(handle.id, `zcode:${OK_SESSION}`);
   assert.equal(rebind.oldId.startsWith("zcode:new-"), true);
-  // 回答事件
+  // reply events
   const upd = events.find((e) => e.type === "message_update");
   assert.equal(upd?.delta, "桩回答");
-  // agent_start/agent_end 对（前端 spinner/收尾词汇；wire 层丢弃的是 turn_start/turn_end）
+  // agent_start/agent_end pair (front-end spinner/finalization vocabulary; the wire layer drops turn_start/turn_end)
   const startIdx = events.findIndex((e) => e.type === "agent_start");
   const endIdx = events.findIndex((e) => e.type === "agent_end");
   const settleIdx = events.findIndex((e) => e.type === "agent_settled");
-  assert.ok(startIdx >= 0, "agent_start 受理即发");
-  assert.ok(endIdx > startIdx && settleIdx > endIdx, "agent_end → agent_settled 顺序");
+  assert.ok(startIdx >= 0, "agent_start emitted immediately on acceptance");
+  assert.ok(endIdx > startIdx && settleIdx > endIdx, "agent_end -> agent_settled ordering");
   assert.ok(events.some((e) => e.type === "agent_settled" && e.stopReason === "end_turn"));
-  // usage / context（getUsage 现为 async：tokens + 账号额度合并；本测试环境无套餐缓存 → tokens-only）
+  // usage / context (getUsage is now async: tokens merged with account quota; no plan cache in this test env -> tokens-only)
   const usage = await handle.getUsage();
   assert.equal(usage.inputTokens, 100);
   assert.equal(usage.provider, "zcode");
@@ -995,7 +995,7 @@ test("handle wire: 首轮捕获 sessionId 换绑 + usage + 事件流 + resume �
   const msgs = await handle.getMessages();
   assert.equal(msgs[0].role, "user");
   assert.equal(msgs[1].content[0].text, "桩回答");
-  // spawn env/argv 治理面（桩 dump）：模型 ref + 官方端点 + override key + build 模式
+  // spawn env/argv governance surface (stub dump): model ref + official endpoint + override key + build mode
   const dumped = JSON.parse(readFileSync(dump, "utf8"));
   assert.equal(dumped.env.M, "bigmodel/GLM-5.3");
   assert.equal(dumped.env.B, "https://open.bigmodel.cn/api/anthropic");
@@ -1006,9 +1006,9 @@ test("handle wire: 首轮捕获 sessionId 换绑 + usage + 事件流 + resume �
   assert.equal(dumped.argv[2], "build");
   assert.equal(dumped.argv.at(-2), "--prompt");
   assert.equal(dumped.argv.at(-1), "第一轮");
-  assert.ok(!dumped.argv.includes("--resume"), "首轮无 --resume");
+  assert.ok(!dumped.argv.includes("--resume"), "first turn has no --resume");
 
-  // 第二轮：--resume 真实 sess id（干净替换 featureValue，仅保留 byId）
+  // second turn: --resume with the real sess id (clean featureValue replacement, keeping only byId)
   const dump2 = join(ROOT, "turn-dump-2.json");
   makeStub(stubDir, "ok2.cjs", { dump: dump2, response: "第二轮回答" });
   const prevById2 = globalThis.__piWebExt?.byId;
@@ -1021,9 +1021,9 @@ test("handle wire: 首轮捕获 sessionId 换绑 + usage + 事件流 + resume �
   await handle.prompt("第二轮");
   const dumped2 = JSON.parse(readFileSync(dump2, "utf8"));
   const ri = dumped2.argv.indexOf("--resume");
-  assert.ok(ri > 0, "第二轮带 --resume");
+  assert.ok(ri > 0, "second turn carries --resume");
   assert.equal(dumped2.argv[ri + 1], OK_SESSION);
-  assert.ok(!events2.some((e) => e.type === "session_backend_ready"), "已换绑不再重发");
+  assert.ok(!events2.some((e) => e.type === "session_backend_ready"), "already rebound, no re-emit");
   await handle.dispose();
 });
 
@@ -1042,15 +1042,15 @@ test("handle wire: CLI 失败 → error 帧进 liveHistory + agent_settled_error
   const events = [];
   handle.subscribe((e) => events.push(e));
   await handle.prompt("会失败");
-  // runTurn 入口会先发 user 气泡 message_end（气泡落定）——error 帧按 stopReason 精确匹配
+  // the runTurn entry first emits the user bubble's message_end (bubble settled) — error frames are matched precisely by stopReason
   const errEnd = events.find((e) => e.type === "message_end" && e.message?.stopReason === "error");
-  assert.ok(errEnd, "message_end 错误帧");
+  assert.ok(errEnd, "message_end error frame");
   assert.match(errEnd.message.errorMessage, /身份验证失败/);
   assert.equal(errEnd.message.provider, "zcode");
   assert.ok(events.some((e) => e.type === "agent_settled_error"));
   const msgs = await handle.getMessages();
-  assert.equal(msgs.at(-1).stopReason, "error", "错误帧进 liveHistory（重开可见）");
-  assert.equal(handle.getContextUsage(), undefined, "失败轮无 usage");
+  assert.equal(msgs.at(-1).stopReason, "error", "error frame lands in liveHistory (visible on reopen)");
+  assert.equal(handle.getContextUsage(), undefined, "failed turn has no usage");
   await handle.dispose();
 });
 
@@ -1061,7 +1061,7 @@ test("handle wire: runtime 不可用 → fail-loud error 帧带指引", async ()
   handle.subscribe((e) => events.push(e));
   await handle.prompt("hi");
   const errEnd = events.find((e) => e.type === "message_end" && e.message?.stopReason === "error");
-  assert.ok(errEnd?.message.errorMessage.includes("zcode.runtimePath") || /runtime/.test(errEnd.message.errorMessage), "人话报错");
+  assert.ok(errEnd?.message.errorMessage.includes("zcode.runtimePath") || /runtime/.test(errEnd.message.errorMessage), "human-readable error");
   await handle.dispose();
 });
 
@@ -1105,40 +1105,40 @@ test("handle wire: start-plan 通道拦截 —— 目录照常列出+提示 / �
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_startplan-1" });
   const { registered } = await setupExtension({ runtimeStub: stub });
-  // 1) 目录：不再屏蔽，照常列出并带「暂不支持」提示
+  // 1) catalog: no longer hidden, listed as usual with a "not yet supported" hint
   const models = await registered.listModels();
   const sp = models.find((m) => m.id === "bigmodel-start-plan/GLM-5.3-Flash");
-  assert.ok(sp, "start-plan 模型照常列出（不再排除）");
-  assert.match(sp.label, /暂不支持/, "标签带「暂不支持」提示");
-  assert.ok(!models.some((m) => m.id.startsWith("zai-start-plan/")), "zai-start-plan 无实据（套餐缓存无 available）→ 不列");
-  // 2) 新建会话显式选 start-plan → 人话拒绝（用户点击即被告知）
+  assert.ok(sp, "start-plan model listed as usual (no longer excluded)");
+  assert.match(sp.label, /desktop only/, "label carries the 'not yet supported' hint");
+  assert.ok(!models.some((m) => m.id.startsWith("zai-start-plan/")), "zai-start-plan without evidence (no available in the plan cache) -> not listed");
+  // 2) creating a session with an explicit start-plan pick -> human-readable rejection (the user learns immediately on click)
   await assert.rejects(
     () => registered.createSession({ cwd: ROOT, model: { provider: "zcode", id: "bigmodel-start-plan/GLM-5.3-Flash" } }),
     /start-plan.*暂不支持/,
   );
-  // 3) 运行中切换到 start-plan → 人话拒绝；从 start-plan 切走不拦
+  // 3) switching to start-plan mid-run -> human-readable rejection; switching away from start-plan is not blocked
   const handle = await registered.createSession({ cwd: ROOT });
   await assert.rejects(
     () => handle.setModel({ id: "bigmodel-start-plan/GLM-5.3-Flash", provider: "zcode" }),
     /start-plan.*暂不支持/,
   );
-  assert.ok(await handle.setModel({ id: "bigmodel/GLM-5.3", provider: "zcode" }), "切换到可用通道不拦");
-  // 4) start-plan 已知会话（恢复路径语义：模型为 start-plan + 已绑定 sess id）→ 发消息直接人话失败
-  // 4a) 恢复的 start-plan 会话即使其通道不在套餐缓存 available（如换套餐后）→ 选择器当前模型仍带提示（合成标签补位）
+  assert.ok(await handle.setModel({ id: "bigmodel/GLM-5.3", provider: "zcode" }), "switching to a driveable channel is not blocked");
+  // 4) known start-plan session (resume-path semantics: model is start-plan + bound sess id) -> prompting fails directly with a human-readable error
+  // 4a) a restored start-plan session whose channel is not in the plan cache's available set (e.g. after a plan change) -> the picker's current model still carries the hint (synthetic label backfill)
   handle.model = { id: "zai-start-plan/GLM-5.3-Flash", provider: "zcode" };
   const restoredList = await handle.getAvailableModels();
   const restoredCur = restoredList.find((m) => m.id === "zai-start-plan/GLM-5.3-Flash");
-  assert.ok(restoredCur && /暂不支持/.test(restoredCur.label ?? ""), "恢复会话合成条目标签补「暂不支持」（zai-start-plan 不在 available）");
-  // 4b) 发消息拦截（bigmodel-start-plan 已知会话 → 专用文案）
+  assert.ok(restoredCur && /desktop only/.test(restoredCur.label ?? ""), "restored session's synthetic entry label gains the 'desktop only' hint (zai-start-plan not in available)");
+  // 4b) prompt interception (known bigmodel-start-plan session -> dedicated wording)
   handle.model = { id: "bigmodel-start-plan/GLM-5.3-Flash", provider: "zcode" };
   handle.setKnownSessionId("sess_startplan-1");
   const events = [];
   handle.subscribe((e) => events.push(e));
   await handle.prompt("开始");
   const errEnd = events.find((e) => e.type === "message_end" && e.message?.stopReason === "error");
-  assert.ok(errEnd, "发消息人话失败（不 spawn runtime）");
-  assert.match(errEnd.message.errorMessage, /start-plan/, "文案含 start-plan");
-  assert.match(errEnd.message.errorMessage, /已知会话/, "已知会话专用文案（start 加载的已知会话）");
+  assert.ok(errEnd, "prompt fails with a human-readable error (no runtime spawn)");
+  assert.match(errEnd.message.errorMessage, /start-plan/, "message mentions start-plan");
+  assert.match(errEnd.message.errorMessage, /已知会话/, "known-session-specific wording (known session loaded via start)");
   assert.ok(events.some((e) => e.type === "agent_settled_error"));
   await handle.dispose();
   rmSync(join(home, "v2"), { recursive: true, force: true });
@@ -1159,8 +1159,8 @@ test("handle wire: All Sessions 历史行复活（sess_ 前缀 → createSession
   await handle.prompt("续聊");
   const dumped = JSON.parse(readFileSync(dump, "utf8"));
   const ri = dumped.argv.indexOf("--resume");
-  assert.ok(ri > 0, "首轮即带 --resume（历史行）");
-  assert.ok(!events.some((e) => e.type === "session_backend_ready"), "id 未变化无换绑");
+  assert.ok(ri > 0, "first turn already carries --resume (history row)");
+  assert.ok(!events.some((e) => e.type === "session_backend_ready"), "id unchanged, no rebind");
   await handle.dispose();
 });
 
@@ -1173,15 +1173,15 @@ test("handle wire: 默认模型通道跟随套餐探测（feature 留空 + codin
   writeFileSync(join(home, "v2", "coding-plan-cache.json"), JSON.stringify({
     entryStatus: { items: { "builtin:zai-coding-plan": { status: "available" } } },
   }));
-  // per-agent last used（本文件先前用例写下的状态）会盖过 feature 空值种子——清掉以保证本用例
-  // 只验证「套餐探测 → 默认 ref」；last-used 继承另有专项用例。
+  // per-agent last-used state written by earlier cases in this file overrides the empty-feature seed — clear it so this case
+  // only verifies "plan probe -> default ref"; last-used inheritance has its own dedicated test.
   rmSync(join(process.env.EXT_MODEL_STATE_DIR, "zcode"), { recursive: true, force: true });
   const stubDir = join(ROOT, "seed-stubs");
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_seed-1" });
   const { registered } = await setupExtension({ runtimeStub: stub, features: { "zcode.model": "" } });
   const handle = await registered.createSession({ cwd: ROOT });
-  assert.equal(handle.model?.id, "zai/GLM-5.3-Flash", "zai 套餐 → 默认 ref 跟随 zai 通道（模型=DEFAULT_MODEL_REF 的 Flash）");
+  assert.equal(handle.model?.id, "zai/GLM-5.3-Flash", "zai plan -> default ref follows the zai channel (model = DEFAULT_MODEL_REF's Flash)");
   await handle.dispose();
   rmSync(join(home, "v2"), { recursive: true, force: true });
   process.env.AITI_ZCODE_HOME = prevHome;
@@ -1198,7 +1198,7 @@ test("handle wire: 新建会话未指定模型 → 继承该 agent 上次使用�
   const stubDir = join(ROOT, "lastused-stubs");
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_lastused-1" });
-  // 直接写一份「上次使用」状态文件（避开 persistModelState 的 fire-and-forget 竞态）
+  // write a "last used" state file directly (avoids the persistModelState fire-and-forget race)
   const { writeExtModelState } = await import("../_shared/ext-model-state.ts");
   await writeExtModelState({
     agentKey: "zcode", sessionId: "zcode:prev-session",
@@ -1206,7 +1206,7 @@ test("handle wire: 新建会话未指定模型 → 继承该 agent 上次使用�
   });
   const { registered } = await setupExtension({ runtimeStub: stub, features: { "zcode.model": "", "zcode.apiKeyOverride": "override.key" } });
   const handle = await registered.createSession({ cwd: ROOT });
-  assert.equal(handle.model?.id, "zai/GLM-5.3-Flash", "新会话默认模型 = 该 agent 上次使用的模型");
+  assert.equal(handle.model?.id, "zai/GLM-5.3-Flash", "new session default model = this agent's last used model");
   await handle.dispose();
   rmSync(join(home, "v2"), { recursive: true, force: true });
   process.env.AITI_ZCODE_HOME = prevHome;
@@ -1218,7 +1218,7 @@ test("handle wire: resume 时经 All Sessions 服务出口回放历史（缺席 
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_replay-1", response: "新轮回答" });
   const { registered } = await setupExtension({ runtimeStub: stub });
-  // mock services.sessions 出口（session-manager 的读取面）
+  // mock the services.sessions outlet (session-manager's read surface)
   globalThis.__piWebExt.byId = () => ({
     ext: { services: { sessions: { async parseSession(id) {
       assert.equal(id, "zcode:sess_replay-1");
@@ -1230,21 +1230,21 @@ test("handle wire: resume 时经 All Sessions 服务出口回放历史（缺席 
   });
   const handle = await registered.createSession({ cwd: ROOT, sessionId: "sess_replay-1" });
   const msgs = await handle.getMessages();
-  assert.equal(msgs.length, 2, "历史已回填 liveHistory");
+  assert.equal(msgs.length, 2, "history backfilled into liveHistory");
   assert.equal(msgs[0].content[0].text, "历史问题");
   assert.equal(msgs[1].content[0].text, "历史回答");
-  // 消息级模型标签（前端 MessageView 渲染依赖 message.model + message.provider）；
-  // 两字段原样透传源库 providerID/modelID，不归一不改写
+  // per-message model tags (front-end MessageView rendering depends on message.model + message.provider);
+  // both fields pass through the source store's providerID/modelID verbatim, no normalization or rewrite
   assert.equal(msgs[1].model, "GLM-5.3");
   assert.equal(msgs[1].provider, "bigmodel");
-  assert.equal(msgs[0].model, undefined, "user 消息不带模型标签");
-  // 继续聊：新轮消息追加在历史之后
+  assert.equal(msgs[0].model, undefined, "user message carries no model tag");
+  // keep chatting: new-turn messages append after the history
   await handle.prompt("新问题");
   const msgs2 = await handle.getMessages();
   assert.equal(msgs2.length, 4);
   assert.equal(msgs2[3].content[0].text, "新轮回答");
   await handle.dispose();
-  // 图片回放：images → content image block（前端 MessageView 原生渲染形状）
+  // image replay: images -> content image block (the shape the front-end MessageView renders natively)
   globalThis.__piWebExt.byId = () => ({
     ext: { services: { sessions: { async parseSession() {
       return { meta: {}, messages: [
@@ -1254,15 +1254,15 @@ test("handle wire: resume 时经 All Sessions 服务出口回放历史（缺席 
       ] };
     } } } },
   });
-  // 会话真实模型恢复：meta.model（状态文件无该会话记录时生效）
-  assert.equal(handle.getModel()?.id, "zai/GLM-5.3-Flash", "回放恢复会话模型");
+  // restore the session's real model: meta.model (applies when the state file has no record for the session)
+  assert.equal(handle.getModel()?.id, "zai/GLM-5.3-Flash", "replay restores the session model");
   const h3 = await registered.createSession({ cwd: ROOT, sessionId: "sess_replay-3" });
   const msgs3 = await h3.getMessages();
   assert.equal(msgs3.length, 1);
-  assert.equal(msgs3[0].content.length, 2, "text + image 两块");
+  assert.equal(msgs3[0].content.length, 2, "text + image blocks");
   assert.deepEqual(msgs3[0].content[1], { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } });
   await h3.dispose();
-  // 缺席 fail-silent：byId 无 session-manager → 不回放但不报错
+  // absent fail-silent: byId has no session-manager -> no replay but no error
   globalThis.__piWebExt.byId = () => undefined;
   const h2 = await registered.createSession({ cwd: ROOT, sessionId: "sess_replay-2" });
   assert.deepEqual(await h2.getMessages(), []);
@@ -1274,7 +1274,7 @@ test("handle wire: 运行中排队（queue_update + settle 后自动续轮）+ s
   const stubDir = join(ROOT, "queue-stubs");
   mkdirSync(stubDir, { recursive: true });
   const dump = join(ROOT, "queue-dump.json");
-  // 慢桩：首轮 800ms（给排队留窗口），回答文本含模式以区分轮次
+  // slow stub: 800ms for the first turn (window for queuing); reply text embeds the mode to tell turns apart
   const slow = join(stubDir, "slow.cjs");
   writeFileSync(slow, `#!/usr/bin/env node
 process.on("uncaughtException", (e) => require("node:fs").writeFileSync("/tmp/q-crash.log", String(e.stack ?? e)));
@@ -1282,7 +1282,7 @@ process.on("unhandledRejection", (e) => require("node:fs").writeFileSync("/tmp/q
 const args = process.argv.slice(2);
 const mode = args[args.indexOf("--mode") + 1];
 setTimeout(() => {
-  // 不加行尾换行——跨层转义易碎；parseTurnOutput 直接解析整段
+  // no trailing newline — cross-layer escaping is fragile; parseTurnOutput parses the whole blob directly
   process.stdout.write(JSON.stringify({ sessionId: "${OK_SESSION}", response: "mode=" + mode }), () => process.exit(0));
 }, 800);
 `);
@@ -1294,18 +1294,18 @@ setTimeout(() => {
   const p1 = handle.prompt("第一轮");
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(handle.isRunning(), true);
-  // 运行中再发两条 → 排队不报错
+  // two more prompts while running -> queued without errors
   await handle.prompt("第二轮(排队)");
   await handle.prompt("第三轮(排队)");
-  assert.equal((await handle.getMessages()).filter((m) => m.role === "user").length, 1, "排队消息暂不进 liveHistory");
+  assert.equal((await handle.getMessages()).filter((m) => m.role === "user").length, 1, "queued messages not yet in liveHistory");
   await p1;
-  // settle 后自动续轮：等待排队轮完成
+  // auto-continue after settle: wait for the queued turns to finish
   for (let i = 0; i < 40 && handle.isRunning(); i++) await new Promise((r) => setTimeout(r, 100));
   for (let i = 0; i < 40 && (await handle.getMessages()).filter((m) => m.role === "user").length < 3; i++) await new Promise((r) => setTimeout(r, 100));
   const msgs = await handle.getMessages();
-  assert.equal(msgs.filter((m) => m.role === "user").length, 3, "排队消息全部落 liveHistory");
-  assert.ok(events.some((e) => e.type === "queue_update" && e.followUp?.length === 2), "queue_update 同步排队区");
-  // setPermissionMode：desiredMode 下轮生效
+  assert.equal(msgs.filter((m) => m.role === "user").length, 3, "all queued messages land in liveHistory");
+  assert.ok(events.some((e) => e.type === "queue_update" && e.followUp?.length === 2), "queue_update mirrors the queue");
+  // setPermissionMode: desiredMode takes effect on the next turn
   assert.ok(await handle.setPermissionMode("plan"));
   await assert.rejects(() => handle.setPermissionMode("bogus"), /非法权限模式/);
   await handle.dispose();
@@ -1314,7 +1314,7 @@ setTimeout(() => {
 test("handle wire: abort 杀当前轮子进程（settled 带非 end_turn）", async () => {
   const stubDir = join(ROOT, "abort-stubs");
   mkdirSync(stubDir, { recursive: true });
-  // 慢桩：2 秒后才打印（给 abort 留窗口）
+  // slow stub: prints only after 2s (window for abort)
   const slow = join(stubDir, "slow.cjs");
   writeFileSync(slow, `#!/usr/bin/env node
 setTimeout(() => { console.log(JSON.stringify({ sessionId: "${OK_SESSION}", response: "不该出现" })); process.exit(0); }, 2000);
@@ -1328,11 +1328,11 @@ setTimeout(() => { console.log(JSON.stringify({ sessionId: "${OK_SESSION}", resp
   const t0 = Date.now();
   await handle.abort();
   await p;
-  assert.ok(Date.now() - t0 < 1500, "abort 后本轮很快 settle");
+  assert.ok(Date.now() - t0 < 1500, "turn settles quickly after abort");
   const settled = events.find((e) => e.type === "agent_settled");
-  assert.ok(settled, "有 settled 帧");
-  assert.equal(settled.stopReason, "aborted", "SIGTERM → aborted（用户主动中止，非错误）");
-  assert.ok(!events.some((e) => e.type === "message_update"), "被中止轮无回答");
+  assert.ok(settled, "settled frame present");
+  assert.equal(settled.stopReason, "aborted", "SIGTERM -> aborted (user-initiated abort, not an error)");
+  assert.ok(!events.some((e) => e.type === "message_update"), "aborted turn has no reply");
   await handle.dispose();
 });
 
@@ -1363,7 +1363,7 @@ test("handle wire: 外部写入推进（桌面端另写同一会话）→ getMes
   const prevHome = process.env.AITI_ZCODE_HOME;
   const home = join(ROOT, "ext-sync-home");
   process.env.AITI_ZCODE_HOME = home;
-  // 建最小 db：readZcodeSessionUpdatedMs 只查 session.time_updated（parse 由下方 mock 服务代偿）
+  // build a minimal db: readZcodeSessionUpdatedMs only queries session.time_updated (parsing is covered by the mock service below)
   const dbPath = join(home, "cli", "db", "db.sqlite");
   mkdirSync(dirname(dbPath), { recursive: true });
   const writeTs = (sid, ts) => {
@@ -1379,7 +1379,7 @@ test("handle wire: 外部写入推进（桌面端另写同一会话）→ getMes
   const stubDir = join(ROOT, "ext-sync-stubs");
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_ext-1" });
-  // parse 返回随「外部写入」推进：首阶段 1 条（seed），T2 后 2 条（重建）
+  // parse output advances with the "external write": 1 message in phase one (seed), 2 after T2 (rebuild)
   let parseCalls = 0;
   let extMessages = [{ role: "user", text: "历史问题" }];
   globalThis.__piWebExt.byId = () => ({
@@ -1392,25 +1392,25 @@ test("handle wire: 外部写入推进（桌面端另写同一会话）→ getMes
 
   const { registered } = await setupExtension({ runtimeStub: stub });
   const handle = await registered.createSession({ cwd: ROOT, sessionId: "sess_ext-1" });
-  assert.equal((await handle.getMessages()).length, 1, "seed 历史 1 条");
-  assert.equal(parseCalls, 1, "seed 时 parse 一次");
+  assert.equal((await handle.getMessages()).length, 1, "seed history is 1 message");
+  assert.equal(parseCalls, 1, "parsed once at seed time");
 
-  // 水位未变 → 不重复 parse（零开销）
+  // watermark unchanged -> no repeated parse (zero overhead)
   assert.equal((await handle.getMessages()).length, 1);
-  assert.equal(parseCalls, 1, "rev 不变不重读源");
+  assert.equal(parseCalls, 1, "unchanged rev does not re-read the source");
 
-  // 桌面端外部写入：db 水位前进 + 源新增一条 assistant
+  // external desktop write: db watermark advances + one assistant message added at the source
   writeTs("sess_ext-1", T2);
   extMessages = [
     { role: "user", text: "历史问题" },
     { role: "assistant", text: "历史回答", model: "GLM-5.3", provider: "bigmodel" },
   ];
   const msgs = await handle.getMessages();
-  assert.equal(msgs.length, 2, "外部推进 → 重建为最新历史");
+  assert.equal(msgs.length, 2, "external advance -> rebuilt to the latest history");
   assert.equal(msgs[1].content[0].text, "历史回答");
-  assert.equal(parseCalls, 2, "推进才重读源一次");
+  assert.equal(parseCalls, 2, "advance triggers exactly one source re-read");
 
-  // 重建后水位已同步 → 再取不重读
+  // watermark synced after rebuild -> subsequent reads do not re-parse
   assert.equal((await handle.getMessages()).length, 2);
   assert.equal(parseCalls, 2);
 

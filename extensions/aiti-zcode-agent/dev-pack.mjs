@@ -1,22 +1,24 @@
 /**
- * pi-web-ext · dev-pack 共享实现（方案 §3.2 / M5：扩展 dev-pack——src + 构建工具 + AGENTS.md 直达部署目录）
+ * pi-web-ext · dev-pack shared implementation (plan §3.2 / M5: extension dev-pack — src + build tools + AGENTS.md delivered straight into the deploy directory)
  *
- * 目标：用户在 AI 窗对 AI 说「帮我改一下 xxx 扩展」时，AI 能在**部署目录**直接：
- *   读 AGENTS.md → 改 src/ → node tools/build.mjs → curl reload → 浏览器生效，不等回开发机。
+ * Goal: when the user asks the AI in the AI window to "tweak extension xxx", the AI can work
+ *   directly in the **deploy directory**: read AGENTS.md → edit src/ → node tools/build.mjs →
+ *   curl reload → live in the browser, without waiting for the dev machine.
  *
- * 各扩展 tools/deploy.mjs 末尾统一追加一段（见本文件同级各 deploy.mjs 模式）：
+ * Every extension's tools/deploy.mjs appends the same block at the end (see sibling deploy.mjs files):
  *   const { packDevPack } = await import("../../_shared/dev-pack.mjs");
- *   packDevPack({ extRoot: <扩展源码根>, log: console.log });
+ *   packDevPack({ extRoot: <extension source root>, log: console.log });
  *
- * packDevPack 向每个已存在的部署目录（~/.pi/web{,-dev}/extensions/<extId>）写入：
- *   AGENTS.md        源码目录有则拷，无则由模板生成（§3.4）
- *   src/             client/src/**、根级服务端源码 *.ts/*.cjs/*.mjs、lib/（跳 vendor）、server/、sched/、worker-src/
- *   tools/build.mjs  现场构建入口（扩展自带则拷真身，否则生成 esbuild 默认版）
- *   tools/deploy.mjs 部署脚本本身（大改后回源码仓重部署的入口）
- *   package.json     含 aitiConfigs 声明与 build 脚本
- *   vite.config.ts   有则拷
+ * packDevPack writes into every existing deploy directory (~/.pi/web{,-dev}/extensions/<extId>):
+ *   AGENTS.md        copied from the source dir when present, else generated from the template (§3.4)
+ *   src/             client/src/**, root-level server sources *.ts/*.cjs/*.mjs, lib/ (vendor skipped), server/, sched/, worker-src/
+ *   tools/build.mjs  on-site build entry (the real one is copied if the extension ships it, else the default esbuild version is generated)
+ *   tools/deploy.mjs the deploy script itself (entry for redeploying from the source repo after big changes)
+ *   package.json     includes the aitiConfigs declaration and the build script
+ *   vite.config.ts   copied when present
  *
- * 幂等：重复部署整目录覆盖；允许失败：任何异常只 log 不影响 deploy 退出码（调用方 try/catch）。
+ * Idempotent: redeployment overwrites the whole directory; failure-tolerant: any exception is
+ * only logged and never affects the deploy exit code (caller wraps in try/catch).
  */
 "use strict";
 import { homedir } from "node:os";
@@ -25,10 +27,10 @@ import {
   existsSync, readdirSync, statSync, mkdirSync, cpSync, rmSync, writeFileSync, readFileSync,
 } from "node:fs";
 
-// 根级服务端源码文件：拷进 src/（运行时平铺文件在部署根不动，宿主 loader 路径不变）
+// Root-level server source files: copied into src/ (runtime flat files stay at the deploy root so host loader paths are unchanged)
 const ROOT_SRC_EXTS = new Set([".ts", ".tsx", ".cjs", ".mjs"]);
 const ROOT_SRC_SKIP = new Set(["dist", "node_modules"]);
-// 源码子目录：整目录拷（vendor 类大资产跳过——部署目录本就有运行时副本）
+// Source subdirectories: copied whole (vendor-style large assets skipped — the deploy directory already has runtime copies)
 const SRC_DIRS = ["client/src", "server", "lib", "sched", "worker-src"];
 const DIR_SKIP = new Set(["vendor", "__pycache__", "node_modules"]);
 
@@ -42,7 +44,7 @@ function copyTree(src, dest, skip) {
   }
 }
 
-/** AGENTS.md 默认模板（§3.4；扩展自带 AGENTS.md 则不走到这里）。供 CLI 批量生成源码目录版复用。 */
+/** Default AGENTS.md template (§3.4; not reached when the extension ships its own AGENTS.md). Reused by the CLI bulk source-dir generator. */
 export function agentsMdTemplate(extId) {
   return `# ${extId} 扩展（部署目录直改指南）
 
@@ -75,9 +77,9 @@ export function agentsMdTemplate(extId) {
 `;
 }
 
-/** 默认 tools/build.mjs（esbuild 单包零配置；扩展自带 tools/build.mjs 则不走到这里）。 */
+/** Default tools/build.mjs (zero-config single-bundle esbuild; not reached when the extension ships its own tools/build.mjs). */
 function buildMjsTemplate(extId, extRoot, clientOut, entryRel) {
-  // No hardcoded checkout path: candidates are resolved at run time (see repoCandidates below).
+  // No hardcoded checkout path: candidates are resolved at run time (see the template below).
   return `/**
  * ${extId} · 现场构建入口（dev-pack 默认模板，esbuild 单包零配置）
  * 用法：node tools/build.mjs
@@ -94,8 +96,8 @@ const extRoot = resolve(here, "..");
 const clientOut = ${JSON.stringify(clientOut || "dist/client-bundle.mjs")};
 const entryRel = ${JSON.stringify(entryRel || "")};
 
-// esbuild 解析：部署目录 node_modules → 源码仓 node_modules（本机开发场景）→ PATH 上的 esbuild → npm exec 现拉。
-// 注意：node_modules/esbuild/bin/esbuild 是原生二进制（ELF/Mach-O），必须直接执行（不能当 JS 跑）。
+// esbuild resolution: deployed node_modules → source-repo node_modules (local dev) → esbuild on PATH → fresh `npm exec`.
+// Note: node_modules/esbuild/bin/esbuild is a native binary (ELF/Mach-O) — execute it directly (never as JS).
 // Checkout roots are discovered by walking up from the extension dir (a root has node_modules/),
 // plus AITI_REPO_ROOT when set — no machine-specific absolute paths baked into generated files.
 function repoCandidates() {
@@ -137,8 +139,8 @@ function pickEntry() {
   return "client/src/" + first;
 }
 
-// 服务端源码同步：src/ 根级文件（index.ts/core.cjs/package.json/vite.config.ts 等）→ 部署根
-// （服务端没有构建产物——jiti 直接加载部署根文件；不 sync 则「改 src → reload」永远不生效）
+// Server source sync: src/ root files (index.ts/core.cjs/package.json/vite.config.ts etc.) → deploy root
+// (the server has no build output — jiti loads the deploy-root files directly; without this sync "edit src → reload" never takes effect)
 import { readdirSync as _rd, copyFileSync as _cp, statSync as _st } from "node:fs";
 const srcRoot = join(extRoot, "src");
 if (existsSync(srcRoot)) {
@@ -169,10 +171,10 @@ console.log("[build] ✓ " + clientOut + "（reload 后浏览器刷新生效）"
 }
 
 /**
- * 主入口：向已存在的部署目录写 dev-pack。
+ * Main entry: write the dev-pack into existing deploy directories.
  * @param {object} opts
- * @param {string} opts.extRoot   扩展源码根（pi-web-ext/<extId>）
- * @param {string[]} [opts.targets] 显式部署目录；缺省 = ~/.pi/web{,-dev}/extensions/<extId>（存在的才写）
+ * @param {string} opts.extRoot   extension source root (pi-web-ext/<extId>)
+ * @param {string[]} [opts.targets] explicit deploy directories; default = ~/.pi/web{,-dev}/extensions/<extId> (only existing ones are written)
  * @param {(m: string) => void} [opts.log]
  */
 export function packDevPack(opts) {
@@ -185,12 +187,12 @@ export function packDevPack(opts) {
   ]).filter((t) => existsSync(t));
   if (!targets.length) return;
 
-  // 1) 打包源码到临时区（staging）→ 逐目标 cpSync（多部署目录零重复扫描）
+  // 1) pack sources into a staging area → cpSync per target (no repeated scans across deploy dirs)
   const stage = join(extRoot, "dist", ".dev-pack-staging");
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
   try {
-    // src/：根级源码文件 + 源码子目录
+    // src/: root-level source files + source subdirectories
     const srcDir = join(stage, "src");
     mkdirSync(srcDir, { recursive: true });
     for (const en of readdirSync(extRoot, { withFileTypes: true })) {
@@ -207,7 +209,7 @@ export function packDevPack(opts) {
     for (const f of ["vite.config.ts", "package.json"]) {
       if (existsSync(join(extRoot, f))) cpSync(join(extRoot, f), join(srcDir, f));
     }
-    // tools/build.mjs：扩展自带拷真身，否则生成默认 esbuild 版
+    // tools/build.mjs: copy the extension's own, else generate the default esbuild version
     mkdirSync(join(stage, "tools"), { recursive: true });
     if (existsSync(join(extRoot, "tools", "build.mjs"))) {
       cpSync(join(extRoot, "tools", "build.mjs"), join(stage, "tools", "build.mjs"));
@@ -218,7 +220,7 @@ export function packDevPack(opts) {
         if (pkg.client && String(pkg.client).startsWith("dist/")) clientOut = pkg.client;
       } catch (e) {}
       if (!clientOut) {
-        // 回退：client 产物名常声明在 entry 的 client: "dist/<id>-client.mjs"（index.ts）——从 staging 的 src 里解析
+        // fallback: the client bundle name is often declared in the entry as client: "dist/<id>-client.mjs" (index.ts) — parse it from the staged src
         try {
           for (const f of readdirSync(srcDir)) {
             if (!/\.tsx?$/.test(f)) continue;
@@ -229,23 +231,23 @@ export function packDevPack(opts) {
       }
       writeFileSync(join(stage, "tools", "build.mjs"), buildMjsTemplate(extId, extRoot, clientOut, ""));
     }
-    // tools/deploy.mjs 本身
+    // tools/deploy.mjs itself
     if (existsSync(join(extRoot, "tools", "deploy.mjs"))) {
       cpSync(join(extRoot, "tools", "deploy.mjs"), join(stage, "tools", "deploy.mjs"));
     }
-    // AGENTS.md：自带优先，否则模板生成
+    // AGENTS.md: the extension's own wins, else generated from the template
     if (existsSync(join(extRoot, "AGENTS.md"))) cpSync(join(extRoot, "AGENTS.md"), join(stage, "AGENTS.md"));
     else writeFileSync(join(stage, "AGENTS.md"), agentsMdTemplate(extId));
 
-    // 1.5) _shared 依赖：部署 src 里的源码可能相对引用 ../../../_shared/*（源仓出仓路径）——
-    // 部署根放一份 _shared（小体量、纯源码），让现场 build 的模块解析与源仓一致
+    // 1.5) _shared dependency: staged src files may reference ../../../_shared/* (source-repo-relative
+    // paths) — a _shared copy at the deploy root (small, pure source) keeps on-site build resolution consistent
     const sharedSrc = resolve(extRoot, "..", "_shared");
     if (existsSync(sharedSrc)) {
       const sharedStage = join(stage, "_shared");
       copyTree(sharedSrc, sharedStage, DIR_SKIP);
     }
 
-    // 2) 落位（staging → 部署目录；package.json/vite.config.ts 双放：根级按 §3.2 结构，src 内供现场阅读）
+    // 2) place into position (staging → deploy dir; package.json/vite.config.ts written twice: root level per the §3.2 layout, inside src for on-site reading)
     for (const t of targets) {
       cpSync(stage, t, { recursive: true });
       for (const f of ["package.json", "vite.config.ts"]) {

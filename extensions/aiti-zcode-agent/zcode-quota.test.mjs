@@ -2,10 +2,10 @@
  * aiti-zcode-agent tests — coding-plan account quota (pure functions + injectable fetch, zero network).
  *
  * Run: node --test extensions/aiti-zcode-agent/zcode-quota.test.mjs
- * （node 24 原生 TS strip-types，import .ts 与 zcode-core.test.mjs 同款）
+ * (node 24 native TS strip-types; importing .ts is the same as zcode-core.test.mjs)
  *
- * fixtures 形状 = 2026-11-28 真机 quota/limit 响应（48 机 bigmodel-coding-plan 通道）+
- * writeProviderConfigFile 产物的真实文档结构；无真凭据无真网络。
+ * fixture shapes = the 2026-11-28 real-device quota/limit response (48 box, bigmodel-coding-plan
+ * channel) + the real document structure produced by writeProviderConfigFile; no real credentials, no real network.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -20,7 +20,7 @@ import {
   readProviderConfigApiKey,
 } from "./zcode-core.ts";
 
-/** 真机同构 payload（字段层级/取值域与 2026-11-28 实测一致）。 */
+/** Payload isomorphic to the real device (field hierarchy / value domains match the 2026-11-28 capture). */
 const REAL_PAYLOAD = {
   code: 200,
   msg: "操作成功",

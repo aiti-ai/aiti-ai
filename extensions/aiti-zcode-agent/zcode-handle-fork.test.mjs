@@ -1,10 +1,10 @@
 /**
- * aiti-zcode-agent handle 级 fork 行为测试（编辑从此处 / 分支 按钮，2026-09-18）
- * —— 真实 ZcodeHandle + 桩 app-server 子进程：entryId 位置 id → turnIndex 映射、
- *    reset 换绑 / 非 reset 纯 fork / 根重建 / 运行中拒绝。零网络零真凭据。
+ * aiti-zcode-agent handle-level fork behavior tests (edit-from-here / branch buttons, 2026-09-18)
+ * —— Real ZcodeHandle + stub app-server child process: entryId positional id → turnIndex mapping,
+ *    reset rebinding / non-reset pure fork / root rebuild / rejection while running. Zero network, zero real credentials.
  *
  * Run: node --test pi-web-ext/aiti-zcode-agent/zcode-handle-fork.test.mjs
- * （桩子进程必须随用例结束回收——dispose 挂 finally，否则 node --test 等子进程 stdio 不退出）
+ * (stub child processes must be reaped when each test ends — dispose in finally, otherwise node --test waits on child stdio forever)
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -92,8 +92,8 @@ test.before(async () => {
     configDir: join(ROOT, "ext-data"),
     sessionProviders: { register: (p) => { registered = p; return "k"; } },
   });
-  // 句柄登记：桩 app-server 只在 stdin EOF 时退出，用例中途失败会跳过 dispose() →
-  // 残留子进程带着继承 stdio 让本文件永不退出，整轮全量套件原地卡死。
+  // Handle registration: the stub app-server exits only on stdin EOF; a mid-test failure skips
+  // dispose() → the leftover child keeps inherited stdio and this file never exits, wedging the whole suite.
   const createSessionOrig = registered.createSession.bind(registered);
   registered.createSession = async (opts) => {
     const h = await createSessionOrig(opts);
@@ -104,10 +104,10 @@ test.before(async () => {
 
 test.after(async () => {
   for (const h of liveHandles) {
-    try { await h.dispose(); } catch { /* 已死 */ }
+    try { await h.dispose(); } catch { /* already dead */ }
   }
   liveHandles.clear();
-  try { rmSync(ROOT, { recursive: true, force: true }); } catch { /* retry 无关紧要 */ }
+  try { rmSync(ROOT, { recursive: true, force: true }); } catch { /* retry failure is harmless */ }
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -118,7 +118,7 @@ async function readLog() {
   return readFileSync(LOG, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 }
 
-/** 种子历史：q1 a1 q2 a2 q3（5 条）——编辑 q3 时分支点 = a2（ext-3）→ turnIndex 1 */
+/** Seed history: q1 a1 q2 a2 q3 (5 entries) — editing q3 branches at a2 (ext-3) → turnIndex 1 */
 function seedTurnHistory(handle) {
   handle.seedHistory([
     { role: "user", text: "q1" },
@@ -143,15 +143,15 @@ test("capabilities：app-server 通道 fork=true（编辑从此处/分支 按钮
 test("fork reset（编辑从此处）：分支点 ext-3 → turnIndex 1 + handle 换绑子会话", async () => {
   const handle = await registered.createSession({ cwd: ROOT });
   try {
-    handle.setKnownSessionId("sess_seed_1"); // All Sessions 复活语义：真实 sid 先于首轮已知
+    handle.setKnownSessionId("sess_seed_1"); // All Sessions revival semantics: real sid known before the first turn
     seedTurnHistory(handle);
     const r = await handle.fork("ext-3", { reset: true });
     assert.equal(r.cancelled, false);
     assert.equal(r.newSessionFile, "zcode:sess_forked_9");
-    assert.equal(handle.id, "zcode:sess_forked_9", "handle 换绑到子会话");
+    assert.equal(handle.id, "zcode:sess_forked_9", "handle rebound to the child session");
     const log = await readLog();
     const forkReq = log.filter((e) => e.method === "session/fork").pop();
-    assert.deepEqual(forkReq.params.target, { kind: "turn", turnIndex: 1 }, "user 计数 -1 = 分支轮号");
+    assert.deepEqual(forkReq.params.target, { kind: "turn", turnIndex: 1 }, "user count -1 = branch turn index");
     assert.equal(forkReq.params.sessionId, "sess_seed_1");
   } finally {
     await handle.dispose();
@@ -162,11 +162,11 @@ test("fork 非 reset（分支按钮）：handle 不换绑，返回子会话复�
   const handle = await registered.createSession({ cwd: ROOT });
   try {
     const beforeId = handle.id;
-    handle.setKnownSessionId("sess_seed_1"); // 只填 sessId（复活语义），id 不变
+    handle.setKnownSessionId("sess_seed_1"); // fills only sessId (revival semantics); id unchanged
     seedTurnHistory(handle);
     const r = await handle.fork("ext-1", { reset: false });
     assert.equal(r.newSessionFile, "zcode:sess_forked_9");
-    assert.equal(handle.id, beforeId, "纯 fork 不动当前会话（无 session_backend_ready）");
+    assert.equal(handle.id, beforeId, "pure fork leaves the current session untouched (no session_backend_ready)");
   } finally {
     await handle.dispose();
   }
@@ -176,13 +176,13 @@ test("fork 根重建（编辑首条消息）：entryId 空 → 丢通道清历�
   const handle = await registered.createSession({ cwd: ROOT });
   try {
     await handle.prompt("第一轮");
-    assert.ok(handle.id.startsWith("zcode:sess_"), "首轮后已有真实 sid");
+    assert.ok(handle.id.startsWith("zcode:sess_"), "real sid present after the first turn");
     const r = await handle.fork("", { reset: true });
     assert.equal(r.cancelled, false);
-    assert.deepEqual(await handle.getMessages(), [], "历史清空");
+    assert.deepEqual(await handle.getMessages(), [], "history cleared");
     await handle.prompt("编辑后的首条消息");
     const log = await readLog();
-    assert.equal(log.filter((e) => e.method === "session/create").length, 2, "根重建后走全新 create（非 resume）");
+    assert.equal(log.filter((e) => e.method === "session/create").length, 2, "after root rebuild a fresh create runs (not resume)");
   } finally {
     await handle.dispose();
   }
@@ -196,8 +196,8 @@ test("fork 分支点解析失败：越界/非位置 id → 显式报错（不静
     seedTurnHistory(handle);
     await assert.rejects(() => handle.fork("ext-99", { reset: true }), /无法解析分支点位置/);
     await assert.rejects(() => handle.fork("pi-entry-xyz", { reset: true }), /无法解析分支点位置/);
-    assert.equal(handle.id, beforeId, "失败不换绑");
-    assert.equal((await handle.getMessages()).length, 5, "失败不动历史");
+    assert.equal(handle.id, beforeId, "failure does not rebind");
+    assert.equal((await handle.getMessages()).length, 5, "failure leaves history untouched");
   } finally {
     await handle.dispose();
   }
@@ -207,7 +207,7 @@ test("fork 运行中拒绝：prompt 未收口时 fork 报人话错误", async ()
   const handle = await registered.createSession({ cwd: ROOT });
   try {
     const p1 = handle.prompt("长轮");
-    await sleep(30); // send 已受理，turn.completed 80ms 后才到
+    await sleep(30); // send accepted; turn.completed only arrives after 80ms
     await assert.rejects(() => handle.fork("ext-1", { reset: true }), /运行中不允许分叉/);
     await p1;
   } finally {
