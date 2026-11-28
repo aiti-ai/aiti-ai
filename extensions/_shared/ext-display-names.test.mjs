@@ -7,7 +7,7 @@ import test from "node:test";
 import { extDescriptionFor, extSoulFor, ui18nExact } from "./ext-display-names.ts";
 
 test("ui18nExact only honors the exact locale table (no cascade)", () => {
-  const i18n = { en: { "ext.description": "EN" }, "zh-CN": { "ext.description": "中文" } };
+  const i18n = { en: { "ext.description": "EN" }, "zh-CN": { "ext.description": "中文" } }; // zh-CN fixture value is a locale resource on purpose
   assert.equal(ui18nExact(i18n, "en")["ext.description"], "EN");
   assert.equal(ui18nExact(i18n, "zh-CN")["ext.description"], "中文");
   assert.deepEqual(ui18nExact(i18n, "zh-TW"), {});
@@ -17,24 +17,24 @@ test("ui18nExact only honors the exact locale table (no cascade)", () => {
 test("description: ui.i18n override wins over package.json maps and the raw text", () => {
   const ext = {
     description: "raw",
-    descriptionI18n: { "zh-CN": "包内中文" },
+    descriptionI18n: { "zh-CN": "包内中文" }, // locale fixtures below stay Chinese on purpose
     ui: { i18n: { en: { "ext.description": "ui en" }, "zh-CN": { "ext.description": "ui 中文" } } },
   };
   assert.equal(extDescriptionFor(ext, "en"), "ui en");
   assert.equal(extDescriptionFor(ext, "zh-CN"), "ui 中文");
-  // No zh-TW table entry → package.json map has no zh-TW → same-family fallback (zh-CN) is
+  // No zh-TW table entry -> the package.json map has no zh-TW -> the same-family fallback (zh-CN) is
   // applied by localeText, so the Chinese one-liner survives the exact-match miss.
   assert.equal(extDescriptionFor(ext, "zh-TW"), "包内中文");
 });
 
-test("description: falls back through package.json map, then the raw manifest", () => {
+test("description: falls back through the package.json map, then the raw manifest", () => {
   assert.equal(extDescriptionFor({ description: "raw", descriptionI18n: { "zh-CN": "中文" } }, "zh-CN"), "中文");
   assert.equal(extDescriptionFor({ description: "raw" }, "zh-CN"), "raw");
   assert.equal(extDescriptionFor({}, "en"), "");
   assert.equal(extDescriptionFor(null, "en"), "");
 });
 
-test("tagline: ui override → soulI18n → bare soul, with language-family fallback", () => {
+test("tagline: ui override -> soulI18n -> bare soul, with language-family fallback", () => {
   const ext = { soul: "中文标语", soulI18n: { en: "EN tagline" } };
   assert.equal(extSoulFor(ext, "en"), "EN tagline");
   assert.equal(extSoulFor(ext, "zh-CN"), "中文标语");

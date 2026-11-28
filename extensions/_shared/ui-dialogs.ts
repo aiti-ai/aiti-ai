@@ -1,22 +1,28 @@
 /**
- * 内部弹窗共享模块（替代浏览器原生 alert/confirm/prompt）。
+ * In-page dialog shared module (replaces the browser-native alert/confirm/prompt).
  *
- * 背景：原生 window.confirm/alert/prompt 是浏览器默认弹窗——阻塞主线程、样式与系统脱节、
- * 且在部分嵌入环境（webview/无头）表现不一致。本模块提供 Promise 风格替代：
+ * Background: native window.confirm/alert/prompt are the browser's default dialogs — they block the
+ * main thread, their style is disconnected from the app, and they behave inconsistently in some
+ * embedded environments (webview/headless). This module provides Promise-style replacements:
  *
- *   const ok = await uiConfirm({ message: "删除分组 X？", danger: true });
- *   await uiAlert("已创建计划");                       // 字符串快捷
- *   await uiAlert({ message: "保存失败", kind: "error" });
- *   const name = await uiPrompt({ message: "输入名称：", value: "草稿" });  // 取消 → null
+ *   const ok = await uiConfirm({ message: "Delete group X?", danger: true });
+ *   await uiAlert("Plan created");                       // string shortcut
+ *   await uiAlert({ message: "Save failed", kind: "error" });
+ *   const name = await uiPrompt({ message: "Enter a name:", value: "Draft" });  // cancel → null
  *
- * 实现：零依赖纯 DOM（React 扩展与原生 h() 扩展通用；事件处理器里直接 await）。
- * 契约（详见 docs/aiti-web-ext-float-dialogs.md）：
- *   - data-ext-float="1"          → aiti-float 接管拖拽/置前/持久化；未装时回退 overlay flex 居中
- *   - data-ext-float-full="1"     → 小屏（≤640px）自动铺满视口（物理适配）
- *   - data-ext-float-keepmask="1" → 真模态：遮罩不去除、点外不关闭（副作用即所求）
- *   - data-ext-float-max="0"      → 豁免最大化按钮注入（小确认框不需要）
- *   - data-ext-float-persist="0"  → 不做位置持久化（一次性弹窗不污染持久化槽）
- * 同一时刻只显示一个弹窗（内部 Promise 链排队），保证不叠罗汉。
+ * Implementation: zero-dependency pure DOM (works for both React extensions and native h()
+ * extensions; await directly inside event handlers).
+ * Contract (see docs/aiti-web-ext-float-dialogs.md):
+ *   - data-ext-float="1"          → aiti-float takes over drag/raise/persistence; falls back to a
+ *                                    flex-centered overlay when not installed
+ *   - data-ext-float-full="1"     → small screens (≤640px) auto-fill the viewport (physical fit)
+ *   - data-ext-float-keepmask="1" → true modal: mask stays, outside clicks don't close (the side
+ *                                    effect is the intent)
+ *   - data-ext-float-max="0"      → exempt from maximize-button injection (small confirm boxes
+ *                                    don't need it)
+ *   - data-ext-float-persist="0"  → no position persistence (one-shot dialogs don't pollute
+ *                                    persistence slots)
+ * Only one dialog shows at a time (internal Promise-chain queue), so they never stack.
  *
  * Layering: mount prefers <dialog>.showModal() — the browser top layer beats any
  * self-managed huge z-index an extension panel may set (e.g. model wizard 2147483101 /
@@ -30,11 +36,11 @@ export type UiDialogKind = "info" | "success" | "error" | "warn";
 export interface UiConfirmOptions {
   title?: string;
   message?: string;
-  /** 附加等宽代码块（如待执行的命令文本） */
+  /** Optional monospace code block (e.g. the command text about to run) */
   detail?: string;
   confirmText?: string;
   cancelText?: string;
-  /** 危险确认：⚠ 图标 + 红色确认按钮 */
+  /** Danger confirm: ⚠ icon + red confirm button */
   danger?: boolean;
 }
 
@@ -69,7 +75,7 @@ export interface UiPromptOptions {
   message?: string;
   value?: string;
   placeholder?: string;
-  /** 输入为空时禁用确定按钮（默认 false：允许空串确认） */
+  /** Disable the OK button when the input is empty (default false: empty-string confirm allowed) */
   required?: boolean;
 }
 
@@ -79,7 +85,7 @@ export interface UiPromptOptions {
  * session-manager confirm dialog. With showModal the tier is irrelevant (top layer wins). */
 const Z_BASE = 2147483600;
 
-/** 常用 CSS 变量兜底（宿主一定是 pi-web 主题页；fallback 仅为防御） */
+/** Common CSS variable fallbacks (the host is always a pi-web themed page; fallbacks are purely defensive) */
 const V = {
   panel: "var(--bg-panel, #1c1c20)",
   hover: "var(--bg-hover, #2a2a30)",
@@ -97,7 +103,7 @@ const KIND_COLOR: Record<UiDialogKind, string> = {
   warn: "var(--warn, #f59e0b)",
 };
 
-/** 线性 stroke 图标（24 viewBox），随色 */
+/** Linear stroke icon (24 viewBox), follows the color */
 function iconSvg(kind: "warn" | "info" | "success" | "error", color: string): SVGSVGElement {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg") as SVGSVGElement;
@@ -147,7 +153,7 @@ interface PendingSpec {
   resolve: (v: unknown) => void;
 }
 
-/** 弹窗队列：同一时刻只显示一个（先到先显，后续排队） */
+/** Dialog queue: only one visible at a time (first come first shown, the rest queue) */
 let chain: Promise<unknown> = Promise.resolve();
 const queue: PendingSpec[] = [];
 let showing = false;
@@ -170,7 +176,7 @@ function drain() {
       drain();
     });
   } catch (e) {
-    // 极端防御：DOM 不可用时按取消收场，不让队列卡死
+    // Extreme defense: when the DOM is unavailable, settle as canceled so the queue never wedges
     next.resolve(next.kind === "prompt" ? null : next.kind === "confirm" ? false : undefined);
     showing = false;
     drain();
@@ -243,7 +249,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
   const color = spec.kind === "confirm" && o.danger ? KIND_COLOR.error : KIND_COLOR[kind];
   const iconKind: "warn" | UiDialogKind = spec.kind === "confirm" && o.danger ? "warn" : kind;
 
-  // 标题栏（aiti-float 把首个子元素当拖拽把手）
+  // Title bar (aiti-float treats the first child element as the drag handle)
   const head = document.createElement("div");
   head.style.cssText = "display:flex;align-items:center;gap:10px;padding:14px 18px 0;";
   const icon = iconSvg(iconKind, color);
@@ -252,18 +258,18 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
   head.appendChild(icon);
   const titleEl = document.createElement("div");
   titleEl.style.cssText = "flex:1;min-width:0;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-  titleEl.textContent = o.title || (spec.kind === "confirm" ? (o.danger ? "危险操作确认" : "确认操作") : spec.kind === "prompt" ? "输入" : spec.kind === "choice" ? "请选择" : "提示");
+  titleEl.textContent = o.title || (spec.kind === "confirm" ? (o.danger ? "Confirm dangerous operation" : "Confirm") : spec.kind === "prompt" ? "Input" : spec.kind === "choice" ? "Choose" : "Notice");
   head.appendChild(titleEl);
   panel.appendChild(head);
 
-  // 正文
+  // Body
   if (o.message) {
     const msg = document.createElement("div");
     msg.style.cssText = "padding:12px 18px 0;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:" + V.text + ";";
     msg.textContent = String(o.message);
     panel.appendChild(msg);
   }
-  // 等宽 detail 块（命令等）
+  // Monospace detail block (commands etc.)
   if (o.detail) {
     const det = document.createElement("pre");
     det.style.cssText =
@@ -272,7 +278,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
     det.textContent = String(o.detail);
     panel.appendChild(det);
   }
-  // prompt 输入框
+  // prompt input
   let input: HTMLInputElement | null = null;
   if (spec.kind === "prompt") {
     input = document.createElement("input");
@@ -290,7 +296,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
     panel.appendChild(input);
   }
 
-  // 页脚
+  // Footer
   const foot = document.createElement("div");
   foot.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:16px 18px;";
   const mk = (label: string, primary: boolean, dangerStyle: boolean, onClick: () => void) => {
@@ -311,17 +317,17 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
     }
     if (items.length === 0) finish(o.cancelId ?? null);
   } else if (spec.kind === "alert") {
-    const ok = mk(o.confirmText || "确定", true, false, () => finish(undefined));
+    const ok = mk(o.confirmText || "OK", true, false, () => finish(undefined));
     (ok as any).__primary = true;
   } else {
-    mk(o.cancelText || "取消", false, false, () => finish(spec.kind === "prompt" ? null : spec.kind === "choice" ? (o.cancelId ?? null) : false));
-    const ok = mk(o.confirmText || (spec.kind === "confirm" && o.danger ? "确认执行" : "确定"), true, !!(spec.kind === "confirm" && o.danger), () =>
+    mk(o.cancelText || "Cancel", false, false, () => finish(spec.kind === "prompt" ? null : spec.kind === "choice" ? (o.cancelId ?? null) : false));
+    const ok = mk(o.confirmText || (spec.kind === "confirm" && o.danger ? "Confirm" : "OK"), true, !!(spec.kind === "confirm" && o.danger), () =>
       finish(spec.kind === "prompt" ? (input && o.required && !input.value.trim() ? undefined : input!.value) : true));
     (ok as any).__primary = true;
   }
   panel.appendChild(foot);
 
-  // 键盘：Esc=取消；Enter=确认（焦点在非按钮元素时）
+  // Keyboard: Esc=cancel; Enter=confirm (when focus is on a non-button element)
   panel.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.stopPropagation(); finish(spec.kind === "prompt" || spec.kind === "choice" ? null : spec.kind === "confirm" ? false : undefined); }
     else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) {
@@ -332,7 +338,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
   return input;
 }
 
-/** 渲染一个弹窗实例；done 由队列在 resolve 后回调（放下一拍，让 DOM 先离场） */
+/** Render one dialog instance; done is called back by the queue after resolve (deferred one tick so the DOM leaves first) */
 function showDialog(spec: PendingSpec, done: () => void) {
   const { overlay, panel } = mount();
   const prevFocus = document.activeElement as HTMLElement | null;
@@ -354,7 +360,7 @@ function showDialog(spec: PendingSpec, done: () => void) {
     });
   } catch { /* no event system in DOM stubs */ }
   const input = buildBody(panel, spec, finish);
-  // 初始焦点：prompt → 输入框（全选）；confirm/alert → 主按钮
+  // Initial focus: prompt → input (select-all); confirm/alert → primary button
   setTimeout(() => {
     try {
       if (input) { input.focus(); input.select(); }
@@ -366,21 +372,21 @@ function showDialog(spec: PendingSpec, done: () => void) {
   }, 0);
 }
 
-// ---------- 公开 API ----------
+// ---------- Public API ----------
 
-/** 确认框（替代 window.confirm）：确定 → true，取消/Esc → false */
+/** Confirm dialog (replaces window.confirm): OK → true, cancel/Esc → false */
 export function uiConfirm(opts: UiConfirmOptions | string): Promise<boolean> {
   const o = typeof opts === "string" ? { message: opts } : opts;
   return enqueue<boolean>("confirm", o);
 }
 
-/** 提示框（替代 window.alert）：确定/Esc 关闭 */
+/** Alert dialog (replaces window.alert): OK/Esc closes */
 export function uiAlert(opts: UiAlertOptions | string): Promise<void> {
   const o = typeof opts === "string" ? { message: opts } : opts;
   return enqueue<void>("alert", o);
 }
 
-/** 输入框（替代 window.prompt）：确定 → 字符串（可能空串），取消/Esc → null */
+/** Input dialog (replaces window.prompt): OK → string (possibly empty), cancel/Esc → null */
 export function uiPrompt(opts: UiPromptOptions | string): Promise<string | null> {
   const o = typeof opts === "string" ? { message: opts } : opts;
   return enqueue<string | null>("prompt", o);

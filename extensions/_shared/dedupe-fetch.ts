@@ -1,44 +1,51 @@
-// 加载窗口级 fetch 去重（方案 docs/pi-web-load-duplicate-requests-analysis.md §3.1/§3.4；pi-web 宿主侧同款在 pi-web lib/dedupe-fetch.ts）。
+// Load-window fetch dedupe (plan docs/pi-web-load-duplicate-requests-analysis.md
+// §3.1/§3.4; the pi-web host-side twin lives in pi-web lib/dedupe-fetch.ts).
 //
-// 只读 GET 的「单飞 + 微缓存」：同 URL 并发请求共享 in-flight promise；成功响应在
-// ttlMs 内直接复用。覆盖的是组件重挂/桌面移动双实例/多消费面在秒级窗口内的重复
-// 请求——不改变任何轮询/SSE 契约（SSE 仍是权威源，兜底快照旧 2~3s 无碍）。
+// "Single-flight + micro cache" for read-only GETs: concurrent requests to the same URL
+// share the in-flight promise; successful responses are reused directly within ttlMs.
+// Covers duplicate requests inside a seconds-wide window caused by component remounts,
+// desktop/mobile twin instances, and multiple consumer surfaces — it changes no
+// polling/SSE contract (SSE remains the authority; a fallback snapshot 2-3s stale is fine).
 //
-// 只套「只读、no-store、幂等」的 GET（/api/home、/api/agent/running、*/status 类）；
-// 带写语义或每次必须新鲜的请求不要走这里。
+// Applies only to "read-only, no-store, idempotent" GETs (/api/home, /api/agent/running,
+// */status types); requests with write semantics or that must be fresh every time
+// must not go through here.
 
 const DEFAULT_TTL_MS = 2_500;
 
 interface CacheEntry {
-  /** 解决到**未消费**的原始 Response——clone 分支从这里 tee 出去 */
+  /** Resolves to the **unconsumed** original Response — the clone branch tees off it */
   promise: Promise<Response>;
-  /** 缓存过期时刻（成功响应才设置；0 = 还在飞/失败不缓存） */
+  /** Cache expiry instant (set only for successful responses; 0 = still in flight / failures not cached) */
   freshUntil: number;
 }
 
 const inflight = new Map<string, CacheEntry>();
 
 export interface DedupeFetchOptions extends RequestInit {
-  /** 成功响应的微缓存时长（默认 2.5s，仅覆盖加载窗口） */
+  /** Micro-cache duration for successful responses (default 2.5s; covers only the load window) */
   ttlMs?: number;
 }
 
 /**
- * dedupeFetch(url, {ttlMs})：同 URL 并发共享一次网络请求，每个调用方拿各自的
- * Response 克隆（原始 body 永不直接外泄，谁先 .json() 都不影响别人）。
- * - in-flight 合流：第二个并发调用者与首个共享同一次网络往返；
- * - TTL 微缓存：成功（res.ok）响应在 ttlMs 内的新调用零网络直接复用；
- * - 失败响应不缓存（下一个调用者立即重试），只解除 in-flight。
+ * dedupeFetch(url, {ttlMs}): concurrent calls to the same URL share one network request;
+ * each caller gets its own Response clone (the original body never leaks out directly;
+ * whoever .json()s first doesn't affect the others).
+ * - in-flight merge: a second concurrent caller shares the first's network round-trip;
+ * - TTL micro cache: a new call within ttlMs of a successful (res.ok) response reuses it
+ *   with zero network;
+ * - failed responses are not cached (the next caller retries immediately); only the
+ *   in-flight entry is released.
  */
 export function dedupeFetch(url: string, options?: DedupeFetchOptions): Promise<Response> {
   const ttlMs = options?.ttlMs ?? DEFAULT_TTL_MS;
   const hit = inflight.get(url);
-  // 仍在飞（freshUntil=0）或缓存新鲜 → 共享；过期才真拉新请求
+  // still in flight (freshUntil=0) or cache fresh → share; only an expiry pulls a real new request
   if (hit && (hit.freshUntil === 0 || Date.now() < hit.freshUntil)) return hit.promise.then((r) => r.clone());
   const promise = fetch(url, options).then((res) => {
     const entry = inflight.get(url);
     if (entry && entry.promise === promise) {
-      // 成功：标记缓存到期时刻；失败：不留缓存（下次调用真拉）
+      // success: mark the cache expiry; failure: keep no cache (the next call pulls for real)
       if (res.ok) entry.freshUntil = Date.now() + ttlMs;
       else inflight.delete(url);
     }
@@ -52,7 +59,7 @@ export function dedupeFetch(url: string, options?: DedupeFetchOptions): Promise<
   return promise.then((r) => r.clone());
 }
 
-/** 测试钩子：清空全部缓存态。 */
+/** Test hook: clears all cache state. */
 export function resetDedupeFetch(): void {
   inflight.clear();
 }

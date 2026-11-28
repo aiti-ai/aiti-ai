@@ -1,11 +1,11 @@
 /**
- * agent-launch 单测 —— _shared/agent-spawn-env.ts 的 P0 launch 解析层
- * （resolveCliLaunch / parseArgsLines / parseCustomAgents / spawn.command / spawn.argsPrefix）。
+ * agent-launch unit tests — the P0 launch resolution layer of _shared/agent-spawn-env.ts
+ * (resolveCliLaunch / parseArgsLines / parseCustomAgents / spawn.command / spawn.argsPrefix).
  *
- * 覆盖 docs/aiti-custom-agent-plan.md §3.3 合并规则：
- *   command 覆盖、argv 拼装、$VAR/${cwd} 展开（未定义=空串+warning）、
- *   env 合并优先级（基底 < 自动 bridge < 成员 env）、bridge 四档重写、
- *   agents.json 校验（非法跳过/去重/行式 env 兼容）。
+ * Covers docs/aiti-custom-agent-plan.md §3.3 merge rules:
+ *   command override, argv assembly, $VAR/${cwd} expansion (undefined = empty string + warning),
+ *   env merge priority (base < auto bridge < member env), the four bridge rewrite modes,
+ *   agents.json validation (invalid entries skipped / dedup / line-style env compat).
  *
  * Run: node --experimental-strip-types --test pi-web-ext/_shared/agent-launch.test.mjs
  */
@@ -25,7 +25,7 @@ import {
 
 const PROC_ENV = { PORT: "3001", PI_WEB_BASE_PATH: "/dev", HOME: "/home/pi", PATH: "/usr/bin" };
 
-test("resolveCliLaunch：缺省 command=defaultCommand，args=[...prefix, ...driverArgs]", () => {
+test("resolveCliLaunch: default command=defaultCommand, args=[...prefix, ...driverArgs]", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "claude",
 		argsPrefix: ["wrap", "-i"],
@@ -37,7 +37,7 @@ test("resolveCliLaunch：缺省 command=defaultCommand，args=[...prefix, ...dri
 	assert.equal(r.warnings.length, 0);
 });
 
-test("resolveCliLaunch：command 覆盖生效（driverArgs 不含原 CLI 名由调用方保证）", () => {
+test("resolveCliLaunch: command override takes effect (driverArgs excluding the original CLI name is the caller's guarantee)", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "claude",
 		command: "docker",
@@ -50,12 +50,12 @@ test("resolveCliLaunch：command 覆盖生效（driverArgs 不含原 CLI 名由�
 	assert.equal(r.warnings.length, 0);
 });
 
-test("resolveCliLaunch：generic 路径自动注入 AITI_BRIDGE_URL（本机实例推导）", () => {
+test("resolveCliLaunch: generic path auto-injects AITI_BRIDGE_URL (derived from the local instance)", () => {
 	const r = resolveCliLaunch({ defaultCommand: "job", processEnv: PROC_ENV });
 	assert.equal(r.env.AITI_BRIDGE_URL, "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools");
 });
 
-test("resolveCliLaunch：显式 env 已带 AITI_BRIDGE_URL 则保持（不重复注入）", () => {
+test("resolveCliLaunch: explicit env already carrying AITI_BRIDGE_URL is kept (no duplicate injection)", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "claude",
 		env: { AITI_BRIDGE_URL: "http://10.0.0.9:1/x", ONLY_THIS: "1" },
@@ -63,10 +63,10 @@ test("resolveCliLaunch：显式 env 已带 AITI_BRIDGE_URL 则保持（不重复
 	});
 	assert.equal(r.env.AITI_BRIDGE_URL, "http://10.0.0.9:1/x");
 	assert.equal(r.env.ONLY_THIS, "1");
-	assert.equal(r.env.PORT, undefined, "显式 env 是基底，不混入 processEnv");
+	assert.equal(r.env.PORT, undefined, "the explicit env is the base; processEnv is not mixed in");
 });
 
-test("resolveCliLaunch：$VAR / ${cwd} 展开（argsPrefix + memberEnv；工作 env 优先）", () => {
+test("resolveCliLaunch: $VAR / ${cwd} expansion (argsPrefix + memberEnv; working env first)", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "docker",
 		argsPrefix: ["-v", "${cwd}:${cwd}", "-w", "${cwd}", "-e", "K=$PORT"],
@@ -80,7 +80,7 @@ test("resolveCliLaunch：$VAR / ${cwd} 展开（argsPrefix + memberEnv；工作 
 	assert.equal(r.warnings.length, 0);
 });
 
-test("resolveCliLaunch：成员 env 覆盖基底 env（最高优先）", () => {
+test("resolveCliLaunch: member env overrides the base env (highest priority)", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "x",
 		env: { A: "base", B: "base" },
@@ -89,10 +89,10 @@ test("resolveCliLaunch：成员 env 覆盖基底 env（最高优先）", () => {
 	});
 	assert.equal(r.env.A, "member");
 	assert.equal(r.env.B, "base");
-	assert.equal(r.env.REF, "base/2", "成员 env 引用先取工作 env 当前值");
+	assert.equal(r.env.REF, "base/2", "a member env reference takes the working env's current value first");
 });
 
-test("resolveCliLaunch：未定义引用 → 空串 + warning（argsPrefix 与 memberEnv 各记一条）", () => {
+test("resolveCliLaunch: undefined reference → empty string + warning (one entry each for argsPrefix and memberEnv)", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "x",
 		argsPrefix: ["$NOPE_1"],
@@ -106,7 +106,7 @@ test("resolveCliLaunch：未定义引用 → 空串 + warning（argsPrefix 与 m
 	assert.ok(r.warnings.some((w) => w.includes("$NOPE_2")));
 });
 
-test("resolveCliLaunch：bridge=host.docker.internal 替换主机保留端口路径", () => {
+test("resolveCliLaunch: bridge=host.docker.internal replaces the host, keeping port and path", () => {
 	const r = resolveCliLaunch({
 		defaultCommand: "claude",
 		env: { AITI_BRIDGE_URL: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools" },
@@ -116,7 +116,7 @@ test("resolveCliLaunch：bridge=host.docker.internal 替换主机保留端口路
 	assert.equal(r.env.AITI_BRIDGE_URL, "http://host.docker.internal:3001/dev/api/extensions/aiti-devtools");
 });
 
-test("resolveCliLaunch：bridge=off 移除；显式 URL 直接采用（支持 ${cwd}）", () => {
+test("resolveCliLaunch: bridge=off removes; explicit URL adopted directly (supports ${cwd})", () => {
 	const off = resolveCliLaunch({ defaultCommand: "x", bridge: "off", processEnv: PROC_ENV });
 	assert.equal("AITI_BRIDGE_URL" in off.env, false);
 	const url = resolveCliLaunch({
@@ -127,10 +127,10 @@ test("resolveCliLaunch：bridge=off 移除；显式 URL 直接采用（支持 ${
 	});
 	assert.equal(url.env.AITI_BRIDGE_URL, "http://bridge.local:8777");
 	assert.equal(url.env.HINT, "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools",
-		"成员 env 在 bridge 重写前展开，看到的是重写前值（自动注入默认）");
+		"the member env expands before the bridge rewrite, seeing the pre-rewrite value (auto-injected default)");
 });
 
-test("resolveCliLaunch：非法 bridge 模式按 inherit + warning；warn 回调与返回值双通道", () => {
+test("resolveCliLaunch: invalid bridge mode falls back to inherit + warning; warn callback and return value are dual channels", () => {
 	const viaCb = [];
 	const r = resolveCliLaunch({
 		defaultCommand: "x",
@@ -143,13 +143,13 @@ test("resolveCliLaunch：非法 bridge 模式按 inherit + warning；warn 回调
 	assert.equal(viaCb.length, 1);
 });
 
-test("parseArgsLines：每行一个参数，注释/空行忽略，$VAR 不在此展开", () => {
+test("parseArgsLines: one argument per line, comments/blank lines ignored, $VAR not expanded here", () => {
 	const { args, warnings } = parseArgsLines("run\n  --rm  \n# comment\n\n-i\n$HOME");
 	assert.deepEqual(args, ["run", "--rm", "-i", "$HOME"]);
 	assert.equal(warnings.length, 0);
 });
 
-test("parseCustomAgents：合法条目全字段规整（默认值补齐 + target 透传）", () => {
+test("parseCustomAgents: valid entry normalizes all fields (defaults filled + target passthrough)", () => {
 	const { agents, warnings } = parseCustomAgents({
 		agents: [
 			{
@@ -179,10 +179,10 @@ test("parseCustomAgents：合法条目全字段规整（默认值补齐 + target
 		enabled: true,
 	}]);
 	assert.deepEqual(parseCustomAgents({ agents: [{ id: "t2", label: "T", command: "c" }] }).agents[0].target, "",
-		"缺省 target 空串");
+		"the default target is an empty string");
 });
 
-test("parseCustomAgents：JSON 字符串输入 + 行式 env 兼容（KEY=VALUE / -NAME）", () => {
+test("parseCustomAgents: JSON string input + line-style env compat (KEY=VALUE / -NAME)", () => {
 	const { agents, warnings } = parseCustomAgents(JSON.stringify({
 		agents: [{ id: "a1", label: "A", command: "cmd", env: "K=1\n-BAD\n# c" }],
 	}));
@@ -190,7 +190,7 @@ test("parseCustomAgents：JSON 字符串输入 + 行式 env 兼容（KEY=VALUE /
 	assert.deepEqual(agents[0].env, { K: "1" });
 });
 
-test("parseCustomAgents：非法 id / 重复 id / 缺 label / generic 缺 command / 非法 driver 逐条跳过；协议型缺 command 合法", () => {
+test("parseCustomAgents: invalid id / duplicate id / missing label / generic missing command / invalid driver each skipped; protocol-backed missing command is legal", () => {
 	const { agents, warnings } = parseCustomAgents({
 		agents: [
 			{ id: "bad/slash", label: "X", command: "c" },
@@ -204,13 +204,13 @@ test("parseCustomAgents：非法 id / 重复 id / 缺 label / generic 缺 comman
 		],
 	});
 	assert.equal(agents.length, 3);
-	assert.equal(agents[0].label, "first", "重复 id 先到先得");
+	assert.equal(agents[0].label, "first", "duplicate ids: first wins");
 	assert.equal(agents[1].id, "ok");
-	assert.equal(agents[2].id, "proto", "协议型 driver 接受、command 可空（可解析性由注册侧裁决）");
+	assert.equal(agents[2].id, "proto", "protocol-backed driver accepted, command may be empty (parsability is the registration side's call)");
 	assert.equal(warnings.length, 5);
 });
 
-test("parseCustomAgents：坏 JSON / agents 缺失 / 非数组 → 空配置 + warning 不抛错", () => {
+test("parseCustomAgents: bad JSON / agents missing / not an array → empty config + warning, no throw", () => {
 	assert.deepEqual(parseCustomAgents("{broken").agents, []);
 	assert.equal(parseCustomAgents("{broken").warnings.length, 1);
 	assert.deepEqual(parseCustomAgents({}).agents, []);
@@ -218,7 +218,7 @@ test("parseCustomAgents：坏 JSON / agents 缺失 / 非数组 → 空配置 + w
 	assert.deepEqual(parseCustomAgents(null).agents, []);
 });
 
-test("parseCustomAgents：非法变量名忽略 + enabled:false 保留 + argsPrefix 数组形态", () => {
+test("parseCustomAgents: invalid var name ignored + enabled:false kept + argsPrefix array form", () => {
 	const { agents, warnings } = parseCustomAgents({
 		agents: [{ id: "e1", label: "E", command: "c", env: { GOOD: "1", "1BAD": "x" }, enabled: false, argsPrefix: ["a", "b"] }],
 	});
@@ -228,7 +228,7 @@ test("parseCustomAgents：非法变量名忽略 + enabled:false 保留 + argsPre
 	assert.deepEqual(agents[0].argsPrefix, ["a", "b"]);
 });
 
-test("extman feature 读取：captureSpawnEnvFeatures 后 spawnCommand/spawnArgsPrefix 生效", () => {
+test("extman feature reads: after captureSpawnEnvFeatures, spawnCommand/spawnArgsPrefix take effect", () => {
 	captureSpawnEnvFeatures({
 		get: (extId, fid) => {
 			if (extId === "aiti-x-agent" && fid === "spawn.command") return "docker";
@@ -245,18 +245,18 @@ test("extman feature 读取：captureSpawnEnvFeatures 后 spawnCommand/spawnArgs
 	}
 });
 
-test("extman feature 声明：spawn.command=string / spawn.argsPrefix=textlist，id 与读取对齐", () => {
-	const cmd = spawnCommandFeature("启动包装");
-	const pre = spawnArgsPrefixFeature("启动包装");
+test("extman feature declarations: spawn.command=string / spawn.argsPrefix=textlist, ids aligned with the readers", () => {
+	const cmd = spawnCommandFeature("Launch wrapper");
+	const pre = spawnArgsPrefixFeature("Launch wrapper");
 	assert.equal(cmd.id, "spawn.command");
 	assert.equal(cmd.type, "string");
-	assert.equal(cmd.group, "启动包装");
+	assert.equal(cmd.group, "Launch wrapper");
 	assert.equal(pre.id, "spawn.argsPrefix");
 	assert.equal(pre.type, "textlist");
 	assert.ok(pre.description.includes("${cwd}"));
 });
 
-test("parseEnvList 回归：既有语义不受 launch 层新增影响", () => {
+test("parseEnvList regression: existing semantics unaffected by the launch-layer additions", () => {
 	const { ops } = parseEnvList("A=$B");
 	assert.deepEqual(ops, [{ key: "A", value: "$B" }]);
 });

@@ -1,25 +1,27 @@
 #!/usr/bin/env node
 /**
- * lazy-loading-metrics — 懒加载 v2 度量脚本（docs/aiti-ext-lazy-loading-plan.md §8）。
+ * lazy-loading-metrics — lazy-loading v2 measurement script (docs/aiti-ext-lazy-loading-plan.md §8).
  *
- * 对指定 pi-web 实例统计「首屏扩展 client 传输量」：无头拉取页面 + PerformanceObserver
- * 采样扩展 bundle 请求数与传输字节。用法：
+ * Measures the "first-screen extension client transfer volume" against a given pi-web instance:
+ * headless page fetch + PerformanceObserver sampling of extension bundle request counts and
+ * transferred bytes. Usage:
  *
  *   node tools/lazy-loading-metrics.mjs [baseUrl] [timeoutMs]
  *
- * 默认 baseUrl = http://127.0.0.1:3001/dev（dev 实例）。生产传 https://pi.example.com。
- * 依赖：无（Node 内置 fetch；页面侧注入采集脚本经 CDP 不可用时降级为 bundle 字节求和）。
+ * Default baseUrl = http://127.0.0.1:3001/dev (dev instance). For production pass https://pi.example.com.
+ * Dependencies: none (Node built-in fetch; when the page-side collection script cannot be injected
+ * via CDP, degrades to summing bundle bytes).
  */
 const base = (process.argv[2] || "http://127.0.0.1:3001/dev").replace(/\/$/, "");
 const manifestUrl = `${base}/api/extensions/manifest`;
 
 const d = await fetch(manifestUrl).then((r) => r.json()).catch(() => null);
-if (!d) { console.error(`[metrics] manifest 拉取失败: ${manifestUrl}`); process.exit(1); }
+if (!d) { console.error(`[metrics] manifest fetch failed: ${manifestUrl}`); process.exit(1); }
 
 const lazy = d.extensions.filter((x) => x.ui && x.ui.clientImmediately === false).map((x) => x.id);
 const immediate = d.extensions.filter((x) => !x.ui || x.ui.clientImmediately !== false).map((x) => x.id);
 
-/** 单个 bundle 的传输字节（对实例再发一次请求，带 Accept-Encoding 模拟首屏传输） */
+/** Transferred bytes of one bundle (one more request to the instance, with Accept-Encoding to simulate first-screen transfer) */
 async function bytesOf(url) {
   try {
     const r = await fetch(url, { headers: { "accept-encoding": "gzip" } });
@@ -29,7 +31,7 @@ async function bytesOf(url) {
   } catch { return -1; }
 }
 
-/** 首屏 = 即时扩展的 client bundle（懒扩展不计入；其重 chunk 按交互另计） */
+/** First screen = immediate extensions' client bundles (lazy extensions not counted; their heavy chunks are measured per interaction) */
 let immediateKB = 0, missing = [];
 for (const id of immediate) {
   const e = d.extensions.find((x) => x.id === id);
@@ -39,7 +41,7 @@ for (const id of immediate) {
   immediateKB += kb;
 }
 
-/** 懒扩展 bundle 体量（对照：若它们仍即时，首屏会多多少） */
+/** Lazy extension bundle volume (comparison: how much more the first screen would carry if they were still immediate) */
 let deferredKB = 0;
 for (const id of lazy) {
   const e = d.extensions.find((x) => x.id === id);
@@ -49,13 +51,13 @@ for (const id of lazy) {
 }
 
 console.log("═".repeat(64));
-console.log(`实例: ${base}`);
-console.log(`扩展总数: ${d.extensions.length}  懒: ${lazy.length}  即时: ${immediate.length}`);
-console.log(`failed: ${(d.failed || []).length ? JSON.stringify(d.failed) : "无"}`);
+console.log(`instance: ${base}`);
+console.log(`total extensions: ${d.extensions.length}  lazy: ${lazy.length}  immediate: ${immediate.length}`);
+console.log(`failed: ${(d.failed || []).length ? JSON.stringify(d.failed) : "none"}`);
 console.log("─".repeat(64));
-console.log(`首屏（即时扩展 bundle 字节和）: ${immediateKB} KB`);
-console.log(`懒扩展 bundle 体量（按需，不计首屏）: ${deferredKB} KB`);
-console.log(`懒化收益 ≈ ${(100 * deferredKB / (immediateKB + deferredKB)).toFixed(1)}% 移出首屏`);
-if (missing.length) console.log(`⚠ 拉取失败（忽略计值）: ${missing.join(", ")}`);
+console.log(`first screen (sum of immediate extensions' bundle bytes): ${immediateKB} KB`);
+console.log(`lazy extension bundle volume (on demand, not in the first screen): ${deferredKB} KB`);
+console.log(`lazy-loading benefit ~= ${(100 * deferredKB / (immediateKB + deferredKB)).toFixed(1)}% moved off the first screen`);
+if (missing.length) console.log(`⚠ fetch failed (excluded from totals): ${missing.join(", ")}`);
 console.log("─".repeat(64));
-console.log("验收基线（§2 目标）: 首屏 ≤1.2MB；交互前懒扩展 0 请求（页面侧 Network 面板核对）");
+console.log("acceptance baseline (§2 target): first screen <=1.2MB; lazy extensions make 0 requests before interaction (verify in the page's Network panel)");

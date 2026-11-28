@@ -1,10 +1,11 @@
 /**
- * remote-queue — 远端 pi 协议队列的 queueManage 适配层（共享层，副本随扩展部署——改动须双向同步；
- * docs/aiti-remote-queue-and-sidecar-plan.md §2）。
+ * remote-queue — queueManage adapter for the remote pi-protocol queue (shared layer; copies deploy
+ * with the extensions — changes must sync both ways; docs/aiti-remote-queue-and-sidecar-plan.md §2).
  *
- * 适用形态：pi RPC 子进程（aiti-pi-agent）与其超集 fork omp（aiti-omp-agent）——队列由
- * 子进程持有，协议原生支持 clear_queue（返回清空前文本，与 pi-web core clearQueue 同契约）
- * 与 steer/follow_up 重注入；子进程经 RPC 流转发 queue_update 帧（含完整文本数组）。
+ * Applies to: pi RPC child processes (aiti-pi-agent) and their superset fork omp (aiti-omp-agent) —
+ * the queue is held by the child process; the protocol natively supports clear_queue (returns the
+ * pre-clear text, same contract as pi-web core clearQueue) and steer/follow_up re-injection; the
+ * child forwards queue_update frames over the RPC stream (with the full text arrays).
  *
  * Mirror freshness: the mirror is fed only by queue_update frames (observeFrame). A
  * reattach starts empty, and the wrapper journal is a 4 MB ring — a long session's last
@@ -15,9 +16,10 @@
  * queued images do not — pi's queue text channel never carried them (same semantics as
  * move/remove/convert).
  *
- * 变更类操作语义（与 pi-web core rpc-manager move_queue 同款）：镜像算出新序 →
- * clear_queue 全量清空 → 按新序重注入。运行中 steer 重注入可能被立即消费的竞态
- * 为该策略既有语义（clear+re-enqueue 在单请求内原子性足够）。
+ * Mutation-operation semantics (same as pi-web core rpc-manager move_queue): compute the new order
+ * from the mirror -> clear_queue wipes everything -> re-inject in the new order. The race where a
+ * re-injected steer during a run may be consumed immediately is that strategy's existing semantics
+ * (clear+re-enqueue is atomic enough within a single request).
  */
 
 export interface RemoteQueueManageReq {
@@ -34,27 +36,27 @@ export interface RemoteQueueManageResult {
   steering: string[];
   followUp: string[];
   entry?: { text: string };
-  /** remove 时返回（对齐 backend-queue / pi-web core QueueTrashItem 的文本字段）。 */
+  /** Returned by remove (aligns with the backend-queue / pi-web core QueueTrashItem text field). */
   removed?: { text: string };
 }
 
 export interface RemotePiQueue {
-  /** handle.onFrame 里喂入子进程帧；只消费 queue_update（镜像维护，不重复广播——原帧由 handle 照常 emit）。 */
+  /** Feed child-process frames from handle.onFrame; only queue_update is consumed (mirror maintenance, no re-broadcast — the original frame is emitted by the handle as usual). */
   observeFrame(msg: Record<string, unknown>): void;
   /** True while no queue_update was ever observed: the mirror has not been synced with the child yet. */
   needsHydrate(): boolean;
   /** Rebuild the mirror from the child after a reattach (no-op once a queue_update was observed). */
   hydrate(): Promise<void>;
-  /** SessionHandle.queueManage 直转发。 */
+  /** Direct forward of SessionHandle.queueManage. */
   queueManage(req: RemoteQueueManageReq): Promise<RemoteQueueManageResult>;
-  /** 当前镜像快照（steer/followUp 两组文本）。 */
+  /** Current mirror snapshot (the steer/followUp text groups). */
   snapshot(): { steering: string[]; followUp: string[] };
 }
 
 export function createRemotePiQueueSupport(opts: {
-  /** 子进程 clear_queue 请求（返回清空前文本；上游不支持时 fail-loud 由调用方人话化）。 */
+  /** Child-process clear_queue request (returns the pre-clear text; when upstream does not support it, the caller turns the fail-loud into human-readable wording). */
   clearRemote(): Promise<{ steering?: string[]; followUp?: string[] }>;
-  /** 重注入单条（kind=steer → steer 命令；followUp → follow_up 命令）。 */
+  /** Re-inject one entry (kind=steer -> the steer command; followUp -> the follow_up command). */
   reinject(text: string, kind: "steer" | "followUp"): Promise<void>;
 }): RemotePiQueue {
   let mirror: { steering: string[]; followUp: string[] } = { steering: [], followUp: [] };
@@ -186,7 +188,7 @@ export function createRemotePiQueueSupport(opts: {
 
   const at = (arr: string[], i: number | undefined): number => {
     const n = Number(i);
-    if (!Number.isInteger(n) || n < 0 || n >= arr.length) throw new Error("队列索引越界");
+    if (!Number.isInteger(n) || n < 0 || n >= arr.length) throw new Error("queue index out of range");
     return n;
   };
 
@@ -194,7 +196,8 @@ export function createRemotePiQueueSupport(opts: {
     if (req.action === "list") return { ...snapshot() };
     switch (req.action) {
       case "clear": {
-        // 远端权威清空：返回值 = 清空前文本（即「清掉了什么」，snapshot 语义不适用）
+        // Remote-authoritative clear: the return value = the pre-clear text (i.e. "what was wiped";
+        // snapshot semantics do not apply here)
         return await serialized(async () => {
           const framesBefore = frameSeq;
           const cleared = await opts.clearRemote();
@@ -235,8 +238,8 @@ export function createRemotePiQueueSupport(opts: {
           const group = req.kind === "steer" ? cur.steering : cur.followUp;
           const i = Number(req.index);
           const text = String(req.text ?? "");
-          if (!Number.isInteger(i) || i < 0 || i > group.length) throw new Error("队列索引越界");
-          if (!text.trim()) throw new Error("requeue 需要非空文本");
+          if (!Number.isInteger(i) || i < 0 || i > group.length) throw new Error("queue index out of range");
+          if (!text.trim()) throw new Error("requeue requires non-empty text");
           group.splice(i, 0, text);
           return { next: cur, result: undefined };
         });
@@ -245,7 +248,7 @@ export function createRemotePiQueueSupport(opts: {
       case "convert": {
         const target = req.targetKind === "followUp" ? "followUp" : "steer";
         const kind: "steer" | "followUp" = req.kind === "steer" ? "steer" : "followUp";
-        if (target === kind) throw new Error("convert 需要不同于当前的 targetKind");
+        if (target === kind) throw new Error("convert requires a targetKind different from the current kind");
         const picked = await mutate((cur) => {
           const [moved] = (kind === "steer" ? cur.steering : cur.followUp).splice(at(kind === "steer" ? cur.steering : cur.followUp, req.index), 1);
           (target === "steer" ? cur.steering : cur.followUp).push(moved);
@@ -255,7 +258,7 @@ export function createRemotePiQueueSupport(opts: {
         return { steering: state.steering, followUp: state.followUp, entry: { text: picked } };
       }
       default:
-        throw new Error(`queueManage: 未知 action "${String(req.action)}"`);
+        throw new Error(`queueManage: unknown action "${String(req.action)}"`);
     }
   };
 

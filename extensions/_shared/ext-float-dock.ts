@@ -1,9 +1,10 @@
 /**
- * _shared/ext-float-dock.ts — aiti-float dock 的扩展侧 **全量面**（重 UI：DockBody、
- * 头行工具条 hooks、faces 工厂）。状态机（present store）已下沉
- * ./ext-float-dock-core.ts（零 react）；壳用薄层 ./ext-float-dock-lite.ts（usePresent/
- * useGate + 状态机小 API）——拆包扩展的薄壳 import lite，不连带本文件的 UI 层
- * （P1-3，方案 pi-web-eager-ext-split-plan.md §6）。
+ * _shared/ext-float-dock.ts — the extension-side **full surface** of the aiti-float dock
+ * (heavy UI: DockBody, header toolbar hooks, faces factory). The state machine (present
+ * store) has sunk into ./ext-float-dock-core.ts (zero react); shells use the thin layer
+ * ./ext-float-dock-lite.ts (usePresent/useGate + the small state-machine API) — split
+ * extensions' shells import lite without dragging in this file's UI layer
+ * (P1-3, plan pi-web-eager-ext-split-plan.md §6).
  *
  * Historical import surface kept intact: re-exports core (state machine) + lite (hooks);
  * unpacked extensions keep importing the same way:
@@ -40,8 +41,9 @@ function menuWord(key: keyof typeof DOCK_MENU_WORDS): string {
 }
 import { DOCK_ICON_NODES, DOCK_ICON_SVG_ROOT_PROPS, dockIconReactAttrs, type DockIconName } from "./dock-icons";
 
-/** 图标元素（React/h 版；dock-icons 单一数据源）：stroke=2 线稿、currentColor。
- *  与 DOM 版 createDockIconSvg（core appendDockIconRow 内）同图形同尺寸。 */
+/** Icon element (React/h flavor; dock-icons is the single source): stroke=2 line art,
+ *  currentColor. Same glyph and size as the DOM flavor createDockIconSvg (in core's
+ *  appendDockIconRow). */
 export function dockIconEl(name: DockIconName, size = 16): unknown {
   return h("svg", { width: size, height: size, ...DOCK_ICON_SVG_ROOT_PROPS, "aria-hidden": "true" },
     // kebab-case SVG attrs (stroke-width from thin()) must be camelized for React JSX
@@ -98,10 +100,12 @@ export function dockIconFromDecl(icon: unknown, size = 13): unknown {
   return h("span", { style: { fontSize: size, lineHeight: 1 } }, icon); // emoji/text glyph
 }
 
-/* ── 左栏区块 zone 泛化（sidebar 统一 dock 方案 §3.8）──
- * 纯状态层（present store + 折叠/排序/头行 store）在 ./ext-float-dock-core.ts
- * （零 react——aiti-float DockStack 同源消费）；这里 re-export 全量兼容面。
- * 规范 zone 值 = `sidebar:<itemKey>`，旧值 "sidebar-explorer" 永远兼容读。 */
+/* ── Sidebar block zone generalization (sidebar unified dock plan §3.8) ──
+ * The pure state layer (present store + collapse/order/header store) lives in
+ * ./ext-float-dock-core.ts (zero react — consumed by aiti-float's DockStack from the
+ * same source); this file re-exports the full compat surface.
+ * Canonical zone value = `sidebar:<itemKey>`; the legacy "sidebar-explorer" value stays
+ * readable forever. */
 export {
   type DockZone, type PresentState, type BlockAlign,
   type DockHeaderAction, type DockHeaderState, type DockHeaderCommands, type DockMenuItem,
@@ -116,13 +120,13 @@ export {
   readDockOrder, writeDockOrder,
   effectiveBlockOrder, moveBlockKey, migrateLegacyCollapseKeys,
   createDockHeaderStore, localDockHeaderStore, DOCK_HEADER_PENDING_TTL,
-  // present 状态机（P1-3 自本文件下沉 core）
+  // present state machine (P1-3: sunk from this file into core)
   present, presentState, onPresentChange, dockPref,
   openFloat, closePanel, dockTo, dockToSidebar, undockToFloat,
   setDockPref, clearDockPref, seedDockDefault, declareDockZones,
   positionMenuItems, positionMenuModel, declareDockWindowOpener, dockWindowOpenerOf, DOCK_ZONE_LABELS,
 } from "./ext-float-dock-core";
-// hooks 薄层（P1-3 自本文件下沉 lite）
+// hooks thin layer (P1-3: sunk from this file into lite)
 export { usePresent, useGate } from "./ext-float-dock-lite";
 import {
   isSidebarDockState,
@@ -135,8 +139,10 @@ import { usePresent, useGate } from "./ext-float-dock-lite";
 import type { DockHeaderAction, DockHeaderCommands, DockHeaderState, DockHeaderStore, DockMenuItem, DockIconRowItem, MenuIconRowItem } from "./ext-float-dock-core";
 
 
-/* ── 左栏区块栈：折叠/排序/迁移的 React 绑定见文件尾（useBlockCollapsed/useDockOrder）；
- *    纯状态层在 ./ext-float-dock-core.ts。此处只留位置菜单项构建（依赖 present 动作糖）。── */
+/* ── Sidebar block stack: React bindings for collapse/order/migration live at the file
+ *    tail (useBlockCollapsed/useDockOrder); the pure state layer is in
+ *    ./ext-float-dock-core.ts. Only the position-menu item builder stays here (it leans
+ *    on present action sugar). ── */
 
 export function usePosition(itemKey: string, zones: DockZone[], defaultZone?: DockZone) {
   const state = usePresent(itemKey);
@@ -144,25 +150,27 @@ export function usePosition(itemKey: string, zones: DockZone[], defaultZone?: Do
 }
 
 
-/** 停靠 face 头行（chrome="section"，左栏区块统一头行 v4）：展开箭头 + 标题 + 计数 +
- *  **单一 ⋮ 功能菜单按钮**（折叠/位置/上移/下移/移除/关闭按上下文显隐——方案评审 6 拍板
- *  「禁多按钮多位置差异」，⇱⇲✕ 三钮收编进一个菜单）。chrome="tab"（右栏 TabBar）v3.1 起
- *  **不渲染头行**——页签行已有 ⇱（位置菜单）+ ✕，双击 = 拉回浮窗。 */
-/* ── dock 头工具条：服务/本地 store 探测 + hooks（v3；方案 §2.3/§2.7） ── */
+/** Docked-face header (chrome="section", unified sidebar-block header v4): expand
+ *  arrow + title + count + a **single ⋮ functional menu button** (collapse/position/
+ *  move-up/move-down/remove/close shown or hidden by context — design review 6 ruled
+ *  "no multi-button multi-position divergence"; the ⇱⇲✕ three buttons were folded into
+ *  one menu). chrome="tab" (right TabBar) **renders no header** since v3.1 — the tab row
+ *  already has ⇱ (position menu) + ✕; double-click = pull back to the float window. */
+/* ── dock header toolbar: service/local store probing + hooks (v3; plan §2.3/§2.7) ── */
 
-/** 当前 store：aiti-float 服务（跨 bundle 单例）优先；缺席回落本地 store（同 bundle）。 */
+/** Current store: the aiti-float service (cross-bundle singleton) wins; fall back to the local store (same bundle) when absent. */
 export function headerStore(): DockHeaderStore {
   const api = floatApi() as (FloatApi & { dockHeader?: DockHeaderStore }) | null;
   const svc = api?.dockHeader;
   return svc && typeof svc.register === "function" ? svc : localDockHeaderStore();
 }
 
-/** 请求 dock 头命令（face 按钮 → 内容实现）：命中即执行；未命中 → 展开区块 + 排队（TTL 10s）。 */
+/** Request a dock-header command (face button → content implementation): hit runs immediately; miss expands the block + queues (TTL 10s). */
 export function requestDockCommand(itemKey: string, actionId: string, payload?: unknown): boolean {
   return headerStore().request(itemKey, actionId, payload);
 }
 
-/** store 上线重解析 tick（服务安装事件）：hook/订阅把它计入 effect 依赖即可换绑。 */
+/** Store-online re-resolve tick (service install event): hooks/subscriptions add it to effect deps to rebind. */
 export function useDockHeaderStoreTick(): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -173,7 +181,7 @@ export function useDockHeaderStoreTick(): number {
   return tick;
 }
 
-/** 内容注册命令实现（每次渲染更新引用；卸载清空）。 */
+/** Content registers command implementations (updates the reference every render; cleared on unmount). */
 export function useDockCommands(itemKey: string | undefined, commands: DockHeaderCommands | null): void {
   const tick = useDockHeaderStoreTick();
   useEffect(() => {
@@ -186,7 +194,7 @@ export function useDockCommands(itemKey: string | undefined, commands: DockHeade
   }, [itemKey, tick]);
 }
 
-/** 内容上报状态（active/done/root 等纯数据；签名变化才通知）。 */
+/** Content reports state (pure data such as active/done/root; notify only on signature change). */
 export function useDockHeaderState(itemKey: string | undefined, state: DockHeaderState | null): void {
   const tick = useDockHeaderStoreTick();
   useEffect(() => {
@@ -199,7 +207,7 @@ export function useDockHeaderState(itemKey: string | undefined, state: DockHeade
   }, [itemKey, tick]);
 }
 
-/** 内容注册 ⋮ 菜单附加项（head/sep/item；复杂文件操作菜单等）。 */
+/** Content registers extra ⋮ menu items (head/sep/item; complex file-operation menus etc.). */
 export function useDockHeaderMenuItems(itemKey: string | undefined, menuItems: DockMenuItem[] | null): void {
   const tick = useDockHeaderStoreTick();
   useEffect(() => {
@@ -212,7 +220,7 @@ export function useDockHeaderMenuItems(itemKey: string | undefined, menuItems: D
   }, [itemKey, tick]);
 }
 
-/** face 读取内容上报的状态（订阅重渲染）。 */
+/** Face reads the content-reported state (subscribes to re-render). */
 export function useDockHeaderStateOf(itemKey: string | undefined): DockHeaderState {
   const tick = useDockHeaderStoreTick();
   const [, setVer] = useState(0);
@@ -224,7 +232,7 @@ export function useDockHeaderStateOf(itemKey: string | undefined): DockHeaderSta
   return itemKey ? headerStore().stateOf(itemKey) : {};
 }
 
-/** DockBody 内部：订阅本 itemKey 的 actions/menuItems（签名变化触发重渲染）。 */
+/** DockBody internal: subscribes to this itemKey's actions/menuItems (signature change triggers re-render). */
 function useDockHeaderStoreData(itemKey: string): { actions: DockHeaderAction[] | null; menuItems: DockMenuItem[] | null; hasCommands: boolean } {
   const tick = useDockHeaderStoreTick();
   const [, setVer] = useState(0);
@@ -236,7 +244,7 @@ function useDockHeaderStoreData(itemKey: string): { actions: DockHeaderAction[] 
   return { actions: s.actionsOf(itemKey), menuItems: s.menuItemsOf(itemKey), hasCommands: !!s.commandsOf(itemKey) };
 }
 
-/** 合并按钮来源：face prop 优先 + 服务/本地 store 补位（按 id 去重，保持声明序）。 */
+/** Merge button sources: face props first + service/local store backfill (dedupe by id, keep declaration order). */
 function mergeHeaderActions(local: DockHeaderAction[] | null | undefined, fromStore: DockHeaderAction[] | null): DockHeaderAction[] {
   const out: DockHeaderAction[] = [];
   const seen = new Set<string>();
@@ -248,19 +256,22 @@ function mergeHeaderActions(local: DockHeaderAction[] | null | undefined, fromSt
   return out;
 }
 
-/** 菜单渲染行（内部统一形态；head/sep/item）。 */
+/** Menu render row (internal unified shape; head/sep/item). */
 type DockMenuRow =
   | { type: "head"; label: string }
   | { type: "sep" }
   | { type: "item"; label: string; icon?: unknown; badge?: number | string; hint?: string; active?: boolean; alwaysRun?: boolean; disabled?: boolean; run: () => void }
   | { type: "icons"; label?: string; icon?: unknown; items: Array<DockIconRowItem | MenuIconRowItem> };
 
-/** 停靠面板头行（chrome="section"，左栏区块统一头行 v3）：展开箭头 + 标题位 +
- *  **声明式业务按钮**（自适应宽度；放不下自动进 ⋮「工具」组）+ **常驻 detach**（位置菜单）+
- *  **单一 ⋮ 功能菜单**（工具溢出 / 内容注册菜单项 / 区块操作三段；长菜单可滚）。
- *  chrome="tab"（右栏 TabBar）不渲染头行——页签行已有 ⇱ + ✕。
- *  折叠保挂：内容注册过命令（曾挂载）时，折叠保留 children（display:none）——头行按钮
- *  状态准确、点击零等待；未注册则折叠不挂载（保住懒加载）。 */
+/** Docked-panel header (chrome="section", unified sidebar-block header v3): expand
+ *  arrow + title slot + **declarative business buttons** (adaptive width; overflow
+ *  auto-moves into the ⋮ "Tools" group) + **resident detach** (position menu) + a
+ *  **single ⋮ functional menu** (tools overflow / content-registered menu items / block
+ *  operations, three sections; long menus scroll).
+ *  chrome="tab" (right TabBar) renders no header — the tab row already has ⇱ + ✕.
+ *  Collapsed keep-alive: when content has registered commands (once mounted), collapsing
+ *  keeps children (display:none) — header button state stays accurate and clicks are
+ *  zero-latency; when unregistered, collapsing unmounts (preserves lazy loading). */
 export function DockBody(props: {
   itemKey: string;
   zone?: DockZone;
@@ -275,38 +286,43 @@ export function DockBody(props: {
    *  headerHint for a semantic description instead — typically on reserved blocks whose
    *  header would otherwise be mute. */
   headerHint?: string;
-  /** "section"：统一 ⋮ 头行（左栏区块）；"tab"：无头行（控件在宿主 TabBar 页签上） */
+  /** "section": unified ⋮ header (sidebar blocks); "tab": no header (controls live on the host TabBar tab) */
   chrome?: "section" | "tab";
-  /** 可停靠位置全集（detach 位置菜单；缺省 [zone]——单 zone 面板无需传） */
+  /** Full set of dockable positions (detach position menu; default [zone] — single-zone panels need not pass it) */
   zones?: DockZone[];
-  /** 扩展声明默认落位（菜单尾标「默认」，纯展示） */
+  /** Extension-declared default position (the menu's trailing "default" mark; display only) */
   defaultZone?: DockZone;
-  /** 区块身份（折叠/排序记忆 key；缺省 = itemKey） */
+  /** Block identity (collapse/order memory key; default = itemKey) */
   blockKey?: string;
-  /** 折叠态外部受控（DockStack 容器传入） */
+  /** Externally controlled collapsed state (passed by the DockStack container) */
   collapsed?: boolean;
   onToggleCollapsed?: (next: boolean) => void;
-  /** 计数徽标（如子代理数） */
+  /** Count badge (e.g. subagent count) */
   count?: number;
-  /** 常驻区块（reserved）：无 detach/关闭菜单项；可带 onRemove（多实例「移除本实例」） */
+  /** Resident block (reserved): no detach/close menu items; may carry onRemove (multi-instance "Remove this instance") */
   kind?: "dockable" | "reserved";
-  /** 多实例区块「移除本实例」 */
+  /** Multi-instance block "Remove this instance" */
   onRemove?: () => void;
-  /** 「关闭」动作覆盖（缺省 closePanel(itemKey)） */
+  /** "Close" action override (default closePanel(itemKey)) */
   onClose?: () => void;
-  /** 「新窗口打开」能力（可选）：提供时位置菜单优先出该项（图标排最前，B 图形）；
-   *  不提供则回退注册表（declareDockWindowOpener），仍无则不显示（不支持的面板）。 */
+  /** "Open in new window" capability (optional): when provided the position menu shows
+   *  this item first (front of the icon row, glyph B); otherwise falls back to the
+   *  registry (declareDockWindowOpener), and if still absent hides it (unsupported panel). */
   onNewWindow?: () => void;
-  /** 扩展附加菜单项（钉住等多实例专属动作；插在区块操作段） */
+  /** Extension extra menu items (pin and other multi-instance-only actions; inserted into the block-operations section) */
   extraMenuItems?: Array<{ label: string; icon?: unknown; hint?: string; active?: boolean; alwaysRun?: boolean; run: () => void }>;
-  /** 移动行钉住钮（2026-11-24 菜单单行化：钉住并入「移动」图标排首位）——提供即渲染
-   *  （pin/pin-off 图标随钉住态切换）；不传则移动行只有上移/下移。 */
+  /** Move-row pin button (2026-11-24 menu single-row pass: pin merged into the front of
+   *  the "Move" icon row) — rendered when provided (pin/pin-off icons switch with pinned
+   *  state); when absent the move row only has move up/down. */
   moveRowPin?: { isPinned: () => boolean; toggle: () => void } | null;
-  /** 隐藏区块段「关闭」item（关闭已并入内容 ⋯ 菜单「窗口」图标排时置 true，防重复入口）。 */
+  /** Hide the block section's "Close" item (set true when close has merged into the
+   *  content ⋯ menu's "window" icon row, preventing a duplicate entry). */
   hideCloseItem?: boolean;
-  /** 标题位自定义（如文件夹的目录切换器）；提供时替换标题文本（title 仍用于 aria/兜底） */
+  /** Custom title slot (e.g. the folder block's directory switcher); replaces the title
+   *  text when provided (title still feeds aria/fallback) */
   renderTitle?: () => unknown;
-  /** 声明式头行按钮（face 本地声明；与服务/本地 store 注册的 buttons 合并，prop 优先按 id 去重） */
+  /** Declarative header buttons (declared locally by the face; merged with
+   *  service/local-store registered buttons, props win, dedupe by id) */
   headerActions?: DockHeaderAction[];
   children: any;
 }) {
@@ -315,7 +331,7 @@ export function DockBody(props: {
   const blockKey = props.blockKey ?? itemKey;
   const selfCollapsed = useState<boolean>(() => readBlockCollapsed(blockKey));
   const collapsed = props.collapsed ?? selfCollapsed[0];
-  // 外部折叠变更（旧 key 迁移 / 跨 tab / 容器）→ 同步自持态（受控 props 时不跟随）
+  // External collapse change (legacy key migration / cross-tab / container) → sync own state (don't follow when props control it)
   const setSelfCollapsed = selfCollapsed[1];
   useEffect(() => {
     if (props.collapsed !== undefined) return;
@@ -326,13 +342,14 @@ export function DockBody(props: {
   }, [blockKey, props.collapsed]);
   const setCollapsed = (next: boolean) => {
     setSelfCollapsed(next);
-    writeBlockCollapsed(blockKey, next); // 单一事实源 + 广播（Stack 同步栈格 flex）
+    writeBlockCollapsed(blockKey, next); // single source of truth + broadcast (Stack syncs stack-cell flex)
     props.onToggleCollapsed?.(next);
   };
-  // ── store 数据（内容注册的 actions/menuItems；签名变化重渲染）──
+  // ── store data (content-registered actions/menuItems; re-render on signature change) ──
   const storeData = useDockHeaderStoreData(itemKey);
-  // ⋮ 主菜单 / ⇱ 位置菜单共用一套 fixed 弹层（v3：菜单可能很长——maxHeight+overflowY，
-  // 内部滚动豁免「任意容器滚动即关」；点外 mousedown / 菜单外滚动仍关）。
+  // The ⋮ main menu / ⇱ position menu share one fixed popup (v3: menus can be long —
+  // maxHeight+overflowY; inner scrolling is exempt from "any container scroll closes";
+  // outside mousedown / outside scroll still close).
   const [menu, setMenu] = useState<{ kind: "position" | "main"; anchor: HTMLElement } | null>(null);
   const [menuEl, setMenuEl] = useState<HTMLElement | null>(null);
   const [menuBtnEl, setMenuBtnEl] = useState<HTMLElement | null>(null);
@@ -346,7 +363,7 @@ export function DockBody(props: {
     let top = b.bottom + gap;
     const below = window.innerHeight - pad - top;
     const above = b.top - gap - pad;
-    if (m.height > below && above > below) top = b.top - gap - m.height; // 上翻
+    if (m.height > below && above > below) top = b.top - gap - m.height; // flip upward
     const c = clampToViewport(b.right - m.width, top, m.width, m.height, pad);
     const o = fixedOrigin(menuEl);
     // Panel UI scale (CSS zoom on the sidebar / right-panel containers): b/m/o are all
@@ -365,14 +382,17 @@ export function DockBody(props: {
       if (t && menu.anchor?.contains(t)) return;
       setMenu(null);
     };
-    // 锚点打开时位置快照（scroll 关闭的位移阈值判据）
+    // anchor position snapshot at open (displacement threshold for the scroll-close heuristic)
     let anchorTop: number | null = null;
     let anchorLeft: number | null = null;
     try { const a = menu.anchor?.getBoundingClientRect?.(); if (a) { anchorTop = a.top; anchorLeft = a.left; } } catch { /* ignore */ }
     const onScroll = (e: any) => {
-      // 菜单内部滚动豁免（长菜单必须可滚）；菜单外滚动在锚点真被滚走时才关（fixed 弹层滞留旧位=错位）。
-      // 位移阈值容错（2026-11-15 小屏反馈「菜单经常自己关掉」）：手机地址栏收缩/橡皮筋/惯性
-      // 假 scroll 时锚点没挪（fixed 侧栏 overlay 不随 body 滚）→ 不关；错位超阈值才关。
+      // Menu-inner scroll is exempt (long menus must scroll); scrolling outside closes
+      // only when the anchor truly scrolled away (a fixed popup lingering at its old spot
+      // = misplacement). Displacement threshold tolerance (2026-11-15 small-screen
+      // feedback "the menu keeps closing itself"): during mobile URL-bar collapse /
+      // rubber-banding / momentum fake scrolls the anchor hasn't moved (the fixed sidebar
+      // overlay doesn't scroll with body) → don't close; close only past the threshold.
       if (menuEl && e.target instanceof Node && menuEl.contains(e.target)) return;
       try {
         const a = menu.anchor?.getBoundingClientRect?.();
@@ -388,7 +408,7 @@ export function DockBody(props: {
       window.removeEventListener("scroll", onScroll, true);
     };
   }, [menu, menuEl]);
-  // ── 自适应：头行可用宽度 → 可见业务按钮数（ResizeObserver + window resize；无轮询）──
+  // ── Adaptive: header available width → visible business button count (ResizeObserver + window resize; no polling) ──
   const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null);
   const [fitCount, setFitCount] = useState(4);
   useEffect(() => {
@@ -396,7 +416,7 @@ export function DockBody(props: {
     const calc = () => {
       const w = headerEl.clientWidth || 0;
       if (w <= 0) return;
-      // 固定占用估算：padding16 + 箭头22 + 标题最小56 + detach24 + ⋮24 + 间隙12
+      // Fixed-occupation estimate: padding16 + arrow22 + title min56 + detach24 + ⋮24 + gaps12
       const fixed = 154;
       const n = Math.max(0, Math.min(6, Math.floor((w - fixed) / 27)));
       setFitCount((cur) => (cur === n ? cur : n));
@@ -410,12 +430,12 @@ export function DockBody(props: {
   const state = usePresent(itemKey);
   const allZones = zones && zones.length ? zones : (zone ? [zone] : []);
   const showDetach = kind === "dockable" && chrome === "section" && allZones.length > 0;
-  // .ts 文件（跨扩展共享不保证 jsx-runtime）→ 用 createElement 而非 JSX 语法
+  // .ts file (shared across extensions, jsx-runtime not guaranteed) → createElement instead of JSX syntax
   const btnBase: any = {
     background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer",
     fontSize: 11, lineHeight: 1, padding: "2px 5px", flexShrink: 0, fontFamily: "inherit",
   };
-  // ── 业务按钮：合并来源 → 折叠过滤 visibility → 自适应截断（其余进 ⋮「工具」组）──
+  // ── Business buttons: merge sources → collapse-filter visibility → adaptive truncation (rest go into the ⋮ "Tools" group) ──
   const allActions = mergeHeaderActions(props.headerActions, storeData.actions);
   const eligible = allActions.filter((a) => !collapsed || (a.visibility ?? "always") !== "expanded");
   const shownActions = eligible.slice(0, fitCount);
@@ -433,12 +453,14 @@ export function DockBody(props: {
     (a.badge !== undefined && a.badge !== null && a.badge !== "") ? h("span", {
       style: { position: "absolute" as const, top: -5, right: -4, fontSize: 9, lineHeight: "13px", color: "var(--text-muted, #888)", background: "var(--bg-panel, #1a1a1a)", border: "1px solid var(--border, #444)", borderRadius: 7, padding: "0 3px" },
     }, String(a.badge)) : null);
-  // ── ⋮ 主菜单（三段：工具溢出 / 内容注册菜单项 / 区块操作）──
+  // ── ⋮ main menu (three sections: tools overflow / content-registered menu items / block operations) ──
   const buildMainMenu = (): DockMenuRow[] => {
     const out: DockMenuRow[] = [];
-    // 「移动」图标行构建（含可选钉住钮首位）：menuItems 有 moveRow 占位时在占位处插入
-    //（前移），否则回落区块段默认位。内容未挂载（折叠未展开过）时 menuItems 缺席，
-    // 区块段默认移动排同样走此构建——钉住钮不再只随挂载态出现（2026-11-15）。
+    // "Move" icon-row builder (optional pin button first): when menuItems carry a
+    // moveRow slot, insert there (moved up); otherwise fall back to the block section's
+    // default spot. When content is unmounted (collapse never expanded), menuItems are
+    // absent and the block section's default move row also goes through this builder —
+    // the pin button no longer appears only while mounted (2026-11-15).
     // Sorting is dockable-only: reserved blocks (fixed resident blocks like projects) get
     // no drag handle and no "move" row in the ⋮ menu.
     const sortable = kind !== "reserved";
@@ -472,10 +494,13 @@ export function DockBody(props: {
     }
     const ops: DockMenuRow[] = [];
     if (chrome === "section" && sortable && !(storeData.menuItems || []).some((m) => m.kind === "moveRow")) {
-      // 单行「移动」（2026-09-15 用户拍板回归 §3.5 图标排形态）：行首对角双箭头图标（move-diagonal-2，
-      // 左上+右下）+ 行名呈 icon+text，与区块段其余行呼应；右侧 chevron-up/down 即时上移/下移。
-      // menuItems 含 moveRow 占位时移动行已前移插入（不在此重复）。与挂载态 buildMoveRow
-      // 同源：钉住钮（moveRowPin 提供时）在未挂载折叠态同样可见可用。
+      // Single-row "Move" (2026-09-15 user ruling, back to the §3.5 icon-row shape): a
+      // leading diagonal double-arrow icon (move-diagonal-2, top-left + bottom-right) +
+      // the row name rendered icon+text, echoing the block section's other rows;
+      // chevron-up/down on the right move instantly. When menuItems carry a moveRow slot
+      // the move row was already inserted earlier (not repeated here). Same source as the
+      // mounted-state buildMoveRow: the pin button (when moveRowPin is provided) stays
+      // visible/usable in the unmounted collapsed state too.
       ops.push(buildMoveRow());
     }
     if (kind === "reserved" && typeof props.onRemove === "function") {
@@ -495,22 +520,25 @@ export function DockBody(props: {
     return out;
   };
   const positionRows: DockMenuRow[] = menu?.kind === "position"
-    // v5 图标排（方案 §3.4）：统一模型（浮窗 → 各停靠位）+ 一行无歧义方位图标
+    // v5 icon row (plan §3.4): unified model (float → each dock position) + one row of
+    // unambiguous zone icons
     ? [{ type: "icons" as const, label: menuWord("zones"), items: positionMenuModel(itemKey, allZones, defaultZone, state, { onNewWindow: props.onNewWindow }) }]
     : [];
   const menuRows: DockMenuRow[] = menu?.kind === "position" ? positionRows : (menu?.kind === "main" ? buildMainMenu() : []);
   const renderMenuRow = (it: DockMenuRow, i: number) => {
     if (it.type === "sep") return h("div", { key: `sep-${i}`, style: { height: 1, background: "var(--border, #444)", margin: "3px 4px", opacity: 0.7, flexShrink: 0 } });
     if (it.type === "head") return h("div", { key: `head-${i}`, style: { fontSize: 10, color: "var(--text-dim, #888)", fontWeight: 600, padding: "4px 10px 2px", letterSpacing: 0.3, userSelect: "none", whiteSpace: "nowrap" as const } }, it.label);
-    // v5 图标排（方案 §3.4/§3.5）：一行「名称 + 右对齐图标组」（参照菜单样式：名称左、
-    // 图标右对齐；当前态高亮锁定、默认位圆点、hover tooltip）；数值与 DOM 版一致。
+    // v5 icon row (plan §3.4/§3.5): one row of "name + right-aligned icon group"
+    // (mirrors the menu style: name left, icons right-aligned; active state highlighted
+    // and locked, default-position dot, hover tooltip); values match the DOM flavor.
     if (it.type === "icons") return h("div", {
       key: `icons-${i}`, role: "group", "data-ext-dock-icon-row": "1",
       style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px", flexShrink: 0 },
     },
       it.label ? h("span", { key: "label", "data-ext-dock-icon-row-label": "1",
-        // 行首图标（可选）：带图标 = 动作行（正文字色，与其余 icon+text 行同款）；
-        // 无图标 = 纯说明名（dim，位置菜单「停靠方位」标题原样）。
+        // Leading row icon (optional): with an icon = an action row (body text color,
+        // same style as the other icon+text rows); without = a pure caption name (dim,
+        // e.g. the position menu's "Dock zones" title as-is).
         style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
           color: it.icon ? "var(--text, #ddd)" : "var(--text-dim, #888)", flexShrink: 0, userSelect: "none" as const, whiteSpace: "nowrap" as const } },
         it.icon ? h("span", { style: { display: "inline-flex", flexShrink: 0 } }, it.icon) : null,
@@ -567,21 +595,26 @@ export function DockBody(props: {
       position: "fixed", zIndex: 2147483600, background: "var(--bg-panel, #1a1a1a)",
       border: "1px solid var(--border, #444)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column", gap: 2,
       boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: menu?.kind === "position" ? 190 : 150, maxWidth: "calc(100vw - 16px)",
-      // 长菜单滚动契约（v3）：视口内可滚 + 防滚动穿透（内部滚动不触发「容器滚动即关」）
+      // Long-menu scroll contract (v3): scrollable inside the viewport + scroll
+      // containment (inner scroll does not trigger "container scroll closes")
       maxHeight: "min(70vh, calc(100vh - 16px))", overflowY: "auto" as const, overscrollBehavior: "contain" as const,
-      // 首帧离屏（布局期测量后落位，绘制前同步无闪烁）
+      // First frame off-screen (positioned after layout measurement, synced before paint, no flicker)
       ...(menuPos ? { left: menuPos.left, top: menuPos.top } : { left: -99999, top: -99999 }),
     },
-    // hover 关闭仅限真 hover 设备（2026-11-15 小屏反馈「菜单经常自己关掉」）：手机上手指
-    // 滑动浏览菜单项时浏览器合成 mouse 事件（touchmove 目标变化 → 合成 mouseleave），
-    // 无条件关闭等于「一滑就关」；触屏（hover:none）忽略 mouseleave，改由外点/滚动关闭。
-    onMouseLeave: () => { try { if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return; } catch { /* 判定缺席按桌面处理 */ } setMenu(null); },
+    // Hover-close only on true hover devices (2026-11-15 small-screen feedback "the menu
+    // keeps closing itself"): while a finger swipes through menu items on phones the
+    // browser synthesizes mouse events (touchmove target change → synthetic mouseleave);
+    // unconditional close equals "one swipe closes it". Touch (hover:none) ignores
+    // mouseleave and closes via outside click/scroll instead.
+    onMouseLeave: () => { try { if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return; } catch { /* no matchMedia → treat as desktop */ } setMenu(null); },
   }, menuRows.map(renderMenuRow)) : null;
   const toggleCollapsed = () => setCollapsed(!collapsed);
-  // 排序 v2：头行 = HTML5 拖拽把手。dragged key 双通道传递：dataTransfer（跨 bundle，
-  // drop 阶段可读）+ 模块级 dragKey（同 bundle 实时读——dragover 阶段 dataTransfer 受
-  // 保护读不到，用于抑制自拖高亮；自拖拽必然同 bundle，故可靠）。drop 前/后半区决定
-  // 插入位；键盘路径 = ⋮ 上移/下移。
+  // Order v2: the header is the HTML5 drag handle. The dragged key travels two channels:
+  // dataTransfer (cross-bundle, readable in the drop phase) + module-level dragKey (read
+  // live within the same bundle — dataTransfer is protected and unreadable during
+  // dragover, used to suppress self-drag highlighting; self-drag is always same-bundle,
+  // hence reliable). Drop before/after half decides the insertion point; the keyboard
+  // path = ⋮ move up/down.
   const onDragStart = (e: any) => {
     if (e.target && typeof e.target.closest === "function" && e.target.closest("button")) { e.preventDefault(); return; }
     dragKey = blockKey;
@@ -636,16 +669,18 @@ export function DockBody(props: {
       // 13px/500 body-color matches custom renderTitle headers (e.g. folder title
       // switcher) so every section header reads as the same tier; icon prop is 13 too.
       : h("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text, #222)", flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 } }, title ?? ""));
-  // 折叠保挂（v3）：内容注册过命令（曾挂载）→ 折叠保留 children（隐藏），按钮状态与命令即时可用
+  // Collapsed keep-alive (v3): content has registered commands (once mounted) →
+  // collapsing keeps children (hidden); button state and commands stay instantly usable
   const keepAlive = collapsed && storeData.hasCommands;
   return h("div", {
     "data-ext-float-dock-body": itemKey,
     "data-ext-item": itemKey,
     "data-ext-dock-block": blockKey,
-    // 根上带声明属性：TabBar ⇱ 菜单在 face 挂载时可直接读（注册表兜底优先）
+    // Declaration attributes on the root: the TabBar ⇱ menu reads them directly when the
+    // face is mounted (registry fallback takes precedence)
     "data-ext-float-dock": allZones.join(" "),
     ...(defaultZone ? { "data-ext-float-dock-default": defaultZone } : {}),
-    // 注册按钮数（e2e/调试断言用）：当前头行可见 / 溢出
+    // Registered button counts (for e2e/debug assertions): currently visible in header / overflow
     "data-ext-dock-actions": String(shownActions.length),
     "data-ext-dock-actions-overflow": String(overflowActions.length),
     style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden", position: "relative" },
@@ -685,20 +720,23 @@ export function DockBody(props: {
   );
 }
 
-/** ⋮ 菜单「上移/下移」请求广播（全栈键集只有 DockStack 容器知道——容器监听落位）。 */
+/** Broadcast a ⋮ menu "move up/down" request (only the DockStack container knows the
+ *  full stack key set — the container listens and lands it). */
 export function requestBlockMove(blockKey: string, delta: number): void {
   try { window.dispatchEvent(new CustomEvent(SIDEBAR_MOVE_EVENT, { detail: { key: blockKey, delta } })); } catch { /* ignore */ }
 }
 
-/** 排序 v2：拖拽落点请求广播（dragged 移到 target 前/后；容器监听落位）。 */
+/** Order v2: broadcast a drag-drop request (move dragged before/after target; the
+ *  container listens and lands it). */
 export function requestBlockDrop(dragged: string, target: string, before: boolean): void {
   try { window.dispatchEvent(new CustomEvent(SIDEBAR_DROP_EVENT, { detail: { key: dragged, target, before } })); } catch { /* ignore */ }
 }
 
-/** 当前拖拽中的区块 key（同 bundle 实时读；跨 bundle 落位走 dataTransfer）。 */
+/** The currently dragged block key (read live within the same bundle; cross-bundle
+ *  landing goes through dataTransfer). */
 let dragKey: string | null = null;
 
-/* 拖放落点高亮样式（一次性注入；DOM API 加类，React 重渲染不冲） */
+/* Drag-drop highlight styles (one-time injection; the DOM API adds classes, no clash with React re-renders) */
 if (typeof document !== "undefined" && !document.getElementById("pi-dock-dnd-css")) {
   try {
     const st = document.createElement("style");
@@ -710,7 +748,8 @@ if (typeof document !== "undefined" && !document.getElementById("pi-dock-dnd-css
   } catch { /* ignore */ }
 }
 
-/** 折叠态 hook（区块栈容器/外部同步用）：localStorage 单一事实源 + 变更事件订阅。 */
+/** Collapsed-state hook (for the block-stack container / external sync): localStorage
+ *  single source of truth + change-event subscription. */
 export function useBlockCollapsed(blockKey: string): [boolean, (next: boolean) => void] {
   const [collapsed, setCollapsed] = useState<boolean>(() => readBlockCollapsed(blockKey));
   useEffect(() => {
@@ -723,7 +762,7 @@ export function useBlockCollapsed(blockKey: string): [boolean, (next: boolean) =
   return [collapsed, (next: boolean) => writeBlockCollapsed(blockKey, next)];
 }
 
-/** 排序持久化 hook（DockStack 容器用）：readDockOrder + 变更事件订阅。 */
+/** Order persistence hook (for the DockStack container): readDockOrder + change-event subscription. */
 export function useDockOrder(): string[] {
   const [order, setOrder] = useState<string[]>(() => readDockOrder());
   useEffect(() => {
@@ -736,25 +775,29 @@ export function useDockOrder(): string[] {
   return order;
 }
 
-/** 左栏停靠 gate（v4 泛化）：docked:sidebar:* 族（含旧 sidebar-explorer）任意落位即真。
- *  返回当前落位 zone（sidebar:<itemKey> | sidebar-explorer），未停靠返回 null。 */
+/** Sidebar dock gate (v4 generalization): true for any landing in the docked:sidebar:*
+ *  family (incl. legacy sidebar-explorer).
+ *  Returns the current docked zone (sidebar:<itemKey> | sidebar-explorer); null when not
+ *  docked. */
 export function useGateSidebar(itemKey: string): string | null {
   const state = usePresent(itemKey);
   if (!isSidebarDockState(state)) return null;
   return state === "docked:sidebar-explorer" ? "sidebar-explorer" : state.slice("docked:".length);
 }
 
-/** 左栏区块注册项（统一区块注册语义糖）：dockable 面板以 sidebar:* 为默认位时的
- *  sidebarExplorerDock 注册条目（meta 携 title/priority——DockStack 排序默认序消费）。
- *  face 门控 = useGateSidebar（sidebar 族任意落位渲染），头行走统一 DockBody。 */
+/** Sidebar block registration entry (sugar over unified block registration): the
+ *  sidebarExplorerDock entry for dockable panels whose default position is sidebar:*
+ *  (meta carries title/priority — consumed by the DockStack default order).
+ *  Face gate = useGateSidebar (renders on any sidebar-family landing); the header goes
+ *  through the unified DockBody. */
 export function sidebarBlockItem(opts: {
-  key: string;                 // 完整 itemKey "extId:itemId"（= 注册复合 id 约定）
+  key: string;                 // full itemKey "extId:itemId" (= the registration composite-id convention)
   title: string;
   /** Collapsed-header icon: five-form declaration (element / {svg} / {url} /
    *  dock-icons name / emoji-text; see dockIconFromDecl). */
   icon?: unknown;
-  priority?: number;           // 默认序（项目0→任务1→文件2→停靠3+）
-  zones?: DockZone[];          // 位置全集（sidebar 族自动并入；右栏显式声明）
+  priority?: number;           // default order (projects0 → tasks1 → files2 → docks3+)
+  zones?: DockZone[];          // full position set (sidebar family merged in automatically; right column declared explicitly)
   defaultZone?: DockZone;
   renderContent: () => any;
 }) {
@@ -775,45 +818,48 @@ export function sidebarBlockItem(opts: {
   return { id: itemId, render: SidebarFace, meta: { title: opts.title, priority: opts.priority } };
 }
 
-/* ── createDockFaces 工厂（v3 §2-F，G5 接入降本）：一个调用注册浮窗 + 各停靠面 ──
+/* ── createDockFaces factory (v3 §2-F, cheaper G5 onboarding): one call registers the
+ * float window + every docked face ──
  *
- *   const faces = createDockFaces({ key: "my-ext:main", title: "我的面板",
+ *   const faces = createDockFaces({ key: "my-ext:main", title: "My panel",
  *     zones: ["right-panel"], defaultZone: "right-panel", renderContent: () => <MyContent/> });
  *   registerItems("dialogs", faces.dialogsItems);
  *   registerItems("rightFileDock", faces.rightFileDock);
  *   registerItems("sidebarExplorerDock", faces.sidebarExplorerDock);
  *
- * 打开入口仍由扩展调 openFloat(key)。浮窗壳 = 标准遮罩 + 面板（头行标题+✕ + 滚动体）；
- * 自带头行 UI 的内容可关 chrome（头行仍需自己调 closePanel(key)）。
- * 特例（git-review pages⇄dock 二面 / doc-center embedded）不走工厂，维持手写。 */
+ * Opening stays with the extension calling openFloat(key). The float shell = standard
+ * overlay + panel (header title + ✕ + scrolling body); content with its own header UI
+ * can pass chrome=false (it still needs to call closePanel(key) itself).
+ * Special cases (git-review pages⇄dock two faces / doc-center embedded) skip the
+ * factory and stay hand-written. */
 export function createDockFaces(opts: {
-  key: string;                       // 完整 itemKey "extId:itemId"（= 注册 id 约定，防 dock tab 链断裂）
+  key: string;                       // full itemKey "extId:itemId" (= registration id convention; prevents a broken dock-tab chain)
   title: string;
   /** Collapsed-header icon: five-form declaration (element / {svg} / {url} /
    *  dock-icons name / emoji-text; see dockIconFromDecl). */
   icon?: unknown;
   zones: DockZone[];
   defaultZone?: DockZone;
-  renderContent: () => any;          // 两面共用内容（ReactNode 工厂）
-  /** 浮窗面板附加 data-ext-float-* 属性（w/h/full/min-w/pos…），如 { "data-ext-float-w": 760 } */
+  renderContent: () => any;          // content shared by both faces (ReactNode factory)
+  /** Extra data-ext-float-* attributes on the float panel (w/h/full/min-w/pos…), e.g. { "data-ext-float-w": 760 } */
   floatAttrs?: Record<string, unknown>;
-  /** 浮窗面板内联样式兑底（未装 float 时生效） */
+  /** Inline-style fallback for the float panel (applies when float is not installed) */
   floatStyle?: Record<string, unknown>;
-  /** 浮窗面宽度/高度（style 与 data-ext-float-w/-h 同步声明；缺省 760×560） */
+  /** Float face width/height (declared in sync via style and data-ext-float-w/-h; default 760×560) */
   w?: number; hh?: number;
-  /** 标准 chrome 头行（标题+✕）；内容自带头行时传 false（自己调 closePanel） */
+  /** Standard chrome header (title + ✕); pass false when content carries its own header (it calls closePanel itself) */
   chrome?: boolean;
-  /** dialogs item id（缺省 = key 第一个冒号后的 itemId 部分） */
+  /** dialogs item id (default = the itemId part after the first colon in key) */
   itemId?: string;
-  /** 左栏区块默认序（meta.priority → DockStack 有效序；项目0→任务1→文件2→停靠3+） */
+  /** Sidebar block default order (meta.priority → DockStack effective order; projects0 → tasks1 → files2 → docks3+) */
   priority?: number;
 }) {
   const { key, title, zones, defaultZone, renderContent } = opts;
   const itemId = opts.itemId ?? (key.includes(":") ? key.slice(key.indexOf(":") + 1) : key);
   const w = opts.w ?? 760;
   const hh = opts.hh ?? 560;
-  if (defaultZone) seedDockDefault(key, defaultZone); // 首次 open 直达默认位（§2-B）+ 注册表默认位
-  declareDockZones(key, zones, defaultZone);     // TabBar ⇱ 菜单 zones 全集（v3.1）
+  if (defaultZone) seedDockDefault(key, defaultZone); // first open lands directly on the default position (§2-B) + registry default
+  declareDockZones(key, zones, defaultZone);     // the TabBar ⇱ menu's full zones set (v3.1)
   const dockAttrs: Record<string, unknown> = { "data-ext-float-dock": zones.join(" ") };
   if (defaultZone) dockAttrs["data-ext-float-dock-default"] = defaultZone;
 
@@ -849,8 +895,9 @@ export function createDockFaces(opts: {
   };
 
   const makeDockFace = (zone: DockZone, chrome: "section" | "tab") => () => {
-    // v4：左栏 face 门控放宽为 sidebar 族（docked:sidebar:* 任意区块位，兼容旧
-    // sidebar-explorer——用户 dockpref 持久化旧值时照样渲染）；头行 zone 由状态推导。
+    // v4: the sidebar face gate widens to the sidebar family (any docked:sidebar:*
+    // block position, still compatible with legacy sidebar-explorer — renders even when
+    // the user's persisted dockpref holds the old value); the header zone derives from state.
     if (zone === "sidebar-explorer") {
       const dockedZone = useGateSidebar(key);
       if (!dockedZone) return null;
@@ -864,19 +911,21 @@ export function createDockFaces(opts: {
   const hasSidebarZone = zones.some((z) => z === "sidebar-explorer" || z.startsWith("sidebar:"));
   return {
     dialogsItems: [{ id: itemId, render: FloatFace }],
-    // ⚠ dock item 注册 raw itemId（宿主 registerItems 自动拼 extId:itemId = itemKey），
-    // 与状态机 key 一致（demo/doc-center/git-review 同款约定；id: key 会拼出双前缀断链）
+    // ⚠ dock items register the raw itemId (the host registerItems auto-joins
+    // extId:itemId = itemKey), consistent with the state-machine key (same convention as
+    // demo/doc-center/git-review; id: key would double-prefix and break the chain)
     rightFileDock: zones.includes("right-panel")
       ? [{ id: itemId, render: makeDockFace("right-panel", "tab"), meta: { title } }]
       : [],
-    // v4：meta.priority 透传（DockStack 默认序：项目0→任务1→文件2→停靠3+；用户改序后失效）
+    // v4: pass meta.priority through (DockStack default order: projects0 → tasks1 →
+    // files2 → docks3+; void once the user reorders)
     sidebarExplorerDock: hasSidebarZone
       ? [{ id: itemId, render: makeDockFace("sidebar-explorer", "section"), meta: { title, ...(opts.priority !== undefined ? { priority: opts.priority } : {}) } }]
       : [],
   };
 }
 
-/* flash 样式（一次性注入；docked 态重复 open 的容器高亮，2s 自删 class） */
+/* Flash style (one-time injection; highlights the container on repeated open while docked, class self-removes after 2s) */
 if (typeof document !== "undefined" && !document.getElementById("piwe-dock-flash-css")) {
   try {
     const st = document.createElement("style");
@@ -887,5 +936,6 @@ if (typeof document !== "undefined" && !document.getElementById("piwe-dock-flash
   } catch { /* ignore */ }
 }
 
-/* ── React 绑定（各扩展 bundle 自带 react；不引 react 的调用方直接用下面的 usePresent/useGate/DockBody） ── */
+/* ── React bindings (each extension bundle carries its own react; callers without react
+ * use the usePresent/useGate/DockBody below directly) ── */
 

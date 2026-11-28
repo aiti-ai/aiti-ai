@@ -1,16 +1,20 @@
 /**
- * ext-lazy 单测（node --test）——方案 pi-web-eager-ext-split-plan.md §4.1 附带最小自测。
+ * ext-lazy unit tests (node --test) — the minimal self-test shipped with plan
+ * pi-web-eager-ext-split-plan.md §4.1.
  *
- * 覆盖点：
- *   1. createLazyModule：load 幂等单例（同实例）、失败复位重试、subscribe/useModule 就绪通知；
- *   2. lazyExtView：active=false 渲染 null 且不 import（门控前置）；active=true 触发加载
- *      → 就绪渲染 pick 组件；fallback 加载占位；失败 → null + onError，门控重开后重试；
- *   3. 同一 load 引用跨视图共享单例（并发只 import 一次）。
+ * Coverage:
+ *   1. createLazyModule: idempotent singleton load (same instance), failure reset + retry,
+ *      subscribe/useModule readiness notification;
+ *   2. lazyExtView: active=false renders null and never imports (gate first); active=true triggers
+ *      loading → renders the pick component when ready; fallback while loading; failure → null +
+ *      onError, retries when the gate reopens;
+ *   3. the same load reference shares one singleton across views (concurrent imports happen once).
  *
- * helper 是 TS + react import（各扩展 vite 构建内联），node 直读不了——
- * 先用 esbuild 打包为可测 bundle（react 用可驱动 hooks 的迷你桩：state 按组件实例
- * （key）+调用序持久化，effect 排队手动 flush，建模 React 最小语义）。
- * ⚠ 桩必须先于 bundle import 安装。
+ * The helper is TS with react imports (inlined by each extension's vite build); node cannot read it
+ * directly — so first bundle it into a testable bundle with esbuild (react is a mini stub that can
+ * drive hooks: state persists per component instance (key) + call order, effects queue and flush
+ * manually, modeling minimal React semantics).
+ * ⚠ The stub must be installed before the bundle import.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -22,11 +26,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** 迷你 react 桩：useState/useEffect 真实驱动（state 按 key（组件实例）+slot 序持久化；
- *  effect 带 deps 比较——deps 未变不重跑，建模 React 最小语义）。 */
+/** Mini react stub: useState/useEffect actually driven (state persists per key (component
+ *  instance) + slot order; effects compare deps — unchanged deps don't re-run, modeling
+ *  minimal React semantics). */
 function makeReactStub() {
   const slotsByKey = new Map(); // key -> Map(slotIndex -> value)
-  const effectDeps = new Map(); // key:slotIndex -> last deps（浅比较）
+  const effectDeps = new Map(); // key:slotIndex -> last deps (shallow compare)
   const pendingEffects = [];
   let currentKey = null;
   let slotIdx = 0;
@@ -45,13 +50,13 @@ function makeReactStub() {
       const id = `${currentKey}:${slotIdx++}`;
       const last = effectDeps.get(id);
       const same = last && deps && last.length === deps.length && deps.every((d, i) => d === last[i]);
-      if (same) return; // deps 未变：不重跑（React 语义）
+      if (same) return; // deps unchanged: don't re-run (React semantics)
       effectDeps.set(id, deps ? [...deps] : null);
       pendingEffects.push(fn);
     },
     useRef(v) { return { current: v }; },
     createElement(type, props, ...children) { return { type, props, children }; },
-    /** 渲染一轮「组件实例 key」：slot 序复位，state 跨轮持久化。 */
+    /** Render one round under a "component instance key": slot order resets, state persists across rounds. */
     render(key, fn) {
       const prevKey = currentKey;
       currentKey = key;
@@ -66,7 +71,7 @@ function makeReactStub() {
   return stub;
 }
 
-test("ext-lazy：单例/重试/门控懒视图", async (t) => {
+test("ext-lazy: singleton / retry / gated lazy view", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "ext-lazy-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -78,7 +83,7 @@ test("ext-lazy：单例/重试/门控懒视图", async (t) => {
     "export const useRef = (v) => globalThis.__reactStub.useRef(v);\n" +
     "export const createElement = (...a) => globalThis.__reactStub.createElement(...a);\n");
   const outfile = join(dir, "bundle.mjs");
-  // 派生形态（Linux 原生 ELF / Windows 官方 .exe，或 node 直跑 JS 入口）由 esbuild-bin 收口
+  // Derived form (Linux native ELF / Windows official .exe, or node running a JS entry directly) is settled by esbuild-bin
   await runEsbuild(esbuildBin, [join(here, "ext-lazy.tsx"), "--bundle", "--format=esm", "--platform=node",
     "--alias:react=" + reactStub, "--outfile=" + outfile, "--log-level=error"]);
 
@@ -88,13 +93,14 @@ test("ext-lazy：单例/重试/门控懒视图", async (t) => {
 
   const flush = async () => {
     react.__flushEffects();
-    // 宏任务排空：import 链（含 then 嵌套采纳）的微任务数不定，宏任务兜底等全
+    // Macrotask drain: the microtask count of the import chain (including nested then adoption)
+    // is unpredictable, so wait out a full macrotask as the backstop
     await new Promise((r) => setImmediate(r));
   };
 
   const mod = await import(pathToFileURL(outfile).href);
 
-  // ── 1) createLazyModule：幂等单例 + 失败复位重试 + 订阅 ──
+  // ── 1) createLazyModule: idempotent singleton + failure reset retry + subscription ──
   let importCount = 0;
   let fail = true;
   const ref = mod.createLazyModule(() => {
@@ -107,21 +113,21 @@ test("ext-lazy：单例/重试/门控懒视图", async (t) => {
 
   await assert.rejects(ref.load(), /boom/);
   await assert.rejects(ref.load(), /boom/);
-  assert.equal(importCount, 2, "失败复位：每次 load 重新 import（否则失败 promise 永久缓存）");
+  assert.equal(importCount, 2, "failure reset: each load re-imports (otherwise the failed promise is cached forever)");
   fail = false;
   const m1 = await ref.load();
   const m2 = await ref.load();
-  assert.equal(importCount, 3, "成功后幂等：不再 import");
-  assert.equal(m1, m2, "同一模块实例");
-  assert.deepEqual(events, [3], "就绪应通知订阅者");
+  assert.equal(importCount, 3, "idempotent after success: no more imports");
+  assert.equal(m1, m2, "same module instance");
+  assert.deepEqual(events, [3], "readiness should notify subscribers");
 
-  // useModule：挂载时已就绪 → 立即拿到模块
+  // useModule: already ready at mount → module returned immediately
   let seen = "unset";
   react.render("probe", () => { seen = ref.useModule(); return null; });
   react.__flushEffects();
-  assert.equal(seen, m1, "useModule 挂载时已就绪应立即返回模块");
+  assert.equal(seen, m1, "useModule should return the module immediately when already ready at mount");
 
-  // ── 2) lazyExtView：门控 / fallback / pick 渲染 / 失败重试 ──
+  // ── 2) lazyExtView: gate / fallback / pick rendering / failure retry ──
   let viewImports = 0;
   const viewLoader = () => {
     viewImports += 1;
@@ -130,20 +136,20 @@ test("ext-lazy：单例/重试/门控懒视图", async (t) => {
   const renderView = (active, extra = {}) =>
     react.render("view", () => mod.lazyExtView({ active, load: viewLoader, pick: "Comp", ...extra }));
 
-  // active=false：渲染 null 且不 import
-  assert.equal(renderView(false), null, "门控关闭渲染 null");
+  // active=false: renders null and never imports
+  assert.equal(renderView(false), null, "gate closed renders null");
   react.__flushEffects();
-  assert.equal(viewImports, 0, "门控关闭绝不 import（dialogs/pages 常挂插槽安全性）");
+  assert.equal(viewImports, 0, "gate closed never imports (always-mounted dialogs/pages slot safety)");
 
-  // active=true：加载中 fallback；就绪后返回 h(Comp, props) 元素（props 透传）
-  assert.equal(renderView(true, { fallback: () => "loading" }), "loading", "加载中渲染 fallback");
+  // active=true: fallback while loading; once ready returns an h(Comp, props) element (props pass through)
+  assert.equal(renderView(true, { fallback: () => "loading" }), "loading", "renders fallback while loading");
   await flush();
   assert.equal(viewImports, 1);
   const el1 = renderView(true, { props: { a: 1 } });
-  assert.equal(el1 && el1.props && el1.props.a, 1, "就绪后返回元素且透传 props");
-  assert.deepEqual(el1.type && el1.type(el1.props), { comp: "Comp", props: { a: 1 } }, "元素 type 即 pick 导出组件");
+  assert.equal(el1 && el1.props && el1.props.a, 1, "returns the element when ready with props passed through");
+  assert.deepEqual(el1.type && el1.type(el1.props), { comp: "Comp", props: { a: 1 } }, "the element's type is the picked export component");
 
-  // 失败：onError + 渲染 null；门控 false→true 重开自动重试成功
+  // Failure: onError + renders null; gate false→true reopen auto-retries successfully
   const errors = [];
   let failLoaderFail = true;
   let failLoaderCount = 0;
@@ -157,30 +163,30 @@ test("ext-lazy：单例/重试/门控懒视图", async (t) => {
   assert.equal(renderFail(true), null);
   await flush();
   assert.equal(failLoaderCount, 1);
-  assert.equal(errors.length, 1, "失败应回调 onError");
-  assert.equal(renderFail(true), null, "失败态渲染 null（active 未变不自动重试）");
+  assert.equal(errors.length, 1, "failure should call onError");
+  assert.equal(renderFail(true), null, "failed state renders null (no auto-retry while active is unchanged)");
   failLoaderFail = false;
-  assert.equal(renderFail(false), null); // 门控关
+  assert.equal(renderFail(false), null); // gate closed
   await flush();
-  assert.equal(renderFail(true), null);  // 门控重开 → 重试中
+  assert.equal(renderFail(true), null);  // gate reopened → retrying
   await flush();
-  assert.equal(failLoaderCount, 2, "门控重开应重试");
-  assert.equal(renderFail(true) && renderFail(true).type(), "ok", "重试成功后渲染组件");
+  assert.equal(failLoaderCount, 2, "gate reopen should retry");
+  assert.equal(renderFail(true) && renderFail(true).type(), "ok", "renders the component after a successful retry");
 
-  // pick 导出缺失 → onError + null
+  // missing pick export → onError + null
   const missingLoader = () => Promise.resolve({ other: 1 });
   const renderMissing = () =>
     react.render("missingView", () => mod.lazyExtView({ active: true, load: missingLoader, pick: "Comp", onError: (e) => errors.push(e) }));
   assert.equal(renderMissing(), null);
   await flush();
-  assert.equal(renderMissing(), null, "导出缺失渲染 null");
-  assert.equal(errors.length, 2, "导出缺失应走 onError（渲染期发现）");
+  assert.equal(renderMissing(), null, "missing export renders null");
+  assert.equal(errors.length, 2, "missing export should go through onError (detected at render time)");
 
-  // 并发单例：同一 load 引用，多视图（不同实例）共享一次 import
+  // Concurrent singleton: the same load reference, multiple views (different instances) share one import
   let sharedCount = 0;
   const sharedLoader = () => { sharedCount += 1; return Promise.resolve({ Comp: () => "s" }); };
   const renderShared = (key) => react.render(key, () => mod.lazyExtView({ active: true, load: sharedLoader, pick: "Comp" }));
   renderShared("s1"); renderShared("s2"); renderShared("s3");
   await flush();
-  assert.equal(sharedCount, 1, "同 load 引用并发只 import 一次");
+  assert.equal(sharedCount, 1, "concurrent views on the same load reference import only once");
 });

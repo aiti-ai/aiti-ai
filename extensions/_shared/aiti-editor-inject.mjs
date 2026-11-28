@@ -1,13 +1,14 @@
 /**
- * aiti-editor 注入缓冲 helper（多编辑器机制 §1.5）——实现扩展 client 统一走这里。
+ * aiti-editor injection buffering helper (multi-editor mechanism §1.5) — implementation extensions'
+ * clients all go through here.
  *
- * 背景：aiti-editor 与实现扩展（aiti-sheet-univer / aiti-word-* 等）的 client 加载
- * 时序不定。晚到的注入需要缓冲重放：
- *   - aiti-editor 已就绪（window.__aitiEditor 存在）→ 立即注册；
- *   - 未就绪 → 注册函数推进 window.__aitiEditorQueue，aiti-editor setupRegistry
- *     挂载后 flush，并广播 `aiti-editor:registry-ready` 事件。
+ * Background: the client load order of aiti-editor and the implementation extensions (aiti-sheet-univer /
+ * aiti-word-* etc.) is nondeterministic. Late injections need buffered replay:
+ *   - aiti-editor ready (window.__aitiEditor exists) -> register immediately;
+ *   - not ready -> the register function is pushed into window.__aitiEditorQueue, flushed once
+ *     aiti-editor's setupRegistry mounts, and broadcast via the `aiti-editor:registry-ready` event.
  *
- * 用法（实现扩展 client 入口）：
+ * Usage (implementation extension client entry):
  *   import { whenAitiEditorReady } from "@aiti-ai/ext-shared/aiti-editor-inject";
  *   whenAitiEditorReady(() => {
  *     window.__aitiEditor.registerEditorProvider({ id: "…", displayName: "…", selector: { extensions: [".xlsx"] },
@@ -15,30 +16,33 @@
  *     window.__aitiEditor.registerContentProvider({ id: "…", write(filePath, data, baseMtimeMs) { … } });
  *   });
  *
- * 本文件按「共享权威源 + 构建期内联」模式消费（同 cursor-cli-store）：实现扩展的
- * vite 构建会把本模块打进各自 bundle，运行时零跨目录依赖。
+ * This file is consumed in the "shared authoritative source + build-time inlining" mode (same as
+ * cursor-cli-store): implementation extensions' vite builds bundle this module into their own bundles,
+ * zero cross-directory runtime dependency.
  */
 
 /**
- * aiti-editor 就绪后执行 registerNow（幂等安全：已就绪立即同步执行；
- * 未就绪入队，aiti-editor 就绪时重放）。异常只打日志不扩散（注册失败不拖垮宿主页面）。
+ * Run registerNow once aiti-editor is ready (idempotent-safe: runs synchronously immediately when
+ * already ready; enqueued when not, replayed once aiti-editor becomes ready). Exceptions are logged
+ * only, never propagated (a failed registration must not take down the host page).
  * @param {() => void} registerNow
  */
 export function whenAitiEditorReady(registerNow) {
   if (typeof window === "undefined") return;
   if (window.__aitiEditor) {
-    try { registerNow(); } catch (e) { console.error("[aiti-editor-inject] 注册失败:", e); }
+    try { registerNow(); } catch (e) { console.error("[aiti-editor-inject] registration failed:", e); }
     return;
   }
   if (!Array.isArray(window.__aitiEditorQueue)) window.__aitiEditorQueue = [];
   window.__aitiEditorQueue.push(() => {
-    try { registerNow(); } catch (e) { console.error("[aiti-editor-inject] 注册失败(重放):", e); }
+    try { registerNow(); } catch (e) { console.error("[aiti-editor-inject] registration failed (replay):", e); }
   });
 }
 
 /**
- * 监听注册表就绪（含已就绪场景立即触发一次）。用于需要在注册表 ready 后
- * 再做的初始化（如读偏好、拉取候选列表）。
+ * Listen for registry readiness (fires once immediately in the already-ready case too). For
+ * initialization that must happen after the registry is ready (e.g. reading preferences, fetching
+ * candidate lists).
  * @param {() => void} cb
  */
 export function onAitiEditorReady(cb) {

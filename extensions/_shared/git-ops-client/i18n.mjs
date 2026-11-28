@@ -1,6 +1,7 @@
 /**
- * git-ops-client · 自带小词典（zh-CN / en / zh-TW；§2 不依赖各扩展 i18n 体系）。
- * locale 归一：zh-TW/zh-HK → tw，其余 zh* → cn，其他 → en。
+ * git-ops-client · self-contained mini dictionary (zh-CN / en / zh-TW; §2 does not depend on
+ * each extension's i18n system).
+ * Locale normalization: zh-TW/zh-HK → tw, other zh* → cn, everything else → en.
  */
 
 const DICT = {

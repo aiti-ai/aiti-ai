@@ -1,9 +1,11 @@
 /**
- * _shared/seed-tool — 索引工具行 → pi 原生工具条目的共享口径单测（D18 归一）。
+ * _shared/seed-tool — unit tests for the shared convention of converting an indexed tool row into
+ * pi-native tool entries (D18 normalization).
  *
- * 钉死四家（zcode/opencode/qoder/codebuddy）seedHistory 收敛后的统一行为：
- * coerce 严格形状（自 zcode-core 搬来）、空结果占位 vs 结果缺席不造条目、
- * callID 缺席时合成配对 id 的递增语义、model/provider 的「缺席省略 / 空串保留」。
+ * Pins the unified behavior after the four families' (zcode/opencode/qoder/codebuddy) seedHistory
+ * convergence: strict-shape coerce (moved over from zcode-core), empty-result placeholder vs absent
+ * result creating no entry, the incrementing synthetic-paired-id semantics when callID is absent,
+ * and model/provider's "absent omitted / empty string kept".
  *
  * Run: node --experimental-strip-types --test pi-web-ext/_shared/seed-tool.test.mjs
  */
@@ -13,28 +15,28 @@ import test from "node:test";
 const { EMPTY_TOOL_ERROR, EMPTY_TOOL_OUTPUT, createSeedToolReplay, normalizeSeedTool, seedToolResultText } =
   await import("@aiti-ai/ext-shared/seed-tool");
 
-test("normalizeSeedTool：严格形状归一 + 非法回退 null", () => {
+test("normalizeSeedTool: strict-shape normalization + invalid falls back to null", () => {
   assert.deepEqual(
     normalizeSeedTool({ callID: "call_1", name: "Bash", input: { command: "pwd" }, output: "/home" }),
     { callID: "call_1", name: "Bash", input: { command: "pwd" }, output: "/home" },
   );
   assert.deepEqual(normalizeSeedTool({ name: "Read", input: null, isError: true }), { name: "Read", input: {}, isError: true });
-  assert.equal(normalizeSeedTool({ input: {} }), null, "缺 name");
+  assert.equal(normalizeSeedTool({ input: {} }), null, "missing name");
   assert.equal(normalizeSeedTool("text"), null);
   assert.equal(normalizeSeedTool(null), null);
-  assert.equal(normalizeSeedTool([{ name: "Bash" }]), null, "数组不是工具行");
-  assert.deepEqual(normalizeSeedTool({ name: "B", input: "raw" })?.input, {}, "input 非对象 → 空对象兜底");
-  assert.equal(normalizeSeedTool({ name: "B", output: 123 }).output, undefined, "非字符串 output 丢");
+  assert.equal(normalizeSeedTool([{ name: "Bash" }]), null, "an array is not a tool row");
+  assert.deepEqual(normalizeSeedTool({ name: "B", input: "raw" })?.input, {}, "non-object input -> empty-object fallback");
+  assert.equal(normalizeSeedTool({ name: "B", output: 123 }).output, undefined, "non-string output dropped");
 });
 
-test("空 output 与缺席 output 语义分开", () => {
+test("empty output and absent output are semantically distinct", () => {
   assert.equal(normalizeSeedTool({ name: "B" }).output, undefined);
   assert.equal(seedToolResultText({ name: "B", input: {}, output: "ok" }), "ok");
   assert.equal(seedToolResultText({ name: "B", input: {}, output: "" }), EMPTY_TOOL_OUTPUT);
   assert.equal(seedToolResultText({ name: "B", input: {}, output: "  \n", isError: true }), EMPTY_TOOL_ERROR);
 });
 
-test("回放：按 callID 配对出 toolCall + toolResult 两条", () => {
+test("replay: pairs a toolCall + toolResult by callID", () => {
   const replay = createSeedToolReplay("x-tool");
   const out = replay.entries({ callID: "call_1", name: "Bash", input: { command: "ls" }, output: "dist" });
   assert.equal(out.length, 2);
@@ -50,7 +52,7 @@ test("回放：按 callID 配对出 toolCall + toolResult 两条", () => {
   });
 });
 
-test("回放：isError 透传；空结果仍配对（占位文案）", () => {
+test("replay: isError passes through; empty results still pair (placeholder copy)", () => {
   const replay = createSeedToolReplay("x-tool");
   const err = replay.entries({ callID: "c1", name: "Read", output: "boom", isError: true });
   assert.equal(err[1].isError, true);
@@ -58,24 +60,24 @@ test("回放：isError 透传；空结果仍配对（占位文案）", () => {
   assert.deepEqual(empty[1].content, [{ type: "text", text: EMPTY_TOOL_OUTPUT }]);
 });
 
-test("回放：结果缺席只出调用卡（不凭空造 toolResult）", () => {
+test("replay: absent result emits only the call card (never invents a toolResult)", () => {
   const replay = createSeedToolReplay("x-tool");
   const out = replay.entries({ callID: "c3", name: "Read", input: { path: "/y" } });
   assert.equal(out.length, 1);
   assert.equal(out[0].content[0].toolCallId, "c3");
 });
 
-test("回放：callID 缺席按前缀合成，跨行递增；新回放器重新计数", () => {
+test("replay: absent callID synthesizes from the prefix, incrementing across rows; a new replayer restarts the count", () => {
   const replay = createSeedToolReplay("qoder-tool");
   const a = replay.entries({ name: "Bash", output: "1" });
   const b = replay.entries({ name: "Bash", output: "2" });
   assert.equal(a[0].content[0].toolCallId, "qoder-tool-1");
   assert.equal(b[0].content[0].toolCallId, "qoder-tool-2");
-  assert.equal(b[1].toolCallId, "qoder-tool-2", "结果条目与合成 id 配对");
+  assert.equal(b[1].toolCallId, "qoder-tool-2", "the result entry pairs with the synthesized id");
   assert.equal(createSeedToolReplay("zcode-tool").entries({ name: "Bash" })[0].content[0].toolCallId, "zcode-tool-1");
 });
 
-test("回放：model/provider 缺席省略、空串保留（各家既有写法）", () => {
+test("replay: absent model/provider omitted, empty strings kept (each family's existing spelling)", () => {
   const replay = createSeedToolReplay("x-tool");
   assert.equal("model" in replay.entries({ name: "B" })[0], false);
   assert.equal("provider" in replay.entries({ name: "B" })[0], false);
@@ -83,11 +85,11 @@ test("回放：model/provider 缺席省略、空串保留（各家既有写法�
   assert.equal(withOpts.model, "glm-4.7");
   assert.equal("provider" in withOpts, false);
   const qoderish = replay.entries({ name: "B" }, { model: "", provider: "aiti-qoder-agent" })[0];
-  assert.equal(qoderish.model, "", "qoder 直播同形状：空 model 也照写");
+  assert.equal(qoderish.model, "", "same shape as the qoder live path: an empty model is written as-is");
   assert.equal(qoderish.provider, "aiti-qoder-agent");
 });
 
-test("回放：非法/非工具行返回 null，交调用方走文本兜底", () => {
+test("replay: invalid/non-tool rows return null, leaving the text fallback to the caller", () => {
   const replay = createSeedToolReplay("x-tool");
   assert.equal(replay.entries(undefined), null);
   assert.equal(replay.entries('🛠 Bash {"command":"ls"}'), null);

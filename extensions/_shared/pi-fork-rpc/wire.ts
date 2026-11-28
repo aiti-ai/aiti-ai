@@ -1,31 +1,34 @@
 /**
- * wire.ts — JSONL RPC 线协议宿主（载体无关）。
+ * wire.ts — JSONL RPC wire-protocol host (carrier-agnostic).
  *
- * 拆自 aiti-pi-agent 的 pi-rpc-spawn.ts：子进程管理 / request-response id 关联 /
- * 事件扇出 / 死亡上报 + extension_ui_request ⇄ interaction_request 帧桥接。
- * 本层**不含任何 fork 语义**（命令映射 / 能力面 / 生命周期收口由各扩展 handle 负责）。
+ * Split out of aiti-pi-agent's pi-rpc-spawn.ts: child-process management / request-response id
+ * correlation / event fanout / death reporting + the extension_ui_request <-> interaction_request
+ * frame bridge.
+ * This layer contains **no fork semantics** (command mapping / capability surface / lifecycle
+ * closeout are each extension's handle's responsibility).
  */
 
 import type { ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
-/** 缺省单行字节上限（MCP stdio transport 同款 10MB）：无换行的超长行视为子进程失控。 */
+/** Default per-line byte cap (same 10MB as the MCP stdio transport): an overlong line without a newline is treated as a runaway child process. */
 export const DEFAULT_MAX_LINE_BYTES = 10 * 1024 * 1024;
 
-/** 控制面命令缺省超时（get_state/set_model/… 等快命令；prompt/compact/bash 等长轮次命令不设）。 */
+/** Default control-plane command timeout (fast commands like get_state/set_model/...; long-turn commands like prompt/compact/bash set none). */
 export const RPC_CTRL_TIMEOUT_MS = 30_000;
 
 export interface LineReaderOptions {
-  /** 单行字节上限（换行前累积量），超出触发 onOverflow 并停止处理后续数据。缺省 10MB。 */
+  /** Per-line byte cap (accumulated before the newline); exceeding it triggers onOverflow and stops processing further data. Default 10MB. */
   maxLineBytes?: number;
-  /** 行超限回调（宿主侧应 markDead——协议流已不可信）。 */
+  /** Line-overflow callback (the host should markDead — the protocol stream is no longer trustworthy). */
   onOverflow?: (size: number) => void;
 }
 
 /**
- * 逐行读取 stdout 流（JSONL）；返回取消函数。
- * 字节累积、按 `\n` 切 Buffer 后整行 utf8 解码（MCP ReadBuffer 同款）——
- * 逐 chunk `Buffer.toString` 会把跨 chunk 的多字节字符解码成 U+FFFD（中文必踩）。
+ * Read a stdout stream line by line (JSONL); returns a cancel function.
+ * Bytes accumulate and are sliced per `\n` into Buffers, each decoded as whole-line utf8 (same as
+ * the MCP ReadBuffer) — per-chunk `Buffer.toString` would decode multi-byte characters spanning
+ * chunks into U+FFFD (CJK text always trips this).
  */
 export function lineReader(
   stream: NodeJS.ReadableStream,
@@ -79,14 +82,14 @@ interface PendingRequest {
 }
 
 /**
- * 载体无关的 RPC 子进程宿主：
- *   - 进程管理（stdin 写帧 / stdout 逐行读 / stderr 日志 / exit·error 杀尾）
- *   - request id 关联（command 附带 `id`，`response` 帧按 id 回拨；控制面命令可带超时）
- *   - 事件扇出（非 response 帧 → onFrame 分发给子类 → emit 给监听者；逐监听器异常隔离）
- *   - 死亡上报（session_backend_dead）
+ * Carrier-agnostic RPC child-process host:
+ *   - process management (stdin frame writes / stdout line reading / stderr logging / exit-error cleanup)
+ *   - request id correlation (commands carry an `id`; `response` frames call back by id; control-plane commands can carry a timeout)
+ *   - event fanout (non-response frames -> onFrame dispatch to subclasses -> emit to listeners; per-listener exception isolation)
+ *   - death reporting (session_backend_dead)
  *
- * 子类通过覆写 onFrame 注入语义（extension_ui / host_tool / ready 握手 / 状态帧…），
- * 通过 protected request / writeRaw 发命令。
+ * Subclasses inject semantics by overriding onFrame (extension_ui / host_tool / ready handshake /
+ * state frames...), and send commands via the protected request / writeRaw.
  */
 export class RpcChildHost {
   protected child: ChildProcess;
@@ -113,8 +116,9 @@ export class RpcChildHost {
       const text = (typeof c === "string" ? c : stderrDecoder.write(c)).trim();
       if (text) console.log(`[rpc-child] ${text.slice(0, 500)}`);
     });
-    // 三个流都必须挂 error 监听：子进程被杀/管道断裂时流上抛 ECONNRESET/EPIPE，
-    // 没有监听器 = unhandled 'error' event = 宿主进程崩溃（MCP stdio transport 同款防御）。
+    // All three streams must carry error listeners: when the child is killed / a pipe breaks, the
+    // stream raises ECONNRESET/EPIPE; with no listener = unhandled 'error' event = host process
+    // crash (same defense as the MCP stdio transport).
     child.stdout?.on("error", (err: Error) => this.markDead(`stdout error: ${err.message}`));
     child.stderr?.on("error", (err: Error) => console.log(`[rpc-child] stderr error: ${err.message}`));
     child.stdin?.on("error", (err: Error) => console.log(`[rpc-child] stdin error: ${err.message}`));
@@ -135,7 +139,8 @@ export class RpcChildHost {
       try {
         l(event);
       } catch (e) {
-        // 逐监听器隔离：一个订阅者抛错不得漏帧给其余订阅者，更不得沿流 data 回调裸抛崩进程
+        // Per-listener isolation: one subscriber throwing must not drop frames for the others,
+        // let alone crash the process via a raw throw along the stream data callback
         console.error(`[rpc-child] listener error: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
@@ -148,9 +153,10 @@ export class RpcChildHost {
     };
   }
 
-  /** 发命令并挂 id 关联（写 stdin；帧的 id 由本方法追加，勿重复传）。
-   *  opts.timeoutMs：可选超时（控制面快命令用；prompt/compact/bash 等长轮次命令不设——
-   *  超时仅解除 pending 并 reject，不影响子进程继续跑）。 */
+  /** Send a command with id correlation attached (writes stdin; the frame's id is appended by this method — don't pass one).
+   *  opts.timeoutMs: optional timeout (for fast control-plane commands; long-turn commands like
+   *  prompt/compact/bash set none — the timeout only clears the pending entry and rejects; the
+   *  child keeps running regardless). */
   protected request<T = unknown>(command: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<T> {
     if (!this.aliveFlag || !this.child.stdin?.writable) {
       return Promise.reject(new Error("[rpc-child] not running"));
@@ -181,17 +187,17 @@ export class RpcChildHost {
     });
   }
 
-  /** 原样写帧（不回显追加 request id）——host_tool_result 等须回显请求帧的 id。 */
+  /** Write a frame as-is (no request id appended) — host_tool_result etc. must echo the request frame's id. */
   protected writeRaw(frame: Record<string, unknown>): void {
     if (!this.aliveFlag || !this.child.stdin?.writable) return;
     try {
       this.child.stdin.write(JSON.stringify(frame) + "\n");
     } catch {
-      // 写失败（子进程刚死）：exit 事件会收尸 markDead
+      // Write failed (the child just died): the exit event will reap it via markDead
     }
   }
 
-  /** 行分发：response 按 id 回拨；其余交给子类 onFrame。 */
+  /** Line dispatch: response calls back by id; the rest go to the subclass's onFrame. */
   protected dispatchLine(line: string): void {
     let msg: Record<string, unknown>;
     try {
@@ -218,12 +224,13 @@ export class RpcChildHost {
     try {
       this.onFrame(msg);
     } catch (e) {
-      // 子类 onFrame 异常同样不得沿流 data 回调裸抛（emit 已隔离，此处兜子类自身逻辑）
+      // A subclass onFrame exception likewise must not raw-throw along the stream data callback
+      // (emit already isolates; this catches the subclass's own logic)
       console.error(`[rpc-child] onFrame error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  /** 子类覆写：非 response 帧的语义分发（默认原样透传 emit）。 */
+  /** Subclass override: semantic dispatch for non-response frames (default passes through to emit). */
   protected onFrame(_msg: Record<string, unknown>): void {
     this.emit(_msg);
   }
@@ -243,17 +250,18 @@ export class RpcChildHost {
 }
 
 // ============================================================================
-// 子进程收尾（dispose 共用）
+// Child-process closeout (shared by dispose)
 // ============================================================================
 
-/** 子进程收尾：SIGTERM → graceMs（缺省 1s）→ SIGKILL → destroy 三流（释放句柄/事件循环；
- *  MCP stdio transport 同款阶梯 + 清理）。已死进程直接跳过信号、仅清流。幂等可重入。 */
+/** Child-process closeout: SIGTERM -> graceMs (default 1s) -> SIGKILL -> destroy the three streams
+ *  (releases handles/event loop; same ladder + cleanup as the MCP stdio transport). A dead process
+ *  skips the signals and only clears the streams. Idempotent and reentrant. */
 export async function shutdownChild(child: ChildProcess, graceMs = 1_000): Promise<void> {
   if (child.exitCode === null && child.signalCode === null) {
-    try { child.kill("SIGTERM"); } catch { /* 已死容错 */ }
+    try { child.kill("SIGTERM"); } catch { /* already dead, tolerated */ }
     await new Promise<void>((resolve) => {
       const t = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch { /* 已死容错 */ }
+        try { child.kill("SIGKILL"); } catch { /* already dead, tolerated */ }
         resolve();
       }, graceMs);
       child.once("exit", () => {
@@ -268,31 +276,31 @@ export async function shutdownChild(child: ChildProcess, graceMs = 1_000): Promi
 }
 
 // ============================================================================
-// extension_ui_request ⇄ interaction_request 桥接（通用帧转换，无 fork 语义）
+// extension_ui_request <-> interaction_request bridge (generic frame conversion, no fork semantics)
 // ============================================================================
 
-/** fork 子进程 extension_ui_request 帧（select/confirm/input/editor/notify/...）。 */
+/** fork child-process extension_ui_request frame (select/confirm/input/editor/notify/...). */
 export interface ExtensionUIRequest extends Record<string, unknown> {
   type: "extension_ui_request";
   id: string;
   method: string;
 }
 
-/** 需要用户作答、要挂 pending 等响应的 UI 方法（其余为单向通知，透传即可）。 */
+/** UI methods that need a user answer and a pending wait (the rest are one-way notifications, pass through). */
 export const UI_METHODS_NEEDING_ANSWER = new Set(["select", "confirm", "input", "editor"]);
 
 /**
- * 把 extension_ui_request 投影为 pi-web 统一 interaction_request 事件
- * （lib/session/types.ts InteractionRequestEvent）。
- *   select/confirm → kind "ask_user" with real options;
- *   input/editor → kind "ask_user" with an EMPTY options list (free-text answer);
- *   open_url → kind "open_url"（OAuth 登录专用卡：url/launchUrl 字段，单向无需作答）；
- *   其余（editor/notify/setStatus/...）→ kind "generic"（原始帧进 input）。
+ * Project an extension_ui_request into the pi-web unified interaction_request event
+ * (lib/session/types.ts InteractionRequestEvent).
+ *   select/confirm -> kind "ask_user" with real options;
+ *   input/editor -> kind "ask_user" with an EMPTY options list (free-text answer);
+ *   open_url -> kind "open_url" (OAuth login card: url/launchUrl fields, one-way, no answer needed);
+ *   the rest (editor/notify/setStatus/...) -> kind "generic" (the raw frame goes into input).
  */
 export function toInteractionRequest(req: ExtensionUIRequest): Record<string, unknown> {
   const method = req.method;
   if (method === "open_url") {
-    // fork 真实帧：{url, launchUrl, instructions}（instructions = 给用户的操作说明）
+    // The fork's real frame: {url, launchUrl, instructions} (instructions = the operation guide for the user)
     const promptText = [req.title, req.instructions].find((s) => typeof s === "string");
     return {
       type: "interaction_request",
@@ -338,7 +346,7 @@ export function toInteractionRequest(req: ExtensionUIRequest): Record<string, un
       questions: [
         {
           question: [req.title, req.message].filter((s) => typeof s === "string").join("\n") || "Confirm?",
-          options: [{ label: "确认" }, { label: "取消" }],
+          options: [{ label: "Confirm" }, { label: "Cancel" }],
         },
       ],
       input: req,
@@ -374,9 +382,9 @@ export function toInteractionRequest(req: ExtensionUIRequest): Record<string, un
 }
 
 /**
- * 把用户作答（InteractionAnswer）编回 extension_ui_response 帧
- * （omp RpcExtensionUIResponse：{value} | {confirmed} | {cancelled:true}）。
- * 返回 null 表示该请求无需作答（单向通知类）。
+ * Encode a user answer (InteractionAnswer) back into an extension_ui_response frame
+ * (omp RpcExtensionUIResponse: {value} | {confirmed} | {cancelled:true}).
+ * Returns null when the request needs no answer (one-way notification class).
  */
 export function toExtensionUIResponse(
   req: ExtensionUIRequest,
@@ -400,15 +408,17 @@ export function toExtensionUIResponse(
   }
   if (method === "confirm") {
     if (answer.action === "decline") return { type: "extension_ui_response", id: req.id, cancelled: true };
-    // select 卡渲染的确认/取消：按所选 label 判断；accept + 未选「取消」= confirmed
+    // The confirm/cancel rendered by the select card: judged by the picked label; accept + not
+    // picking "Cancel" = confirmed
     const q = [req.title, req.message].filter((s) => typeof s === "string").join("\n") || "Confirm?";
     const v = answer.answers?.[q];
     const picked = Array.isArray(v) ? v[0] : v;
-    // 防御（fail-closed）：answers 非空但未命中问题 key（title 渲染漂移等）→ 视为未确认；
-    // 完全无 answers（前端批准按钮路径）保持 confirmed:true，不破坏既有契约。
+    // Defense (fail-closed): non-empty answers that miss the question key (title rendering drift
+    // etc.) -> treated as unconfirmed; completely empty answers (the front-end approve-button
+    // path) stays confirmed:true, preserving the existing contract.
     const hasAnswers = !!answer.answers && Object.keys(answer.answers).length > 0;
-    const confirmed = picked !== undefined ? picked !== "取消" : !hasAnswers;
+    const confirmed = picked !== undefined ? picked !== "Cancel" : !hasAnswers;
     return { type: "extension_ui_response", id: req.id, confirmed };
   }
-  return null; // notify/setStatus/setWidget/setTitle/open_url/... 单向，无需响应
+  return null; // notify/setStatus/setWidget/setTitle/open_url/... one-way, no response needed
 }

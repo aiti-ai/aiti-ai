@@ -1,58 +1,58 @@
 /**
- * agent-spawn-env —— 可 spawn 外部 CLI 的 agent 扩展共享 spawn env 机制
+ * agent-spawn-env — shared spawn-env mechanism for agent extensions that spawn external CLIs
  *
- * 权威源：pi-web-ext/_shared/agent-spawn-env.ts（改动后同步到各扩展目录副本）。
- * 当前副本：aiti-{zcode,claude-code,codex,pi,acp,codebuddy,cursor,qoder}-agent/agent-spawn-env.ts
- * 方案：docs/pi-web-ext-agent-spawn-env-plan.md（2026-09-12）
+ * Authoritative source: pi-web-ext/_shared/agent-spawn-env.ts (sync to each extension dir's copy after changes).
+ * Deployed copies: aiti-{zcode,claude-code,codex,pi,acp,codebuddy,cursor,qoder}-agent/agent-spawn-env.ts
+ * Plan: docs/pi-web-ext-agent-spawn-env-plan.md (2026-09-12)
  *
- * 两件事：
- *   1. 全自动 AITI_BRIDGE_URL——按 pi-web 自身实例推导（systemd 注入 PORT / PI_WEB_BASE_PATH），
- *      agent 子进程里的 aiti MCP shim（aiti-mcp-shim.cjs）继承后自协商端点，自动连
- *      「spawn 自己的这个实例」的桥——通知/交互直达 AI 窗所在实例，dev/prod 不再串线。
- *   2. extman `spawn.env`（type: textlist）环境变量列表——用户逐行配 KEY=VALUE，我们自行
- *      解析 $VAR / ${VAR} 引用（工作 env 里已有者优先，回退父进程 env），完全不依赖目标机器
- *      shell 的变量展开（Windows cmd/PowerShell 均无 $ 语法），三平台同一套写法。
+ * Two things:
+ *   1. Fully automatic AITI_BRIDGE_URL — derived from the pi-web instance itself (systemd injects PORT / PI_WEB_BASE_PATH);
+ *      the aiti MCP shim (aiti-mcp-shim.cjs) inside the agent subprocess inherits it and self-negotiates the endpoint, auto-connecting
+ *      to the bridge of "the very instance that spawned it" — notifications/interactions reach the instance hosting the AI window; dev/prod no longer cross-wire.
+ *   2. extman `spawn.env` (type: textlist) env-var list — the user configures KEY=VALUE line by line; we parse
+ *      $VAR / ${VAR} references ourselves (working env first, falling back to the parent process env), with no dependence on the
+ *      target machine's shell variable expansion (Windows cmd/PowerShell have no $ syntax); one syntax for all three platforms.
  *
- * 行语法（两处列表通用）：
- *   KEY=VALUE   设置（VALUE 支持 $VAR / ${VAR} 引用；未定义 → 空串 + warning）
- *   -KEY        从最终 env 移除 KEY（急救口：治理/全量透传漏进来的坏变量，用户配一行即拔掉；
- *               扩展注册侧同样可用，排除未设置的变量是幂等无害操作）
- *   # ... / 空行  注释与空白
+ * Line syntax (shared by both lists):
+ *   KEY=VALUE   set (VALUE supports $VAR / ${VAR} references; undefined → empty string + warning)
+ *   -KEY        remove KEY from the final env (emergency escape: pull out a bad variable leaked in by governance/full passthrough with one line;
+ *               also usable on the extension-registration side; excluding an unset variable is an idempotent no-op)
+ *   # ... / blank line  comments and whitespace
  *
- * 合并顺序（后行覆盖前行；移除后可再被后续行重新设置）：
- *   治理白名单透传（有则）/ processEnv 全量 → 自动 AITI_BRIDGE_URL → extra
- *   → 扩展注册侧默认列表（registerSpawnEnvDefaults，含排除项）→ 用户 extman spawn.env（最高优先）。
+ * Merge order (later lines override earlier; a removed key can be re-set by later lines):
+ *   governance whitelist passthrough (if present) / full processEnv → automatic AITI_BRIDGE_URL → extra
+ *   → extension-registered default list (registerSpawnEnvDefaults, incl. exclusions) → user extman spawn.env (highest priority).
  *
- * launch 解析（P0 共享层，docs/aiti-custom-agent-plan.md §3.3；2026-09-13）：
- *   resolveCliLaunch —— 统一 command/argsPrefix/成员 env/bridge 重写（$VAR/${cwd} 展开）；
- *   parseCustomAgents —— agents.json 内部格式校验（aiti-custom-agent UI 读写）；
- *   spawn.command / spawn.argsPrefix extman feature（spawnCommandFeature/spawnArgsPrefixFeature）。
+ * Launch resolution (P0 shared layer, docs/aiti-custom-agent-plan.md §3.3; 2026-09-13):
+ *   resolveCliLaunch — unified command/argsPrefix/member env/bridge rewrite ($VAR/${cwd} expansion);
+ *   parseCustomAgents — validation of the agents.json internal format (read/written by the aiti-custom-agent UI);
+ *   spawn.command / spawn.argsPrefix extman features (spawnCommandFeature/spawnArgsPrefixFeature).
  */
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** extman feature 源（ctx.features，startup 捕获；DI 方案 P1 同款，缺省走 __piWebExt 兜底） */
+/** extman feature source (ctx.features, captured at startup; same DI approach as plan P1, with the __piWebExt fallback when absent) */
 type FeaturesLike = { get(extId: string, fid: string): boolean | string | undefined };
 
 let capturedFeatures: FeaturesLike | null = null;
 
-/** startup 时捕获 ctx.features（可传 null 清除，热重载/测试用） */
+/** Captures ctx.features at startup (pass null to clear; for hot reload/tests) */
 export function captureSpawnEnvFeatures(f: FeaturesLike | null): void {
 	capturedFeatures = f;
 }
 
-/** 扩展注册侧默认列表（agentSpawnEnv 时按 extId 取用；与用户列表按序合并，用户在后可覆盖） */
+/** Extension-registered default list (looked up by extId in agentSpawnEnv; merged in order with the user list, user last so it wins) */
 const registeredDefaults = new Map<string, string>();
 
-/** 扩展在 startup/注册时声明自己的默认环境变量列表（含 -NAME 排除项；后注册覆盖前注册） */
+/** The extension declares its own default env-var list at startup/registration (incl. -NAME exclusions; later registration overrides earlier) */
 export function registerSpawnEnvDefaults(extId: string, list: string): void {
 	registeredDefaults.set(extId, String(list ?? ""));
 }
 
-/** pi-web 自身实例基地址（同进程推导；127.0.0.1 直连不走 nginx/Authelia）。
- *  dev=3001 + /dev、prod=3002 + 空（48）；155/23 随各自服务单元的 PORT/PI_WEB_BASE_PATH。 */
+/** pi-web's own instance base URL (derived in-process; 127.0.0.1 connects directly, bypassing nginx/Authelia).
+ *  dev=3001 + /dev, prod=3002 + empty (48); 155/23 follow their own service units' PORT/PI_WEB_BASE_PATH. */
 export function piWebSelfBase(processEnv?: Record<string, string | undefined>): string {
 	const env = processEnv ?? (process.env as Record<string, string | undefined>);
 	const port = env.PORT || "3000";
@@ -60,14 +60,14 @@ export function piWebSelfBase(processEnv?: Record<string, string | undefined>): 
 	return `http://127.0.0.1:${port}${basePath}`;
 }
 
-/** 全自动注入项：aiti-devtools MCP 端点线索（带扩展路径签名，aiti-mcp-shim 识别后直连 <extBase>/mcp/mcp） */
+/** Fully automatic injection: aiti-devtools MCP endpoint hint (carries the extension path signature; aiti-mcp-shim recognizes it and connects straight to <extBase>/mcp/mcp) */
 export function bridgeEnv(processEnv?: Record<string, string | undefined>): Record<string, string> {
 	return { AITI_BRIDGE_URL: `${piWebSelfBase(processEnv)}/api/extensions/aiti-devtools` };
 }
 
-// ---------------- 列表解析（纯语法层，无 shell 参与） ----------------
+// ---------------- List parsing (pure syntax layer, no shell involved) ----------------
 
-/** 单条操作：value=null 表示移除（-KEY），否则为设置（KEY=VALUE） */
+/** Single operation: value=null means remove (-KEY), otherwise set (KEY=VALUE) */
 export interface EnvLineOp {
 	key: string;
 	value: string | null;
@@ -76,7 +76,7 @@ export interface EnvLineOp {
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
-/** 解析列表文本为操作序列（非法行记 warning 跳过、不中断；重复 KEY 后行覆盖，移除行原样保留） */
+/** Parses list text into an operation sequence (invalid lines are logged as warnings and skipped, never aborting; a repeated KEY is overridden by the later line; removal lines are kept as-is) */
 export function parseEnvList(raw: string): { ops: EnvLineOp[]; warnings: string[] } {
 	const ops: EnvLineOp[] = [];
 	const warnings: string[] = [];
@@ -86,7 +86,7 @@ export function parseEnvList(raw: string): { ops: EnvLineOp[]; warnings: string[
 		if (line.startsWith("-")) {
 			const key = line.slice(1).trim();
 			if (!KEY_RE.test(key)) {
-				warnings.push(`跳过非法排除行（须 -NAME）：${line.slice(0, 80)}`);
+				warnings.push(`Skipping invalid exclusion line (must be -NAME): ${line.slice(0, 80)}`);
 				continue;
 			}
 			ops.push({ key, value: null });
@@ -94,12 +94,12 @@ export function parseEnvList(raw: string): { ops: EnvLineOp[]; warnings: string[
 		}
 		const eq = line.indexOf("=");
 		if (eq <= 0) {
-			warnings.push(`跳过非法行（须 KEY=VALUE 或 -NAME）：${line.slice(0, 80)}`);
+			warnings.push(`Skipping invalid line (must be KEY=VALUE or -NAME): ${line.slice(0, 80)}`);
 			continue;
 		}
 		const key = line.slice(0, eq).trim();
 		if (!KEY_RE.test(key)) {
-			warnings.push(`跳过非法变量名：${key.slice(0, 80)}`);
+			warnings.push(`Skipping invalid variable name: ${key.slice(0, 80)}`);
 			continue;
 		}
 		ops.push({ key, value: line.slice(eq + 1).trim() });
@@ -108,10 +108,10 @@ export function parseEnvList(raw: string): { ops: EnvLineOp[]; warnings: string[
 }
 
 /**
- * 把操作序列应用到工作 env 上（原地修改并返回；无 shell 参与）：
- *   - 设置行：VALUE 中 $NAME / ${NAME} 先查工作 env（含治理透传/自动注入/前面行），
- *     再查 base（父进程 env）；两处皆无 → 空串 + warning（不保留字面量，避免半解析值进子进程）；
- *   - 移除行：delete，幂等（排除未设置的变量无害）；不做引号剥离 / %VAR% / 命令替换。
+ * Applies the operation sequence to the working env (in-place mutation and return; no shell involved):
+ *   - Set lines: $NAME / ${NAME} in VALUE first look up the working env (governance passthrough / auto injection / earlier lines included),
+ *     then base (parent process env); missing in both → empty string + warning (the literal is not kept, to avoid half-parsed values entering the subprocess);
+ *   - Removal lines: delete, idempotent (excluding an unset variable is harmless); no quote stripping / %VAR% / command substitution.
  */
 export function applyEnvList(
 	ops: EnvLineOp[],
@@ -129,14 +129,14 @@ export function applyEnvList(
 			const name = braced || plain;
 			if (Object.prototype.hasOwnProperty.call(env, name)) return env[name];
 			if (base && Object.prototype.hasOwnProperty.call(base, name)) return base[name] as string;
-			onWarning?.(`${op.key}: 引用的 $${name} 未定义（工作 env 与父进程均无），按空串处理`);
+			onWarning?.(`${op.key}: referenced $${name} is undefined (missing from both the working env and the parent process); treated as an empty string`);
 			return "";
 		});
 	}
 	return env;
 }
 
-/** 便捷口：解析 + 应用到空白 env（独立解析场景用；spawn 链路走 agentSpawnEnv） */
+/** Convenience entry: parse + apply to a blank env (for standalone parsing scenarios; the spawn chain goes through agentSpawnEnv) */
 export function resolveEnvList(
 	raw: string,
 	base?: Record<string, string | undefined>,
@@ -147,7 +147,7 @@ export function resolveEnvList(
 	return { env, warnings };
 }
 
-/** 读 extman string/textlist feature 原文（ctx.features 优先，__piWebExt 直调兜底；非字符串一律按空串） */
+/** Reads an extman string/textlist feature's raw text (ctx.features first, __piWebExt direct call as fallback; anything non-string is treated as "") */
 function readStringFeature(extId: string, fid: string): string {
 	const v = capturedFeatures?.get?.(extId, fid);
 	if (typeof v === "string") return v;
@@ -159,17 +159,17 @@ function readStringFeature(extId: string, fid: string): string {
 	return "";
 }
 
-/** 读 extman spawn.env 列表原文（缺省 ""） */
+/** Reads the extman spawn.env list raw text (default "") */
 export function spawnEnvList(extId: string): string {
 	return readStringFeature(extId, "spawn.env");
 }
 
-/** 读 extman spawn.command（启动命令覆盖；缺省 ""= 用驱动默认 CLI） */
+/** Reads extman spawn.command (launch command override; default "" = the driver's default CLI) */
 export function spawnCommand(extId: string): string {
 	return readStringFeature(extId, "spawn.command");
 }
 
-/** 读 extman spawn.argsPrefix（参数前缀列表原文，每行一个参数；缺省 ""） */
+/** Reads extman spawn.argsPrefix (argument prefix list raw text, one argument per line; default "") */
 export function spawnArgsPrefix(extId: string): string {
 	return readStringFeature(extId, "spawn.argsPrefix");
 }
@@ -232,13 +232,13 @@ export function readUiEnvSnapshot(processEnv?: Record<string, string | undefined
 }
 
 /**
- * spawn env 统一构造。
- *   - cli + governance：走治理白名单（external-governance.ts 的 governanceEnv）为基底，
- *     自动 bridgeEnv 进 extra（白名单外仍注入）；
- *   - 无 governance（cursor/qoder 等全量透传派）：processEnv 基底 + bridgeEnv + extra；
+ * Unified spawn-env construction.
+ *   - cli + governance: the governance whitelist (governanceEnv from external-governance.ts) as the base,
+ *     automatic bridgeEnv merged into extra (injected even outside the whitelist);
+ *   - no governance (the full-passthrough camp: cursor/qoder etc.): processEnv base + bridgeEnv + extra;
  *   - merged in order: aiti-ui-env display-env snapshot (spawn.displayEnv switch, default auto)
  *     → registered defaults (registerSpawnEnvDefaults) → user extman spawn.env
- *     （可覆盖/可 -NAME 排除一切，含自动注入项——逃生口）。
+ *     (everything can be overridden or excluded with -NAME, including auto-injected items — the escape hatch).
  */
 export function agentSpawnEnv(opts: {
 	cli?: string;
@@ -278,7 +278,7 @@ export function agentSpawnEnv(opts: {
 	return out;
 }
 
-/** extman feature 声明（各 agent 扩展 features 数组统一追加；type: textlist 见方案文档机制 B） */
+/** extman feature declaration (appended uniformly to each agent extension's features array; for type: textlist see mechanism B in the plan doc) */
 export function spawnEnvFeature(group?: string): {
 	id: string; type: "textlist"; label: string; description: string; value: string; placeholder: string; group?: string;
 } {
@@ -286,14 +286,14 @@ export function spawnEnvFeature(group?: string): {
 		id: "spawn.env",
 		...(group ? { group } : {}),
 		type: "textlist",
-		label: "spawn 环境变量",
+		label: "Spawn environment variables",
 		description:
-			"每行一条，启动 agent 子进程时注入（我们自行解析，不依赖 shell，Windows 同样可用）：" +
-			"KEY=VALUE 设置（支持 $VAR / ${VAR} 引用：先取当前生效值，再回退父进程环境变量；未定义按空串）；" +
-			"-NAME 移除该变量（急救口：透传漏进来的坏变量配一行即拔掉）；# 注释与空行忽略。" +
-			"此处可覆盖自动注入的 AITI_BRIDGE_URL，也可 -AITI_BRIDGE_URL 整个去掉。改完下一轮 spawn 生效。",
+			"One per line, injected when the agent subprocess is spawned (parsed by us, no shell dependency, works on Windows too): " +
+			"KEY=VALUE sets (supports $VAR / ${VAR} references: the current effective value first, then the parent process env; undefined becomes an empty string); " +
+			"-NAME removes that variable (emergency escape: one line pulls out a bad variable that leaked through passthrough); # comments and blank lines ignored. " +
+			"Here you can override the auto-injected AITI_BRIDGE_URL, or remove it entirely with -AITI_BRIDGE_URL. Takes effect on the next spawn.",
 		value: "",
-		placeholder: "FOO=bar\nBAR=$FOO\n-UNWANTED_VAR\n# 注释行与空行忽略",
+		placeholder: "FOO=bar\nBAR=$FOO\n-UNWANTED_VAR\n# comment lines and blank lines are ignored",
 	};
 }
 
@@ -305,18 +305,18 @@ export function spawnDisplayEnvFeature(group?: string): {
 		id: "spawn.displayEnv",
 		...(group ? { group } : {}),
 		type: "string",
-		label: "显示环境注入",
+		label: "Display env injection",
 		description:
-			"把 aiti-ui-env 显示模式裁决出的显示环境（DISPLAY/XAUTHORITY/DBUS 等）注入本扩展 spawn 的会话进程，" +
-			"新会话里的 GUI 程序与 MCP 即落在对应屏幕（虚拟屏可经浏览器 VNC 查看）。取值：留空或 auto = 跟随显示模式（快照存在即注入）；" +
-			"off = 不注入；headless = 仅虚拟屏快照注入；desktop = 仅真实桌面快照注入。改完下一轮 spawn 生效；" +
-			"spawn.env 里同名变量仍可覆盖（如 DISPLAY=:0）或 -DISPLAY 排除。",
+			"Injects the display environment (DISPLAY/XAUTHORITY/DBUS etc.) decided by aiti-ui-env's display-mode arbiter into the session processes spawned by this extension, " +
+			"so GUI programs and MCP in new sessions land on the matching screen (the virtual screen is viewable in the browser over VNC). Values: empty or auto = follow the display mode (inject whenever a snapshot exists); " +
+			"off = never inject; headless = inject only virtual-screen snapshots; desktop = inject only real-desktop snapshots. Takes effect on the next spawn; " +
+			"a same-named variable in spawn.env can still override (e.g. DISPLAY=:0) or exclude with -DISPLAY.",
 		value: "",
 		placeholder: "auto",
 	};
 }
 
-/** extman feature 声明：spawn.command（启动命令覆盖；P1' 启动包装，方案 docs/aiti-custom-agent-plan.md §3.5） */
+/** extman feature declaration: spawn.command (launch command override; P1' launch wrapper, plan docs/aiti-custom-agent-plan.md §3.5) */
 export function spawnCommandFeature(group?: string): {
 	id: string; type: "string"; label: string; description: string; value: string; placeholder: string; group?: string;
 } {
@@ -324,17 +324,17 @@ export function spawnCommandFeature(group?: string): {
 		id: "spawn.command",
 		...(group ? { group } : {}),
 		type: "string",
-		label: "spawn 命令覆盖",
+		label: "Spawn command override",
 		description:
-			"留空 = 使用本扩展默认 CLI。填入后以它替换默认 CLI 启动（docker 化包装：这里填 docker，" +
-			"再配「spawn 参数前缀」拼 run --rm -i … 镜像 CLI）。支持 $VAR / ${cwd} 引用（spawn 时展开）。改完下一轮 spawn 生效。" +
-			"注意：命令可执行任意本机程序，配置者须为本机管理员（与 spawn.env 同级信任）。",
+			"Empty = use this extension's default CLI. When set, it replaces the default CLI at launch (docker wrapper: put docker here, " +
+			"then pair it with the \"spawn argument prefix\" to assemble run --rm -i … image CLI). Supports $VAR / ${cwd} references (expanded at spawn). Takes effect on the next spawn. " +
+			"Note: the command can run any local program, so only the machine's administrator should configure it (same trust level as spawn.env).",
 		value: "",
 		placeholder: "docker",
 	};
 }
 
-/** extman feature 声明：spawn.argsPrefix（参数前缀；textlist 每行一个参数，拼在驱动内置参数之前） */
+/** extman feature declaration: spawn.argsPrefix (argument prefix; textlist with one argument per line, prepended before the driver's built-in arguments) */
 export function spawnArgsPrefixFeature(group?: string): {
 	id: string; type: "textlist"; label: string; description: string; value: string; placeholder: string; group?: string;
 } {
@@ -342,20 +342,20 @@ export function spawnArgsPrefixFeature(group?: string): {
 		id: "spawn.argsPrefix",
 		...(group ? { group } : {}),
 		type: "textlist",
-		label: "spawn 参数前缀",
+		label: "Spawn argument prefix",
 		description:
-			"每行一个参数，拼在驱动内置参数之前（docker 化：run / --rm / -i / -v 挂载 / 镜像名 / 容器内 CLI 名）。" +
-			"支持 $VAR / ${VAR} / ${cwd}（会话工作目录）引用，spawn 时展开；# 注释与空行忽略。改完下一轮 spawn 生效。" +
-			"docker 配方要求 -v ${cwd}:${cwd} -w ${cwd} 同路径挂载，否则容器内路径与宿主历史不一致。",
+			"One argument per line, prepended before the driver's built-in arguments (docker: run / --rm / -i / -v mounts / image name / CLI name inside the container). " +
+			"Supports $VAR / ${VAR} / ${cwd} (session working directory) references, expanded at spawn; # comments and blank lines ignored. Takes effect on the next spawn. " +
+			"The docker recipe requires -v ${cwd}:${cwd} -w ${cwd} mounting at the same path, otherwise in-container paths diverge from the host's history.",
 		value: "",
 		placeholder: "run\n--rm\n-i\n-v\n${cwd}:${cwd}\n-w\n${cwd}\nmy-image:latest\nclaude",
 	};
 }
 
-// ---------------- launch 解析（P0：command / argsPrefix / 成员 env / bridge 重写） ----------------
+// ---------------- Launch resolution (P0: command / argsPrefix / member env / bridge rewrite) ----------------
 
-/** 通用 $VAR / ${VAR} 展开：resolve(name) 命中 → 值；未命中 → 空串 + warning（不保留字面量）。
- *  与 applyEnvList 同一引用语法；${cwd} 由调用方注入 resolve 实现。 */
+/** Generic $VAR / ${VAR} expansion: resolve(name) hit → value; miss → empty string + warning (the literal is not kept).
+ *  Same reference syntax as applyEnvList; ${cwd} is provided by the caller's resolve implementation. */
 export function expandRefs(
 	value: string,
 	resolve: (name: string) => string | undefined,
@@ -365,12 +365,12 @@ export function expandRefs(
 		const name = braced || plain;
 		const hit = resolve(name);
 		if (hit !== undefined) return hit;
-		onWarning?.(`引用的 $${name} 未定义，按空串处理`);
+		onWarning?.(`Referenced $${name} is undefined; treated as an empty string`);
 		return "";
 	});
 }
 
-/** 解析多行参数列表：每行一个参数；# 注释与空行忽略；行内容原样保留（$VAR/${cwd} 在 spawn 时展开） */
+/** Parses a multi-line argument list: one argument per line; # comments and blank lines ignored; line content kept as-is ($VAR/${cwd} expanded at spawn) */
 export function parseArgsLines(raw: string): { args: string[]; warnings: string[] } {
 	const args: string[] = [];
 	const warnings: string[] = [];
@@ -382,9 +382,9 @@ export function parseArgsLines(raw: string): { args: string[]; warnings: string[
 	return { args, warnings };
 }
 
-/** 启动包装覆盖（P2 协议委托：aiti-custom-agent 成员 → 基础扩展 `<extId>.launch` 服务）。
- *  各基础扩展 spawn 点的 resolveCliLaunch 以本覆盖优先于 extman spawn.command/spawn.argsPrefix；
- *  target 仅供多成员家族（如 acp）选成员，单成员扩展忽略。 */
+/** Launch wrapper override (P2 protocol delegation: aiti-custom-agent member → the base extension's `<extId>.launch` service).
+ *  Each base extension's spawn-point resolveCliLaunch gives this override priority over extman spawn.command/spawn.argsPrefix;
+ *  target is only for selecting a member in multi-member families (e.g. acp); single-member extensions ignore it. */
 export interface LaunchOverride {
 	command?: string;
 	argsPrefix?: string[];
@@ -393,49 +393,49 @@ export interface LaunchOverride {
 	target?: string;
 }
 
-/** launch 解析输入（resolveCliLaunch） */
+/** Launch resolution input (resolveCliLaunch) */
 export interface CliLaunchInput {
-	/** 驱动默认 CLI（成员 command 覆盖之） */
+	/** Driver default CLI (the member command overrides it) */
 	defaultCommand: string;
-	/** 启动命令覆盖（空串/缺省 → defaultCommand；覆盖时 argv 不再附带原 CLI 名） */
+	/** Launch command override (empty/absent → defaultCommand; when overridden, argv no longer carries the original CLI name) */
 	command?: string;
-	/** 参数前缀（逐项展开 $VAR/${VAR}/${cwd}） */
+	/** Argument prefix ($VAR/${VAR}/${cwd} expanded item by item) */
 	argsPrefix?: string[];
-	/** 驱动内置 argv（不含 CLI 名本身） */
+	/** Driver built-in argv (excluding the CLI name itself) */
 	driverArgs?: string[];
-	/** 预构建基底 env（协议扩展路径：agentSpawnEnv 产物）；缺省 = processEnv 全量透传（generic 路径） */
+	/** Pre-built base env (protocol-extension path: agentSpawnEnv output); default = full processEnv passthrough (generic path) */
 	env?: Record<string, string>;
-	/** 成员级 env（最高优先；值展开 $VAR/${VAR}/${cwd}） */
+	/** Member-level env (highest priority; values expand $VAR/${VAR}/${cwd}) */
 	memberEnv?: Record<string, string>;
-	/** 桥模式：inherit（缺省，保持现状）/ host.docker.internal（替换主机）/ off（移除）/ 显式 http(s):// URL */
+	/** Bridge mode: inherit (default, keep as-is) / host.docker.internal (replace host) / off (remove) / explicit http(s):// URL */
 	bridge?: string;
 	processEnv?: Record<string, string | undefined>;
-	/** ${cwd} 解析值；缺省 process.cwd() */
+	/** ${cwd} resolution value; default process.cwd() */
 	cwd?: string;
 	warn?: (msg: string) => void;
 }
 
-/** launch 解析产物：最终 spawn(command, args, { env }) 三元组 + 警告 */
+/** Launch resolution output: the final spawn(command, args, { env }) triple + warnings */
 export interface ResolvedLaunch {
 	command: string;
 	args: string[];
 	env: Record<string, string>;
 	warnings: string[];
 	/**
-	 * win32 且 command 以 .cmd/.bat 结尾时为 true（lessons §0.1：Node ≥18.20 直 spawn
-	 * .cmd shim 即 EINVAL）——调用方 spawn opts 必须带 `shell: launch.shell`。
-	 * 参数全部为旗标/路径（prompt 走 stdin），无 cmd 特殊字符面。
+	 * True when win32 and command ends with .cmd/.bat (lessons §0.1: spawning a
+	 * .cmd shim directly on Node ≥18.20 fails with EINVAL) — the caller's spawn opts must pass `shell: launch.shell`.
+	 * All arguments are flags/paths (the prompt goes over stdin), no cmd special-character surface.
 	 */
 	shell?: boolean;
 }
 
 /**
- * 统一 launch 解析（P0 共享层，方案 docs/aiti-custom-agent-plan.md §3.3）。
- *   - command：成员覆盖 → defaultCommand；
- *   - env：显式 env 或 processEnv 全量透传为基底 → 自动 AITI_BRIDGE_URL（已有则保持）→
- *     成员 env（最高优先，逐项展开）→ bridge 重写（inherit/host.docker.internal/URL/off）；
- *   - args：[...argsPrefix(展开), ...driverArgs]——command 覆盖时由调用方保证 driverArgs 不含原 CLI 名。
- * 纯函数：不 spawn、不读文件（feature 读取在扩展侧完成后传入）。
+ * Unified launch resolution (P0 shared layer, plan docs/aiti-custom-agent-plan.md §3.3).
+ *   - command: member override → defaultCommand;
+ *   - env: explicit env or full processEnv passthrough as base → automatic AITI_BRIDGE_URL (kept if already present) →
+ *     member env (highest priority, expanded item by item) → bridge rewrite (inherit/host.docker.internal/URL/off);
+ *   - args: [...argsPrefix(expanded), ...driverArgs] — when command is overridden the caller guarantees driverArgs excludes the original CLI name.
+ * Pure function: no spawn, no file reads (feature reads happen on the extension side and are passed in).
  */
 export function resolveCliLaunch(input: CliLaunchInput): ResolvedLaunch {
 	const processEnv = input.processEnv ?? (process.env as Record<string, string | undefined>);
@@ -447,16 +447,16 @@ export function resolveCliLaunch(input: CliLaunchInput): ResolvedLaunch {
 	const command = String(input.command ?? "").trim() || input.defaultCommand;
 	const cwd = input.cwd ?? process.cwd();
 
-	// env 基底：显式 env（协议扩展路径，agentSpawnEnv 产物）或全量透传（generic 路径）
+	// env base: explicit env (protocol-extension path, agentSpawnEnv output) or full passthrough (generic path)
 	const env: Record<string, string> = input.env
 		? { ...input.env }
 		: { ...(processEnv as Record<string, string>) };
-	// 自动桥线索：显式 env 未带时补注入（agentSpawnEnv 产物已带则原样保持）
+	// auto bridge hint: injected only when the explicit env lacks it (kept as-is if the agentSpawnEnv output already has it)
 	if (!Object.prototype.hasOwnProperty.call(env, "AITI_BRIDGE_URL")) {
 		env.AITI_BRIDGE_URL = bridgeEnv(processEnv).AITI_BRIDGE_URL;
 	}
 
-	// 引用展开上下文：${cwd} 特殊名 → 工作 env → 父进程 env；皆无 → undefined（空串 + warning）
+	// reference expansion context: the ${cwd} special name → working env → parent process env; none → undefined (empty string + warning)
 	const resolveRef = (name: string): string | undefined => {
 		if (name === "cwd") return cwd;
 		if (Object.prototype.hasOwnProperty.call(env, name)) return env[name];
@@ -464,12 +464,12 @@ export function resolveCliLaunch(input: CliLaunchInput): ResolvedLaunch {
 		return undefined;
 	};
 
-	// 成员 env（最高优先）
+	// member env (highest priority)
 	for (const [k, v] of Object.entries(input.memberEnv ?? {})) {
 		env[k] = expandRefs(v, resolveRef, (m) => onWarning(`env ${k}: ${m}`));
 	}
 
-	// bridge 重写（作用于最终 env 的 AITI_BRIDGE_URL）
+	// bridge rewrite (acts on the final env's AITI_BRIDGE_URL)
 	const mode = String(input.bridge ?? "").trim() || "inherit";
 	if (mode !== "inherit") {
 		const cur = env.AITI_BRIDGE_URL;
@@ -482,59 +482,59 @@ export function resolveCliLaunch(input: CliLaunchInput): ResolvedLaunch {
 					u.hostname = "host.docker.internal";
 					env.AITI_BRIDGE_URL = u.toString();
 				} catch {
-					onWarning(`bridge=host.docker.internal：当前 AITI_BRIDGE_URL 非法（${cur}），保持不变`);
+					onWarning(`bridge=host.docker.internal: current AITI_BRIDGE_URL invalid (${cur}); left unchanged`);
 				}
 			} else {
-				onWarning("bridge=host.docker.internal：当前无 AITI_BRIDGE_URL，忽略");
+				onWarning("bridge=host.docker.internal: no current AITI_BRIDGE_URL; ignored");
 			}
 		} else if (/^https?:\/\//i.test(mode)) {
 			env.AITI_BRIDGE_URL = expandRefs(mode, resolveRef, (m) => onWarning(`bridge: ${m}`));
 		} else {
-			onWarning(`bridge 模式无法识别（${mode}），按 inherit 处理`);
+			onWarning(`unrecognized bridge mode (${mode}); treated as inherit`);
 		}
 	}
 
-	// 参数前缀展开 + 拼装
-	const prefix = (input.argsPrefix ?? []).map((a) => expandRefs(a, resolveRef, (m) => onWarning(`argsPrefix「${a}」: ${m}`)));
+	// argument prefix expansion + assembly
+	const prefix = (input.argsPrefix ?? []).map((a) => expandRefs(a, resolveRef, (m) => onWarning(`argsPrefix "${a}": ${m}`)));
 	let launchArgs: string[] = [...prefix, ...(input.driverArgs ?? [])];
 	const shell = process.platform === "win32" && /\.(cmd|bat)$/i.test(command.trim());
-	if (shell) onWarning(`command 是 .cmd/.bat shim，spawn 需带 shell:true（调用方读取 launch.shell）`);
+	if (shell) onWarning(`command is a .cmd/.bat shim; spawn needs shell:true (the caller reads launch.shell)`);
 
-	// 脚本入口（.js/.cjs/.mjs）：CreateProcess 无法直跑（POSIX 依赖 shebang+chmod，Windows 必挂）
-	// → 包装 process.execPath 直跑（lessons §0.1/§5「node 直跑入口」，三平台同构）。
+	// Script entry (.js/.cjs/.mjs): CreateProcess cannot run it directly (POSIX relies on shebang+chmod; Windows always fails)
+	// → wrap to run via process.execPath (lessons §0.1/§5 "run the entry with node", identical on all three platforms).
 	let launchCommand = command;
 	if (/\.(cjs|mjs|js)$/i.test(command.trim())) {
 		launchCommand = process.execPath;
 		launchArgs = [command, ...launchArgs];
-		onWarning(`command 是脚本入口，已包装 process.execPath 直跑`);
+		onWarning(`command is a script entry; wrapped to run via process.execPath`);
 	}
 	return { command: launchCommand, args: launchArgs, env, warnings, shell };
 }
 
-/** 自定义 agent 成员（agents.json 内部格式，UI 读写；parseCustomAgents 产物） */
+/** Custom agent member (agents.json internal format, read/written by the UI; output of parseCustomAgents) */
 export interface CustomAgentSpec {
-	/** provider type（唯一；slug：[a-z0-9][a-z0-9_-]*，不含 / 和 .） */
+	/** provider type (unique; slug: [a-z0-9][a-z0-9_-]*, no / or .) */
 	id: string;
-	/** 选择器展示名 */
+	/** Display name in the picker */
 	label: string;
-	/** 驱动类型：generic（通用命令 one-shot）或协议型（claude/codex/…——注册侧映射到
-	 *  基础扩展 `<extId>.launch` 服务，服务缺席则该成员不注册） */
+	/** Driver type: generic (general-purpose one-shot command) or protocol-backed (claude/codex/… — the registration side maps it to
+	 *  the base extension's `<extId>.launch` service; if the service is absent the member is not registered) */
 	driver: string;
-	/** 启动命令（generic 必填；协议型空 = 用驱动默认 CLI） */
+	/** Launch command (required for generic; empty for protocol-backed = the driver's default CLI) */
 	command: string;
-	/** 参数前缀（逐项展开 $VAR/${cwd}） */
+	/** Argument prefix ($VAR/${cwd} expanded item by item) */
 	argsPrefix: string[];
-	/** 成员级 env（最高优先） */
+	/** Member-level env (highest priority) */
 	env: Record<string, string>;
-	/** 桥模式：""=inherit / host.docker.internal / off / http(s)://… */
+	/** Bridge mode: ""=inherit / host.docker.internal / off / http(s)://… */
 	bridge: string;
-	/** 委托目标成员（仅多成员家族协议型，如 acp 的 "claude-code"；空 = 服务端缺省成员） */
+	/** Delegation target member (only for multi-member protocol-backed families, e.g. acp's "claude-code"; empty = the server-side default member) */
 	target: string;
-	/** 探活命令（缺省 = command） */
+	/** Liveness probe command (default = command) */
 	probe: string;
-	/** picker 位次（小者靠前；缺省 1000 与内置一致） */
+	/** Picker position (lower comes first; default 1000, same as built-ins) */
 	order: number;
-	/** 启停（false=保留配置但不注册） */
+	/** Enabled/disabled (false = keep the config but do not register) */
 	enabled: boolean;
 }
 
@@ -549,21 +549,21 @@ function safeJsonParse(raw: string): unknown {
 }
 
 /**
- * 校验/规整 agents.json（内部格式，方案 §3.2）：非法条目按 warning 跳过、不整体失败；
- * id 去重（先到先得）、driver 白名单（P1 仅 generic）、env 兼容行式写法（KEY=VALUE / -NAME）。
+ * Validates/normalizes agents.json (internal format, plan §3.2): invalid entries are logged as warnings and skipped, never failing wholesale;
+ * ids deduplicated (first wins), driver whitelist (P1 generic only), env accepts the line syntax (KEY=VALUE / -NAME).
  */
 export function parseCustomAgents(raw: unknown): { agents: CustomAgentSpec[]; warnings: string[] } {
 	const warnings: string[] = [];
 	const agents: CustomAgentSpec[] = [];
 	const obj = typeof raw === "string" ? safeJsonParse(raw) : raw;
 	if (obj !== null && typeof obj === "object" && "__parseError" in (obj as Record<string, unknown>)) {
-		warnings.push(`agents.json 不是合法 JSON（${(obj as Record<string, unknown>).__parseError}），按空配置处理`);
+		warnings.push(`agents.json is not valid JSON (${(obj as Record<string, unknown>).__parseError}); treated as an empty config`);
 		return { agents, warnings };
 	}
 	const list = (obj as { agents?: unknown } | null | undefined)?.agents;
 	if (list === undefined) return { agents, warnings };
 	if (!Array.isArray(list)) {
-		warnings.push("agents.json 的 agents 字段不是数组，按空配置处理");
+		warnings.push("the agents field of agents.json is not an array; treated as an empty config");
 		return { agents, warnings };
 	}
 	const seen = new Set<string>();
@@ -572,26 +572,26 @@ export function parseCustomAgents(raw: unknown): { agents: CustomAgentSpec[]; wa
 		const it = (item ?? {}) as Record<string, unknown>;
 		const id = String(it.id ?? "").trim();
 		if (!CUSTOM_AGENT_ID_RE.test(id)) {
-			warnings.push(`${at}: 非法 id「${id.slice(0, 40)}」（须 [a-z0-9][a-z0-9_-]*，不含 / .），跳过`);
+			warnings.push(`${at}: invalid id "${id.slice(0, 40)}" (must be [a-z0-9][a-z0-9_-]*, no / or .), skipping`);
 			return;
 		}
 		if (seen.has(id)) {
-			warnings.push(`${at}: id「${id}」重复，保留先到条目，跳过`);
+			warnings.push(`${at}: duplicate id "${id}", keeping the first entry and skipping`);
 			return;
 		}
 		const label = String(it.label ?? "").trim();
 		if (!label) {
-			warnings.push(`${at}(${id}): 缺显示名 label，跳过`);
+			warnings.push(`${at}(${id}): missing display name label, skipping`);
 			return;
 		}
 		const driver = String(it.driver ?? "generic").trim() || "generic";
 		if (!/^[a-z][a-z0-9-]*$/i.test(driver)) {
-			warnings.push(`${at}(${id}): 非法驱动类型「${driver.slice(0, 40)}」，跳过`);
+			warnings.push(`${at}(${id}): invalid driver type "${driver.slice(0, 40)}", skipping`);
 			return;
 		}
 		const command = String(it.command ?? "").trim();
 		if (driver === "generic" && !command) {
-			warnings.push(`${at}(${id}): 缺启动命令 command，跳过`);
+			warnings.push(`${at}(${id}): missing launch command, skipping`);
 			return;
 		}
 		const argsPrefix = Array.isArray(it.argsPrefix)
@@ -604,13 +604,13 @@ export function parseCustomAgents(raw: unknown): { agents: CustomAgentSpec[]; wa
 			for (const [k, v] of Object.entries(it.env as Record<string, unknown>)) {
 				const key = String(k).trim();
 				if (!KEY_RE.test(key)) {
-					warnings.push(`${at}(${id}): 非法环境变量名「${key.slice(0, 40)}」，忽略`);
+					warnings.push(`${at}(${id}): invalid env var name "${key.slice(0, 40)}", ignored`);
 					continue;
 				}
 				env[key] = String(v ?? "");
 			}
 		} else if (typeof it.env === "string" && it.env.trim()) {
-			// 兼容行式写法（KEY=VALUE / -NAME 排除）
+			// compatible line-style env syntax (KEY=VALUE / -NAME exclusion)
 			const { ops, warnings: w } = parseEnvList(it.env);
 			warnings.push(...w.map((m) => `${at}(${id}): ${m}`));
 			for (const op of ops) {
@@ -641,7 +641,7 @@ export function parseCustomAgents(raw: unknown): { agents: CustomAgentSpec[]; wa
 /**
  * English `ui.i18n.en` entries for the four spawn.* feature toggles above.
  *
- * The factory hands every agent backend the same Chinese manifest text, so each backend spreads this
+ * The factory hands every agent backend the same manifest text, so each backend spreads this
  * table into its own en table instead of hand-copying four labels + four descriptions:
  *   `ui: { i18n: { en: { ...spawnFeatureI18nEn(), … } } }`
  */

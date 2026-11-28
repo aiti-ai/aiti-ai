@@ -1,15 +1,15 @@
 /**
- * git-ops-client · 共享分支面板（方案 §2：mockup ② 六分区）+ chip 徽标。
+ * git-ops-client · shared branch panel (plan §2: mockup ② six sections) + chip badge.
  *
- * 消费方（session-manager 折叠头 chip / aiti-folder 工具条）以 bundle 源引内联；
- * react hooks 经宿主 alias 委托（_shared 惯例）；apiUrl 由消费方注入（basePath 感知）。
+ * Consumers (session-manager collapsed-header chip / aiti-folder toolbar) inline it from bundle source;
+ * react hooks delegate via the host alias (_shared convention); apiUrl is injected by the consumer (basePath-aware).
  *
- * 主题硬条款（§2 v2 升格）：全部颜色走宿主 CSS vars
+ * Hard theme rule (§2 v2 promotion): every color goes through host CSS vars
  * （--bg/--bg-hover/--border/--text/--text-muted/--text-dim/--accent/--font-mono），
- * 半透明派生一律 color-mix 且基色取自 var——零硬编码色值；验收=深/浅两主题截图比对。
+ * translucent derivations always use color-mix with a var base — zero hardcoded color values; acceptance = dark/light theme screenshot comparison.
  *
- * 数据：打开拉一次（refs/log/stash），写操作后本地刷新——零轮询。
- * worktree 分区数据与操作由消费方注入（宿主 /api/worktrees* 例外不进引擎，§2）。
+ * Data: fetched once on open (refs/log/stash), locally refreshed after write operations — zero polling.
+ * Worktree section data and operations are injected by the consumer (the host /api/worktrees* exception bypasses the engine, §2).
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "../popup-anchor";
@@ -18,13 +18,13 @@ import { createGitOpsApi } from "./api.mjs";
 import { assignLanes, laneColor, parseGraphRows } from "./graph-lanes.mjs";
 import { makeT } from "./i18n.mjs";
 
-/* ── chip 徽标（折叠头右端；非 git / 引擎缺席由消费方门控不渲染）── */
+/* ── chip badge (right end of the collapsed header; non-git / engine-absent is gated off by the consumer) ── */
 
 export function BranchChipBadge(p: {
   branch: string;
   dirtyCount?: number;
   open?: boolean;
-  compact?: boolean;   // 小屏：仅 ⎇ 图标（title 保全文）
+  compact?: boolean;   // small screen: ⎇ icon only (title keeps the full text)
   title?: string;
 }) {
   const label = p.compact ? "" : p.branch;
@@ -54,7 +54,7 @@ export function BranchChipBadge(p: {
   );
 }
 
-/* ── 面板 ── */
+/* ── panel ── */
 
 export interface BranchPanelProps {
   apiUrl: (p: string) => string;
@@ -63,9 +63,9 @@ export interface BranchPanelProps {
   locale?: string;
   open: boolean;
   onClose: () => void;
-  /** chip 按钮视口矩形（getBoundingClientRect；面板右对齐其右缘、展开其下） */
+  /** Chip button viewport rect (getBoundingClientRect; panel right-aligns to its right edge, expands below it) */
   anchor: { left: number; top: number; right: number; bottom: number } | null;
-  /** worktree 例外（宿主 /api/worktrees* 数据与操作，消费方注入） */
+  /** Worktree exception (host /api/worktrees* data and operations, injected by the consumer) */
   projectRoot?: string | null;
   worktrees?: { path: string; branch?: string; isMain?: boolean }[];
   currentWorktreePath?: string | null;
@@ -73,18 +73,18 @@ export interface BranchPanelProps {
   onCreateWorktree?: (branch: string) => Promise<{ path?: string; error?: string } | void>;
   onRemoveWorktree?: (path: string, force: boolean) => Promise<{ dirty?: boolean; error?: string } | void>;
   onWorktreeChanged?: () => void;
-  /** 块级 -p（aiti-cmd PTY；缺席不渲染按钮） */
+  /** Hunk-level -p (aiti-cmd PTY; button not rendered when absent) */
   pty?: {
     available: boolean;
     stashInteractive: (mode: "push" | "apply", index?: number) => Promise<{ ok: boolean; error?: string }>;
   };
-  /** 写操作成功后通知消费方（刷新其他 git 面板） */
+  /** Notify the consumer after a successful write (refreshes other git panels) */
   onChanged?: () => void;
-  /** 客户端服务解析（getExtService 封装）：Git Review 直开 / @ 到新会话所需；缺席隐藏对应按钮 */
+  /** Client-side service resolution (getExtService wrapper): needed by Git Review direct-open / @ to a new session; hides the corresponding buttons when absent */
   extSvc?: <T>(key: string) => T | undefined;
-  /** 打开工作区文件（folder 注入；缺席隐藏「打开」按钮——commit 时点内容≠工作区，按钮文案已标注） */
+  /** Open a workspace file (folder injects; hides the "Open" button when absent — a commit-time blob ≠ the workspace version, the button copy says so) */
   openFile?: (absPath: string) => void;
-  /** aiti-float 持久化键（面板 portal 到 body 无 data-ext-item 祖先，须显式；两消费方各自传） */
+  /** aiti-float persistence key (the panel portals to body with no data-ext-item ancestor, so it must be explicit; each consumer passes its own) */
   floatKey?: string;
 }
 
@@ -115,7 +115,7 @@ export function BranchPanel(p: BranchPanelProps) {
   const [conflict, setConflict] = useState<{ ref: string; files: string[] } | null>(null);
   const [createAt, setCreateAt] = useState<{ from: string; suggested?: string } | null>(null);
   const [createName, setCreateName] = useState("");
-  // ── commit 详情卡（图谱点行；docs/aiti-git-ops-commit-card-plan.md）──
+  // ── commit detail card (graph row click; docs/aiti-git-ops-commit-card-plan.md) ──
   const [commitSha, setCommitSha] = useState<string | null>(null);
   const [commitInfo, setCommitInfo] = useState<any>(null);
   const [commitLoadErr, setCommitLoadErr] = useState<string | null>(null);
@@ -157,7 +157,7 @@ export function BranchPanel(p: BranchPanelProps) {
     setStash(s.data?.items ?? []);
   }, [api, p.cwd, logRef]);
 
-  // 打开拉一次（cwd 变了重拉）
+  // Fetch once on open (refetch when cwd changes)
   useEffect(() => {
     if (!p.open || !p.cwd) return;
     void refreshData();
@@ -180,7 +180,7 @@ export function BranchPanel(p: BranchPanelProps) {
 
   const graphRows = useMemo(() => assignLanes(parseGraphRows(log.lines)), [log.lines]);
 
-  // 定位：右对齐 chip、展开其下；下方装不下则压缩高度（面板内滚，不上翻——mockup 形态）
+  // Positioning: right-align to the chip, expand below it; if it doesn't fit below, compress the height (scroll inside the panel, never flip up — the mockup shape)
   useLayoutEffect(() => {
     if (!p.open || !p.anchor) return;
     const el = boxRef.current;
@@ -197,7 +197,7 @@ export function BranchPanel(p: BranchPanelProps) {
     setPos((cur) => (cur && cur.left === (left - o.x) / z && cur.top === (top - o.y) / z ? cur : { left: (left - o.x) / z, top: (top - o.y) / z }));
   });
 
-  // 点外关闭（chip 本体除外——由 chip onClick 单一开关）+ Escape
+  // Close on outside click (except the chip itself — the chip onClick is the single toggle) + Escape
   useEffect(() => {
     if (!p.open) return;
     const onDown = (e: MouseEvent) => {
@@ -223,7 +223,7 @@ export function BranchPanel(p: BranchPanelProps) {
     p.onChanged?.();
   }, [refreshData, p.onChanged]);
 
-  /** checkout 家族统一管道：409 → 冲突三选一卡 */
+  /** Unified pipeline for the checkout family: 409 → three-way conflict card */
   const switchTo = useCallback((ref: string) => run(async () => {
     if (wtMode) { await openAsWorktree(ref); return; }
     const r = await api.checkout(p.cwd, ref);
@@ -232,7 +232,7 @@ export function BranchPanel(p: BranchPanelProps) {
     afterWrite();
   }), [run, wtMode, api, p.cwd, afterWrite]);
 
-  /** worktree 形态打开：已有同名 worktree 直接切；否则宿主建（会自动切项目） */
+  /** Open as a worktree: switch directly when a same-named worktree exists; otherwise the host creates it (and switches project automatically) */
   const openAsWorktree = useCallback(async (branchName: string) => {
     if (!p.onCreateWorktree) { setError("worktree unavailable"); return; }
     const existing = (p.worktrees ?? []).find((w) => w.branch === branchName);
@@ -242,7 +242,7 @@ export function BranchPanel(p: BranchPanelProps) {
     p.onClose();
   }, [p.onCreateWorktree, p.worktrees, p.onSelectWorktree, p.onClose]);
 
-  /** 远程分支 → 先确保同名本地分支（无 tracking 语义，MVP），再走 worktree/checkout */
+  /** Remote branch → ensure the same-named local branch first (no tracking semantics, MVP), then worktree/checkout */
   const ensureLocalBranch = useCallback(async (remoteRef: string): Promise<string | null> => {
     const short = remoteRef.replace(/^[^/]+\//, "");
     if ((refsData?.branches ?? []).includes(short)) return short;
@@ -340,7 +340,7 @@ export function BranchPanel(p: BranchPanelProps) {
     else setError((r?.error) || t("stashInteractiveFail"));
   }), [run, p.pty, t]);
 
-  // ── commit 详情卡 ──
+  // ── commit detail card ──
   const openCommit = useCallback((shaShort: string) => run(async () => {
     setCommitSha(shaShort);
     setCommitInfo(null);
@@ -362,14 +362,14 @@ export function BranchPanel(p: BranchPanelProps) {
     const workSvc = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined;
     if (!openSvc || !workSvc) return false;
     const full = commitRef();
-    if (!full || commitInfo?.parents?.length === 0) return false; // root commit 无 base，交由选择器手选
+    if (!full || commitInfo?.parents?.length === 0) return false; // root commit has no base; the picker decides manually
     openSvc({
       path: repoDir(),
       base: full + "^",
       ref2: full,
       ...(opts?.files?.length ? { files: opts.files } : {}),
     });
-    try { workSvc(); } catch { /* work 缺席时 open 已把状态置好，宿主打开工作区后生效 */ }
+    try { workSvc(); } catch { /* when work is absent, open already set the state; takes effect once the host opens the workspace */ }
     return true;
   };
 
@@ -394,7 +394,7 @@ export function BranchPanel(p: BranchPanelProps) {
       ta.style.opacity = "0";
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand("copy"); } catch { /* 剪贴板不可用静默 */ }
+      try { document.execCommand("copy"); } catch { /* clipboard unavailable: silent */ }
       ta.remove();
     }
     if (okMsg) setToast(okMsg);
@@ -467,8 +467,8 @@ export function BranchPanel(p: BranchPanelProps) {
   return (
     <div
       ref={boxRef}
-      // aiti-float 浮窗契约（docs/aiti-web-ext-float-dialogs.md）：大屏拖拽/缩放/移动/持久化 +
-      // 自动 ⛶ 最大化钮；小屏（≤640px）铺满视口。pos="asis" 首次在 chip 下出现；持久化后恢复。
+      // aiti-float floating-window contract (docs/aiti-web-ext-float-dialogs.md): desktop drag/resize/move/persistence +
+      // an automatic ⛶ maximize button; small screens (≤640px) fill the viewport. pos="asis" first appears below the chip; restored after persistence.
       data-ext-float="1"
       data-ext-float-full="1"
       data-ext-float-pos="asis"
@@ -486,7 +486,7 @@ export function BranchPanel(p: BranchPanelProps) {
         fontFamily: "inherit", textAlign: "left",
       }}
     >
-      {/* 当前态：分支 + 脏文件徽标（点击开部分暂存卡） */}
+      {/* Current state: branch + dirty-file badge (click opens the partial-stash card) */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           ⎇ {refsData?.current ?? (loadError ? t("noRepo") : t("loading"))}
@@ -519,7 +519,7 @@ export function BranchPanel(p: BranchPanelProps) {
         <div style={{ padding: "14px 12px", fontSize: 11.5, color: "var(--text-muted)" }}>{t("loading")}</div>
       ) : (
         <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" as const }}>
-          {/* worktree 模式开关 */}
+          {/* worktree mode switch */}
           <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", fontSize: 11.5, color: "var(--text-muted)", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
             title={wtMode ? t("wtModeOn") : t("wtMode")}>
             <input type="checkbox" checked={wtMode} onChange={(e) => {
@@ -530,7 +530,7 @@ export function BranchPanel(p: BranchPanelProps) {
             {t("wtMode")}
           </label>
 
-          {/* 冲突三选一卡（覆盖正文，mockup ③） */}
+          {/* Three-way conflict card (covers the body, mockup ③) */}
           {conflict ? (
             <div style={{ padding: "10px 12px" }}>
               <div style={{ fontSize: 12, fontWeight: 600, display: "flex", gap: 7, alignItems: "center" }}>
@@ -557,7 +557,7 @@ export function BranchPanel(p: BranchPanelProps) {
               </div>
             </div>
           ) : partOpen ? (
-            /* 部分暂存卡（mockup ③ 下） */
+            /* Partial-stash card (below mockup ③) */
             <div style={{ padding: "10px 12px" }}>
               <div style={{ fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
                 {t("stashPartTitle")}
@@ -602,7 +602,7 @@ export function BranchPanel(p: BranchPanelProps) {
                 </div>
               )}
 
-              {/* 分支 */}
+              {/* Branches */}
               {sectionHead("branches", t("branches"))}
               {!collapsed.has("branches") && (
                 <div style={{ paddingBottom: 2 }}>
@@ -646,7 +646,7 @@ export function BranchPanel(p: BranchPanelProps) {
                 </div>
               ))}
 
-              {/* 新建分支 */}
+              {/* New branch */}
               {sectionHead("new", t("newBranch"))}
               {!collapsed.has("new") && (
                 <div style={{ display: "flex", gap: 6, margin: "4px 12px 0" }}>
@@ -666,7 +666,7 @@ export function BranchPanel(p: BranchPanelProps) {
               ) : null}
 
               {/* worktree */}
-              {/* worktree 分区：消费方提供宿主 worktree 回调才渲染（folder 无此面 → 整区隐藏） */}
+              {/* Worktree section: renders only when the consumer provides the host worktree callbacks (folder has no such side → the whole section hides) */}
               {p.onCreateWorktree ? sectionHead("worktree", t("worktree")) : null}
               {!collapsed.has("worktree") && p.onCreateWorktree ? (
                 <div style={{ paddingBottom: 2 }}>
@@ -715,7 +715,7 @@ export function BranchPanel(p: BranchPanelProps) {
                 <div style={{ paddingBottom: 6 }}>
                   {stash.length === 0 && <div style={{ padding: "2px 12px 4px", fontSize: 11, color: "var(--text-dim)" }}>{t("stashEmpty")}</div>}
                   {stash.map((it: any, idxFromEnd: number) => {
-                    const index = stash.length - 1 - idxFromEnd; // stash@{0} = 最新（列表首行）
+                    const index = stash.length - 1 - idxFromEnd; // stash@{0} = newest (first row)
                     const no = stash.length - 1 - idxFromEnd;
                     const files = stashFiles[index];
                     return (
@@ -819,10 +819,10 @@ export function BranchPanel(p: BranchPanelProps) {
         </div>
       )}
 
-      {/* commit 详情卡（图谱点行；查看/操作面，docs/aiti-git-ops-commit-card-plan.md；覆盖正文） */}
+      {/* Commit detail card (graph row click; view/action surface, docs/aiti-git-ops-commit-card-plan.md; covers the body) */}
       {commitSha && !conflict && !partOpen ? (
         <div style={{ position: "absolute" as const, inset: 0, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-          {/* 头：返回 + sha/subject + 元信息 + 操作行 */}
+          {/* Head: back + sha/subject + meta info + action row */}
           <div style={{ padding: "8px 12px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <button type="button" title={t("commitBack")} onClick={() => setCommitSha(null)} style={iconBtn()}>←</button>
@@ -851,8 +851,8 @@ export function BranchPanel(p: BranchPanelProps) {
                 <button type="button" disabled={busy} title={t("commitReviewTitle")} onClick={() => { openInReview(); }} style={chipBtn()}>{t("commitReview")}</button>
               ) : null}
               <button type="button" disabled={busy} title={t("commitAtNewTitle")} onClick={() => {
-                const s = commitInfo?.subject ? `（${commitInfo.subject}）` : "";
-                void atNewSession(`请解读 commit ${commitRef()}${s} 的改动`, repoDir());
+                const s = commitInfo?.subject ? ` (${commitInfo.subject})` : "";
+                void atNewSession(`Explain the changes in commit ${commitRef()}${s}`, repoDir());
               }} style={chipBtn()}>{t("commitAtNew")}</button>
             </div>
             {tagInput ? (
@@ -873,7 +873,7 @@ export function BranchPanel(p: BranchPanelProps) {
               </div>
             ) : null}
           </div>
-          {/* 正文：单文件 diff 视图 / 变更文件清单 */}
+          {/* Body: single-file diff view / changed-file list */}
           {commitDiff ? (
             <div style={{ flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
@@ -941,7 +941,7 @@ export function BranchPanel(p: BranchPanelProps) {
         </div>
       ) : null}
 
-      {/* commit 建分支卡（图谱/tag 入口；覆盖正文；渲染在详情卡之后 = 叠其上，取消回到详情卡） */}
+      {/* Commit branch-creation card (graph/tag entries; covers the body; rendered after the detail card = stacked on top, cancel returns to the detail card) */}
       {createAt && !conflict && !partOpen ? (
         <div style={{ position: "absolute" as const, inset: 0, background: "var(--bg)", padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 600 }}>{t("createAt")}</div>
@@ -974,7 +974,7 @@ export function BranchPanel(p: BranchPanelProps) {
   );
 }
 
-/* ── 按钮样式（全部 var 基色）── */
+/* ── button styles (all var-based colors) ── */
 const priBtn = (busy: boolean) => ({
   height: 27, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
   fontSize: 11.5, cursor: busy ? "not-allowed" : "pointer", fontWeight: 600,
@@ -997,7 +997,7 @@ const iconBtn = () => ({
   border: "none", background: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 11,
   padding: "2px 3px", flexShrink: 0,
 } as const);
-/** commit 卡操作行小按钮（轻量 chip：描边 + var 基色，主题硬条款合规） */
+/** Small button for the commit card action row (lightweight chip: outline + var base color, honors the hard theme rule) */
 const chipBtn = (disabled?: boolean) => ({
   height: 22, padding: "0 8px", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 4,
   fontSize: 10.5, whiteSpace: "nowrap" as const, flexShrink: 0,

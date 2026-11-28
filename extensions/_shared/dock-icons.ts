@@ -11,13 +11,16 @@
  *   · block semantic icons (folder/clock/bot/…): sidebar block-header icon + lazy-extension
  *     static shell (manifest entry icon field, name string → rendered by DockBody dockIconEl).
  *
- * 设计约定：
- *   · 不依赖 react、不读部署资产——区别于 `_shared/icons/*.svg`（扩展条目图标契约，需宿主
- *     loader/copyIcons 部署）；本文件是纯节点数据 + 双端渲染 helper，构建时按现有机制内联进
- *     各消费 bundle，零部署资产、零运行时请求。
- *   · 图形规范（与现有头行内联 SVG 一致）：viewBox 0 0 24 24、stroke=2、round 线稿（lucide 同款）。
- *   · 节点用数据描述（tag + attrs）而非字符串，React 端 `h(tag, attrs)` 与 DOM 端
- *     `createElementNS` 各自组装，无 innerHTML / dangerouslySetInnerHTML。
+ * Design conventions:
+ *   · No react dependency, no deployed assets — unlike `_shared/icons/*.svg` (the
+ *     extension-entry icon contract, needing the host loader/copyIcons deployment); this
+ *     file is pure node data + dual-end render helpers, inlined into each consumer
+ *     bundle by the existing build mechanism: zero deployed assets, zero runtime requests.
+ *   · Glyph spec (consistent with the existing header inline SVG): viewBox 0 0 24 24,
+ *     stroke=2, round line art (lucide-style).
+ *   · Nodes described as data (tag + attrs) rather than strings; the React side
+ *     `h(tag, attrs)` and the DOM side `createElementNS` each assemble their own, with
+ *     no innerHTML / dangerouslySetInnerHTML.
  */
 
 export type DockIconName =
@@ -39,59 +42,66 @@ export interface DockIconNode {
 const P = (d: string): DockIconNode => ({ tag: "path", attrs: { d } });
 const R = (x: number, y: number, width: number, height: number, rx = 2): DockIconNode =>
   ({ tag: "rect", attrs: { x, y, width, height, rx } });
-/** 节点级细线覆盖：stroke-width 1.5（24 viewBox）→ 13px 渲染 ≈0.81px，与 Catppuccin
- *  文件夹图标（16 viewBox / stroke 1）同线宽。子节点显式属性优先于根继承，三端
- *  （dockIconEl / createDockIconSvg / dockIconDecl 序列化）attrs 全透传，零特判。 */
+/** Node-level thin-stroke override: stroke-width 1.5 (24 viewBox) → ≈0.81px at 13px
+ *  render, the same stroke width as the Catppuccin folder icon (16 viewBox / stroke 1).
+ *  Child explicit attrs win over root inheritance; all three ends (dockIconEl /
+ *  createDockIconSvg / dockIconDecl serialization) pass attrs through verbatim, zero
+ *  special cases. */
 const thin = (n: DockIconNode): DockIconNode => ({ ...n, attrs: { ...n.attrs, "stroke-width": 1.5 } });
 
-/** 图标节点表（lucide 图形；「方框+粗边」= panel-* 家族，与截图同款语言）。 */
+/** Icon node table (lucide glyphs; "box + thick edge" = the panel-* family, the same visual language as the screenshots). */
 export const DOCK_ICON_NODES: Record<DockIconName, DockIconNode[]> = {
-  /** 浮窗：圆角框 + 标题栏 + 圆点（app-window；用户 2026-09-15 定稿 C）。 */
+  /** Float: rounded frame + title bar + dots (app-window; user finalized C on 2026-09-15). */
   float: [
     R(2, 4, 20, 16, 2),
     P("M10 4v4"),
     P("M2 8h20"),
     P("M6 4v4"),
   ],
-  /** 新窗口打开：方框 + 右上外斜箭头（square-arrow-out-up-right；
-   *  用户 2026-09-15 拍板：B 图形用作「新窗口打开」，且仅支持的面板（文件/文件夹）显示）。 */
+  /** Open in new window: box + outward diagonal arrow at top right
+   *  (square-arrow-out-up-right;
+   *  user ruling 2026-09-15: glyph B serves "Open in new window", shown only for capable
+   *  panels (files/folders)). */
   "new-window": [
     P("M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"),
     P("m21 3-9 9"),
     P("M15 3h6v6"),
   ],
-  /** 左栏：方框 + 左缘粗边。 */
+  /** Left panel: box + thick left edge. */
   "panel-left": [R(3, 3, 18, 18), P("M9 3v18")],
-  /** 右栏：方框 + 右缘粗边。 */
+  /** Right panel: box + thick right edge. */
   "panel-right": [R(3, 3, 18, 18), P("M15 3v18")],
-  /** 底部（预留位）：方框 + 下缘粗边。 */
+  /** Bottom (reserved slot): box + thick bottom edge. */
   "panel-bottom": [R(3, 3, 18, 18), P("M3 15h18")],
   "chevron-up": [P("m18 15-6-6-6 6")],
   "chevron-down": [P("m6 9 6 6 6-6")],
   "chevron-left": [P("m15 18-6-6 6-6")],
   "chevron-right": [P("m9 18 6-6-6-6")],
   "arrow-up": [P("m5 12 7-7 7 7"), P("M12 19V5")],
-  /** 钉住：图钉（lucide pin；⋮ 区块操作「钉住」，与 aiti-folder MiPin 同形）。 */
+  /** Pin: pushpin (lucide pin; the ⋮ block operation "Pin", same shape as aiti-folder's MiPin). */
   pin: [
     { tag: "line", attrs: { x1: 12, y1: 17, x2: 12, y2: 22 } },
     P("M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"),
   ],
-  /** 关闭：×（lucide x；⋮ 区块操作「关闭」）。 */
+  /** Close: × (lucide x; the ⋮ block operation "Close"). */
   x: [P("M18 6 6 18"), P("m6 6 12 12")],
-  /** 取消钉住态：图钉 + 斜删除线（lucide pin-off；移动行钉住钮已钉态，与 MiPin 同语义族）。 */
+  /** Unpin state: pushpin + diagonal strike (lucide pin-off; the move-row pin button's
+   *  pinned state, same semantic family as MiPin). */
   "pin-off": [
     { tag: "line", attrs: { x1: 12, y1: 17, x2: 12, y2: 22 } },
     P("M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"),
     { tag: "line", attrs: { x1: 2, y1: 2, x2: 22, y2: 22 } },
   ],
-  /** 移除本实例：垃圾桶（lucide trash；多实例区块 ⋮「移除本实例」，与 aiti-folder MiTrash 同形）。 */
+  /** Remove this instance: trash can (lucide trash; multi-instance blocks' ⋮ "Remove
+   *  this instance", same shape as aiti-folder's MiTrash). */
   trash: [
     { tag: "polyline", attrs: { points: "3 6 5 6 21 6" } },
     P("M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"),
     { tag: "line", attrs: { x1: 10, y1: 11, x2: 10, y2: 17 } },
     { tag: "line", attrs: { x1: 14, y1: 11, x2: 14, y2: 17 } },
   ],
-  /** 移动：对角双箭头（lucide move-diagonal-2；⋮「移动」行首图标——左上 + 右下，用户 2026-09-15 指定）。 */
+  /** Move: diagonal double arrow (lucide move-diagonal-2; the ⋮ "Move" row's leading
+   *  icon — top-left + bottom-right, specified by the user 2026-09-15). */
   "move-diagonal-2": [
     P("M5 11V5h6"),
     P("M19 13v6h-6"),
@@ -199,7 +209,7 @@ export function dockIconDecl(name: DockIconName): { svg: string } {
   return { svg: markup };
 }
 
-/** zone / 位置 → 方位图标名（D1/D2/D3 位置菜单数据共用）。 */
+/** zone / position → zone icon name (shared by the D1/D2/D3 position menu data). */
 export function dockIconOfZone(zone: string): DockIconName {
   if (zone === "float" || zone === "floating") return "float";
   if (zone === "sidebar-explorer" || zone.startsWith("sidebar:")) return "panel-left";
@@ -207,11 +217,11 @@ export function dockIconOfZone(zone: string): DockIconName {
   return "panel-right";
 }
 
-/* ── DOM 端（D2 aiti-float / D3 降级菜单；core 亦可 re-export）── */
+/* ── DOM side (D2 aiti-float / D3 fallback menus; core may re-export too) ── */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-/** 构造一个完整 svg 元素（currentColor / stroke=2 / round；aria-hidden）。 */
+/** Build a complete svg element (currentColor / stroke=2 / round; aria-hidden). */
 export function createDockIconSvg(name: DockIconName, size = 16): SVGElement {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");

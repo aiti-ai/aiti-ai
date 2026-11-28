@@ -1,6 +1,6 @@
 /**
- * ext-protocol 单测（纯函数）。
- * 运行：node scripts/test-web-ext.mjs --only _shared
+ * ext-protocol unit tests (pure functions).
+ * Run: node scripts/test-web-ext.mjs --only _shared
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,21 +12,21 @@ import {
   extProtocolUpgradeRefs,
 } from "./ext-protocol.mjs";
 
-test("常量：当前版本与最低支持 major", () => {
+test("constants: current version and minimum supported major", () => {
   assert.equal(EXT_PROTOCOL_VERSION, "1.0");
   assert.equal(EXT_PROTOCOL_MIN_MAJOR, 1);
 });
 
-test("parseExtProtocol：合法字符串", () => {
+test("parseExtProtocol: valid strings", () => {
   assert.deepEqual(parseExtProtocol("1.0"), { major: 1, minor: 0, raw: "1.0" });
   assert.deepEqual(parseExtProtocol(" 2.13 "), { major: 2, minor: 13, raw: "2.13" });
   assert.deepEqual(parseExtProtocol("10.7"), { major: 10, minor: 7, raw: "10.7" });
 });
 
-test("parseExtProtocol：非法输入（含数字类型）", () => {
-  assert.equal(parseExtProtocol(1.0), null);      // 数字必须拒绝（1.10 被吃成 1.1 的经典坑）
+test("parseExtProtocol: invalid input (including number types)", () => {
+  assert.equal(parseExtProtocol(1.0), null);      // numbers must be rejected (the classic trap of 1.10 being eaten as 1.1)
   assert.equal(parseExtProtocol(1), null);
-  assert.equal(parseExtProtocol("1"), null);      // 必须 MAJOR.MINOR
+  assert.equal(parseExtProtocol("1"), null);      // must be MAJOR.MINOR
   assert.equal(parseExtProtocol("1.0.0"), null);
   assert.equal(parseExtProtocol("v1.0"), null);
   assert.equal(parseExtProtocol(""), null);
@@ -35,7 +35,7 @@ test("parseExtProtocol：非法输入（含数字类型）", () => {
   assert.equal(parseExtProtocol({}), null);
 });
 
-test("extProtocolInfo：ok / minorAhead", () => {
+test("extProtocolInfo: ok / minorAhead", () => {
   const ok = extProtocolInfo("1.0");
   assert.equal(ok.state, "ok");
   assert.equal(ok.needsUpgrade, false);
@@ -46,7 +46,7 @@ test("extProtocolInfo：ok / minorAhead", () => {
   assert.equal(ahead.minorAhead, true);
 });
 
-test("extProtocolInfo：stale / incompatible", () => {
+test("extProtocolInfo: stale / incompatible", () => {
   const stale = extProtocolInfo("1.0", { current: "2.1", minMajor: 1 });
   assert.equal(stale.state, "stale");
   assert.equal(stale.needsUpgrade, true);
@@ -58,13 +58,13 @@ test("extProtocolInfo：stale / incompatible", () => {
   assert.deepEqual(incompat.upgradeRefs, ["v1-to-v2", "v2-to-v3"]);
 });
 
-test("extProtocolInfo：too_new", () => {
+test("extProtocolInfo: too_new", () => {
   const info = extProtocolInfo("2.0", { current: "1.0" });
   assert.equal(info.state, "too_new");
   assert.equal(info.needsUpgrade, false);
 });
 
-test("extProtocolInfo：missing / invalid", () => {
+test("extProtocolInfo: missing / invalid", () => {
   const missing = extProtocolInfo(undefined);
   assert.equal(missing.state, "missing");
   assert.equal(missing.needsUpgrade, true);
@@ -75,13 +75,13 @@ test("extProtocolInfo：missing / invalid", () => {
   assert.equal(invalid.needsUpgrade, true);
 });
 
-test("extProtocolUpgradeRefs：逐跳路由", () => {
+test("extProtocolUpgradeRefs: hop-by-hop routing", () => {
   assert.deepEqual(extProtocolUpgradeRefs("1.0", { current: "1.0" }), []);
   assert.deepEqual(extProtocolUpgradeRefs("1.0", { current: "2.0" }), ["v1-to-v2"]);
   assert.deepEqual(extProtocolUpgradeRefs("1.0", { current: "3.2" }), ["v1-to-v2", "v2-to-v3"]);
   assert.deepEqual(extProtocolUpgradeRefs(undefined, { current: "1.0" }), ["legacy-to-v1"]);
   assert.deepEqual(extProtocolUpgradeRefs(undefined, { current: "2.0" }), ["legacy-to-v1", "v1-to-v2"]);
-  // 0.x（版本化前谱系）与缺失同路由：先 legacy 手册
+  // 0.x (pre-versioning lineage) routes the same as missing: legacy manual first
   assert.deepEqual(extProtocolUpgradeRefs("0.9", { current: "1.0" }), ["legacy-to-v1"]);
   assert.deepEqual(extProtocolUpgradeRefs("0.9", { current: "2.0" }), ["legacy-to-v1", "v1-to-v2"]);
   assert.equal(extProtocolInfo("0.9").state, "incompatible");

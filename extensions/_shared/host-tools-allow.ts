@@ -1,25 +1,28 @@
 /**
- * G1 host tools 白名单（docs/pi-web-ext-host-tools-gate-plan.md §G1）
+ * G1 host tools allowlist (docs/pi-web-ext-host-tools-gate-plan.md §G1)
  *
- * 背景：桥 MCP 的 `aiti_*` 工具经 wireBridgeHostTools（omp） / aiti_bridge_req 转发（attach）
- * 注入外部 agent 时零过滤——prompt injection 一跳即达页面执行/表单写等高危工具。
- * G1 = 缺省只放行只读与人机交互类子集；`*`（或 "all"）= 全量＝旧现状；显式清单 = 精确集合。
+ * Background: the bridge MCP's `aiti_*` tools were injected into external agents with zero filtering
+ * via wireBridgeHostTools (omp) / aiti_bridge_req forwarding (attach) — one prompt-injection hop
+ * reaches high-risk tools such as page execution / form writes.
+ * G1 = by default only the read-only + human-in-the-loop subset is allowed; `*` (or "all") = everything
+ * (= the old status quo); an explicit list = the exact set.
  *
- * 消费方：aiti-omp-agent/host-tools-bridge.ts（tools/list 过滤）、aiti-attach-agent/index.ts
- * （aiti_bridge_req 转发校验）。feature：`<extId>.hostToolsAllow`（string，缺省空=readonly 子集）。
+ * Consumers: aiti-omp-agent/host-tools-bridge.ts (tools/list filtering), aiti-attach-agent/index.ts
+ * (aiti_bridge_req forwarding check). Feature: `<extId>.hostToolsAllow` (string; default empty = the
+ * readonly subset).
  */
 
-/** 缺省只读/人机交互子集（无页面数据副作用；写类 page_exec/form_fill 默认排除） */
+/** Default read-only / human-in-the-loop subset (no page-data side effects; write-class page_exec/form_fill excluded by default) */
 export const HOST_TOOLS_READONLY_NAMES: readonly string[] = [
-  "aiti_inbox",       // 消息主通道拉取（G1 红线：保守清单必含 inbox 读类）
-  "aiti_hello",       // agent 自我介绍/注册
-  "bridge_status",    // 已连接页面快照
-  "page_snapshot",    // 页面现场读取
-  "self_ui",          // 弹窗/表单清单扫描
-  "page_logs",        // console 日志读取
-  "page_network",     // 网络完成态读取
-  "file_stat",        // 文件元数据查询
-  "user_pick_element", // 人机点选（人参与，无数据副作用）
+  "aiti_inbox",       // main message-channel fetch (G1 red line: a conservative list must include inbox reads)
+  "aiti_hello",       // agent self-introduction/registration
+  "bridge_status",    // connected-page snapshot
+  "page_snapshot",    // page live reading
+  "self_ui",          // dialog/form inventory scan
+  "page_logs",        // console log reading
+  "page_network",     // network settled-state reading
+  "file_stat",        // file metadata query
+  "user_pick_element", // human point-and-pick (human in the loop, no data side effects)
   "user_confirm",
   "user_choose",
   "user_input",
@@ -31,7 +34,7 @@ const READONLY = new Set<string>(HOST_TOOLS_READONLY_NAMES);
 
 export type HostToolsAllow = "all" | "readonly" | Set<string>;
 
-/** 解析 feature 值：空/"readonly" → 只读子集；"*"/"all" → 全量；其余 = 逗号/空白分隔的显式名单 */
+/** Parse a feature value: empty/"readonly" -> read-only subset; "*"/"all" -> everything; otherwise = an explicit comma/whitespace-separated list */
 export function parseHostToolsAllow(value: string | null | undefined): HostToolsAllow {
   const v = String(value ?? "").trim();
   if (!v || v === "readonly") return "readonly";
@@ -40,32 +43,32 @@ export function parseHostToolsAllow(value: string | null | undefined): HostTools
   return names.length ? new Set(names) : "readonly";
 }
 
-/** 按白名单过滤工具清单（omp tools/list 用） */
+/** Filter a tool list by the allowlist (used by omp tools/list) */
 export function filterHostToolsByAllow<T extends { name: string }>(tools: T[], allow: HostToolsAllow): T[] {
   if (allow === "all") return tools;
   if (allow === "readonly") return tools.filter((t) => READONLY.has(t.name));
   return tools.filter((t) => allow.has(t.name));
 }
 
-/** 单工具判定（attach aiti_bridge_req 转发校验用） */
+/** Single-tool decision (used by the attach aiti_bridge_req forwarding check) */
 export function hostToolAllowed(name: string, allow: HostToolsAllow): boolean {
   if (allow === "all") return true;
   if (allow === "readonly") return READONLY.has(name);
   return allow.has(name);
 }
 
-/** 读 extman feature `<extId>.hostToolsAllow`（运行时经宿主 featureValue；缺席=缺省只读子集） */
+/** Read the extman feature `<extId>.hostToolsAllow` (at runtime via the host featureValue; absent = the default read-only subset) */
 export function readHostToolsAllow(extId: string): string | null {
   try {
     const reg = (globalThis as { __piWebExt?: { featureValue?: (extId: string, fid: string) => boolean | string } }).__piWebExt;
     const v = reg?.featureValue?.(extId, "hostToolsAllow");
     if (typeof v === "string" && v.trim()) return v.trim();
     if (v === true) return "*";
-  } catch { /* 宿主缺席：按缺省处理 */ }
+  } catch { /* host absent: treat as default */ }
   return null;
 }
 
-/** extman feature 声明（各消费扩展 features 数组追加；group 传 "Omp" 等分组名） */
+/** extman feature declaration (each consumer extension appends it to its features array; pass a group name like "Omp") */
 export function hostToolsAllowFeature(group?: string): {
   id: string; type: "string"; label: string; description: string; value: string; placeholder: string; group?: string;
 } {
@@ -73,13 +76,15 @@ export function hostToolsAllowFeature(group?: string): {
     id: "hostToolsAllow",
     ...(group ? { group } : {}),
     type: "string",
-    label: "桥工具白名单",
+    label: "Bridge tool allowlist",
     description:
-      "注入 agent 的桥（aiti_*）工具白名单。留空 = 只读子集（消息/页面读/人机交互类；page_exec、form_fill " +
-      "等写类不注入——G1 安全缺省）。* = 全量（恢复旧现状，含页面执行/表单写）。也可给精确名单（逗号/空格分隔，" +
-      "如 aiti_inbox, page_exec）。名单外工具 agent 调用会报 unknown host tool；改完下一轮会话生效。",
+      "Allowlist of the bridge (aiti_*) tools injected into the agent. Empty = read-only subset (messages / page reads / " +
+      "human-in-the-loop; write-class tools such as page_exec and form_fill are withheld — the G1 secure default). " +
+      "* = everything (restores the old status quo, including page execution / form writes). A precise list also works " +
+      "(comma/space separated, e.g. aiti_inbox, page_exec). Tools outside the list make the agent's call fail with " +
+      "unknown host tool; takes effect on the next session turn.",
     value: "",
-    placeholder: "留空=只读子集；*=全量；或 aiti_inbox, page_snapshot, page_exec",
+    placeholder: "empty=read-only subset; *=everything; or aiti_inbox, page_snapshot, page_exec",
   };
 }
 

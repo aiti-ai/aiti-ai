@@ -1,11 +1,11 @@
 /**
- * controlled-login tests — 外部 Agent 受控登录标准（共享层状态机 + 副本同步 + 五家 driver fixture）。
+ * controlled-login tests — External agent controlled login standard (shared-layer state machine + copy sync + five vendors' driver fixtures).
  *
  * Run: node --test pi-web-ext/_shared/controlled-login.test.mjs
  *
- * 桩机制：spawnImpl 注入 EventEmitter 假子进程（stdout/stderr data + exit 事件、stdin writes、
- * kill 记录）——零真进程零网络。fixture 样本取自方案实测记录
- * （docs/ext-controlled-login-standard.md §1 + docs/zcode-controlled-login-analysis.md §2）。
+ * Stubbing: spawnImpl injects EventEmitter fake child processes (stdout/stderr data + exit events, stdin writes,
+ * kill records) — zero real processes, zero network. Fixture samples come from the plan's measured records
+ * (docs/ext-controlled-login-standard.md §1 + docs/zcode-controlled-login-analysis.md §2).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -20,8 +20,8 @@ const ROOT = join(SHARED, "..");
 
 const cl = await import("./controlled-login.mjs");
 
-// 五家 driver（zcode 在 zcode-core.ts；cursor/claude/codex 内联 index.ts；qoder 独立 login-driver.ts
-// —— index.ts 顶部有 WASM 预热副作用，不进测试面）
+// Five vendors' drivers (zcode lives in zcode-core.ts; cursor/claude/codex inline index.ts; qoder in a standalone login-driver.ts
+// — index.ts has WASM warmup side effects at the top, so it stays out of the test surface)
 const zcore = await import(pathToFileURL(join(ROOT, "aiti-zcode-agent/zcode-core.ts")).href);
 const cursorMod = await import(pathToFileURL(join(ROOT, "aiti-cursor-agent/index.ts")).href);
 const claudeMod = await import(pathToFileURL(join(ROOT, "aiti-claude-code-agent/index.ts")).href);
@@ -32,7 +32,7 @@ const flush = () => new Promise((r) => setImmediate(r));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ============================================================================
-// 假子进程工厂
+// Fake child process factory
 // ============================================================================
 
 let spawnCalls = [];
@@ -52,7 +52,7 @@ function makeFakeProc(pid = 42000 + spawnCalls.length) {
   return proc;
 }
 
-/** 建一个受控登录控制器：spawnImpl 出假进程并登记；driver 可覆盖。 */
+/** Builds a controlled login controller: spawnImpl yields fake processes and registers them; driver can be overridden. */
 const TMP_DIRS = [];
 function makeController(over = {}) {
   const configDir = over.configDir ?? mkdtempSync(join(tmpdir(), "cl-test-"));
@@ -89,10 +89,10 @@ function makeController(over = {}) {
 }
 
 // ============================================================================
-// 状态机：waiting / 幂等 / success / failed / timeout / cancel / submit / pid
+// State machine: waiting / idempotency / success / failed / timeout / cancel / submit / pid
 // ============================================================================
 
-test("start: spawn → URL 命中 → waiting + url；状态文件含 pid 不含 code", async () => {
+test("start: spawn → URL hit → waiting + url; state file carries pid, not code", async () => {
   const { ctrl, configDir, getProc } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -101,13 +101,13 @@ test("start: spawn → URL 命中 → waiting + url；状态文件含 pid 不含
   assert.equal(res.state, "waiting");
   assert.equal(res.url, "https://stub.example/auth?x=1");
   assert.equal(res.mode, "url");
-  assert.ok(!("pid" in res), "公开状态不透出 pid");
+  assert.ok(!("pid" in res), "public state does not expose pid");
   const raw = JSON.parse(readFileSync(join(configDir, "controlled-login.json"), "utf8"));
   assert.equal(typeof raw.pid, "number");
-  assert.ok(!JSON.stringify(raw).includes("code="), "状态文件不含 code/token");
+  assert.ok(!JSON.stringify(raw).includes("code="), "state file contains no code/token");
 });
 
-test("start: 幂等——waiting 且进程存活时重复 start 不重复 spawn，原样返回既有 url", async () => {
+test("start: idempotent — repeated start while waiting and process alive does not re-spawn, returns existing url as-is", async () => {
   const { ctrl, getProc, spawnCount } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -119,7 +119,7 @@ test("start: 幂等——waiting 且进程存活时重复 start 不重复 spawn�
   assert.equal(second.state, "waiting");
 });
 
-test("exit 0 → success + user + onSuccess 钩子；终态清 pid", async () => {
+test("exit 0 → success + user + onSuccess hook; terminal state clears pid", async () => {
   const { ctrl, configDir, getProc, onSuccessCalls } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -137,7 +137,7 @@ test("exit 0 → success + user + onSuccess 钩子；终态清 pid", async () =>
   assert.ok(raw.finishedAt > 0);
 });
 
-test("exit 非 0 → failed，error 落状态；failed 附 outputTail 原文", async () => {
+test("exit non-zero → failed, error lands in state; failed carries the raw outputTail", async () => {
   const { ctrl, getProc } = makeController({
     driver: { interpret: () => ({ state: "failed", error: "boom" }) },
   });
@@ -153,23 +153,23 @@ test("exit 非 0 → failed，error 落状态；failed 附 outputTail 原文", a
   assert.match(s.outputTail, /some raw output for tail/);
 });
 
-test("loginTimeoutMs 兜底：超时 kill → timeout 态", async () => {
+test("loginTimeoutMs backstop: expiry kill → timeout state", async () => {
   const { ctrl, getProc } = makeController({
     driver: { loginTimeoutMs: 120 },
     urlWaitMs: 30,
   });
   const started = ctrl.start({});
   await flush();
-  await started; // urlWaitMs 30 到点，无 URL 也返回 waiting（timeout 120ms 未到）
+  await started; // urlWaitMs 30 elapses; still returns waiting without a URL (timeout 120ms not reached)
   assert.equal(ctrl.status().state, "waiting");
   await sleep(160);
   const s = ctrl.status();
   assert.equal(s.state, "timeout");
-  assert.match(s.error, /超时/);
+  assert.match(s.error, /timed out/);
   assert.ok(getProc().kills.includes("SIGTERM"));
 });
 
-test("cancel: kill → cancelled；之后再 submit 报错", async () => {
+test("cancel: kill → cancelled; submit afterwards errors out", async () => {
   const { ctrl, getProc } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -178,13 +178,13 @@ test("cancel: kill → cancelled；之后再 submit 报错", async () => {
   const c = await ctrl.cancel();
   assert.equal(c.state, "cancelled");
   assert.ok(getProc().kills.includes("SIGTERM"));
-  await assert.rejects(() => ctrl.submit("ABC"), /没有进行中的登录/);
-  // 幂等：无进行中流程时 cancel 原样返回当前状态
+  await assert.rejects(() => ctrl.submit("ABC"), /No login currently in progress/);
+  // idempotent: cancel with no flow in progress returns the current state as-is
   const again = await ctrl.cancel();
   assert.equal(again.state, "cancelled");
 });
 
-test("paste 模式 submit：原样写 stdin + \\r\\n（剥用户粘贴尾随换行）", async () => {
+test("paste mode submit: writes stdin verbatim + \\r\\n (strips user-pasted trailing newlines)", async () => {
   const { ctrl, getProc } = makeController({ driver: { mode: "paste" } });
   const started = ctrl.start({});
   await flush();
@@ -194,27 +194,27 @@ test("paste 模式 submit：原样写 stdin + \\r\\n（剥用户粘贴尾随换�
   assert.deepEqual(getProc().stdin.writes, ["ABC-123\r\n"]);
 });
 
-test("url 模式 submit 拒绝；无进行中流程 submit 拒绝", async () => {
+test("url mode submit rejected; submit with no flow in progress rejected", async () => {
   const { ctrl, getProc } = makeController();
-  await assert.rejects(() => ctrl.submit("X"), /没有进行中的登录/);
+  await assert.rejects(() => ctrl.submit("X"), /No login currently in progress/);
   const started = ctrl.start({});
   await flush();
   getProc().stdout.emit("data", "https://stub.example/auth?u=1\n");
   await started;
-  await assert.rejects(() => ctrl.submit("X"), /url 模式/);
+  await assert.rejects(() => ctrl.submit("X"), /url mode/);
 });
 
-test("resolveRuntime 失败 → failed + 人话 error（fail-loud，不 spawn）", async () => {
+test("resolveRuntime failure → failed + human-readable error (fail-loud, no spawn)", async () => {
   const { ctrl, spawnCount } = makeController({
-    resolveRuntime: async () => { throw new Error("未找到 xxx CLI（PATH 上无 xxx）"); },
+    resolveRuntime: async () => { throw new Error("xxx CLI not found (xxx not on PATH)"); },
   });
   const res = await ctrl.start({});
   assert.equal(res.state, "failed");
-  assert.match(res.error, /未找到 xxx CLI/);
+  assert.match(res.error, /xxx CLI not found/);
   assert.equal(spawnCount.n, 0);
 });
 
-test("spawn error 事件（ENOENT 等）→ failed 人话", async () => {
+test("spawn error event (ENOENT etc.) → failed with human-readable message", async () => {
   const { ctrl, getProc } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -225,18 +225,18 @@ test("spawn error 事件（ENOENT 等）→ failed 人话", async () => {
   assert.match(s.error, /ENOENT/);
 });
 
-test("服务重启 reconcile：waiting + pid 死 → status 返回 failed", async () => {
+test("server restart reconcile: waiting + dead pid → status returns failed", async () => {
   const { ctrl, configDir } = makeController();
-  // 手工落一个 waiting 态（模拟重启前的残留），pid 指向不存在的进程
+  // Hand-write a waiting state (simulating a leftover from before a restart), pid pointing at a nonexistent process
   writeFileSync(join(configDir, "controlled-login.json"), JSON.stringify({
     state: "waiting", url: null, mode: "url", startedAt: Date.now() - 1000, pid: 999999999,
   }));
   const s = ctrl.status();
   assert.equal(s.state, "failed");
-  assert.match(s.error, /重新发起/);
+  assert.match(s.error, /start again/);
 });
 
-test("终态后重新 start：全新 spawn（spawn 计数 +1，旧进程 kill 清理）", async () => {
+test("start again after a terminal state: fresh spawn (spawn count +1, old process kill-cleaned)", async () => {
   const { ctrl, getProc, spawnCount } = makeController();
   const first = ctrl.start({});
   await flush();
@@ -250,7 +250,7 @@ test("终态后重新 start：全新 spawn（spawn 计数 +1，旧进程 kill �
   assert.equal(second.state, "waiting");
 });
 
-test("dispose：清残活进程", async () => {
+test("dispose: cleans up leftover processes", async () => {
   const { ctrl, getProc } = makeController();
   const started = ctrl.start({});
   await flush();
@@ -258,11 +258,11 @@ test("dispose：清残活进程", async () => {
   await started;
   ctrl.dispose();
   assert.ok(getProc().kills.includes("SIGTERM"));
-  // dispose 后 waiting 态留文件；下次 status 因 pid 死（假进程非真 pid）→ failed（可接受语义）
+  // after dispose the waiting state stays in the file; the next status sees a dead pid (fake process is not a real pid) → failed (acceptable semantics)
 });
 
 // ============================================================================
-// API 挂载 helper（mountControlledLoginApi）
+// API mounting helper (mountControlledLoginApi)
 // ============================================================================
 
 function apiReq(path, method, body) {
@@ -272,17 +272,17 @@ function apiReq(path, method, body) {
   });
 }
 
-test("mountControlledLoginApi：start/status/submit/cancel 全链 + 非 login 路径放行", async () => {
+test("mountControlledLoginApi: start/status/submit/cancel full chain + non-login paths pass through", async () => {
   const { ctrl, getProc } = makeController({ driver: { mode: "paste" } });
   const api = cl.mountControlledLoginApi(ctrl);
 
-  // 非 login 路径 → null（放行给扩展其他端点）
+  // non-login path → null (passes through to the extension's other endpoints)
   assert.equal(await api(apiReq(["usage"], "GET"), { path: ["usage"], method: "GET" }), null);
-  // 未知端点 → 404
+  // unknown endpoint → 404
   const nf = await api(apiReq(["login", "nope"], "GET"), { path: ["login", "nope"], method: "GET" });
   assert.equal(nf.status, 404);
 
-  // status：idle
+  // status: idle
   const s0 = await (await api(apiReq(["login", "status"], "GET"), { path: ["login", "status"], method: "GET" })).json();
   assert.equal(s0.state, "idle");
 
@@ -294,11 +294,11 @@ test("mountControlledLoginApi：start/status/submit/cancel 全链 + 非 login �
   assert.equal(s1.state, "waiting");
   assert.equal(s1.url, "https://stub.example/auth?api=1");
 
-  // submit（paste）
+  // submit (paste)
   const s2 = await (await api(apiReq(["login", "submit"], "POST", { code: "CC-9" }), { path: ["login", "submit"], method: "POST" })).json();
   assert.equal(s2.state, "waiting");
   assert.deepEqual(getProc().stdin.writes, ["CC-9\r\n"]);
-  // submit 缺 code → 400
+  // submit missing code → 400
   const bad = await api(apiReq(["login", "submit"], "POST", {}), { path: ["login", "submit"], method: "POST" });
   assert.equal(bad.status, 400);
 
@@ -308,23 +308,23 @@ test("mountControlledLoginApi：start/status/submit/cancel 全链 + 非 login �
 });
 
 // ============================================================================
-// 副本同步断言（前端弹窗，字节级一致）
-// （服务端 controlled-login.mjs 五份副本已退役为 @aiti-ai/ext-shared 包导入——M2a，2026-09-16）
+// Copy sync assertions (frontend dialog, byte-identical)
+// (the five server-side controlled-login.mjs copies were retired into @aiti-ai/ext-shared package imports — M2a, 2026-09-16)
 // ============================================================================
 
 const EXT_IDS = ["aiti-zcode-agent", "aiti-cursor-agent", "aiti-qoder-agent", "aiti-claude-code-agent", "aiti-codex-agent"];
 
 
-test("副本同步：controlled-login-dialog.mjs 五份 client 拷贝与权威源字节一致", () => {
+test("copy sync: the five client copies of controlled-login-dialog.mjs are byte-identical to the authoritative source", () => {
   const auth = readFileSync(join(SHARED, "controlled-login-dialog.mjs"));
   for (const id of EXT_IDS) {
-    const p = join(ROOT, id, "client", "src", "controlled-login-dialog.mjs"); // dist-migration 后副本统一在 client/src/
-    assert.ok(existsSync(p), `缺副本: ${relative(ROOT, p)}`);
-    assert.ok(auth.equals(readFileSync(p)), `副本与权威源不一致: ${relative(ROOT, p)}`);
+    const p = join(ROOT, id, "client", "src", "controlled-login-dialog.mjs"); // after dist-migration copies live uniformly in client/src/
+    assert.ok(existsSync(p), `missing copy: ${relative(ROOT, p)}`);
+    assert.ok(auth.equals(readFileSync(p)), `copy differs from authoritative source: ${relative(ROOT, p)}`);
   }
 });
 
-test("图标库：key-round.svg 存在且为 lucide 线图风格（currentColor / fill none）", () => {
+test("icon library: key-round.svg exists and is lucide line-icon style (currentColor / fill none)", () => {
   const svg = readFileSync(join(SHARED, "icons", "key-round.svg"), "utf8");
   assert.match(svg, /stroke="currentColor"/);
   assert.match(svg, /fill="none"/);
@@ -332,7 +332,7 @@ test("图标库：key-round.svg 存在且为 lucide 线图风格（currentColor 
 });
 
 // ============================================================================
-// 五家 driver fixture（方案 §1 实测 stdout/stderr 样本钉死）
+// Five vendors' driver fixtures (stdout/stderr samples measured in plan §1, pinned)
 // ============================================================================
 
 const ZCODE_STDERR = "Open this URL to sign in:\n" +
@@ -343,39 +343,39 @@ const ZCODE_READY_STDOUT = JSON.stringify({
   model: "glm-5.3", credentialsPath: "~/.zcode/v2/credentials.json", configPath: "~/.zcode/cli/config.json", browserOpened: false,
 }, null, 2);
 
-test("zcode driver：stderr 抓 URL / ready JSON → success+user / timed out → timeout / clean env", async () => {
+test("zcode driver: stderr URL capture / ready JSON → success+user / timed out → timeout / clean env", async () => {
   const d = zcore.zcodeLoginDriver;
   assert.equal(d.mode, "url");
-  // URL（stderr，--json 档）
+  // URL (stderr, --json flavor)
   assert.equal(
     d.extractUrl(ZCODE_STDERR),
     "https://chat.z.ai/api/oauth/authorize?client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapi%2Fv1%2Foauth%2Fcli%2Fcallback%2Fzai&state=e3b0c44298fc1c14&response_type=code",
   );
   assert.equal(d.extractUrl("no url here"), null);
-  // 成功：exit 0 + stdout JSON ready → user 取 name
+  // success: exit 0 + stdout JSON ready → user takes name
   const ok = d.interpret(0, ZCODE_READY_STDOUT, "");
   assert.equal(ok.state, "success");
   assert.equal(ok.user, "Wind");
-  // 超时：exit 1 + Error: Authorization timed out
+  // timeout: exit 1 + Error: Authorization timed out
   const to = d.interpret(1, "", "Error: Authorization timed out. Please retry login.\n");
   assert.equal(to.state, "timeout");
-  // 失败：exit 1 + 其他 Error
+  // failure: exit 1 + other Error
   const fail = d.interpret(1, "", "Error: config_update_failed\n");
   assert.equal(fail.state, "failed");
   assert.match(fail.error, /config_update_failed/);
-  // spawn 三元组：node + runtime + login --no-browser --json；env 干净（不含模型 key）
+  // spawn triple: node + runtime + login --no-browser --json; env clean (no model keys)
   const built = d.buildLogin({ runtime: "/data/runtime/zcode.cjs" });
   assert.equal(built.args[0], "/data/runtime/zcode.cjs");
   assert.deepEqual(built.args.slice(1), ["login", "--no-browser", "--json"]);
-  assert.ok(!("ZCODE_API_KEY" in built.env) && !("ZCODE_MODEL" in built.env), "login env 不注入模型 key");
-  assert.ok(built.env.PATH, "保留 PATH");
+  assert.ok(!("ZCODE_API_KEY" in built.env) && !("ZCODE_MODEL" in built.env), "login env injects no model key");
+  assert.ok(built.env.PATH, "PATH preserved");
 });
 
 const CURSOR_STDOUT = "To authenticate, copy and paste this open URL:\n" +
   "navigate to this link: https://cursor.com/loginDeepControl?uuid=9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d&verifier=TAmv7f\n" +
   "Waiting for authorization...\n";
 
-test("cursor driver：stdout 抓 loginDeepControl 链接 / NO_OPEN_BROWSER=1 / 退出码判结果", () => {
+test("cursor driver: stdout loginDeepControl link capture / NO_OPEN_BROWSER=1 / exit code judges the result", () => {
   const d = cursorMod.cursorLoginDriver;
   assert.equal(d.mode, "url");
   assert.equal(d.extractUrl(CURSOR_STDOUT), "https://cursor.com/loginDeepControl?uuid=9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d&verifier=TAmv7f");
@@ -392,10 +392,12 @@ test("cursor driver：stdout 抓 loginDeepControl 链接 / NO_OPEN_BROWSER=1 / �
 
 const QODER_STDOUT_INTL = "Visit the following URL to sign in:\n" +
   "https://qoder.com/device/selectAccounts?challenge=czlCQ0haTnpO&nonce=a1b2c3d4&machine_id=MIIDdDCCAil&client_id=qoder_cli\n";
-const QODER_STDOUT_CN = "请打开以下链接登录：\n" +
+// CN region fixture: real qoder CLI prints the prompt line in Chinese; translated here for repo language policy,
+// the matchable part is the CN-domain URL (qoder.com.cn + qoderclicn client_id), which is unchanged.
+const QODER_STDOUT_CN = "Open the following link to sign in:\n" +
   "https://qoder.com.cn/device/selectAccounts?challenge=Y24xMjM0NTY&nonce=e5f6a7b8&machine_id=Q0404GTHT3&client_id=qoderclicn\n";
 
-test("qoder driver：双区域 selectAccounts URL 都命中 / NO_BROWSER=true", () => {
+test("qoder driver: both regions' selectAccounts URLs hit / NO_BROWSER=true", () => {
   const d = qoderDrv.qoderLoginDriver;
   assert.equal(d.mode, "url");
   assert.equal(d.extractUrl(QODER_STDOUT_INTL), "https://qoder.com/device/selectAccounts?challenge=czlCQ0haTnpO&nonce=a1b2c3d4&machine_id=MIIDdDCCAil&client_id=qoder_cli");
@@ -415,16 +417,16 @@ const CLAUDE_STDOUT = "OAuth authorization is required before proceeding.\n" +
   "https://claude.com/cai/oauth/authorize?code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=hC9j&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&client_id=9d1c250a-3bf\n" +
   "\nPaste code here if prompted > ";
 
-test("claude driver：paste 模式 / authorize URL 抓取 / --console 档 / 退出码判结果", () => {
+test("claude driver: paste mode / authorize URL capture / --console flavor / exit code judges the result", () => {
   const d = claudeMod.claudeLoginDriver;
-  assert.equal(d.mode, "paste", "claude 是唯一 paste-relay 家");
+  assert.equal(d.mode, "paste", "claude is the only paste-relay vendor");
   assert.equal(
     d.extractUrl(CLAUDE_STDOUT),
     "https://claude.com/cai/oauth/authorize?code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=hC9j&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&client_id=9d1c250a-3bf",
   );
-  // claude.ai 旧域同样命中
+  // the old claude.ai domain hits too
   assert.ok(d.extractUrl("see https://claude.ai/cai/oauth/authorize?code_challenge=x&state=y").startsWith("https://claude.ai/"));
-  // 默认档与 --console 档
+  // default flavor vs --console flavor
   assert.deepEqual(claudeMod.claudeLoginDriver.buildLogin({ runtime: "claude" }).args, ["auth", "login"]);
   assert.deepEqual(claudeMod.claudeLoginDriver.buildLogin({ runtime: "claude", consoleMode: true }).args, ["auth", "login", "--console"]);
   assert.deepEqual(claudeMod.interpretClaudeLogin(0, "Login successful.", ""), { state: "success" });
@@ -437,14 +439,14 @@ const CODEX_STDOUT = "Signing in...\n" +
   "1. Open this URL in your browser: https://auth.openai.com/api/accounts/deviceauth/usercode?user_code=WTMH-JPQT\n" +
   "2. Enter the code shown below.\n";
 
-test("codex driver：--device-auth / 通用 URL 抓取（⚠ 155 首跑校准 TODO）/ 退出码判结果", () => {
+test("codex driver: --device-auth / generic URL capture (⚠ TODO: calibrate against real 155 run) / exit code judges the result", () => {
   const d = codexMod.codexLoginDriver;
   assert.equal(d.mode, "url");
-  // ⚠ TODO(155 校准)：输出格式未实测，样本为合成；正则=通用 https 兜底
+  // ⚠ TODO(155 calibration): output format unmeasured, sample is synthetic; regex = generic https fallback
   assert.equal(d.extractUrl(CODEX_STDOUT), "https://auth.openai.com/api/accounts/deviceauth/usercode?user_code=WTMH-JPQT");
-  // localhost 回调（非 device-auth 默认档）不命中——受控登录只走设备码
+  // localhost callback (non-device-auth default flavor) does not hit — controlled login only uses device codes
   assert.equal(d.extractUrl("callback server at http://localhost:1455/auth/callback"), null);
-  // 错误行内括号包裹的 URL：尾标点（右括号）不能带进 URL（agent-manager 直显可点）
+  // URL wrapped in parentheses inside an error line: trailing punctuation (right paren) must not leak into the URL (agent-manager displays it directly, clickable)
   assert.equal(
     d.extractUrl("Error logging in with device code: error sending request for url (https://auth.openai.com/api/accounts/deviceauth/usercode)"),
     "https://auth.openai.com/api/accounts/deviceauth/usercode",
@@ -458,7 +460,7 @@ test("codex driver：--device-auth / 通用 URL 抓取（⚠ 155 首跑校准 TO
 });
 
 // ============================================================================
-// 清理
+// Cleanup
 // ============================================================================
 
 test.after(() => {

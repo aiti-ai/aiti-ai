@@ -1,19 +1,24 @@
 /**
- * session-recycle —— 会话 recycle API 共享实现（债务 D8）。
+ * session-recycle — shared implementation of the session recycle API (debt D8).
  *
- * 把存量 handle 升级到当前扩展代码，无需重启 pi-web 进程（扩展热重载只换模块，
- * core handle store（globalThis.__sessionHandles）里已存在的 handle 实例继续跑老代码）。
- * 样板：aiti-zcode-agent / aiti-codebuddy-agent 的本地实现（先例）；本层抽公共骨架，
- * 各扩展以「isOwn + parseId」两个闭包接入。
+ * Upgrades existing handles to the current extension code without restarting the pi-web process
+ * (extension hot-reload only swaps modules; handle instances already in the core handle store
+ * (globalThis.__sessionHandles) keep running the old code).
+ * Template: the local implementations of aiti-zcode-agent / aiti-codebuddy-agent (precedent); this
+ * layer extracts the common skeleton, and each extension plugs in via the two closures
+ * "isOwn + parseId".
  *
- *   GET  /session/recycle               → 存量会话清单（id/running/alive）
- *   POST /session/recycle {id, force?}  → 空闲校验（运行中需 force:true，会打断当前轮）
- *       → dispose 旧 handle → 自 fetch POST /api/session-backends（loopback 恒过门禁）
- *       → core 复活分支建新 handle（当前代码）→ putHandle 覆盖。
- *   占位 id（未发过消息的空会话）仅 dispose——前端下次访问按需重建。
+ *   GET  /session/recycle               -> list of existing sessions (id/running/alive)
+ *   POST /session/recycle {id, force?}  -> idle check (a running session requires force:true, which
+ *       interrupts the current turn)
+ *       -> dispose the old handle -> self-fetch POST /api/session-backends (loopback always passes the gate)
+ *       -> the core revival branch creates a new handle (current code) -> putHandle overwrites it.
+ *   Placeholder ids (empty sessions that never sent a message) are only disposed — the front end
+ *   rebuilds on demand at next access.
  *
- * ⚠ 权威源：pi-web-ext/_shared/session-recycle.ts。部署时复制进各扩展目录
- *   （同 backend-queue 先例）——改动须同步全部副本，头部保留本注释。
+ * ⚠ Authoritative source: pi-web-ext/_shared/session-recycle.ts. Copied into each extension
+ *   directory at deploy time (same precedent as backend-queue) — changes must sync all copies, and
+ *   this header comment is preserved.
  */
 
 export interface RecycleHandleLike {
@@ -25,17 +30,17 @@ export interface RecycleHandleLike {
 }
 
 export interface SessionRecycleOpts {
-  /** GET 清单过滤 + POST id 归属校验（扩展自认领：id 前缀或 handle 特征）。 */
+  /** GET list filter + POST id ownership check (extension self-claims: id prefix or handle traits). */
   isOwn(handle: RecycleHandleLike): boolean;
   /**
-   * id → 重建参数。返回 null = id 不合法（400）；
-   * sessionId 为空串 = 占位会话（仅 dispose，不重建）；providerType = 扩展注册 type 全名。
-   * handle 参数 = 该 id 当前对应的旧 handle（providerType 可按 handle 特征细分，如 pi 双 fork）。
+   * id -> rebuild params. Returning null = invalid id (400);
+   * an empty sessionId = placeholder session (dispose only, no rebuild); providerType = the extension's registered full type name.
+   * The handle arg = the old handle currently mapped to that id (providerType can be refined by handle traits, e.g. pi's dual forks).
    */
   parseId(id: string, handle: RecycleHandleLike): { sessionId: string; providerType: string } | null;
 }
 
-/** 服务端自基址（loopback；127.0.0.1 直连不走 nginx/Authelia，经域名来的回退 argv 解析）。 */
+/** The server's own base URL (loopback; 127.0.0.1 direct connections bypass nginx/Authelia; requests arriving via a domain fall back to argv parsing). */
 export function selfBaseFromRequest(req: Request): string {
   try {
     const u = new URL(req.url);
@@ -63,24 +68,24 @@ export function createSessionRecycleApi(opts: SessionRecycleOpts): (
     }
     if (req.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 });
     let body: { id?: unknown; force?: unknown } = {};
-    try { body = await req.json() as typeof body; } catch { /* 空体按缺省 */ }
+    try { body = await req.json() as typeof body; } catch { /* empty body treated as defaults */ }
     const id = typeof body.id === "string" ? body.id : "";
     const old = store?.get(id);
     if (!old || !opts.isOwn(old)) {
-      return Response.json({ error: `无存活的 handle：${id}` }, { status: 404 });
+      return Response.json({ error: `no live handle: ${id}` }, { status: 404 });
     }
     const parsed = opts.parseId(id, old);
-    if (!parsed) return Response.json({ error: `id 不属于本扩展（或无法解析）：${id}` }, { status: 400 });
+    if (!parsed) return Response.json({ error: `id does not belong to this extension (or cannot be parsed): ${id}` }, { status: 400 });
     if (old.isRunning() && !body.force) {
       return Response.json(
-        { error: "会话正在运行中——等本轮收口后重试；确认要打断请带 force:true（当前轮作废，已排队消息随之清空）", running: true },
+        { error: "session is running — retry after this turn settles; to interrupt it for sure pass force:true (the current turn is voided and queued messages are cleared with it)", running: true },
         { status: 409 },
       );
     }
     const cwd = typeof old.cwd === "string" ? old.cwd : "";
-    try { await old.dispose(); } catch { /* 已死容错 */ }
+    try { await old.dispose(); } catch { /* already dead, tolerated */ }
     if (!parsed.sessionId) {
-      return Response.json({ recycled: true, recreated: false, id, note: "占位会话已释放（未发过消息的空会话），前端下次访问按需重建" });
+      return Response.json({ recycled: true, recreated: false, id, note: "placeholder session released (an empty session that never sent a message); the front end rebuilds on demand at next access" });
     }
     const base = selfBaseFromRequest(req);
     try {
@@ -93,16 +98,16 @@ export function createSessionRecycleApi(opts: SessionRecycleOpts): (
       if (!res.ok) {
         return Response.json({
           recycled: true, recreated: false, id,
-          error: `重建请求 HTTP ${res.status}: ${JSON.stringify(data).slice(0, 200)}`,
-          note: "旧 handle 已释放——前端刷新该会话即走复活路径用当前代码重建",
+          error: `rebuild request HTTP ${res.status}: ${JSON.stringify(data).slice(0, 200)}`,
+          note: "the old handle is released — refreshing the session in the front end takes the revival path and rebuilds with the current code",
         });
       }
       return Response.json({ recycled: true, recreated: true, id, session: data });
     } catch (e) {
       return Response.json({
         recycled: true, recreated: false, id,
-        error: `重建请求失败: ${e instanceof Error ? e.message : String(e)}`,
-        note: "旧 handle 已释放——前端刷新该会话即走复活路径用当前代码重建",
+        error: `rebuild request failed: ${e instanceof Error ? e.message : String(e)}`,
+        note: "the old handle is released — refreshing the session in the front end takes the revival path and rebuilds with the current code",
       });
     }
   };

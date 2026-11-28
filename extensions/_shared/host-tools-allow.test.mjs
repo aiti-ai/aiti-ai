@@ -1,5 +1,5 @@
 /**
- * host-tools-allow · G1 白名单纯逻辑单测（docs/pi-web-ext-host-tools-gate-plan.md §G1）
+ * host-tools-allow · G1 allowlist pure-logic unit tests (docs/pi-web-ext-host-tools-gate-plan.md §G1)
  * Run: node scripts/test-web-ext.mjs --only host-tools-allow
  */
 import { test } from "node:test";
@@ -13,7 +13,7 @@ const TOOLS = [
   { name: "page_exec" }, { name: "form_fill" },
 ];
 
-test("parse：空/readonly→只读子集；*/all→全量；清单→精确集合；坏输入回退只读", () => {
+test("parse: empty/readonly->read-only subset; */all->everything; list->exact set; bad input falls back to readonly", () => {
   assert.equal(parseHostToolsAllow(null), "readonly");
   assert.equal(parseHostToolsAllow(""), "readonly");
   assert.equal(parseHostToolsAllow("  readonly "), "readonly");
@@ -22,21 +22,21 @@ test("parse：空/readonly→只读子集；*/all→全量；清单→精确集�
   const custom = parseHostToolsAllow("aiti_inbox, page_exec;; page_logs");
   assert.ok(custom instanceof Set);
   assert.deepEqual([...custom].sort(), ["aiti_inbox", "page_exec", "page_logs"]);
-  assert.equal(parseHostToolsAllow("  ,  ;; "), "readonly"); // 全分隔符 → 回退缺省
+  assert.equal(parseHostToolsAllow("  ,  ;; "), "readonly"); // separators only -> fall back to the default
 });
 
-test("filter：只读子集排除写类（page_exec/form_fill）；全量原样；清单精确", () => {
+test("filter: the read-only subset excludes write-class (page_exec/form_fill); everything passes as-is; list is exact", () => {
   const ro = filterHostToolsByAllow(TOOLS, "readonly").map((t) => t.name);
   assert.deepEqual(ro.sort(), ["aiti_inbox", "bridge_status", "page_snapshot"]);
   for (const n of HOST_TOOLS_READONLY_NAMES) {
-    if (["page_exec", "form_fill"].includes(n)) throw new Error("写类不应进只读子集: " + n);
+    if (["page_exec", "form_fill"].includes(n)) throw new Error("write-class tools must not enter the read-only subset: " + n);
   }
   assert.equal(filterHostToolsByAllow(TOOLS, "all").length, TOOLS.length);
   const custom = filterHostToolsByAllow(TOOLS, new Set(["page_exec"]));
   assert.deepEqual(custom.map((t) => t.name), ["page_exec"]);
 });
 
-test("hostToolAllowed：单工具判定（attach 转发校验语义）", () => {
+test("hostToolAllowed: single-tool decision (attach forwarding-check semantics)", () => {
   assert.equal(hostToolAllowed("aiti_inbox", "readonly"), true);
   assert.equal(hostToolAllowed("page_exec", "readonly"), false);
   assert.equal(hostToolAllowed("form_fill", "readonly"), false);

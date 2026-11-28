@@ -7,7 +7,7 @@ test("execFileAsync resolves stdout", async () => {
   assert.equal(out, "hello\n");
 });
 
-test("execFileAsync error carries stdout/stderr/status (execFileSync 形态)", async () => {
+test("execFileAsync error carries stdout/stderr/status (execFileSync shape)", async () => {
   try {
     await execFileAsync("sh", ["-c", "echo out; echo err >&2; exit 3"]);
     assert.fail("should throw");

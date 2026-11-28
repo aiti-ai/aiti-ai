@@ -1,106 +1,109 @@
 /**
- * spec.ts — pi 系 fork 家族的类型与能力声明（载体无关，无 fork 语义之外的逻辑）。
- * 拆自 aiti-pi-agent 的 pi-rpc-spawn.ts：类型/常量原样迁移；registerFork/listForks
- * （家族注册机制）随拆分退役——每个扩展各自声明自己的 spec。
+ * spec.ts — types and capability declarations for the pi fork family (carrier-agnostic, no logic
+ * beyond fork semantics).
+ * Split out of aiti-pi-agent's pi-rpc-spawn.ts: types/constants migrated as-is; registerFork/listForks
+ * (the family registration mechanism) retired with the split — each extension declares its own spec.
  */
 
 // ============================================================================
-// 家族差异声明
+// Family difference declarations
 // ============================================================================
 
 export interface PiForkCommands {
-  /** fork 元语命令名：pi=fork；omp=branch。 */
+  /** fork meta-command name: pi=fork; omp=branch. */
   fork: "fork" | "branch";
-  /** fork 消息查询命令名（本引擎暂未消费，声明给后续 viewer 用）。 */
+  /** Fork message query command name (not yet consumed by this engine; declared for a future viewer). */
   getForkMessages: "get_fork_messages" | "get_branch_messages";
-  /** 命令清单查询命令名：pi=get_commands；omp=get_available_commands。 */
+  /** Command list query command name: pi=get_commands; omp=get_available_commands. */
   getCommands: "get_commands" | "get_available_commands";
-  /** 是否支持 get_entries（pi true；omp false → 走 get_messages）。 */
+  /** Whether get_entries is supported (pi true; omp false → uses get_messages). */
   hasGetEntries: boolean;
-  /** 是否有启动 ready 握手帧（omp true；pi 无 → 300ms sleep 兜底）。 */
+  /** Whether there is a startup ready handshake frame (omp true; pi has none → 300ms sleep fallback). */
   hasReadyFrame: boolean;
-  /** get_state 是否含 contextUsage（omp true）。 */
+  /** Whether get_state includes contextUsage (omp true). */
   hasContextUsage: boolean;
-  /** get_state 是否含 dumpTools（omp true）。 */
+  /** Whether get_state includes dumpTools (omp true). */
   hasDumpTools: boolean;
-  /** 是否支持宿主工具注入（omp set_host_tools / host_tool_call｜result｜cancel）。 */
+  /** Whether host tool injection is supported (omp set_host_tools / host_tool_call｜result｜cancel). */
   hasHostTools: boolean;
-  /** 是否支持 OAuth 登录 RPC（omp get_login_providers/login → open_url 帧；pi 无）。 */
+  /** Whether OAuth login RPC is supported (omp get_login_providers/login → open_url frame; pi has none). */
   hasLogin: boolean;
-  /** A09：subagent RPC 面（omp get_subagents/set_subagent_subscription/get_subagent_messages；pi 无）。 */
+  /** A09: subagent RPC surface (omp get_subagents/set_subagent_subscription/get_subagent_messages; pi has none). */
   hasSubagents: boolean;
 }
 
 export interface PiForkSpec {
-  /** 家族成员 id（= provider type 后缀：spawn / omp-spawn）。 */
+  /** Family member id (= provider type suffix: spawn / omp-spawn). */
   id: string;
-  /** Backend 下拉 UI label。 */
+  /** Backend dropdown UI label. */
   label: string;
-  /** Backend 下拉位次（SessionProvider.order）。 */
+  /** Backend dropdown position (SessionProvider.order). */
   order: number;
-  /** agentKey（all-sessions 认领键；omp 会话落 ~/.omp，不认领 pi 历史）。 */
+  /** agentKey (all-sessions claim key; omp sessions land in ~/.omp and do not claim pi history). */
   agentKey?: string;
-  /** 执行运行时：node → 显式 process.execPath 解释 cli.js；bun → 显式 bun 解释。 */
+  /** Execution runtime: node → interpret cli.js with the explicit process.execPath; bun → interpret with the explicit bun. */
   runtime: "node" | "bun";
-  /** PATH 上的 CLI 名（pi / omp）。 */
+  /** CLI name on PATH (pi / omp). */
   pathBin: string;
-  /** 显式 CLI 覆盖 env 变量名（如 OMP_CLI）。 */
+  /** Explicit CLI override env variable name (e.g. OMP_CLI). */
   cliEnvVar: string;
-  /** 包内自带 SDK cli.js 路径（pi 专用：PI_WEB_PKG_DIR）；无则不启用该解析层。 */
+  /** Bundled SDK cli.js path inside the package (pi only: PI_WEB_PKG_DIR); when absent this resolution tier is disabled. */
   bundledCli?(): string | undefined;
   commands: PiForkCommands;
 }
 
 /**
- * 宿主工具定义（omp host tools）：宿主注入给 fork 子进程的工具；agent 调用时经
- * `host_tool_call` 帧回传宿主执行，宿主以 `host_tool_result` 应答（omp 独有能力）。
+ * Host tool definition (omp host tools): a tool the host injects into the fork child process; when
+ * the agent calls it, the call comes back to the host via a `host_tool_call` frame, and the host
+ * answers with `host_tool_result` (an omp-only capability).
  */
 export interface HostToolDefinition {
   name: string;
   label?: string;
   description: string;
-  /** JSON Schema（omp RpcHostToolDefinition.parameters）。 */
+  /** JSON Schema (omp RpcHostToolDefinition.parameters). */
   parameters: Record<string, unknown>;
-  /** 宿主执行体：返回文本结果；抛错 → isError 结果帧。 */
+  /** Host executor: returns a text result; throwing → an isError result frame. */
   execute(args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
 }
 
-/** Handle 能力位（SessionCapabilities 的 fork 家族子集，前端据此渲染操作面）。 */
+/** Handle capability bits (the fork-family subset of SessionCapabilities; the front end renders the action surface from these). */
 export interface ForkCapabilities extends Record<string, boolean> {}
 
-/** 由 spec.commands 派生能力位（pi/omp 各扩展以此声明 maxCapabilities）。 */
+/** Derive capability bits from spec.commands (each pi/omp extension declares its maxCapabilities from this). */
 export function capabilitiesFor(spec: PiForkSpec): ForkCapabilities {
   return {
     steer: true,
     followUp: true,
-    // 队列 keeper 全 CRUD（remote-queue 共享层：clear_queue 原生 + clear/重注入变更策略，
-    // docs/aiti-remote-queue-and-sidecar-plan.md §2）
+    // Queue keeper full CRUD (remote-queue shared layer: native clear_queue + the clear/re-inject mutation
+    // strategy, docs/aiti-remote-queue-and-sidecar-plan.md §2)
     queueManage: true,
-    // steering 条目同样可撤回/移动/转换（变更即 clear+重注入）——宿主据此放开队列面板
-    // steer 行的行级操作；zcode 那类「已注入对端进程、协议收不回」的后端不声明
+    // Steering entries can likewise be recalled/moved/converted (a mutation is clear+re-inject) — the host
+    // uses this to enable the row-level actions of the queue panel's steer rows; backends like zcode whose
+    // entries are "already injected into the peer process, unrecoverable via protocol" do not declare it
     steerQueueManage: true,
     getMessages: true,
-    contextUsage: spec.commands.hasContextUsage, // omp get_state.contextUsage；pi RPC 无
+    contextUsage: spec.commands.hasContextUsage, // omp get_state.contextUsage; pi RPC has none
     setModel: true,
     setThinkingLevel: true,
     fork: true,
     renameSession: true,
     compact: true,
     executeBash: true,
-    setActiveTools: false, // 两系 RPC 均无（待实测协议面，见拆分计划 B5）
+    setActiveTools: false, // neither family's RPC has it (pending protocol probing, see split plan B5)
     navigateTree: false,
     deleteSession: false,
     getCommands: true,
     listModels: true,
-    listTools: spec.commands.hasDumpTools, // omp get_state.dumpTools；pi RPC 无（待实测）
-    // 进阶能力（2026-09-14 拆分时盘点）：respondInteraction 已实现，补声明；
-    // respondPermission/getUsage/fileAttachments 待实测协议面后补（B5）。
+    listTools: spec.commands.hasDumpTools, // omp get_state.dumpTools; pi RPC has none (pending probing)
+    // Advanced capabilities (inventoried at the 2026-09-14 split): respondInteraction is implemented,
+    // declared; respondPermission/getUsage/fileAttachments to be added after protocol probing (B5).
     respondInteraction: true,
     subagents: spec.commands.hasSubagents,
     respondPermission: false,
     getUsage: false,
     fileAttachments: false,
-    respondProviderHeaders: false, // zcode 专属
-    setPermissionMode: false, // cc-connect 专属
+    respondProviderHeaders: false, // zcode only
+    setPermissionMode: false, // cc-connect only
   };
 }

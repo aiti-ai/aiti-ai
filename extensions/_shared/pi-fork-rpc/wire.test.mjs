@@ -1,6 +1,6 @@
 /**
- * wire.test — pi-fork-rpc 共享层线协议宿主 / extension_ui 桥接纯函数测试。
- * 拆分自旧 aiti-pi-agent/pi-rpc-spawn.test.mjs 的公共部分（不依赖任何 fork 语义）。
+ * wire.test — pi-fork-rpc shared-layer wire-protocol host / extension_ui bridge pure-function tests.
+ * Split from the common part of the old aiti-pi-agent/pi-rpc-spawn.test.mjs (depends on no fork semantics).
  */
 
 import assert from "node:assert/strict";
@@ -44,7 +44,7 @@ async function later(ms = 20) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-test("wire：request/response id 关联 + 错误帧 reject", async () => {
+test("wire: request/response id correlation + error frame rejects", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const p = h.request({ type: "get_state" });
@@ -60,7 +60,7 @@ test("wire：request/response id 关联 + 错误帧 reject", async () => {
   await assert.rejects(p2, /boom/);
 });
 
-test("wire：非 response 帧默认原样透传 emit", async () => {
+test("wire: non-response frames pass through to emit as-is by default", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const events = [];
@@ -72,7 +72,7 @@ test("wire：非 response 帧默认原样透传 emit", async () => {
   assert.equal(events[1].type, "message_end");
 });
 
-test("wire：进程 exit → pending reject + session_backend_dead 事件", async () => {
+test("wire: process exit -> pending rejects + session_backend_dead event", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const events = [];
@@ -84,35 +84,35 @@ test("wire：进程 exit → pending reject + session_backend_dead 事件", asyn
   assert.equal(events.find((e) => e.type === "session_backend_dead")?.reason, "process exited (137)");
 });
 
-// ---- 加固回归（审查 docs/pi-fork-rpc-review-findings.md 实证项）---------------------
+// ---- hardening regressions (evidence items from docs/pi-fork-rpc-review-findings.md) ----
 
-test("wire：跨 chunk 的多字节字符整行解码不损坏（审查 P0-1 回归）", async () => {
+test("wire: multi-byte characters split across chunks decode intact per line (review P0-1 regression)", async () => {
   const pt = new PassThrough();
   const lines = [];
   lineReader(pt, (l) => lines.push(l));
-  // 「标」= E6 A0 87、「题」= E9 A2 98：在「标」的 3 字节中间切开
+  // "é" = C3 A9: split inside the 2-byte sequence across two chunks
   pt.write('{"title":"');
-  pt.write(Buffer.from([0xe6, 0xa0]));
-  pt.write(Buffer.from([0x87, 0xe9, 0xa2, 0x98]));
+  pt.write(Buffer.from([0xc3]));
+  pt.write(Buffer.from([0xa9]));
   pt.write('"}\n');
   await later();
-  assert.ok(lines[0]?.includes("标题"), `跨块解码应完整，got=${JSON.stringify(lines[0])}`);
+  assert.ok(lines[0]?.includes("é"), `cross-chunk decoding must be complete, got=${JSON.stringify(lines[0])}`);
 });
 
-test("lineReader：超长行触发 onOverflow 并停止处理（审查 P1-6 回归）", async () => {
+test("lineReader: an overlong line triggers onOverflow and stops processing (review P1-6 regression)", async () => {
   const pt = new PassThrough();
   const lines = [];
   let overflowSize = 0;
   lineReader(pt, (l) => lines.push(l), { maxLineBytes: 64, onOverflow: (n) => (overflowSize = n) });
-  pt.write(Buffer.from("a".repeat(100))); // 无换行超限
+  pt.write(Buffer.from("a".repeat(100))); // over the cap without a newline
   await later();
-  pt.write('{"x":1}\n'); // 超限后不再处理
+  pt.write('{"x":1}\n'); // no longer processed after the overflow
   await later();
-  assert.ok(overflowSize >= 64, "应触发 onOverflow");
-  assert.equal(lines.length, 0, "超限后不再分发");
+  assert.ok(overflowSize >= 64, "onOverflow should have fired");
+  assert.equal(lines.length, 0, "no dispatch after the overflow");
 });
 
-test("wire：行超限 → markDead（RpcChildHost 接线）", async () => {
+test("wire: line overflow -> markDead (RpcChildHost wiring)", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child, { maxLineBytes: 64 });
   const events = [];
@@ -123,7 +123,7 @@ test("wire：行超限 → markDead（RpcChildHost 接线）", async () => {
   assert.equal(h.aliveFlag, false);
 });
 
-test("wire：单个 listener 抛错不漏帧、不裸抛（审查 P0-3 回归）", async () => {
+test("wire: a single listener throwing neither drops frames nor raw-throws (review P0-3 regression)", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const got = [];
@@ -132,11 +132,11 @@ test("wire：单个 listener 抛错不漏帧、不裸抛（审查 P0-3 回归）
   h.subscribe((e) => got.push(e));
   child.stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
   await later();
-  assert.equal(got.length, 1, "第二个 listener 应照常收到帧");
+  assert.equal(got.length, 1, "the second listener should still receive the frame");
   assert.equal(got[0].type, "agent_start");
 });
 
-test("wire：stdout 流 error → markDead（审查 P0-2 回归）", async () => {
+test("wire: stdout stream error -> markDead (review P0-2 regression)", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const events = [];
@@ -147,65 +147,66 @@ test("wire：stdout 流 error → markDead（审查 P0-2 回归）", async () =>
   assert.equal(h.aliveFlag, false);
 });
 
-test("wire：request 超时 reject + 响应/死亡清定时器（审查 P1-4 回归）", async () => {
+test("wire: request timeout rejects + response/death clears the timer (review P1-4 regression)", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   await assert.rejects(
     h.request({ type: "get_state" }, { timeoutMs: 20 }),
     /\[rpc-child\] timeout: get_state after 20ms/,
   );
-  // 正常响应路径不受超时影响
+  // The normal response path is unaffected by the timeout
   const p = h.request({ type: "get_state" }, { timeoutMs: 5_000 });
   await later();
   feed(h, { id: child.frames()[1].id, type: "response", command: "get_state", success: true, data: { ok: 1 } });
   assert.deepEqual(await p, { ok: 1 });
 });
 
-test("wire：死亡时挂起超时定时器一并清理（无泄漏）", async () => {
+test("wire: the pending timeout timer is cleared together on death (no leak)", async () => {
   const child = fakeChild();
   const h = new RpcChildHost(child);
   const p = h.request({ type: "get_state" }, { timeoutMs: 60_000 });
   await later();
   child.emit("exit", 0);
   await assert.rejects(p, /dead/);
-  // 若定时器未清，60s 后会多一次 reject（pending 已清，无副作用）——此处仅回归 reject 路径
+  // If the timer leaked, 60s later there would be one extra reject (pending already cleared, no
+  // side effect) — this only regresses the reject path
 });
 
-test("shutdownChild：SIGTERM → destroy 三流（真实子进程冒烟）", async () => {
+test("shutdownChild: SIGTERM -> destroy the three streams (real child-process smoke test)", async () => {
   const child = spawn("node", ["-e", "setInterval(()=>{},1000)"]);
   await later(80);
   const t0 = Date.now();
   await shutdownChild(child, 120);
-  assert.ok(child.signalCode !== null || child.exitCode !== null, "子进程应已退出");
-  assert.ok(Date.now() - t0 < 900, "grace 后应快速收尾");
+  assert.ok(child.signalCode !== null || child.exitCode !== null, "the child process should have exited");
+  assert.ok(Date.now() - t0 < 900, "should settle quickly after the grace period");
   assert.equal(child.stdout.destroyed, true);
   assert.equal(child.stdin.destroyed, true);
 });
 
-// ---- extension_ui ⇄ interaction_request 桥接纯函数 --------------------------------
+// ---- extension_ui <-> interaction_request bridge pure functions --------------------------------
 
-test("toInteractionRequest：open_url 真实帧形状（instructions 字段）→ prompt 投影", () => {
+test("toInteractionRequest: open_url real frame shape (instructions field) -> prompt projection", () => {
   const ir = toInteractionRequest({
     type: "extension_ui_request", id: "ui-8", method: "open_url",
-    url: "https://auth.x/oa2/authorize", launchUrl: "http://127.0.0.1:1/l", instructions: "在浏览器完成授权",
+    url: "https://auth.x/oa2/authorize", launchUrl: "http://127.0.0.1:1/l", instructions: "Finish the authorization in the browser",
   });
   assert.equal(ir.kind, "open_url");
   assert.equal(ir.toolName, "extension_ui.open_url");
-  assert.equal(ir.prompt, "在浏览器完成授权");
+  assert.equal(ir.prompt, "Finish the authorization in the browser");
   assert.equal(ir.url, "https://auth.x/oa2/authorize");
   assert.equal(ir.launchUrl, "http://127.0.0.1:1/l");
 });
 
-test("toInteractionRequest：select（含 optionDetails description）→ ask_user 事件", () => {
+test("toInteractionRequest: select (with optionDetails description) -> ask_user event", () => {
   const ir = toInteractionRequest({
     type: "extension_ui_request", id: "b", method: "select", title: "t", options: ["x", "y"],
-    optionDetails: [{}, { description: "便宜" }],
+    optionDetails: [{}, { description: "cheaper" }],
   });
   assert.equal(ir.kind, "ask_user");
-  assert.equal(ir.questions[0].options[1].description, "便宜");
+  assert.equal(ir.questions[0].options[1].description, "cheaper");
 });
 
-test("toInteractionRequest：input/editor → ask_user 自由文本（options 必填，必须是空数组）", () => {
+test("toInteractionRequest: input/editor -> ask_user free text (options required, must be an empty array)", () => {
   // Regression: the projection used to omit `options` entirely, so the session-request
   // cards threw on options.map and the request had no way to be answered — /vault add
   // (ctx.ui.input) never reached the store on subprocess backends.
@@ -217,7 +218,7 @@ test("toInteractionRequest：input/editor → ask_user 自由文本（options �
   assert.equal(input.toolName, "extension_ui.input");
   assert.equal(input.questions.length, 1);
   assert.equal(input.questions[0].question, 'Value for "API_KEY"');
-  assert.deepEqual(input.questions[0].options, [], "options 必填契约：自由文本题给空数组，不能缺字段");
+  assert.deepEqual(input.questions[0].options, [], "options-required contract: free-text questions carry an empty array, the field must not be omitted");
 
   const editor = toInteractionRequest({
     type: "extension_ui_request", id: "e1", method: "editor", title: "", prefill: "secret",
@@ -225,7 +226,7 @@ test("toInteractionRequest：input/editor → ask_user 自由文本（options �
   assert.equal(editor.kind, "ask_user");
   assert.equal(editor.toolName, "extension_ui.editor");
   assert.deepEqual(editor.questions[0].options, []);
-  assert.equal(editor.questions[0].question, "Editor", "无标题时给稳定标签（answers 的键）");
+  assert.equal(editor.questions[0].question, "Editor", "a stable label when untitled (the answers key)");
   assert.equal(editor.input.prefill, "secret");
 
   // An untitled input still gets a stable label — it is the key the answer is addressed by
@@ -238,7 +239,7 @@ test("toInteractionRequest：input/editor → ask_user 自由文本（options �
   );
 });
 
-test("toExtensionUIResponse：select 无答案（decline）→ cancelled；纯函数直测", () => {
+test("toExtensionUIResponse: select with no answer (decline) -> cancelled; direct pure-function test", () => {
   assert.deepEqual(
     toExtensionUIResponse({ type: "extension_ui_request", id: "a", method: "select", title: "t", options: ["x"] }, { action: "decline" }),
     { type: "extension_ui_response", id: "a", cancelled: true },
@@ -247,33 +248,33 @@ test("toExtensionUIResponse：select 无答案（decline）→ cancelled；纯�
   assert.equal(ir.kind, "ask_user");
 });
 
-test("toExtensionUIResponse：select accept 带答案 → value 帧；confirm 三态；input/editor", () => {
+test("toExtensionUIResponse: select accept with an answer -> value frame; confirm three states; input/editor", () => {
   const sel = toExtensionUIResponse(
     { type: "extension_ui_request", id: "s", method: "select", title: "t", options: ["x"] },
     { action: "accept", answers: { t: "x" } },
   );
   assert.deepEqual(sel, { type: "extension_ui_response", id: "s", value: "x" });
-  // confirm：accept（无答案=批准按钮路径）→ confirmed true；answers 选「取消」→ false；decline → cancelled
+  // confirm: accept (no answers = approve-button path) -> confirmed true; answers picking "Cancel" -> false; decline -> cancelled
   assert.deepEqual(
-    toExtensionUIResponse({ type: "extension_ui_request", id: "c1", method: "confirm", title: "删除?", message: "不可撤销" }, { action: "accept" }),
+    toExtensionUIResponse({ type: "extension_ui_request", id: "c1", method: "confirm", title: "Delete?", message: "Irreversible" }, { action: "accept" }),
     { type: "extension_ui_response", id: "c1", confirmed: true },
   );
   assert.deepEqual(
-    toExtensionUIResponse({ type: "extension_ui_request", id: "c2", method: "confirm", title: "删除?", message: "不可撤销" }, { action: "accept", answers: { "删除?\n不可撤销": "取消" } }),
+    toExtensionUIResponse({ type: "extension_ui_request", id: "c2", method: "confirm", title: "Delete?", message: "Irreversible" }, { action: "accept", answers: { "Delete?\nIrreversible": "Cancel" } }),
     { type: "extension_ui_response", id: "c2", confirmed: false },
   );
   assert.deepEqual(
-    toExtensionUIResponse({ type: "extension_ui_request", id: "c3", method: "confirm", title: "t", message: "m" }, { action: "decline", message: "不要" }),
+    toExtensionUIResponse({ type: "extension_ui_request", id: "c3", method: "confirm", title: "t", message: "m" }, { action: "decline", message: "No" }),
     { type: "extension_ui_response", id: "c3", cancelled: true },
   );
-  // confirm 防御（fail-closed）：answers 非空但未命中问题 key → 不再默认 confirmed true
+  // confirm defense (fail-closed): non-empty answers missing the question key -> no longer defaults to confirmed true
   assert.deepEqual(
-    toExtensionUIResponse({ type: "extension_ui_request", id: "c4", method: "confirm", title: "删除?", message: "不可撤销" }, { action: "accept", answers: { "别的问题": "确认" } }),
+    toExtensionUIResponse({ type: "extension_ui_request", id: "c4", method: "confirm", title: "Delete?", message: "Irreversible" }, { action: "accept", answers: { "some other question": "Confirm" } }),
     { type: "extension_ui_response", id: "c4", confirmed: false },
   );
-  // input/editor：answers 文本 → value；decline → cancelled
+  // input/editor: answers text -> value; decline -> cancelled
   assert.deepEqual(
-    toExtensionUIResponse({ type: "extension_ui_request", id: "i1", method: "input", title: "会话名" }, { action: "accept", answers: { "会话名": "my session" } }),
+    toExtensionUIResponse({ type: "extension_ui_request", id: "i1", method: "input", title: "Session name" }, { action: "accept", answers: { "Session name": "my session" } }),
     { type: "extension_ui_response", id: "i1", value: "my session" },
   );
   assert.deepEqual(
@@ -282,7 +283,7 @@ test("toExtensionUIResponse：select accept 带答案 → value 帧；confirm �
   );
 });
 
-test("toExtensionUIResponse：notify/setWidget 等单向方法 → null（无需响应）", () => {
+test("toExtensionUIResponse: one-way methods like notify/setWidget -> null (no response needed)", () => {
   assert.equal(
     toExtensionUIResponse({ type: "extension_ui_request", id: "n", method: "notify", message: "hello" }, { action: "accept" }),
     null,

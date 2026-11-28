@@ -1,14 +1,14 @@
 /**
- * agent-capability-contract —— Agent 类扩展 capability 声明 ↔ handle 方法存在性 静态对照
- * （债务清单 docs/pi-web-ext-agent-authoring-debt.md D2 防回归）。
+ * agent-capability-contract — static cross-check of Agent-class extension capability declarations ↔ handle method existence
+ * (debt-list docs/pi-web-ext-agent-authoring-debt.md D2 regression guard).
  *
- * 机制：适配层（pi-web lib/session/handle-adapter.ts）对 steer/followUp 等命令是
- * 「cap("X") 通过后 await h.X!()」——声明 true 而方法缺失即运行时 TypeError；
- * getMessages 错名则走 fail-loud 报 UnsupportedCapability（不崩但功能缺失）。
- * 本测试静态扫描 pi-web-ext/aiti-*-agent 的 *.ts 源码（不 import、零副作用）：
- *   1. 逐行收集已知 capability 键为 `true` 的声明（剔除注释行）；
- *   2. 对照「方法定义行模式」与豁免表（无方法面的声明）；
- *   3. 声明 true 而两处皆无 → fail，提示补方法或改 false + fail-loud stub。
+ * Mechanism: the adapter layer (pi-web lib/session/handle-adapter.ts) handles steer/followUp-style commands as
+ * "cap("X") passes → await h.X!()" — declaring true without the method is a runtime TypeError;
+ * a wrong getMessages name goes fail-loud as UnsupportedCapability (no crash, but the feature is missing).
+ * This test statically scans pi-web-ext/aiti-*-agent *.ts sources (no import, zero side effects):
+ *   1. collect line by line the known capability keys declared `true` (comment lines excluded);
+ *   2. cross-check against "method definition line patterns" and the exemption table (declarations with no method surface);
+ *   3. declared true but found in neither → fail, hinting to add the method or change to false + a fail-loud stub.
  *
  * Run: node --experimental-strip-types --test pi-web-ext/_shared/agent-capability-contract.test.mjs
  */
@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** capability 键 → handle 方法名（多候选 = 任一存在即可）。
- *  依据 pi-web handle-adapter.ts 命令表的查名。 */
+/** capability key → handle method names (multiple candidates = any one present suffices).
+ *  Based on the lookup names in pi-web's handle-adapter.ts command table. */
 const CAP_TO_METHODS = {
 	prompt: ["prompt"],
 	abort: ["abort"],
@@ -46,18 +46,18 @@ const CAP_TO_METHODS = {
 	navigateTree: ["navigateTree"],
 	deleteSession: ["deleteSession"],
 	listModels: ["getAvailableModels"],
-	// adapter get_tools 走 h.send 直达通道或 getAllTools 快照，任一即可
+	// adapter get_tools goes through the h.send direct channel or the getAllTools snapshot, either suffices
 	listTools: ["getAllTools", "getTools", "send"],
 };
 
-/** 无独立方法面的 capability（声明 true 合法，无需方法）： */
+/** Capabilities with no standalone method surface (declaring true is legal, no method needed): */
 const CAP_EXEMPT = new Set([
-	"fileAttachments", // prompt images 参数面；ACP 实例按 initialize promptCapabilities 收敛
+	"fileAttachments", // prompt images parameter surface; the ACP instance narrows by initialize promptCapabilities
 ]);
 
 const KNOWN_KEYS = new Set([...Object.keys(CAP_TO_METHODS), ...CAP_EXEMPT]);
 
-/** 方法定义行模式（逐行；不含调用——调用带 `.` / `!` 前缀或缩进不符）：
+/** Method definition line patterns (line by line; excludes calls — calls carry a `.` / `!` prefix or mismatched indentation):
  *   async followUp(text: string): Promise<void> {   /   getUsage() {   /
  *   queueManage = (req: {...}) => ...               /   private steer(): never { */
 function methodDefined(src, method) {
@@ -98,13 +98,13 @@ function listTsFiles(dir) {
 }
 
 for (const ext of listAgentExts()) {
-	test(`[${ext}] capability 声明 ↔ handle 方法对照（D2 防回归）`, () => {
+	test(`[${ext}] capability declaration ↔ handle method cross-check (D2 regression guard)`, () => {
 		const files = listTsFiles(join(ROOT, ext));
-		assert.ok(files.length, `${ext}: 未找到 .ts 源文件`);
+		assert.ok(files.length, `${ext}: no .ts source files found`);
 		const src = files.map((p) => readFileSync(p, "utf8")).join("\n");
 
-		// 收集声明 true 的已知 capability 键（剔除纯注释行）
-		const claimed = new Map(); // key -> 首个声明处描述
+		// collect known capability keys declared true (pure comment lines excluded)
+		const claimed = new Map(); // key -> description of the first declaration site
 		for (const file of files) {
 			for (const [i, line] of readFileSync(file, "utf8").split(/\r?\n/).entries()) {
 				const t = line.trim();
@@ -123,8 +123,8 @@ for (const ext of listAgentExts()) {
 			const found = candidates.find((m) => methodDefined(src, m));
 			if (!found) {
 				problems.push(
-					`capabilities.${key}: true（${at}）但无对应方法（${candidates.join("/")}）——` +
-					`适配层调用即 TypeError/UnsupportedCapability；请实现方法或改 false + fail-loud stub`,
+					`capabilities.${key}: true (${at}) but no matching method (${candidates.join("/")}) — ` +
+					`the adapter call would be a TypeError/UnsupportedCapability; implement the method or change to false + a fail-loud stub`,
 				);
 			}
 		}

@@ -1,45 +1,53 @@
 /**
- * _shared/ext-float-dock-core.ts — 左栏 dock 区块栈的**纯状态层**（零 react import）。
+ * _shared/ext-float-dock-core.ts — the sidebar dock block stack's **pure state layer**
+ * (zero react import).
  *
- * 拆分动机（sidebar 统一 dock 方案 §3.8）：aiti-float 自身 bundle 不做 react alias
- * （产物零 React 引用），其 DockStack 容器需要折叠/排序的读写与迁移逻辑——这些是
- * 纯 localStorage + window 事件，不含任何 React；React 绑定（useBlockCollapsed /
- * useDockOrder / DockBody）留在 ext-float-dock.ts（各扩展 bundle 内联，react alias
- * → host-shim）。
+ * Split rationale (sidebar unified dock plan §3.8): the aiti-float bundle itself does no
+ * react aliasing (zero React references in the artifact), yet its DockStack container
+ * needs collapse/order read-write and migration logic — these are pure localStorage +
+ * window events, no React; the React bindings (useBlockCollapsed / useDockOrder /
+ * DockBody) stay in ext-float-dock.ts (inlined into each extension bundle, react alias
+ * → host-shim).
  *
- * 单一事实源 = localStorage（跨 bundle/跨扩展零共享模块实例也收敛）；变更以 window
- * 事件广播（事件驱动零轮询）。订阅方 = aiti-float DockStack 容器 + DockBody 头行。
+ * Single source of truth = localStorage (converges even with zero shared module
+ * instances across bundles/extensions); changes broadcast via window events (event
+ * driven, zero polling). Subscribers = the aiti-float DockStack container + DockBody header.
  *
- * 图标排（v5，方案 docs/pi-web-dock-icon-row-plan.md）：位置菜单/移动操作由文字项改
- * 一排无歧义图标（图标数据在 ./dock-icons.ts）；本文件的 positionMenuModel/positionMenuItems
- * 产出统一模型，appendDockIconRow 供 DOM 端（D2 aiti-float / D3 降级层）共用渲染。
+ * Icon rows (v5, plan docs/pi-web-dock-icon-row-plan.md): the position menu / move
+ * operations switched from text items to one row of unambiguous icons (icon data in
+ * ./dock-icons.ts); this file's positionMenuModel/positionMenuItems produce the unified
+ * model and appendDockIconRow serves the DOM side (D2 aiti-float / D3 fallback layer).
  */
 import { dockIconOfZone, createDockIconSvg, type DockIconName } from "./dock-icons.ts";
 
-/* ── 左栏区块 zone 泛化（sidebar 统一 dock 方案 §3.8）──
- * 规范 zone 值 = `sidebar:<itemKey>`（每面板一个区块身份，blockKey 即 itemKey——
- * 折叠/排序记忆直接按 itemKey 落 key）；旧值 "sidebar-explorer" 永远兼容读
- * （旧 dockpref 持久化 / 在网面板）。DockStack 以 isSidebarDockState 判定成员资格。 */
+/* ── Sidebar block zone generalization (sidebar unified dock plan §3.8) ──
+ * Canonical zone value = `sidebar:<itemKey>` (one block identity per panel; blockKey is
+ * the itemKey — collapse/order memory keys land directly on itemKey); the legacy
+ * "sidebar-explorer" value stays readable forever (persisted legacy dockpref / panels
+ * in the wild). DockStack uses isSidebarDockState for membership. */
 export type DockZone = "sidebar-explorer" | "right-panel" | `sidebar:${string}`;
 export type PresentState = "closed" | "floating" | `docked:${string}`;
 
 export function sidebarZoneOf(itemKey: string): `sidebar:${string}` {
   return `sidebar:${itemKey}`;
 }
-/** 展示状态是否落在左栏区块（规范 sidebar:* 或旧值 sidebar-explorer）。 */
+/** Whether the present state lands in a sidebar block (canonical sidebar:* or legacy sidebar-explorer). */
 export function isSidebarDockState(state: PresentState | string): boolean {
   return state === "docked:sidebar-explorer" || state.startsWith("docked:sidebar:");
 }
 
-/* ── 拖拽入位落点解析（aiti-float-dock-drag-drop-unify-plan §3.1）──
- * 落点标记是公共 DOM（谁拥有停泊区谁盖 data-ext-float-dock-zone），而 sidebar 的
- * zone 值是每面板私有的 sidebar:<itemKey>——公共落点只能盖通配值。标记值 = 通配
- * "sidebar"，拖拽命中后按拖拽面板自己声明的 zones 解析出真实落位。 */
+/* ── Drag-in drop-target resolution (aiti-float-dock-drag-drop-unify-plan §3.1) ──
+ * The drop marker is public DOM (whoever owns the berth stamps data-ext-float-dock-zone),
+ * while a sidebar zone value is per-panel-private sidebar:<itemKey> — a public drop
+ * target can only stamp the wildcard. Marker value = wildcard "sidebar"; on a drag hit
+ * the real landing is resolved against the dragging panel's own declared zones. */
 export const SIDEBAR_DROP_ZONE = "sidebar";
 
-/** 落点标记 zone → 拖拽面板真实落位：marker 在面板声明 zones 里原样返回（现有行为）；
- *  通配 "sidebar" → 面板声明的第一个 sidebar:* zone（旧值 sidebar-explorer 一并认）；
- *  无可落位返回 null（松手不入位，浮窗回原处）。 */
+/** Drop-marker zone → the dragging panel's real landing: a marker inside the panel's
+ *  declared zones returns as-is (existing behavior);
+ *  wildcard "sidebar" → the panel's first declared sidebar:* zone (legacy
+ *  sidebar-explorer accepted too);
+ *  returns null when no landing fits (release does not dock; the float window stays put). */
 export function resolveDropZone(markerZone: string, declaredZones: readonly string[]): DockZone | null {
   if (!markerZone) return null;
   if (declaredZones.includes(markerZone)) return markerZone as DockZone;
@@ -50,15 +58,19 @@ export function resolveDropZone(markerZone: string, declaredZones: readonly stri
   return null;
 }
 
-/* ── 左栏区块对齐分组（v4 补录设计：dock 区块上对齐 / 下对齐）──
- *  核心区块（项目、定时任务）上对齐——钉在左栏顶部；重要性次级的区块（文件夹、
- *  停靠面板、消息类）下对齐——钉在左栏底部；两组之间留弹性空隙。对齐是区块的
- *  声明属性（props.blocks.align / slot item meta.align），不是用户可切换态（v1）。
- *  DockStack 以 splitBlockAlign 分组渲染：组内保持有效序，组界 = 排序硬边界。 */
+/* ── Sidebar block alignment grouping (v4 addendum design: dock blocks top / bottom aligned) ──
+ *  Core blocks (projects, scheduled tasks) align top — pinned to the sidebar's top;
+ *  lower-importance blocks (folders, docked panels, message-type) align bottom — pinned
+ *  to the sidebar's bottom; an elastic gap sits between the two groups. Alignment is a
+ *  declared block property (props.blocks.align / slot item meta.align), not a
+ *  user-toggleable state (v1).
+ *  DockStack renders groups via splitBlockAlign: effective order kept within a group;
+ *  group boundaries are hard sort borders. */
 export type BlockAlign = "top" | "bottom";
 
-/** 按对齐属性分组（保持输入序 = 有效序的组内相对序）。defaultAlign：未声明 align
- *  时的兜底（常驻 blocks 缺省 top；dockable items 在构造期已填默认 bottom）。 */
+/** Group by the align property (input order kept = the effective order's within-group
+ *  relative order). defaultAlign: the fallback when align is undeclared (resident blocks
+ *  default top; dockable items got their default bottom filled at construction). */
 export function splitBlockAlign<T extends { align?: BlockAlign }>(entries: T[], defaultAlign: BlockAlign = "top"): { top: T[]; bottom: T[] } {
   const top: T[] = [];
   const bottom: T[] = [];
@@ -69,14 +81,14 @@ export function splitBlockAlign<T extends { align?: BlockAlign }>(entries: T[], 
   return { top, bottom };
 }
 
-/* ── 左栏区块栈：折叠 / 排序 / 旧折叠 key 迁移（sidebar 统一 dock 方案 §3.1/§3.6）── */
+/* ── Sidebar block stack: collapse / order / legacy collapse key migration (sidebar unified dock plan §3.1/§3.6) ── */
 export const SIDEBAR_COLLAPSE_PREFIX = "pi:sidebar-dock:collapsed:";
 export const SIDEBAR_ORDER_KEY = "pi:sidebar-dock:order";
 export const SIDEBAR_COLLAPSE_EVENT = "pi:sidebar-dock:collapsed-changed";
 export const SIDEBAR_ORDER_EVENT = "pi:sidebar-dock:order-changed";
-/** 上下移请求（DockBody ⋮ 菜单发出；DockStack 容器监听——全栈键集只有容器知道）。 */
+/** Move up/down requests (emitted by the DockBody ⋮ menu; the DockStack container listens — only the container knows the full stack key set). */
 export const SIDEBAR_MOVE_EVENT = "pi:sidebar-dock:move";
-/** 拖拽排序落点请求（排序 v2：DockBody 头行 HTML5 DnD 发出；键集裁决同上）。 */
+/** Drag-reorder landing request (order v2: emitted by the DockBody header's HTML5 DnD; key-set arbitration as above). */
 export const SIDEBAR_DROP_EVENT = "pi:sidebar-dock:drop";
 
 export function readBlockCollapsed(blockKey: string): boolean {
@@ -87,9 +99,11 @@ export function writeBlockCollapsed(blockKey: string, collapsed: boolean): void 
   try { window.dispatchEvent(new CustomEvent(SIDEBAR_COLLAPSE_EVENT, { detail: { key: blockKey, collapsed } })); } catch { /* ignore */ }
 }
 
-/** 播种默认折叠态（仅当该区块尚无折叠记录时写入；与 seedDockDefault 同模式）。
- *  默认显示的常驻区块（项目/文件夹）据此获得「首次出现即折叠/展开」的规定默认态；
- *  用户手动折叠/展开后（writeBlockCollapsed 已写 key）尊重用户操作，永不覆盖。 */
+/** Seed the default collapsed state (writes only when the block has no collapse record
+ *  yet; same pattern as seedDockDefault). Resident blocks shown by default (projects /
+ *  folders) thereby get their mandated default of "collapsed/expanded on first
+ *  appearance"; after the user manually collapses/expands (writeBlockCollapsed wrote the
+ *  key) the user action is respected and never overwritten. */
 export function seedBlockCollapsedDefault(blockKey: string, collapsed: boolean): void {
   try {
     const k = SIDEBAR_COLLAPSE_PREFIX + blockKey;
@@ -129,7 +143,8 @@ export function writeDockOrder(order: string[]): void {
   try { window.dispatchEvent(new Event(SIDEBAR_ORDER_EVENT)); } catch { /* ignore */ }
 }
 
-/** 有效序：用户改序数组在前（∩ 在场键），其余按 priority 稳定补尾（默认 项目0→任务1→文件2→停靠3+）。 */
+/** Effective order: the user's reorder array first (∩ present keys), the rest stably
+ *  appended by priority (default projects0 → tasks1 → files2 → docks3+). */
 export function effectiveBlockOrder<T extends { key: string; priority?: number }>(entries: T[], order: string[]): T[] {
   const byKey = new Map(entries.map((e) => [e.key, e] as const));
   const head: T[] = [];
@@ -143,7 +158,7 @@ export function effectiveBlockOrder<T extends { key: string; priority?: number }
   return [...head, ...withIdx.map((x) => x.e)];
 }
 
-/** 计算移动后的全栈键序（delta ±1；邻居交换），持久化并广播。 */
+/** Compute the full stack key order after a move (delta ±1; neighbor swap), persist and broadcast. */
 export function moveBlockKey(key: string, delta: number, allKeys: string[]): void {
   const cur = effectiveBlockOrder(allKeys.map((k) => ({ key: k })), readDockOrder()).map((e) => e.key);
   const idx = cur.indexOf(key);
@@ -156,7 +171,8 @@ export function moveBlockKey(key: string, delta: number, allKeys: string[]): voi
   writeDockOrder(next);
 }
 
-/** 拖拽排序落位（v2）：把 key 移到 target 的前/后（其余键相对序不变），持久化并广播。 */
+/** Drag-reorder landing (v2): move key before/after target (relative order of the other
+ *  keys unchanged), persist and broadcast. */
 export function moveBlockTo(key: string, target: string, allKeys: string[], before: boolean): void {
   if (key === target) return;
   const cur = effectiveBlockOrder(allKeys.map((k) => ({ key: k })), readDockOrder()).map((e) => e.key);
@@ -170,18 +186,21 @@ export function moveBlockTo(key: string, target: string, allKeys: string[], befo
   writeDockOrder(next);
 }
 
-/** 旧折叠 key 一次性迁移（方案 §3.1：四旧 key 读一次迁入 pi:sidebar-dock:collapsed:*；
- *  旧 key 保留不删——回滚旧宿主仍可读；新 key 已存在时不覆盖，模块级 once 守卫）。 */
+/** One-time migration of legacy collapse keys (plan §3.1: read the four legacy keys once
+ *  and migrate into pi:sidebar-dock:collapsed:*; legacy keys are kept, not deleted — a
+ *  rolled-back old host can still read them; no overwrite when the new key exists,
+ *  module-level once guard). */
 let legacyCollapsedMigrated = false;
 export function migrateLegacyCollapseKeys(): void {
   if (legacyCollapsedMigrated || typeof localStorage === "undefined") return;
   legacyCollapsedMigrated = true;
   const legacy: Array<[string, string, (v: string) => boolean]> = [
-    // [旧 key, 新 blockKey, 值→折叠语义]（sm 项目区写 "1"/"0"，宿主区块写 "true"/"false"）
+    // [legacy key, new blockKey, value → collapsed semantics] (the sm projects area
+    // writes "1"/"0", host blocks write "true"/"false")
     ["pi-web:sidebar-projects-collapsed", "projects", (v) => v === "1" || v === "true"],
     ["pi-sidebar-tasks-collapsed", "tasks", (v) => v === "true" || v === "1"],
     ["pi-web:sidebar-explorer-dock-collapsed", "docks", (v) => v === "true" || v === "1"],
-    // 宿主 saveExplorerOpen 存「展开」语义 → 折叠取反
+    // the host saveExplorerOpen stores "expanded" semantics → invert for collapsed
     ["pi-web:file-explorer:open", "files", (v) => v === "false" || v === "0"],
   ];
   for (const [oldKey, blockKey, parse] of legacy) {
@@ -195,22 +214,28 @@ export function migrateLegacyCollapseKeys(): void {
   }
 }
 
-/* ── dock 头工具条 store（v3；公开服务 / 本地回落两层承载） ──
+/* ── dock header toolbar store (v3; two-tier carriage: public service / local fallback) ──
  *
- * 机制（方案 docs/pi-web-dock-header-toolbar-plan.md §2.3/§2.7）：
- *   · 按钮定义（actions）由扩展自己声明（face prop / 服务 register），DockBody 自适应渲染；
- *   · 命令实现（commands）与状态（state）由内容组件注册（useDockCommands/useDockHeaderState）；
- *   · 菜单项（menuItems）由内容注册（head/sep/item，渲染进 ⋮ 菜单，供复杂菜单使用）；
- *   · 未命中命令 → pending（TTL 10s）+ 展开区块，命令注册时补跑一次。
+ * Mechanism (plan docs/pi-web-dock-header-toolbar-plan.md §2.3/§2.7):
+ *   · Button definitions (actions) are declared by the extension itself (face prop /
+ *     service register); DockBody renders them adaptively;
+ *   · Command implementations (commands) and state (state) are registered by the content
+ *     component (useDockCommands/useDockHeaderState);
+ *   · Menu items (menuItems) are registered by content (head/sep/item, rendered into
+ *     the ⋮ menu, for complex menus);
+ *   · Command miss → pending (TTL 10s) + expand the block; run once when the command
+ *     registers.
  *
- * 承载：aiti-float 安装时用本工厂创建宿主级 store（ctx 服务 aiti-float.dock-header +
- * window.__piweFloat.dockHeader core 保留口）；服务缺席时 _shared 层回落 lazy 本地单例。
- * 纯逻辑零 react（服务端/测试可直接导入）。
+ * Carriage: on install aiti-float creates the host-level store with this factory (ctx
+ * service aiti-float.dock-header + window.__piweFloat.dockHeader core-reserved slot);
+ * when the service is absent the _shared layer falls back to a lazy local singleton.
+ * Pure logic, zero react (importable directly by server/tests).
  */
 
 export type DockHeaderVisibility = "always" | "expanded";
 
-/** dock 头按钮定义（扩展声明）。badge=角标（变更数等）；active=高亮态；done=完成绿态。 */
+/** Dock-header button definition (declared by the extension). badge = count badge
+ *  (change counts etc.); active = highlighted state; done = green completed state. */
 export type DockHeaderAction = {
   id: string;
   title: string;
@@ -219,19 +244,20 @@ export type DockHeaderAction = {
   active?: boolean;
   done?: boolean;
   disabled?: boolean;
-  /** 缺省 always：收起与展开都显示；"expanded" 仅展开时显示 */
+  /** Default always: shown both collapsed and expanded; "expanded" shows only while expanded */
   visibility?: DockHeaderVisibility;
-  /** 点击回调；DockBody 会传原始事件（face 可据此取按钮矩形做弹层锚点） */
+  /** Click callback; DockBody passes the raw event (the face can take the button rect from it as a popup anchor) */
   onClick: (ev?: unknown) => void;
 };
 
-/** 内容上报的状态（纯数据：标量/数组/普通对象——签名比较用 JSON）。 */
+/** Content-reported state (pure data: scalars/arrays/plain objects — signature compared via JSON). */
 export type DockHeaderState = Record<string, unknown>;
 
-/** 命令实现表（id → 函数）；payload 可用于传递锚点矩形等参数。 */
+/** Command implementation table (id → function); payload can carry anchor rects and similar parameters. */
 export type DockHeaderCommands = Record<string, ((payload?: unknown) => void) | undefined>;
 
-/** 图标排注册项（iconsRow 行内按钮；icon 接受 React 元素——与 DockIconRowItem 的 DockIconName 区分）。 */
+/** Icon-row registration item (buttons inside an iconsRow row; icon accepts React
+ *  elements — distinguishes from DockIconRowItem's DockIconName). */
 export interface MenuIconRowItem {
   key: string;
   icon: unknown;
@@ -239,16 +265,19 @@ export interface MenuIconRowItem {
   run: () => void;
 }
 
-/** ⋮ 菜单附加项（内容注册，渲染在「工具」组之后的扩展分组）。
- *  iconsRow（2026-11-24）：单行「label 居左 + 图标钮排居右」（v5 图标排同款），供同段多动作合并；
- *  items 内 icon 接受任意 React 元素（React 端 DockBody 渲染）。 */
+/** Extra ⋮ menu items (content-registered, rendered as extension groups after the
+ *  "Tools" group).
+ *  iconsRow (2026-11-24): a single row of "label left + icon buttons right" (same style
+ *  as the v5 icon row), for merging multiple actions of one segment;
+ *  items' icon accepts any React element (rendered by the React-side DockBody). */
 export type DockMenuItem =
   | { kind: "item"; id?: string; label: string; icon?: unknown; hint?: string; active?: boolean; alwaysRun?: boolean; disabled?: boolean; run: () => void }
   | { kind: "sep"; id?: string }
   | { kind: "head"; label: string; id?: string }
   | { kind: "iconsRow"; id?: string; label?: string; items: MenuIconRowItem[] }
-  /** 移动行占位：DockBody 在该位置插入固定「移动」图标行（含 moveRowPin 钉住钮），
-   *  并跳过区块段末尾的默认移动行（前移语义）；无占位时维持区块段末尾现状。 */
+  /** Move-row slot: DockBody inserts the fixed "Move" icon row at this position
+   *  (incl. the moveRowPin pin button) and skips the default move row at the end of the
+   *  block section (moved-up semantics); without a slot the block section stays as-is. */
   | { kind: "moveRow"; id?: string };
 
 export type DockHeaderRegistration = {
@@ -259,9 +288,9 @@ export type DockHeaderRegistration = {
 };
 
 export type DockHeaderStore = {
-  /** 部分字段合并更新（仅更新传入字段）；返回反注册（仅清本次提供字段）。 */
+  /** Partial-field merge update (updates only the passed fields); returns an unregister (clears only the fields provided this time). */
   register(key: string, reg: DockHeaderRegistration): () => void;
-  /** 有命令→立即执行（payload 透传）返回 true；无→展开区块+pending 返回 false。 */
+  /** With a command → run immediately (payload passed through), return true; without → expand the block + pending, return false. */
   request(key: string, id: string, payload?: unknown): boolean;
   actionsOf(key: string): DockHeaderAction[] | null;
   commandsOf(key: string): DockHeaderCommands | null;
@@ -270,10 +299,11 @@ export type DockHeaderStore = {
   subscribe(key: string, cb: () => void): () => void;
 };
 
-/** aiti-float 安装完成事件（install() 末尾广播；服务上线重解析信号）。 */
+/** aiti-float install-complete event (broadcast at the end of install(); service-online re-resolve signal). */
 export const FLOAT_INSTALLED_EVENT = "piwe-float-installed";
 
-/** pending 命令存活时长（命令注册晚于点击的窗口；超时丢弃——避免久后挂载意外执行）。 */
+/** Pending command lifetime (the window where the command registers after the click;
+ *  dropped on timeout — avoids accidental execution on a much-later mount). */
 export const DOCK_HEADER_PENDING_TTL = 10_000;
 
 function actionSig(list: DockHeaderAction[] | null): string {
@@ -318,7 +348,7 @@ export function createDockHeaderStore(): DockHeaderStore {
     if (!set) return;
     for (const cb of [...set]) { try { cb(); } catch { /* ignore */ } }
   };
-  /** 命令注册后补跑排队命令（TTL 内、id 命中才执行；执行一次即清）。 */
+  /** After a command registers, run the queued one (only within TTL and on id hit; cleared after one run). */
   const tryConsumePending = (k: string): void => {
     const s = keyState(k);
     const p = s.pending;
@@ -340,7 +370,7 @@ export function createDockHeaderStore(): DockHeaderStore {
       }
       if ("state" in reg) {
         const next = reg.state ?? {};
-        s.state = next; // 引用始终更新（闭包读最新值）
+        s.state = next; // reference always updated (closures read the latest value)
         const sig = stateSig(next);
         if (sig !== s.sig.state) { s.sig.state = sig; notify(key); }
       }
@@ -388,7 +418,8 @@ export function createDockHeaderStore(): DockHeaderStore {
   };
 }
 
-/** 本地回落单例（aiti-float 服务缺席时 _shared 层使用；模块级 = 同 bundle 共享）。 */
+/** Local fallback singleton (used by the _shared layer when the aiti-float service is
+ *  absent; module-level = shared within the bundle). */
 let localHeaderStore: DockHeaderStore | null = null;
 export function localDockHeaderStore(): DockHeaderStore {
   if (!localHeaderStore) localHeaderStore = createDockHeaderStore();
@@ -396,12 +427,13 @@ export function localDockHeaderStore(): DockHeaderStore {
 }
 
 
-/* ── 展示状态机（present store）——P1-3 自 ext-float-dock.ts 下沉（方案
- * pi-web-eager-ext-split-plan.md §6 P1-3）：纯 localStorage + window 事件，零 react。
- * 下沉动机：扩展薄壳（eager 侧）只须 usePresent/openFloat/seedDockDefault 这层小 API，
- * 不该连带 DockBody/头行 UI——薄壳 import ext-float-dock-lite（hooks + 本层 re-export）
- * 即可，重 UI 留在 ext-float-dock.ts 由懒 chunk 携带。aiti-float 本体仍只消费本 core
- * （产物零 React 引用的红线不破）。 ── */
+/* ── Present state machine (present store) — P1-3 sunk from ext-float-dock.ts (plan
+ * pi-web-eager-ext-split-plan.md §6 P1-3): pure localStorage + window events, zero react.
+ * Sinking rationale: an extension's thin shell (the eager side) only needs the small API
+ * layer — usePresent/openFloat/seedDockDefault — and must not drag in DockBody/header UI;
+ * the shell imports ext-float-dock-lite (hooks + this layer's re-exports) while the
+ * heavy UI stays in ext-float-dock.ts carried by the lazy chunk. aiti-float itself still
+ * consumes only this core (the zero-React-references red line stays intact). ── */
 
 const ITEM_KEY_GLOBAL = "__piweFloat";
 export const CHANGE_EVENT = "piwe-float-present-change";
@@ -412,24 +444,30 @@ type FloatApi = {
   presented(k: string): PresentState;
   onPresentChange(cb: (detail: { key: string; state: PresentState }) => void): () => void;
   dockPref(k: string): string | null;
-  /** 「新窗口打开」能力注册表（面板声明自己能否开独立窗口；位置菜单据此显隐图标） */
+  /** "Open in new window" capability registry (panels declare whether they can open a standalone window; the position menu shows/hides the icon accordingly) */
   registerWindowOpener?(k: string, fn: (() => void) | null): void;
   windowOpenerOf?(k: string): (() => void) | null;
 };
 
-/** float 服务探测（ext-float-dock.ts 头行 store 也用；内部共享出口）。 */
+/** float service probe (also used by ext-float-dock.ts's header store; internal shared exit). */
 export function floatApi(): FloatApi | null {
   const api = (window as any)[ITEM_KEY_GLOBAL] as FloatApi | undefined;
   return api && typeof api.present === "function" ? api : null;
 }
 
-/* ── 降级 store（未装 aiti-float）：无浮窗形态，open 直达停靠（嵌入可用） ──
- * ⚠ 状态必须落 localStorage（跨 bundle 单一事实源）：本模块被各扩展 vite 构建内联，
- * 每个 bundle 各持一份模块实例——内存 Map 会出现「open 走 A 副本（session-manager 内联份）、
- * close 走 B 副本（aiti-folder 内联份）」的分叉：close 在 B 副本里 prev===next 走 no-op 分支
- * 不发事件 → gate 永远 floating → 面板关不掉 + 自带遮罩挡屏（实证：folder 浮窗幽灵态）。
- * 同源同 tab 的 localStorage 全 bundle 共享，本 Map 只是写穿缓存；跨刷新残留无害
- * （closed/docked 残留与重 open 落位一致；floating 仅用户显式选浮窗才产生）。 */
+/* ── Fallback store (aiti-float not installed): no float form; open goes straight to
+ * dock (embedding usable) ──
+ * ⚠ State must land in localStorage (the cross-bundle single source of truth): this
+ * module is inlined by each extension's vite build, so every bundle holds its own module
+ * instance — an in-memory Map forks: "open goes through copy A (session-manager's inline
+ * copy), close through copy B (aiti-folder's inline copy)": close in copy B sees
+ * prev===next and takes the no-op branch without emitting an event → the gate stays
+ * floating forever → the panel can't close and the built-in overlay blocks the screen
+ * (observed: the folder float-window ghost state).
+ * localStorage of the same origin and tab is shared by all bundles; this Map is just a
+ * write-through cache; leftovers across refreshes are harmless (closed/docked leftovers
+ * agree with the re-open landing; floating only arises when the user explicitly picks
+ * float). */
 const LOCAL_STATES_KEY = "pi-web:ext-float:localstates:v1";
 const LOCAL_STATES_REV_KEY = "pi-web:ext-float:localstates-rev:v1";
 function loadLocalStates(): Map<string, PresentState> {
@@ -440,7 +478,8 @@ function loadLocalStates(): Map<string, PresentState> {
   } catch { return new Map(); }
 }
 const localStates = loadLocalStates();
-/** 本副本已加载的版本戳：另一副本写入后 rev 变化 → 下次读前重拉（写穿读穿）。 */
+/** Revision stamp this copy has loaded: after another copy writes, rev changes → re-pull
+ *  before the next read (write-through, read-through). */
 let localStatesRev = "";
 try { localStatesRev = localStorage.getItem(LOCAL_STATES_REV_KEY) ?? ""; } catch { /* ignore */ }
 function syncLocalStates(): void {
@@ -461,8 +500,10 @@ function persistLocalStates(): void {
   localStatesRev = rev;
 }
 const localSubs = new Set<(detail: { key: string; state: PresentState }) => void>();
-/** 降级层 activate 事件（与 aiti-float dock.ts 的 piwe-float-present-activate 同名同语义）：
- *  同态 docked 再 open 时宿主右栏据此置前对应 tab——降级模式不缺失「不置前」修复。 */
+/** Fallback-layer activate event (same name and semantics as aiti-float dock.ts's
+ *  piwe-float-present-activate):
+ *  when an already-docked state is opened again, the host's right column brings the
+ *  corresponding tab forward — the fallback mode does not miss the "don't raise" fix. */
 const ACTIVATE_EVENT = "piwe-float-present-activate";
 
 function localPresent(k: string, mode: "open" | "float" | `dock:${string}` | "close", opts?: { auto?: boolean }) {
@@ -470,10 +511,14 @@ function localPresent(k: string, mode: "open" | "float" | `dock:${string}` | "cl
   const prev = localStates.get(k) ?? "closed";
   let next: PresentState = prev;
   if (mode === "open") {
-    // open 直达停靠（本层语义原意，aiti-float 缺席时不弹自带遮罩的模态浮窗）：
-    // 已停靠保持原位（激活由下方 activate 广播兜底）；关闭态按
-    // 用户 pref（zone；"float" 不认）> 扩展默认位 > 首个声明 zone 落位；
-    // 全无声明才 floating 兜底（未接入 dock 声明的老面板）。
+    // open goes straight to dock (this layer's original semantics; no self-overlay
+    // modal float window pops when aiti-float is absent):
+    // already docked keeps its position (activation is backstopped by the activate
+    // broadcast below); a closed state lands by
+    // user pref (zone; "float" unrecognized) > extension default position > first
+    // declared zone;
+    // only with no declarations at all does floating backstop (legacy panels without
+    // dock declarations).
     if (prev.startsWith("docked:")) next = prev;
     else {
       const pref = dockPref(k);
@@ -489,16 +534,19 @@ function localPresent(k: string, mode: "open" | "float" | `dock:${string}` | "cl
     writeBlockDismissed(k, true); // programmatic closes recorded too — harmless, explicit reopen clears
   } else if (mode.startsWith("dock:")) {
     const zone = mode.slice(5);
-    // 与 float 状态机 dock.ts 同语义：用户显式停靠即记忆偏好（下次 open 回该位）
+    // same semantics as the float state machine's dock.ts: an explicit user dock
+    // memorizes the preference (next open returns there)
     try { localStorage.setItem(DOCKPREF_KEY(k), zone); } catch { /* ignore */ }
-    next = `docked:${zone}` as PresentState; // 规范态 docked:<zone>（旧实现误存 dock:<zone> → gate 永假，停靠 face 不渲染）
+    next = `docked:${zone}` as PresentState; // canonical state docked:<zone> (the old implementation mistakenly stored dock:<zone> → gate always false, docked face never rendered)
   }
   // Explicit (non-auto) landing in the sidebar family = user actively bringing the
   // block back → clear the dismissed record (mirrors dock.ts).
   if (!opts?.auto && next !== "closed" && isSidebarDockState(next)) writeBlockDismissed(k, false);
   if (next === prev) {
-    // 同态 docked 再打开：与 float 状态机同语义——广播 activate 供宿主置前。
-    // auto 透传（与 dock.ts 一致）：恢复性入栈的 activate 不得把宿主小屏抽屉拉起。
+    // Opening an already-docked state: same semantics as the float state machine —
+    // broadcast activate so the host brings it forward.
+    // auto passed through (consistent with dock.ts): a restorative re-dock's activate
+    // must not raise the host's small-screen drawer.
     if (prev.startsWith("docked:")) {
       try { window.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: { key: k, state: prev, ...(opts?.auto ? { auto: true } : {}) } })); } catch { /* ignore */ }
     }
@@ -511,7 +559,7 @@ function localPresent(k: string, mode: "open" | "float" | `dock:${string}` | "cl
   try { window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail })); } catch { /* ignore */ }
 }
 
-/* ── 公共 API ── */
+/* ── Public API ── */
 
 export function present(k: string, mode: "open" | "float" | `dock:${string}` | "close", opts?: { auto?: boolean }): void {
   const api = floatApi();
@@ -539,16 +587,18 @@ export function dockPref(k: string): string | null {
   try { return localStorage.getItem(DOCKPREF_KEY(k)); } catch { return null; }
 }
 
-/* ── 语义糖 ── */
+/* ── Action sugar ── */
 
-/** docked 态重复 open 的容器 flash 提示（方案 §3.2：不开第二个，提示面板在哪）。
- *  定位 DockBody 根上的 data-ext-item 标注（自删 CSS class，零宿主逻辑）。 */
+/** Container flash hint for a repeated open while docked (plan §3.2: don't open a
+ *  second one; hint where the panel is).
+ *  Targets the data-ext-item attribute on the DockBody root (self-removing CSS class,
+ *  zero host logic). */
 function flashDockContainer(k: string): void {
   try {
     const el = document.querySelector(`[data-ext-float-dock-body="${k}"]`);
     if (!el) return;
     el.classList.remove("piwe-dock-flash");
-    // 触发 reflow 重启动画
+    // trigger a reflow to restart the animation
     void (el as HTMLElement).offsetWidth;
     el.classList.add("piwe-dock-flash");
     setTimeout(() => el.classList.remove("piwe-dock-flash"), 2000);
@@ -556,60 +606,72 @@ function flashDockContainer(k: string): void {
 }
 
 export function openFloat(k: string) {
-  // docked 态幂等 open：不开第二个，flash 提示（方案 §3.2）；float 状态机内部同样幂等
+  // idempotent open while docked: don't open a second one, flash hint (plan §3.2); the
+  // float state machine is idempotent the same way inside
   const st = presentState(k);
   if (st.startsWith("docked:")) flashDockContainer(k);
   present(k, "open");
 }
 
-// 降级命令监听：未装 aiti-float 时由本层响应宿主命令事件（TabBar ✕ 等）；
-// float 在场时由 float 的监听处理（本层不重复执行）
+// Fallback command listener: when aiti-float is not installed this layer answers host
+// command events (TabBar ✕ etc.);
+// when float is present its own listener handles them (this layer does not double-run)
 if (typeof window !== "undefined") {
   try {
     window.addEventListener("piwe-float-present-command", ((e: CustomEvent<{ key: string; mode: "open" | "float" | `dock:${string}` | "close" }>) => {
-      if (floatApi()) return; // float 在场 → float 的监听已处理
+      if (floatApi()) return; // float present → float's listener already handled it
       if (!e.detail || !e.detail.key || !e.detail.mode) return;
       localPresent(e.detail.key, e.detail.mode);
     }) as EventListener);
   } catch { /* ignore */ }
 }
 export function dockTo(k: string, zone: DockZone) { present(k, `dock:${zone}`); }
-/** dock 到左栏区块（zone = sidebar:<itemKey>；sidebar 统一 dock 方案 §3.8）。 */
+/** Dock to a sidebar block (zone = sidebar:<itemKey>; sidebar unified dock plan §3.8). */
 export function dockToSidebar(k: string) { present(k, `dock:${sidebarZoneOf(k)}`); }
-/** 拉回浮窗（v3 Q1：同时记住浮窗偏好——下次 open 仍回浮窗；dock.ts present("float") 内已写） */
+/** Pull back to the float window (v3 Q1: also remember the float preference — the next
+ *  open returns to float; written inside dock.ts present("float")) */
 export function undockToFloat(k: string) { present(k, "float"); }
 export function closePanel(k: string) { present(k, "close"); }
-/** 直接写用户形态偏好（zone | "float"），不迁移状态——偏好下次 open 生效。 */
+/** Write the user presence preference directly (zone | "float") without migrating state — the preference applies on the next open. */
 export function setDockPref(k: string, pref: "float" | DockZone) {
   const api = floatApi();
   if (api && typeof (api as any).setPref === "function") { (api as any).setPref(k, pref); return; }
   try { localStorage.setItem(DOCKPREF_KEY(k), pref); } catch { /* ignore */ }
 }
 
-/** 清除用户形态偏好（不迁移状态）。用于「关闭即忘」语义的面板（文件夹区块拍板：
- *  任何路径关闭后清偏好，下次 open/刷新自动入栈回落默认位——避免拉成浮窗关掉后
- *  刷新又弹出）。float 状态机 dockprefOf 每次直读 localStorage 无缓存，删 key 即生效
- *  （float 在场/降级层同 key，两态通用）。 */
+/** Clear the user presence preference (no state migration). For panels with "close and
+ *  forget" semantics (folder block ruling: any close path clears the preference so the
+ *  next open/refresh auto-docks back to the default position — avoids being pulled out
+ *  to float, closed, then popping up again on refresh). The float state machine's
+ *  dockprefOf reads localStorage directly each time with no cache, so deleting the key
+ *  takes effect immediately (same key in both float-present and fallback modes). */
 export function clearDockPref(k: string): void {
   try { localStorage.removeItem(DOCKPREF_KEY(k)); } catch { /* ignore */ }
 }
 
-/** 播种扩展声明默认落位（v3 §2-B 实现修正）：仅当用户尚无偏好时写 dockPref=zone。
- *  为什么不是只靠面板属性：default 需要在**首次 open 时**生效，而面板 JSX 只在渲染后
- *  存在（open 前状态机拿不到 DOM 属性，鸡生蛋）——故扩展 register 时调本函数预填。
- *  用户 ⇲/选浮窗后偏好被覆盖，本函数永不再次覆盖（尊重用户选择）。
- *  createDockFaces 工厂自动调；手写接入在 register() 里显式调一次。 */
+/** Seed the extension-declared default landing (v3 §2-B implementation fix): writes
+ *  dockPref=zone only while the user has no preference yet.
+ *  Why not rely on panel attributes alone: the default must apply **at first open**,
+ *  while the panel JSX only exists after rendering (before open the state machine cannot
+ *  read DOM attributes — chicken and egg), so extensions call this at register time to
+ *  prefill. After the user undocks/picks float the preference is overwritten and this
+ *  function never overwrites again (user choice respected).
+ *  Called automatically by the createDockFaces factory; hand-written integrations call
+ *  it once explicitly inside register(). */
 export function seedDockDefault(k: string, zone: DockZone) {
   try { if (!localStorage.getItem(DOCKPREF_KEY(k))) localStorage.setItem(DOCKPREF_KEY(k), zone); } catch { /* ignore */ }
-  // 默认位进注册表（TabBar ⇱ 菜单「默认」尾标；v3.1）——与 declareDockZones 互不覆盖：
-  // 本函数只补 default，不动 zones 集合
+  // Default position into the registry (the TabBar ⇱ menu's "default" suffix; v3.1) —
+  // no mutual overwrite with declareDockZones:
+  // this function only fills default, leaving the zones set untouched.
   const api = floatApi() as any;
   if (api && typeof api.registerDefaultZone === "function") { try { api.registerDefaultZone(k, zone); } catch { /* ignore */ } }
   localDefaults.set(k, zone);
 }
 
-/* ── 降级 ⇱ 菜单：未装 aiti-float 时宿主 TabBar ⇱ 也得出菜单（float 在场由其监听处理）。
- *  数据源 = 降级注册表；动作 = localPresent（同态激活语义由宿主 activate 监听兜）。 ── */
+/* ── Fallback ⇱ menu: when aiti-float is not installed the host TabBar ⇱ must still get
+ *  a menu (when float is present its listener handles it).
+ *  Data source = the fallback registry; actions = localPresent (same-state activation is
+ *  backstopped by the host's activate listener). ── */
 let fbMenuKey: string | null = null;
 let fbMenuEl: HTMLElement | null = null;
 let fbDismiss: { key: string; at: number } | null = null;
@@ -617,10 +679,11 @@ let fbDismiss: { key: string; at: number } | null = null;
 if (typeof window !== "undefined") {
   try {
     window.addEventListener("piwe-float-dock-menu", ((e: CustomEvent<{ key: string; rect?: { left: number; bottom: number } }>) => {
-      if (floatApi()) return; // float 在场 → float 的监听已处理
+      if (floatApi()) return; // float present → float's listener already handled it
       const k = e.detail?.key;
       if (!k) return;
-      // 同 key toggle（含锚按钮 mousedown dismiss 后 click 再触发的场景）
+      // same-key toggle (covers the case of click re-triggering after the anchor
+      // button's mousedown dismiss)
       if (fbMenuKey === k || (fbDismiss && fbDismiss.key === k && Date.now() - fbDismiss.at < 350)) {
         if (fbMenuEl) fbMenuEl.remove();
         fbMenuEl = null; fbMenuKey = null;
@@ -637,7 +700,8 @@ if (typeof window !== "undefined") {
       const rect = e.detail?.rect;
       menu.style.left = Math.max(8, (rect?.left ?? window.innerWidth / 2 - 70) - 60) + "px";
       menu.style.top = (rect?.bottom ?? 140) + 4 + "px";
-      // v5 图标排（方案 §3.4）：统一模型（浮窗 + 各停靠位），共享 DOM 行构造
+      // v5 icon row (plan §3.4): unified model (float + each dock position), shared DOM
+      // row construction
       const items = positionMenuModel(k, zones as DockZone[], def, cur, { onNewWindow: dockWindowOpenerOf(k) });
       appendDockIconRow(menu, items, { label: "停靠方位", onPick: () => { if (fbMenuEl === menu) { fbMenuEl = null; fbMenuKey = null; } } });
       document.body.appendChild(menu);
@@ -656,9 +720,10 @@ if (typeof window !== "undefined") {
   }
 }
 
-/* ── 位置菜单（v3 §2-D：DockBody 头行 📍，停靠态一键换位） ──
- *  数据源 = 调用方传入的 zones/defaultZone（扩展自己知道自己声明了什么；
- *  createDockFaces 自动传）。float 状态机不存 DOM 属性，故不经全局查询。 */
+/* ── Position menu (v3 §2-D: DockBody header 📍, one-click re-position while docked) ──
+ *  Data source = the zones/defaultZone passed by the caller (an extension knows what it
+ *  declared; createDockFaces passes it automatically). The float state machine stores no
+ *  DOM attributes, so no global query is involved. */
 /** Dock-menu word table (core layer lives in _shared without ctx.t; resolve via the
  *  same localStorage pi-locale source as the host useI18n; en default). */
 const DOCK_WORDS: Record<string, { "zh-CN": string; en: string }> = {
@@ -678,33 +743,41 @@ export const DOCK_ZONE_LABELS: Record<string, string> = {
   "right-panel": dockWord("zoneRight"),
 };
 
-/** ── 图标排模型（v5，方案 docs/pi-web-dock-icon-row-plan.md §3.4）──────────────────
- *  D1/D2/D3 位置菜单与 D1 ⋮「移动」行共用同一形状（2026-09-15 用户拍板：移动回归单行图标排，
- *  行首补 move-diagonal-2 行图标——行图标由 React 端 DockMenuRow 承载，不在本模型内）。
- *  · active：当前态（高亮 + 锁定，点击不生效）——语义同旧文字菜单 active；
- *  · isDefault：扩展声明默认位（右上角圆点角标；tooltip 后缀「（默认）」）。 */
+/** ── Icon-row model (v5, plan docs/pi-web-dock-icon-row-plan.md §3.4) ──────────────────
+ *  The D1/D2/D3 position menus and D1's ⋮ "Move" row share one shape (2026-09-15 user
+ *  ruling: move returns to a single icon row, with a leading move-diagonal-2 row icon —
+ *  the row icon is carried by the React-side DockMenuRow, not in this model).
+ *  · active: the current state (highlighted + locked, clicks do nothing) — same
+ *    semantics as the old text menu's active;
+ *  · isDefault: the extension-declared default position (top-right dot badge; tooltip
+ *    suffix " (default)"). */
 export interface DockIconRowItem {
-  /** 稳定键（位置键 / move-up 等；DOM 端写 data-ext-dock-icon 供 e2e 断言） */
+  /** Stable key (position key / move-up etc.; the DOM side writes data-ext-dock-icon for e2e assertions) */
   key: string;
   icon: DockIconName;
-  /** tooltip / aria-label 文案 */
+  /** tooltip / aria-label text */
   label: string;
   active?: boolean;
   isDefault?: boolean;
   run: () => void;
 }
 
-/** 位置菜单项（v5 图标排）：`key` = 位置键（"float" 或 zone 值；sidebar 族折叠成一项）。 */
+/** Position menu item (v5 icon row): `key` = the position key ("float" or a zone value;
+ *  the sidebar family collapses into one item). */
 export interface PositionMenuItem extends DockIconRowItem {
-  /** 位置键："float" 或 DockZone（sidebar 族多项折叠为 "sidebar-explorer"） */
+  /** Position key: "float" or a DockZone (the sidebar family's multiple zones collapse
+   *  into "sidebar-explorer") */
   key: string;
-  /** 兼容字段（旧文字菜单「默认」尾标；图标排用 isDefault 圆点） */
+  /** Compat field (the old text menu's "default" suffix; the icon row uses the isDefault dot) */
   hint?: string;
 }
 
-/** 位置菜单项构建（v4 统一 + v5 图标化）：sidebar 族 zone 折叠成单个「左栏 · 区块」条目
- *  （栈内各区块行为一致，具体 zone 值无用户语义）；active 按状态族判定
- *  （兼容旧 docked:sidebar-explorer）。浮窗/各物理位一族一项。 */
+/** Position menu item builder (v4 unified + v5 iconified): the sidebar-family zones
+ *  collapse into a single "Left · blocks" entry
+ *  (all blocks in the stack behave identically; the concrete zone value has no
+ *  user-facing meaning); active is judged by state family
+ *  (compatible with legacy docked:sidebar-explorer). Float and each physical position
+ *  get one item per family. */
 export function positionMenuItems(k: string, zones: DockZone[], defaultZone: DockZone | undefined, cur: PresentState): PositionMenuItem[] {
   const hasSidebar = zones.some((z) => z === "sidebar-explorer" || z.startsWith("sidebar:"));
   const items: PositionMenuItem[] = [];
@@ -735,10 +808,14 @@ export function positionMenuItems(k: string, zones: DockZone[], defaultZone: Doc
   return items;
 }
 
-/** 完整位置菜单模型（含浮窗项；序 = 浮窗 → 各停靠位）——D1/D2/D3 三处菜单共用，
- *  消灭三份「浮窗 + zones」手工拼装。run 走本层动作糖（float 在场自动转 api 状态机）。
- *  opts.onNewWindow：面板支持「新窗口打开」时传打开函数——该项排最前（序：新窗口 →
- *  浮窗 → 各停靠位）；不传/无注册 → 不显示（「有些暂时不支持」由能力注册决定）。 */
+/** Full position menu model (incl. the float item; order = float → each dock position)
+ *  — shared by the three menus D1/D2/D3, eliminating three hand-assembled
+ *  "float + zones" lists. run goes through this layer's action sugar (auto-routes to the
+ *  api state machine when float is present).
+ *  opts.onNewWindow: pass the open function when the panel supports "open in new
+ *  window" — that item sorts first (order: new window → float → each dock position);
+ *  absent/unregistered → not shown ("some unsupported for now" is decided by capability
+ *  registration). */
 export function positionMenuModel(k: string, zones: DockZone[], defaultZone: DockZone | undefined, cur: PresentState, opts?: { onNewWindow?: (() => void) | null }): PositionMenuItem[] {
   const newWindow = opts?.onNewWindow ?? dockWindowOpenerOf(k);
   return [
@@ -748,12 +825,15 @@ export function positionMenuModel(k: string, zones: DockZone[], defaultZone: Doc
   ];
 }
 
-/* ── 「新窗口打开」能力注册表（跨 bundle 收敛）──
- *  面板挂载/实例创建时调 declareDockWindowOpener(k, fn) 声明支持；位置菜单模型
- *  据此显隐 B 图标（aiti-folder 文件夹面支持；文件走工具条入口）。
- *  float 在场 → 存 float 单例注册表（D2 TabBar ⇱ 菜单跨 bundle 可读）；
- *  缺席 → 本 bundle local map 兑底（D1 内联菜单同 bundle 可读；D3 降级菜单读不到
- *  其他 bundle 的注册，故降级模式不显示该项——接受）。 */
+/* ── "Open in new window" capability registry (converged across bundles) ──
+ *  On mount/instance creation the panel calls declareDockWindowOpener(k, fn) to declare
+ *  support; the position menu model shows/hides glyph B accordingly (the aiti-folder
+ *  folder face supports it; files go through the toolbar entry).
+ *  float present → stored in float's singleton registry (readable cross-bundle by D2's
+ *  TabBar ⇱ menu);
+ *  absent → this bundle's local map backstops (D1's inline menu reads same-bundle; D3's
+ *  fallback menu cannot read other bundles' registrations, so fallback mode hides the
+ *  item — accepted). */
 const localWindowOpeners = new Map<string, () => void>();
 export function declareDockWindowOpener(k: string, fn: (() => void) | null): void {
   const api = floatApi() as (FloatApi & { registerWindowOpener?: (k2: string, f: (() => void) | null) => void }) | null;
@@ -761,7 +841,7 @@ export function declareDockWindowOpener(k: string, fn: (() => void) | null): voi
   if (typeof fn === "function") localWindowOpeners.set(k, fn);
   else localWindowOpeners.delete(k);
 }
-/** 查面板「新窗口打开」能力（无注册返回 null）。 */
+/** Look up a panel's "open in new window" capability (returns null when unregistered). */
 export function dockWindowOpenerOf(k: string): (() => void) | null {
   const api = floatApi() as (FloatApi & { windowOpenerOf?: (k2: string) => (() => void) | null }) | null;
   if (api && typeof api.windowOpenerOf === "function") {
@@ -770,10 +850,13 @@ export function dockWindowOpenerOf(k: string): (() => void) | null {
   return localWindowOpeners.get(k) ?? null;
 }
 
-/** 图标排 DOM 渲染（D2 aiti-float / D3 降级层共用）：一行「名称 + 右对齐图标组」
- *  （名称 12px 灰字居左；图标 28×28、gap 6、右对齐；当前态高亮锁定、默认位圆点、hover tooltip）。
- *  label 缺省时仅渲染图标组（兼容纯图标行）。onPick 在「可点项」点击时先于 run 调用
- *  （消费方用于关菜单）。返回行元素。 */
+/** Icon-row DOM rendering (shared by D2 aiti-float / D3 fallback layer): one row of
+ *  "name + right-aligned icon group"
+ *  (name 12px dim left; icons 28×28, gap 6, right-aligned; active state highlighted and
+ *  locked, default-position dot, hover tooltip).
+ *  Without a label only the icon group renders (for pure icon rows). onPick runs before
+ *  run when a clickable item is clicked
+ *  (consumers use it to close the menu). Returns the row element. */
 export function appendDockIconRow(parent: HTMLElement, items: DockIconRowItem[], opts?: { label?: string; onPick?: (it: DockIconRowItem) => void }): HTMLElement {
   const row = document.createElement("div");
   row.setAttribute("data-ext-dock-icon-row", "1");
@@ -822,13 +905,17 @@ export function appendDockIconRow(parent: HTMLElement, items: DockIconRowItem[],
   parent.appendChild(row);
   return row;
 }
-/* ── zones/default 集中注册（v3.1）：TabBar dock tab ⇱ 菜单的数据源。面板停靠 face
- *  未挂载（后台 tab）时菜单只能靠这里；DOM 属性是兜底（DockBody 根上也有同名属性）。 */
+/* ── Central zones/default registration (v3.1): the data source for the TabBar dock tab
+ *  ⇱ menu. When a panel's docked face is unmounted (background tab) the menu can only
+ *  rely on this; DOM attributes are the fallback (the DockBody root carries the same
+ *  attributes too). */
 const localZones = new Map<string, DockZone[]>();
 const localDefaults = new Map<string, DockZone>();
 
-/** 声明面板可停靠位 + 默认位（register 时调一次；createDockFaces 自动调）。
- *  float 在场 → 进状态机注册表；缺席 → 本层降级表（降级 ⇱ 菜单同源）。 */
+/** Declare the panel's dockable positions + default position (called once at register;
+ *  createDockFaces calls it automatically).
+ *  float present → into the state machine's registry; absent → this layer's fallback
+ *  table (same source as the fallback ⇱ menu). */
 export function declareDockZones(k: string, zones: DockZone[], defaultZone?: DockZone) {
   const api = floatApi() as any;
   if (api && typeof api.registerZones === "function") {

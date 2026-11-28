@@ -1,20 +1,25 @@
 /**
- * 扩展端「小屏系统返回关闭浮层」接线（宿主退栈服务 `pi-web.overlayBack` 消费薄封装）。
+ * Extension-side wiring for "close the overlay on the small-screen system back gesture" (a thin
+ * wrapper consuming the host back-stack service `pi-web.overlayBack`).
  *
- * 宿主侧：`pi-web/lib/overlay-back.ts`（历史退栈唯一写入口）+ 客户端服务
- * `ctx.getExtService("pi-web.overlayBack")`。扩展**不要**自己监听 popstate（两套栈会互踩）。
+ * Host side: `pi-web/lib/overlay-back.ts` (the single writer of the history back stack) + the client
+ * service `ctx.getExtService("pi-web.overlayBack")`. Extensions must **not** listen to popstate
+ * themselves (two stacks would step on each other).
  *
- * 用法（React 扩展，二选一）：
- *   // ① 组件挂载即弹（确认框/选择器这类面板本身就是 open 态）
+ * Usage (React extensions, pick one):
+ *   // (1) The component is open as soon as it mounts (confirm/selector panels are open-state by nature)
  *   useEffect(() => dismissOnBack(() => extSvc("pi-web.overlayBack"), onClose), []);
- *   // ② 有 open 状态（弹窗常驻渲染 but 条件显示）
+ *   // (2) There is an open state (the dialog renders persistently but shows conditionally)
  *   useEffect(() => (open ? dismissOnBack(() => extSvc("pi-web.overlayBack"), () => close()) : undefined), [open]);
  *
- * 降级：旧宿主 / 服务缺席 / 桌面（>640px，与全仓移动断点一致）/ 非浏览器 → 返回 no-op，
- * 浏览器返回语义不变。是否注册由小屏判定内置，调用方无需自己 matchMedia。
- * 断点动态重估（与 aiti-float back-layer 同款）：注册期间跨断点（旋转/拉窗）自动 acquire/release，
- * 不会出现「桌面宽度注册的层残留到窄窗口」或「窄窗口开启的弹窗回宽屏后无返回关闭」。
- * 方案：docs/pi-web-mobile-back-dismiss-coverage-plan.md；契约：docs/aiti-web-ext-float-dialogs.md。
+ * Degradation: old hosts / absent service / desktop (>640px, matching the repo-wide mobile breakpoint) /
+ * non-browser -> returns a no-op; browser back semantics unchanged. Whether to register is decided by
+ * the built-in small-screen check; callers need no matchMedia of their own.
+ * Dynamic breakpoint re-evaluation (same as the aiti-float back layer): crossing the breakpoint during
+ * registration (rotation/window resize) auto acquires/releases — no "layer registered at desktop width
+ * lingering into a narrow window" and no "dialog opened in a narrow window losing back-to-close after
+ * returning to a wide screen".
+ * Plan: docs/pi-web-mobile-back-dismiss-coverage-plan.md; contract: docs/aiti-web-ext-float-dialogs.md.
  */
 export interface OverlayBackHandle {
   release(): void;
@@ -24,13 +29,13 @@ export interface OverlayBackService {
   acquire(close: () => void): OverlayBackHandle;
 }
 
-/** 小屏断点（与宿主 useIsMobile / data-ext-float-full 同款）。 */
+/** Small-screen breakpoint (same as the host useIsMobile / data-ext-float-full). */
 export const OVERLAY_BACK_MOBILE_QUERY = "(max-width: 640px)";
 
 /**
- * 注册「系统返回时关闭」层。返回 release（幂等；组件卸载/关闭时调用）。
- * @param getService 取宿主服务（断点重估/重注册时都重新读，兼容懒加载/服务后上线）
- * @param close 返回触发时执行的关闭动作（点 ✕ / 取消 / dismiss 同款）
+ * Register the "close on system back" layer. Returns release (idempotent; called on unmount/close).
+ * @param getService fetches the host service (re-read on every breakpoint re-evaluation/re-registration; tolerates lazy loading / late-arriving services)
+ * @param close the close action executed when back triggers (same as clicking ✕ / cancel / dismiss)
  */
 export function dismissOnBack(
   getService: () => OverlayBackService | null | undefined,
@@ -61,7 +66,7 @@ export function dismissOnBack(
       try {
         prev.release();
       } catch {
-        /* 宿主降级不阻断扩展 */
+        /* a degrading host must not block the extension */
       }
     }
   };

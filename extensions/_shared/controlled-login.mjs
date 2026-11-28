@@ -1,69 +1,71 @@
 /**
- * controlled-login — 外部 Agent 受控登录标准 · 服务端共享层（权威源，Node 零依赖）。
+ * controlled-login — External agent controlled login standard · server-side shared layer (authoritative source, zero Node deps).
  *
- * ⚠ 副本同步（字节级拷贝，改动须同步到全部副本；测试 `_shared/controlled-login.test.mjs` 钉住一致性）：
+ * ⚠ Copy sync (byte-level copies; changes must be synced to all copies; test `_shared/controlled-login.test.mjs` pins consistency):
  *   pi-web-ext/aiti-zcode-agent/controlled-login.mjs
  *   pi-web-ext/aiti-cursor-agent/controlled-login.mjs
  *   pi-web-ext/aiti-qoder-agent/controlled-login.mjs
  *   pi-web-ext/aiti-claude-code-agent/controlled-login.mjs
  *   pi-web-ext/aiti-codex-agent/controlled-login.mjs
  *
- * 目标形态（docs/ext-controlled-login-standard.md）：后端 spawn 官方 login 进程 → 抓出
- * login URL 交给用户前端 → 用户在任意设备的浏览器完成授权 → CLI 自己轮询感知并落盘凭据
- * → 后端全流程可查可取消。**不实现任何 OAuth 协议、不碰凭据内容**。
+ * Target shape (docs/ext-controlled-login-standard.md): the backend spawns the official login process → captures
+ * the login URL and hands it to the user's frontend → the user completes authorization in a browser on any device → the CLI
+ * notices it on its own polling and persists credentials → the backend can inspect and cancel the whole flow. **Implements no
+ * OAuth protocol and never touches credential contents**.
  *
- * 模式分类：
- *   - A url-only（"url"）：URL 交出去即完事，login 进程自己轮询并退出。zcode/cursor/qoder/codex。
- *   - B paste-relay（"paste"）：授权完成后服务端页面显示一次性 code，用户粘回前端，
- *     后端写进 login 进程 stdin 才能完成。claude。
+ * Mode classification:
+ *   - A url-only ("url"): handing out the URL is all there is; the login process polls and exits on its own. zcode/cursor/qoder/codex.
+ *   - B paste-relay ("paste"): after authorization the server page shows a one-time code; the user pastes it back to the
+ *     frontend, and the backend must write it into the login process's stdin to finish. claude.
  *
- * 状态机（单槽，每扩展同时至多一个 login 进程）：
- *   start → spawn（干净 env）→ 积累 stdout/stderr → extractUrl 命中置 waiting+url
- *   → [paste] submit(text) 写 stdin+"\r\n" → 进程退出走 interpret → 终态
- *   loginTimeoutMs 兜底 kill → timeout；cancel = kill → cancelled。
+ * State machine (single slot, at most one login process per extension at a time):
+ *   start → spawn (clean env) → accumulate stdout/stderr → extractUrl hit sets waiting+url
+ *   → [paste] submit(text) writes stdin+"\r\n" → process exit goes through interpret → terminal state
+ *   loginTimeoutMs backstop kill → timeout; cancel = kill → cancelled.
  *
- * 状态落 `<configDir>/controlled-login.json`（**不含 code/token**）：
+ * State lands in `<configDir>/controlled-login.json` (**no code/token inside**):
  *   { state: "waiting"|"success"|"failed"|"timeout"|"cancelled", url?, mode?,
  *     startedAt, pid?, user?, error?, outputTail?, finishedAt? }
- *   pid 仅供存活检查（服务重启后 waiting 态死 pid 在 status() 里 reconcile 成 failed）；
- *   failed/timeout 态附 outputTail（≤1500 字符 stdout+stderr 尾巴）供弹窗透出原文——
- *   CLI 升级改输出格式导致 URL 抓取失败时人工可读可复制（方案 §7 风险对策）。
+ *   pid is only for liveness checks (after a server restart a waiting state with a dead pid is reconciled to failed in status());
+ *   failed/timeout states carry outputTail (≤1500-char stdout+stderr tail) so the dialog can surface the raw text —
+ *   if a CLI upgrade changes the output format and URL capture fails, a human can still read and copy it (plan §7 risk mitigation).
  *
  * ============================================================================
- * Driver 契约（每家 ~20 行，由各扩展提供；成功后凭据链路全走各扩展现成逻辑）
+ * Driver contract (~20 lines each, provided per extension; after success the credential chain
+ * entirely reuses each extension's existing logic)
  * ============================================================================
  * @typedef {Object} ControlledLoginDriver
  * @property {string} agentId                       "zcode" | "cursor" | ...
  * @property {"url"|"paste"} mode                   A url-only / B paste-relay
- * @property {number} [loginTimeoutMs]              兜底 kill（默认 330_000；CLI 内部多为 300s）
+ * @property {number} [loginTimeoutMs]              backstop kill (default 330_000; CLI internals mostly 300s)
  * @property {(argv: { runtime: string; consoleMode?: boolean }) => {
  *   cmd: string; args: string[]; env: Record<string, string>;
- * }} buildLogin                                   组装 spawn 三元组；env 用 cleanEnv() 起底（不注入模型 key）
+ * }} buildLogin                                   assembles the spawn triple; env starts from cleanEnv() (no model keys injected)
  * @property {(text: string) => string|null} extractUrl
- *                                                  从累计 stdout+stderr 抓 loginUrl（各家正则，命中即停）
+ *                                                  grabs the loginUrl from accumulated stdout+stderr (per-vendor regex; stops at first hit)
  * @property {(code: number|null, stdout: string, stderr: string) => {
  *   state: "success"|"failed"|"timeout"; user?: string; error?: string;
- * }} interpret                                    进程退出判结果（zcode「timed out」→ timeout）
+ * }} interpret                                    judges the outcome from process exit (zcode "timed out" → timeout)
  *
- * 接入（扩展 index.ts，startup 里建一次、server.api 一行挂载）：
+ * Wiring (extension index.ts; create once in startup, mount with one line on server.api):
  *   const login = createControlledLogin({ driver, configDir, resolveRuntime, onSuccess });
  *   loginApi = mountControlledLoginApi(login);
  *   … server: { startup(ctx) { … }, api(req, ctx) { return loginApi(req, ctx); } }
- * 端点（POST body 均 JSON；错误 → {error} 400）：
- *   POST /api/extensions/<ext>/login/start   {consoleMode?, variant?…} → {state,url?,mode?}（幂等）
+ * Endpoints (POST bodies are all JSON; error → {error} 400):
+ *   POST /api/extensions/<ext>/login/start   {consoleMode?, variant?…} → {state,url?,mode?} (idempotent)
  *   GET  /api/extensions/<ext>/login/status   → {state,url?,mode?,user?,error?,startedAt,outputTail?}
  *   POST /api/extensions/<ext>/login/cancel   → {state:"cancelled"}
- *   POST /api/extensions/<ext>/login/submit   {code} → {state}（仅 paste 模式）
+ *   POST /api/extensions/<ext>/login/submit   {code} → {state} (paste mode only)
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** 兜底 kill 时长（默认 330s：CLI 内部多为 300s 硬超时，外层放宽一档再杀）。 */
+/** Backstop kill duration (default 330s: CLI internals mostly hard-timeout at 300s, so the outer layer allows one notch more before killing). */
 export const DEFAULT_LOGIN_TIMEOUT_MS = 330_000;
 
-/** 干净 env 起底：只透传系统定位/代理/TLS/Windows 系统键——**不透传任何模型 key/token**。 */
+/** Clean env baseline: only passes through system locale/proxy/TLS/Windows system keys — **passes through no model key/token whatsoever**. */
 const ENV_ALLOW = [
   "PATH", "HOME", "USERPROFILE", "USER", "LOGNAME", "SHELL",
   "LANG", "LC_ALL", "TERM", "TZ", "TMPDIR", "TEMP", "TMP",
@@ -83,7 +85,7 @@ export function cleanEnv(extra = {}) {
   return { ...env, ...extra };
 }
 
-/** pid 存活检查（0 信号探测；EPERM = 存活但无权限，按活算）。 */
+/** pid liveness check (signal-0 probe; EPERM = alive but no permission, counted as alive). */
 export function isPidAlive(pid) {
   if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return false;
   try {
@@ -94,7 +96,7 @@ export function isPidAlive(pid) {
   }
 }
 
-/** 最后一条非空行（driver interpret 组人话 error 用）。 */
+/** Last non-empty line (drivers use interpret to compose a human-readable error from it). */
 export function tailLine(text, max = 300) {
   const lines = String(text ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
   return (lines[lines.length - 1] ?? "").slice(0, max);
@@ -103,29 +105,29 @@ export function tailLine(text, max = 300) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 受控登录控制器（每扩展一个实例 = 单槽）。
+ * Controlled login controller (one instance per extension = single slot).
  *
  * @param {object} opts
- * @param {ControlledLoginDriver} opts.driver          家驱动
- * @param {string} opts.configDir                        扩展数据目录（状态文件落这里）
+ * @param {ControlledLoginDriver} opts.driver          vendor driver
+ * @param {string} opts.configDir                        extension data directory (state file lands here)
  * @param {(argv: object) => Promise<string>} [opts.resolveRuntime]
- *                                                     spawn 前解析 CLI/runtime（复用各扩展现有解析；
- *                                                     未装 throw 人话错误 → start 返回 failed 态）
+ *                                                     resolves the CLI/runtime before spawn (reuses each extension's existing resolution;
+ *                                                     throws a human-readable error when not installed → start returns a failed state)
  * @param {(info: { user?: string; stdout: string; stderr: string }) => void} [opts.onSuccess]
- *                                                     成功钩子（如 zcode 预热 ensureCredential）
- * @param {(cmd: string, args: string[], o: object) => ChildProcess} [opts.spawnImpl] 测试注入
- * @param {number} [opts.urlWaitMs]                    start 返回前等 URL 的上限（默认 15s；超了也照常
- *                                                     waiting，URL 由 status 轮询补见）
- * @param {string} [opts.cwd]                          login 进程工作目录（默认 process.cwd()）
+ *                                                     success hook (e.g. zcode warming up ensureCredential)
+ * @param {(cmd: string, args: string[], o: object) => ChildProcess} [opts.spawnImpl] test injection
+ * @param {number} [opts.urlWaitMs]                    upper bound for waiting on the URL before start returns (default 15s; on expiry still
+ *                                                     returns waiting normally, the URL is picked up later by status polling)
+ * @param {string} [opts.cwd]                          login process working directory (default process.cwd())
  * @param {(msg: string) => void} [opts.log]
  */
 export function createControlledLogin(opts) {
   const driver = opts.driver;
   if (!driver || typeof driver.buildLogin !== "function" || typeof driver.extractUrl !== "function" || typeof driver.interpret !== "function") {
-    throw new Error("createControlledLogin: driver 契约不完整（需 agentId/mode/buildLogin/extractUrl/interpret）");
+    throw new Error("createControlledLogin: incomplete driver contract (needs agentId/mode/buildLogin/extractUrl/interpret)");
   }
   const configDir = opts.configDir;
-  if (!configDir) throw new Error("createControlledLogin: configDir 必填");
+  if (!configDir) throw new Error("createControlledLogin: configDir is required");
   const spawnImpl = opts.spawnImpl ?? ((cmd, args, o) => nodeSpawn(cmd, args, o));
   const resolveRuntime = opts.resolveRuntime ?? (async () => "");
   const onSuccess = typeof opts.onSuccess === "function" ? opts.onSuccess : null;
@@ -134,7 +136,7 @@ export function createControlledLogin(opts) {
   const urlWaitMs = Number(opts.urlWaitMs) > 0 ? Number(opts.urlWaitMs) : 15_000;
   const cwd = opts.cwd || process.cwd();
 
-  /** 活动流程（单槽）：{ proc, cancelled, timedOut, timer, resolveUrl, resolveExit } */
+  /** Active flow (single slot): { proc, cancelled, timedOut, timer, resolveUrl, resolveExit } */
   let run = null;
 
   const stateFile = () => join(configDir, "controlled-login.json");
@@ -146,7 +148,7 @@ export function createControlledLogin(opts) {
       mkdirSync(configDir, { recursive: true });
       writeFileSync(stateFile(), JSON.stringify(s, null, 2));
     } catch (e) {
-      log(`[controlled-login] 状态文件写失败: ${e?.message || e}`);
+      log(`[controlled-login] failed to write state file: ${e?.message || e}`);
     }
   };
   const clearState = () => { try { rmSync(stateFile(), { force: true }); } catch { /* ignore */ } };
@@ -172,7 +174,7 @@ export function createControlledLogin(opts) {
     if (typeof t.unref === "function") t.unref();
   }
 
-  /** 状态查询；waiting 态且无活动进程时按 pid 做存活 reconcile（服务重启 → failed）。 */
+  /** Status query; when state is waiting and there is no active process, reconcile liveness by pid (server restart → failed). */
   function status() {
     let s = readState();
     if (!s) return { state: "idle", mode: driver.mode };
@@ -180,7 +182,7 @@ export function createControlledLogin(opts) {
       s = {
         ...s,
         state: "failed",
-        error: s.error ?? "登录进程已退出（服务重启或进程被终止），请重新发起",
+        error: s.error ?? "Login process has exited (server restarted or process was killed); please start again",
         finishedAt: Date.now(),
         pid: null,
       };
@@ -190,15 +192,15 @@ export function createControlledLogin(opts) {
   }
 
   /**
-   * 发起登录（幂等：waiting 且进程存活时原样返回既有状态，不重复 spawn）。
-   * argv 透传 resolveRuntime（variant 等家参数）+ buildLogin（consoleMode）。
+   * Start a login (idempotent: while waiting and the process is alive, returns the existing state as-is, no re-spawn).
+   * argv passes through to resolveRuntime (variant and other vendor params) + buildLogin (consoleMode).
    */
   async function start(argv = {}) {
     const existing = readState();
     if (existing && existing.state === "waiting" && (run || isPidAlive(existing.pid))) {
-      return publicView(existing); // 幂等
+      return publicView(existing); // idempotent
     }
-    if (run) { killProc(run.proc); clearTimeout(run.timer); run = null; } // 兜底清残活
+    if (run) { killProc(run.proc); clearTimeout(run.timer); run = null; } // backstop-clear leftovers
     clearState();
 
     const failStart = (error) => {
@@ -224,7 +226,7 @@ export function createControlledLogin(opts) {
     try {
       proc = spawnImpl(built.cmd, built.args, { cwd, env: built.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
-      return failStart(`无法启动登录进程 ${built.cmd}：${e?.message || e}`);
+      return failStart(`Failed to start login process ${built.cmd}: ${e?.message || e}`);
     }
 
     const ctx = { proc, cancelled: false, timedOut: false, timer: null };
@@ -250,7 +252,7 @@ export function createControlledLogin(opts) {
     proc.stderr?.on?.("data", (c) => { stderrBuf += typeof c === "string" ? c : c.toString("utf8"); tryCapture(); });
 
     writeState(mkState({ pid: typeof proc.pid === "number" ? proc.pid : null }));
-    tryCapture(); // 竞态兜底（数据先于本行到达的极端情况）
+    tryCapture(); // race backstop (extreme case where data arrives before this line)
 
     const writeTerminal = (update, tailText) => {
       const s = readState() ?? mkState({});
@@ -272,12 +274,12 @@ export function createControlledLogin(opts) {
       if (run !== ctx || ctx.cancelled || ctx.timedOut) return;
       run = null;
       clearTimeout(ctx.timer);
-      writeTerminal({ state: "failed", error: `无法启动登录进程 ${built.cmd}：${err?.message || err}（请确认 CLI 已安装并在 PATH）` });
+      writeTerminal({ state: "failed", error: `Failed to start login process ${built.cmd}: ${err?.message || err} (verify the CLI is installed and on PATH)` });
       resolveExit();
     });
 
     proc.on?.("exit", (code) => {
-      if (run !== ctx) return; // 被 cancel/timeout/新一轮接管：终态已有人写
+      if (run !== ctx) return; // taken over by cancel/timeout/a new round: someone else already wrote the terminal state
       run = null;
       clearTimeout(ctx.timer);
       resolveExit();
@@ -286,12 +288,12 @@ export function createControlledLogin(opts) {
       try {
         r = driver.interpret(code, stdoutBuf, stderrBuf);
       } catch (e) {
-        r = { state: "failed", error: `interpret 异常：${e?.message || e}` };
+        r = { state: "failed", error: `interpret threw: ${e?.message || e}` };
       }
       writeTerminal(r, stdoutBuf + "\n" + stderrBuf);
       if (r.state === "success" && onSuccess) {
         try { onSuccess({ user: r.user, stdout: stdoutBuf, stderr: stderrBuf }); } catch (e) {
-          log(`[controlled-login] onSuccess 失败（不影响登录结果）: ${e?.message || e}`);
+          log(`[controlled-login] onSuccess failed (does not affect the login result): ${e?.message || e}`);
         }
       }
     });
@@ -301,35 +303,35 @@ export function createControlledLogin(opts) {
       ctx.timedOut = true;
       run = null;
       killProc(proc);
-      writeTerminal({ state: "timeout", error: `登录超时（${Math.round(timeoutMs / 1000)}s 未完成授权，进程已终止）` }, stdoutBuf + "\n" + stderrBuf);
+      writeTerminal({ state: "timeout", error: `Login timed out (${Math.round(timeoutMs / 1000)}s without completed authorization; process terminated)` }, stdoutBuf + "\n" + stderrBuf);
       resolveExit();
     }, timeoutMs);
     if (typeof ctx.timer.unref === "function") ctx.timer.unref();
 
-    // start 调用方：URL 命中 / 快速退出 / urlWaitMs，三者先到先回（未等到也照常 waiting，
-    // URL 由前端 status 轮询补见）
+    // start caller: URL hit / quick exit / urlWaitMs — first of the three wins (if none arrives,
+    // still returns waiting normally; the frontend's status polling picks up the URL later)
     await Promise.race([urlSeen, exitSeen, sleep(urlWaitMs)]);
     return status();
   }
 
-  /** B 模式专属：把用户粘来的 code（或完整回调 URL）原样喂 login 进程 stdin。 */
+  /** B mode only: feeds the user-pasted code (or full callback URL) verbatim into the login process's stdin. */
   async function submit(text) {
     const s = readState();
-    if (!s || s.state !== "waiting") throw new Error("当前没有进行中的登录");
-    if (driver.mode !== "paste") throw new Error(`${driver.agentId} 登录为 url 模式（无需提交 code）`);
-    if (!run || !run.proc?.stdin?.writable) throw new Error("登录进程未在运行（可能已退出），请重新发起登录");
+    if (!s || s.state !== "waiting") throw new Error("No login currently in progress");
+    if (driver.mode !== "paste") throw new Error(`${driver.agentId} login is in url mode (no code submission needed)`);
+    if (!run || !run.proc?.stdin?.writable) throw new Error("Login process not running (may have exited); please start a new login");
     const line = String(text ?? "").trim().replace(/[\r\n]+$/, "");
-    if (!line) throw new Error("提交内容为空");
-    // 背压修正（同 A4）：write() 返回 false 仅表示帧入缓冲，不是失败——真失败才 throw
+    if (!line) throw new Error("Submitted content is empty");
+    // Backpressure correction (same as A4): write() returning false only means the frame entered the buffer, not a failure — throw only on real failure
     try {
       run.proc.stdin.write(line + "\r\n");
     } catch (e) {
-      throw new Error(`登录进程 stdin 写失败: ${e?.message || e}`);
+      throw new Error(`Failed to write login process stdin: ${e?.message || e}`);
     }
     return status();
   }
 
-  /** 取消：kill → cancelled（幂等：无进行中流程时原样返回当前状态）。 */
+  /** Cancel: kill → cancelled (idempotent: with no flow in progress, returns the current state as-is). */
   async function cancel() {
     const s = readState();
     if (!s || s.state !== "waiting") return status();
@@ -343,7 +345,7 @@ export function createControlledLogin(opts) {
     return publicView(readState());
   }
 
-  /** 扩展停卸时清残留进程/定时器。 */
+  /** Cleans up leftover processes/timers when the extension stops or unloads. */
   function dispose() {
     if (run) {
       clearTimeout(run.timer);
@@ -356,8 +358,8 @@ export function createControlledLogin(opts) {
 }
 
 /**
- * API 挂载 helper：返回可直接用作扩展 `server.api` 的处理器（不匹配 /login/* 时返回 null 放行）。
- * 用法：`api(req, ctx) { return loginApi(req, ctx); }`
+ * API mounting helper: returns a handler usable directly as the extension's `server.api` (returns null to pass through when not matching /login/*).
+ * Usage: `api(req, ctx) { return loginApi(req, ctx); }`
  */
 export function mountControlledLoginApi(controller) {
   async function readJsonBody(req) {
@@ -374,7 +376,7 @@ export function mountControlledLoginApi(controller) {
       (sub === "cancel" && method === "POST") ||
       (sub === "submit" && method === "POST");
     if (!allowed) {
-      return Response.json({ error: `未知登录端点 /login/${sub}（${method}）` }, { status: 404 });
+      return Response.json({ error: `Unknown login endpoint /login/${sub} (${method})` }, { status: 404 });
     }
     try {
       if (sub === "start") {
@@ -389,7 +391,7 @@ export function mountControlledLoginApi(controller) {
       // sub === "submit"
       const body = await readJsonBody(req);
       const code = typeof body?.code === "string" ? body.code : "";
-      if (!code.trim()) throw new Error("缺少 code（粘贴授权完成后页面显示的 code，或完整回调链接）");
+      if (!code.trim()) throw new Error("Missing code (paste the code shown on the page after completing authorization, or the full callback link)");
       return Response.json(await controller.submit(code));
     } catch (e) {
       return Response.json({ error: e?.message || String(e) }, { status: 400 });

@@ -1,22 +1,25 @@
 /**
- * cbc-model-catalog — cbc（CodeBuddy Code）`--help` 内置模型目录解析（权威源）。
+ * cbc-model-catalog — parsing of the model catalog embedded in cbc (CodeBuddy Code) `--help`
+ * (authoritative source).
  *
- * cbc 无免会话 list-models 命令，但 `--help` 的 `--model` 行内嵌当前支持清单：
+ * cbc has no session-free list-models command, but the `--model` line of `--help` embeds the
+ * currently supported list:
  *   `--model <model>  Model for the current session. ... Currently supported: (a, b, c)`
- * 方案：docs/aiti-acp-model-catalog-startup-plan.md §2/§3.1（D13/D15）。
+ * Plan: docs/aiti-acp-model-catalog-startup-plan.md §2/§3.1 (D13/D15).
  *
- * 本文件按部署单元复制进 aiti-acp-agent / aiti-codebuddy-agent
- * （cbc-model-catalog.ts），修改后同步副本（与 cursor-cli-store.ts 同一模式）。
+ * This file is copied per deployment unit into aiti-acp-agent / aiti-codebuddy-agent
+ * (cbc-model-catalog.ts); sync the copies after changes (same pattern as cursor-cli-store.ts).
  */
 
 import { spawn } from "node:child_process";
 
-/** `--model` 行内嵌清单：`Currently supported: (a, b, c)`（cbc 2.150 实测格式）。 */
+/** The list embedded in the `--model` line: `Currently supported: (a, b, c)` (measured on cbc 2.150). */
 const SUPPORTED_RE = /Currently supported:\s*\(([^)]*)\)/;
 
 /**
- * `--help` 输出 → 模型 id 列表（纯函数，样本钉死单测）。
- * 解析不到（格式漂移/被截断）返回 [] —— 调用方回落既有静态清单。
+ * `--help` output -> model id list (pure function; a sample pins the unit test).
+ * Returns [] when unparseable (format drift / truncated) — the caller falls back to its existing
+ * static catalog.
  */
 export function parseCbcHelpModels(helpText: string): Array<{ id: string }> {
   const m = SUPPORTED_RE.exec(helpText);
@@ -28,20 +31,20 @@ export function parseCbcHelpModels(helpText: string): Array<{ id: string }> {
     .map((id) => ({ id }));
 }
 
-/** 探测结果：CLI 目录（可能为空 = 解析失败/超时）+ 版本（cli 条目失效判据）。 */
+/** Probe result: the CLI catalog (possibly empty = parse failure/timeout) + version (the criterion for a stale cli entry). */
 export interface CbcCatalogProbe {
   models: Array<{ id: string }>;
   cliVersion: string | null;
   timedOut: boolean;
 }
 
-/** CLI 三元组（与各扩展 resolveCli 同形：direct = bin 直调；npx = node + npx-cli.js …）。 */
+/** CLI triple (same shape as each extension's resolveCli: direct = invoke the bin directly; npx = node + npx-cli.js ...). */
 export interface CliCommand {
   cmd: string;
   baseArgs: string[];
 }
 
-/** 通用 CLI 采集（stdout 全量 + 超时杀进程；opencode models 等探测复用）。 */
+/** Generic CLI capture (full stdout + kill on timeout; reused by probes such as opencode models). */
 export function runCliCapture(cmd: string, args: string[], opts: { timeoutMs: number; env?: Record<string, string> }): Promise<{ stdout: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: opts.env });
@@ -70,8 +73,8 @@ export function runCliCapture(cmd: string, args: string[], opts: { timeoutMs: nu
 }
 
 /**
- * 探测 cbc 目录：`<cli> --help` 解析模型清单 + `<cli> --version` 取版本。
- * 任何失败 fail-soft（models:[]），由调用方决定回落。
+ * Probe the cbc catalog: `<cli> --help` parses the model list + `<cli> --version` fetches the version.
+ * Any failure is fail-soft (models:[]); the caller decides the fallback.
  */
 export async function probeCbcCatalog(cli: CliCommand, opts: { timeoutMs?: number; env?: Record<string, string> } = {}): Promise<CbcCatalogProbe> {
   const timeoutMs = opts.timeoutMs ?? 60_000;

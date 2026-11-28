@@ -1,12 +1,14 @@
 /**
- * _shared/popup-anchor.ts — 弹层固定定位公共小工具（零 react，构建期内联进各扩展 bundle）。
+ * _shared/popup-anchor.ts — shared fixed-positioning utilities for popups (zero react; inlined into
+ * each extension's bundle at build time).
  *
- * 背景：左栏 sidebar-container（桌面端宽度动画 overflow:hidden）→ StackCell → DockBody
- * 全链 overflow:hidden，absolute 锚定的弹层（下拉/菜单）在矮格/折叠格/栈底格一律被
- * 祖先裁剪（弹层自身 getBoundingClientRect 仍在视口内 → 视口钳位兜底探测不到）。
- * 出路 = 弹层一律 position:fixed 锚定触发器矩形——fixed 逃逸 overflow 裁剪；唯
- * transform/filter 等祖先会成为 fixed 的 containing block，此时坐标须按其原点校正
- * （fixedOrigin）。
+ * Background: the left sidebar-container (desktop width animation overflow:hidden) -> StackCell ->
+ * DockBody are all overflow:hidden, so popups anchored with absolute (dropdowns/menus) are always
+ * clipped by ancestors when in short/collapsed/bottom-stack cells (the popup's own
+ * getBoundingClientRect is still inside the viewport, so viewport-clamping fallbacks cannot detect it).
+ * The way out = always anchor popups with position:fixed to the trigger rect — fixed escapes overflow
+ * clipping. The one exception: ancestors with transform/filter etc. become the fixed element's
+ * containing block, in which case coordinates must be corrected by that ancestor's origin (fixedOrigin).
  */
 
 /** Whether an ancestor constitutes a fixed containing block (common CSS subset:
@@ -24,8 +26,9 @@ function isFixedContainingBlock(cs: CSSStyleDeclaration): boolean {
   return c === "strict" || c === "content" || c === "layout" || c === "paint";
 }
 
-/** el 最近 fixed-containing-block 祖先的原点（视口坐标；无 = {x:0,y:0}）。
- *  fixed 弹层坐标 = 期望视口坐标 − 本值（无 transformed 祖先时即视口坐标）。 */
+/** Origin of el's nearest fixed-containing-block ancestor (viewport coords; none = {x:0,y:0}).
+ *  A fixed popup's coordinates = expected viewport coords minus this value (i.e. viewport coords when
+ *  there is no transformed ancestor). */
 export function fixedOrigin(el: Element): { x: number; y: number } {
   let n = el.parentElement;
   while (n && n !== document.documentElement) {
@@ -59,7 +62,7 @@ export function zoomFactorOf(el: Element): number {
   return z;
 }
 
-/** 视口内钳制（pad 内边距；宽/高超视口时贴 pad 对齐）。入参/返回均为视口坐标。 */
+/** Clamp inside the viewport (pad inset; when width/height exceed the viewport, align flush to pad). Inputs/outputs are viewport coords. */
 export function clampToViewport(left: number, top: number, width: number, height: number, pad = 8): { left: number; top: number } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;

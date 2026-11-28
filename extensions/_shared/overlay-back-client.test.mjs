@@ -1,12 +1,13 @@
-// _shared/overlay-back-client 单测（扩展端返回关闭接线薄封装）。
-// 覆盖：小屏门控 / 断点动态重估 / 服务缺席与抛错降级 / acquire 异常兜底 / release 幂等。
+// _shared/overlay-back-client unit tests (the extension-side back-to-close wiring thin wrapper).
+// Coverage: small-screen gate / dynamic breakpoint re-evaluation / missing-or-throwing service
+// degradation / acquire exception tolerance / release idempotence.
 // Run: node --experimental-strip-types --test pi-web-ext/_shared/overlay-back-client.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { dismissOnBack, OVERLAY_BACK_MOBILE_QUERY } from "./overlay-back-client.ts";
 
-/** 可控 matchMedia 桩：matches 可翻转并派发 change。 */
+/** Controllable matchMedia stub: matches can be flipped and dispatches change. */
 function makeMedia(initial) {
   const listeners = [];
   let matches = initial;
@@ -63,18 +64,18 @@ test("desktop does not register; mobile does; release is idempotent", () => {
   withWindow(media, () => {
     const svc = makeService();
     const release = dismissOnBack(() => svc, () => {});
-    assert.equal(svc.acquired.length, 0, "桌面不得注册");
+    assert.equal(svc.acquired.length, 0, "desktop must not register");
     media.set(true);
-    assert.equal(svc.acquired.length, 1, "进小屏自动补注册");
+    assert.equal(svc.acquired.length, 1, "entering the small screen auto-registers");
     media.set(false);
-    assert.equal(svc.released.length, 1, "回大屏自动释放");
+    assert.equal(svc.released.length, 1, "returning to desktop auto-releases");
     media.set(true);
-    assert.equal(svc.acquired.length, 2, "再进小屏重新注册");
+    assert.equal(svc.acquired.length, 2, "re-entering the small screen registers again");
     release();
     assert.equal(svc.released.length, 2);
     release();
-    assert.equal(svc.released.length, 2, "release 幂等");
-    assert.equal(media.listenerCount(), 0, "release 反注册 matchMedia 监听");
+    assert.equal(svc.released.length, 2, "release is idempotent");
+    assert.equal(media.listenerCount(), 0, "release unregisters the matchMedia listener");
   });
 });
 
@@ -110,9 +111,9 @@ test("late service is picked up on a later breakpoint re-evaluation", () => {
     const release = dismissOnBack(() => svc, () => {});
     assert.equal(media.listenerCount(), 1);
     svc = makeService();
-    media.set(false); // 触发一次重估（服务已上线）
+    media.set(false); // trigger one re-evaluation (the service has arrived)
     media.set(true);
-    assert.equal(svc.acquired.length, 1, "服务后上线：重估时补注册");
+    assert.equal(svc.acquired.length, 1, "late-arriving service: registered on re-evaluation");
     release();
     assert.equal(svc.released.length, 1);
   });

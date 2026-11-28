@@ -1,9 +1,11 @@
-// dedupe-fetch 单测（node --test，直跑 TS：node ≥ 22.6 --experimental-strip-types）。
-// 与 pi-web lib/dedupe-fetch.test.mjs 同源（复制同步，两处语义保持一致）。
+// dedupe-fetch unit tests (node --test, running TS directly: node >= 22.6
+// --experimental-strip-types).
+// Same source as pi-web lib/dedupe-fetch.test.mjs (copy-synced; both sides keep the
+// same semantics).
 import { dedupeFetch, resetDedupeFetch } from "./dedupe-fetch.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-/** stub global fetch：记录调用次数，返回 (status, body) 或委托自定义实现 */
+/** stub global fetch: records call counts, returns (status, body) or delegates a custom implementation */
 function stubFetch(impl) {
   const calls = [];
   const fn = (url, init) => {
