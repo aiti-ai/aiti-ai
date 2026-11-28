@@ -208,7 +208,7 @@ export function DetailBody(p: { target: DetailTarget; onBack?: () => void }) {
           body: JSON.stringify({
             provider,
             cwd,
-            id: item.id,
+            id: item.key || item.id,
             title: item.title || `${item.type} ${item.key}`,
             text,
             files,

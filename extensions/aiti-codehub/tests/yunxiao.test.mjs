@@ -45,6 +45,14 @@ test("buildConditions: keyword identifier", () => {
   assert.equal(r.category, "Req,Bug,Task,Risk,SubTask");
 });
 
+test("buildConditions: bare number falls back to title/body search (serialNumber needs the full serial)", () => {
+  const r = buildConditions({ keyword: "6909" });
+  const parsed = JSON.parse(r.conditions);
+  assert.equal(parsed.conditionGroups.length, 2); // subject OR description
+  assert.equal(parsed.conditionGroups[0][0].fieldIdentifier, "subject");
+  assert.deepEqual(parsed.conditionGroups[0][0].value, ["6909"]);
+});
+
 test("buildConditions: subject/description OR groups + extra AND, types", () => {
   const r = buildConditions({ keyword: "login", statuses: ["进行中"], excludeTerminal: true, assignee: "alice", types: ["Bug", "Task"] });
   const parsed = JSON.parse(r.conditions);

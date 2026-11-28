@@ -149,7 +149,10 @@ export function buildConditions(filter: WorkItemFilter): { conditions: string; c
 
   const kw = (filter.keyword || "").trim();
   if (kw) {
-    const ident = /^#?([A-Za-z][A-Za-z0-9]*-\d+|\d+)$/.exec(kw);
+    // Only the full serial ("CEXP-6909") is accepted by Yunxiao's serialNumber
+    // field — EQUAL with a bare number or CONTAINS on a partial serial both
+    // 400 ("编号搜索不合法"). Bare numbers fall back to a title/body search.
+    const ident = /^#?([A-Za-z][A-Za-z0-9]*-\d+)$/.exec(kw);
     if (ident) {
       groups.push([{ fieldIdentifier: "serialNumber", operator: "EQUAL", value: [ident[1]], className: "string", toValue: null, format: "input" }]);
     } else {
