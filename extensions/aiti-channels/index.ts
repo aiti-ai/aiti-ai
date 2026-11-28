@@ -496,9 +496,6 @@ export default {
         "移动端远程控制": "Mobile remote control",
         "选择工作目录…": "Pick workspace directory…",
         "或直接输入路径": "or type a path directly",
-        "跟随 pi CLI 默认": "Follow the pi CLI default",
-        "Backend": "Backend",
-        "Pi 本地进程（默认）": "Pi local process (default)",
         "Model": "Model",
         "跟随 pi-web 默认": "Follow the pi-web default",
         "Thinking": "Thinking",
@@ -786,9 +783,6 @@ export default {
       "对话": "对话",
       "自动化": "自动化",
       "cc-connect 运行日志": "cc-connect 运行日志",
-      "跟随 pi CLI 默认": "跟随 pi CLI 默认",
-      "Backend": "后端",
-      "Pi 本地进程（默认）": "Pi 本地进程（默认）",
       "Model": "模型",
       "跟随 pi-web 默认": "跟随 pi-web 默认",
       "Thinking": "思考级别",
@@ -1277,7 +1271,6 @@ export default {
               agent: x.agent || "piweb",
               work_dir: x.work_dir ? String(x.work_dir) : "",
               mode: x.mode ? String(x.mode) : "",
-              model: x.model ? String(x.model) : "",
               // 原生 piweb agent（type=piweb 直连）；缺省走 type=acp+连接器兜底
               piwebNative: !!x.piwebNative,
               platforms: Array.isArray(x.platforms) ? x.platforms.map((y: any) => ({
@@ -1392,39 +1385,24 @@ export default {
         // live incident). Route piweb creates through a surgical config append
         // with the full agent block; non-piweb agents keep add-platform.
         const agentType = String(b.agent_type || "piweb");
-        // CLI agents expose a native opts["model"] too — a creation request with
-        // an explicit model goes through the same surgical append (full agent
-        // block with model), so no agent type is stuck on the default model.
-        const piwebCreate = agentType === "piweb";
-        const cliModelSet = agentType !== "piweb" && typeof b.model === "string" && b.model.trim();
-        const piModelSet = agentType === "pi" && typeof b.model === "string" && b.model.trim();
-        if (piwebCreate || cliModelSet || piModelSet) {
-          // add-platform cannot express agent options (piweb socket / CLI model /
-          // pi thinking) — surgical append with the full agent block, then reload
+        if (agentType === "piweb") {
           const cfgPath = mOpts.config || manager.DEFAULTS.config;
           let raw = "";
           try { raw = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf8") : ""; } catch (e: any) { return json({ ok: false, error: "读 config 失败：" + e.message }, 500); }
           if (raw.includes(`name = ${JSON.stringify(project)}`)) return json({ ok: false, error: `项目已存在：${project}` }, 409);
           if (!raw.trim()) return json({ ok: false, error: "config.toml 为空：先在面板生成/初始化实例配置" }, 409);
+          const primary = acp.primaryEndpoint(instId);
           const esc = (v: string) => JSON.stringify(v);
-          const agentOptions: string[] = [];
-          if (b.work_dir) agentOptions.push(`      work_dir = ${esc(String(b.work_dir))}`);
-          if (piwebCreate) {
-            agentOptions.push(`      socket = ${esc(acp.acpSocketPath(instId))}`);
-            agentOptions.push(`      display_name = "AITI Agent"`);
-          } else {
-            if (cliModelSet) agentOptions.push(`      model = ${esc(b.model.trim())}`);
-            if (piModelSet) agentOptions.push(`      model = ${esc(b.model.trim())}`);
-            if (piModelSet && typeof b.thinking === "string" && b.thinking.trim()) agentOptions.push(`      thinking = ${esc(b.thinking.trim())}`);
-          }
           const block = [
             "",
             "[[projects]]",
             `  name = ${esc(project)}`,
             "  [projects.agent]",
-            `    type = ${esc(agentType)}`,
+            '    type = "piweb"',
             "    [projects.agent.options]",
-            ...agentOptions,
+            ...(b.work_dir ? [`      work_dir = ${esc(String(b.work_dir))}`] : []),
+            `      socket = ${esc(acp.acpSocketPath(instId))}`,
+            `      display_name = "AITI Agent"`,
             "",
             "  [[projects.platforms]]",
             `    type = ${esc(type)}`,
@@ -1577,33 +1555,20 @@ export default {
 
       // per-cwd session model preference (wizard model picker defaults)
       if (action === "model-pref-get") {
-        // POST form preferred: cwd travels in the JSON body, never in the URL/access log.
-        let cwd = String(ctx.searchParams?.get("cwd") || "");
-        if (req.method === "POST") {
-          const b = await parseBody(req);
-          cwd = String(b.cwd || "");
-        }
+        const cwd = String(ctx.searchParams?.get("cwd") || "");
         return json({ ok: true, cwd, pref: acp.readSessionModelPref(cwd) });
       }
       if (action === "model-pref-set" && req.method === "POST") {
         const b = await parseBody(req);
         const cwd = String(b.cwd || "").trim();
-        const backend = String(b.backend || "").trim();
         const provider = String(b.provider || "").trim();
         const modelId = String(b.modelId || "").trim();
         const thinkingLevel = String(b.thinkingLevel || "").trim();
         if (!cwd) return json({ ok: false, error: "需要 cwd" }, 400);
-        if (backend && !provider && !modelId) return json({ ok: false, error: "backend 模式需要 provider/modelId（所选后端的模型目录）" }, 400);
-        if (!backend && (!provider || !modelId)) return json({ ok: false, error: "需要 provider + modelId（清除偏好请用 model-pref-clear）" }, 400);
+        if (!provider || !modelId) return json({ ok: false, error: "需要 provider + modelId（清除偏好请用 model-pref-clear）" }, 400);
         try {
-          acp.writeSessionModelPref({
-            cwd,
-            ...(backend ? { backend } : {}),
-            provider: provider || backend,
-            modelId: modelId || "default",
-            thinkingLevel: thinkingLevel || undefined,
-          });
-          return json({ ok: true, cwd, pref: { backend: backend || undefined, provider: provider || backend, modelId: modelId || "default", thinkingLevel: thinkingLevel || undefined } });
+          acp.writeSessionModelPref({ cwd, provider, modelId, thinkingLevel: thinkingLevel || undefined });
+          return json({ ok: true, cwd, pref: { provider, modelId, thinkingLevel: thinkingLevel || undefined } });
         } catch (e: any) { return json({ ok: false, error: e.message }, 500); }
       }
       if (action === "model-pref-clear" && req.method === "POST") {

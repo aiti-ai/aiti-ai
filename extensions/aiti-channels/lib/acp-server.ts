@@ -53,21 +53,14 @@ function dataDir(): string {
  *  to the pi-web default model. */
 let _prefsPath = "";
 export function setPrefsPath(p: string) { _prefsPath = p || ""; }
-export type SessionModelPref = { backend?: string; provider: string; modelId: string; thinkingLevel?: string };
-export function writeSessionModelPref(entry: { cwd: string; backend?: string; provider: string; modelId: string; thinkingLevel?: string }): void {
+export type SessionModelPref = { provider: string; modelId: string; thinkingLevel?: string };
+export function writeSessionModelPref(entry: { cwd: string; provider: string; modelId: string; thinkingLevel?: string }): void {
   if (!_prefsPath || !entry.cwd) throw new Error("prefs path not configured");
   let map: Array<Record<string, unknown>> = [];
   try { map = JSON.parse(fs.readFileSync(_prefsPath, "utf8")); } catch { /* fresh */ }
   if (!Array.isArray(map)) map = [];
   map = map.filter((e) => e?.cwd !== entry.cwd);
-  map.push({
-    cwd: entry.cwd,
-    ...(entry.backend ? { backend: entry.backend } : {}),
-    provider: entry.provider,
-    modelId: entry.modelId,
-    ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}),
-    updatedAt: new Date().toISOString(),
-  });
+  map.push({ cwd: entry.cwd, provider: entry.provider, modelId: entry.modelId, ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}), updatedAt: new Date().toISOString() });
   fs.mkdirSync(path.dirname(_prefsPath), { recursive: true });
   fs.writeFileSync(_prefsPath, JSON.stringify(map, null, 2));
 }
@@ -90,12 +83,7 @@ export function readSessionModelPref(cwd: string): SessionModelPref | null {
     const map = JSON.parse(fs.readFileSync(_prefsPath, "utf8"));
     const pref = (Array.isArray(map) ? map : []).find((e: { cwd?: string }) => e?.cwd === cwd);
     if (pref && pref.provider && pref.modelId) {
-      return {
-        ...(pref.backend ? { backend: String(pref.backend) } : {}),
-        provider: String(pref.provider),
-        modelId: String(pref.modelId),
-        thinkingLevel: pref.thinkingLevel ? String(pref.thinkingLevel) : undefined,
-      };
+      return { provider: String(pref.provider), modelId: String(pref.modelId), thinkingLevel: pref.thinkingLevel ? String(pref.thinkingLevel) : undefined };
     }
   } catch { /* missing/corrupt → no pref */ }
   return null;
@@ -337,15 +325,10 @@ class AcpConnection {
         }
         case "session/new": {
           const cwd = String(p.cwd || "");
-          // per-cwd model/backend preference (wizard picker, state file) → session options
+          // per-cwd model preference (wizard picker, state file) → session options
           const runtime = await bridge.createSession(cwd, (() => {
             const pref = readSessionModelPref(cwd);
-            if (!pref) return undefined;
-            return {
-              ...(pref.backend ? { backend: pref.backend } : {}),
-              initialModel: { provider: pref.provider, modelId: pref.modelId },
-              thinkingLevel: pref.thinkingLevel,
-            };
+            return pref ? { initialModel: { provider: pref.provider, modelId: pref.modelId }, thinkingLevel: pref.thinkingLevel } : undefined;
           })());
           console.log(`[aiti-channels][acp] session/new ${this.instanceId}: acp=${runtime.info.acpSessionId.slice(0, 8)} pi=${runtime.info.piSessionId.slice(0, 12)} cwd=${cwd}`);
           this.respond(id, { sessionId: runtime.info.acpSessionId });
