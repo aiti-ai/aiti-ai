@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectIconRefs, syncExtIcons } from "./sync-ext-icons.mjs";
+import { pathToFileURL } from "node:url";
+import { collectIconRefs, syncExtIcons, syncExtIconsForEntry } from "./sync-ext-icons.mjs";
 
 function fixture() {
   const base = mkdtempSync(join(tmpdir(), "sync-ext-icons-"));
@@ -19,6 +20,9 @@ function fixture() {
   mkdirSync(join(root, "icons"), { recursive: true });
   mkdirSync(join(root, "client", "src"), { recursive: true });
   mkdirSync(shared, { recursive: true });
+  // deployed trees exist in this fixture (the helper skips absent targets by default)
+  mkdirSync(t1, { recursive: true });
+  mkdirSync(t2, { recursive: true });
 
   // extension-owned artwork (same relative path wins over the shared library)
   writeFileSync(join(root, "icons", "own.svg"), "<svg>own</svg>");
@@ -30,12 +34,13 @@ function fixture() {
   );
   // client registration (evaluated string inside the built bundle)
   writeFileSync(join(root, "client", "src", "entry.tsx"), 'meta: { icon: "icons/from-client.svg" }\n');
+  writeFileSync(join(root, "client", "src", "ui.test.mjs"), 'meta: { icon: "icons/fixture.svg" }\n');
   writeFileSync(join(shared, "shared.svg"), "<svg>shared</svg>");
   writeFileSync(join(shared, "from-client.svg"), "<svg>client</svg>");
   return { base, root, shared, t1, t2 };
 }
 
-test("collectIconRefs scans manifest declarations and client sources", () => {
+test("collectIconRefs scans manifest declarations and client sources (test fixtures excluded)", () => {
   const f = fixture();
   try {
     const names = [...collectIconRefs(f.root)].sort();
@@ -68,6 +73,36 @@ test("syncExtIcons copies resolved icons to every target and reports dangling re
     assert.ok(logs.some((m) => m.includes("icons/missing.svg")));
     // own artwork wins over the shared library
     assert.ok(readFileSync(join(f.t1, "icons", "own.svg"), "utf8").includes("own"));
+  } finally {
+    rmSync(f.base, { recursive: true, force: true });
+  }
+});
+
+test("syncExtIcons skips absent deployed trees unless create is requested", () => {
+  const f = fixture();
+  try {
+    const missing = join(f.base, "not-installed", "ext");
+    syncExtIcons({ root: f.root, extId: "demo", sharedIconDir: f.shared, targets: [missing] });
+    assert.ok(!existsSync(missing));
+    syncExtIcons({ root: f.root, extId: "demo", sharedIconDir: f.shared, targets: [missing], create: true });
+    assert.ok(existsSync(join(missing, "icons", "own.svg")));
+  } finally {
+    rmSync(f.base, { recursive: true, force: true });
+  }
+});
+
+test("syncExtIconsForEntry derives the extension root/id from tools/deploy.mjs", () => {
+  const f = fixture();
+  try {
+    const tools = join(f.root, "tools");
+    mkdirSync(tools, { recursive: true });
+    const metaUrl = pathToFileURL(join(tools, "deploy.mjs")).href;
+    const targets = [f.t1, f.t2];
+    const logs = [];
+    const r = syncExtIconsForEntry(metaUrl, { targets, sharedIconDir: f.shared, log: (m) => logs.push(m) });
+    assert.ok(r.copied.includes("own.svg"));
+    assert.ok(existsSync(join(f.t1, "icons", "from-client.svg")));
+    assert.ok(logs.some((m) => /ext: \d+ icon file\(s\) synced/.test(m)));
   } finally {
     rmSync(f.base, { recursive: true, force: true });
   }

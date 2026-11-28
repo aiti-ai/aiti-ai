@@ -49,7 +49,14 @@ for (const extDir of targets) {
 
 // 部署状态 commit（无变更跳过；失败不阻断）——crash-rescue #9：纯 mjs 扩展也可回滚
 
-// 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
+// Icons: sync every icons/<name>.svg the manifest or the client bundle references
+// (this step used to be an empty placeholder here; deploy-all also does it centrally).
+try {
+  const { syncExtIconsForEntry } = await import("@aiti-ai/ext-shared/sync-ext-icons");
+  syncExtIconsForEntry(import.meta.url, { log: (m) => console.log("[deploy] " + m) });
+} catch (e) {
+  console.log("[deploy] icon sync skipped: " + (e && e.message ? e.message : String(e)));
+}
 deployCommit({ repo: resolve(homedir(), ".pi", "web", "extensions"), name: "aiti-acp-agent", paths: ["aiti-acp-agent"], ident: true, log: (m) => console.log("[deploy] " + m) });
 console.log("[deploy] 完成。reload: POST /api/extensions/reload");
 

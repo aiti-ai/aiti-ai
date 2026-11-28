@@ -22,7 +22,9 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** `icons/<name>.svg` references inside a text file (source, client bundle, manifest). */
 const ICON_REF_RE = /\bicons\/([A-Za-z0-9_.@-]+\.svg)\b/g;
@@ -78,18 +80,22 @@ export function collectIconRefs(root) {
  * @param {(msg: string) => void} [opts.log]
  * @returns {{ provenance: string[], copied: string[], missing: string[] }}
  */
-export function syncExtIcons({ root, extId = root, targets, sharedIconDir, log }) {
+export function syncExtIcons({ root, extId = root, targets, sharedIconDir, log, create = false }) {
   const say = typeof log === "function" ? log : () => {};
   const provenance = [];
   const copied = [];
   const missing = [];
   if (!root || !Array.isArray(targets) || targets.length === 0) return { provenance, copied, missing };
   if (!existsSync(root) || !statSync(root).isDirectory()) return { provenance, copied, missing };
+  // Deployed trees only: creating an icons/ dir under an extension that is not installed in an
+  // instance would leave a stray directory behind. Callers that really need creation pass create.
+  const live = create ? targets : targets.filter((t) => existsSync(t));
+  if (live.length === 0) return { provenance, copied, missing };
 
   // Extension-level icon (served from the extension root, not from icons/).
   const extIcon = join(root, "icon.svg");
   if (existsSync(extIcon)) {
-    for (const target of targets) {
+    for (const target of live) {
       try {
         mkdirSync(target, { recursive: true });
         copyFileSync(extIcon, join(target, "icon.svg"));
@@ -109,7 +115,7 @@ export function syncExtIcons({ root, extId = root, targets, sharedIconDir, log }
       say(`${extId}: icon referenced but not found (extension dir / shared library): icons/${name}`);
       continue;
     }
-    for (const target of targets) {
+    for (const target of live) {
       try {
         mkdirSync(join(target, "icons"), { recursive: true });
         copyFileSync(src, join(target, "icons", name));
@@ -121,4 +127,27 @@ export function syncExtIcons({ root, extId = root, targets, sharedIconDir, log }
     }
   }
   return { provenance, copied, missing };
+}
+
+/**
+ * Convenience for an extension's own `tools/deploy.mjs`: derive the extension root, id and the
+ * shared library from `import.meta.url`, then sync into the standard deployed trees that exist.
+ * A single call keeps every deploy path (direct script or the unified runner) icon-complete.
+ *
+ * @param {string} metaUrl `import.meta.url` of the calling `tools/deploy.mjs`
+ * @param {{ log?: (msg: string) => void, targets?: string[], sharedIconDir?: string }} [opts]
+ */
+export function syncExtIconsForEntry(metaUrl, { log, targets, sharedIconDir } = {}) {
+  const toolsDir = dirname(fileURLToPath(metaUrl));
+  const root = dirname(toolsDir);
+  const extId = basename(root);
+  const shared = sharedIconDir ?? join(dirname(root), "_shared", "icons");
+  const home = process.env.HOME || process.env.USERPROFILE || homedir();
+  const dirs = targets ?? [
+    join(home, ".pi", "web", "extensions", extId),
+    join(home, ".pi", "web-dev", "extensions", extId),
+  ];
+  const result = syncExtIcons({ root, extId, targets: dirs, sharedIconDir: shared, log });
+  if (result.copied.length && typeof log === "function") log(`${extId}: ${result.copied.length} icon file(s) synced`);
+  return result;
 }

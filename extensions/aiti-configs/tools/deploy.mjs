@@ -63,7 +63,14 @@ console.log("[deploy] 完成。生效：POST /api/extensions/reload（或重启 
 
 // 提交部署状态到扩展 git 仓库（生产目录是 git 仓库）
 
-// 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
+// Icons: sync every icons/<name>.svg the manifest or the client bundle references
+// (this step used to be an empty placeholder here; deploy-all also does it centrally).
+try {
+  const { syncExtIconsForEntry } = await import("@aiti-ai/ext-shared/sync-ext-icons");
+  syncExtIconsForEntry(import.meta.url, { log: (m) => console.log("[deploy] " + m) });
+} catch (e) {
+  console.log("[deploy] icon sync skipped: " + (e && e.message ? e.message : String(e)));
+}
 
 deployCommit({ repo: extRepo, name: "aiti-configs", paths: ["aiti-configs"], log: (m) => console.log("[deploy] " + m) });
 

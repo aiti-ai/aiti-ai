@@ -55,7 +55,14 @@ for (const extDir of targets) {
 const extRepo = resolve(homedir(), ".pi", "web", "extensions");
 
 
-// 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
+// Icons: sync every icons/<name>.svg the manifest or the client bundle references
+// (this step used to be an empty placeholder here; deploy-all also does it centrally).
+try {
+  const { syncExtIconsForEntry } = await import("@aiti-ai/ext-shared/sync-ext-icons");
+  syncExtIconsForEntry(import.meta.url, { log: (m) => console.log("[deploy] " + m) });
+} catch (e) {
+  console.log("[deploy] icon sync skipped: " + (e && e.message ? e.message : String(e)));
+}
 deployCommit({ repo: extRepo, name: "aiti-ai-usage", paths: ["aiti-ai-usage"], log: (m) => console.log("[deploy] " + m) });
 console.log("[deploy] 完成。reload: POST /api/extensions/reload");
 
