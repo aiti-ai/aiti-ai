@@ -122,7 +122,7 @@ test("队列接线：recall 单条取回；steer 组操作给人话错误", asyn
   await h.followUp("x");
   const rec = await h.queueManage({ action: "recall", index: 0 });
   assert.equal(rec.entry.text, "x");
-  await assert.rejects(() => h.queueManage({ action: "clear", kind: "steer" }), /不支持/);
+  await assert.rejects(() => h.queueManage({ action: "clear", kind: "steer" }), /does not support recall\/move/);
 });
 
 // ---- 上下文用量（机会式；docs/pi-web-external-agent-context-usage-plan.md）----

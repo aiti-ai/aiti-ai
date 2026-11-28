@@ -1,20 +1,20 @@
 /**
- * agent-accounts —— 多 agent 登录账号档（别名备份 / 一键切换 / 自动保险）共享引擎
- * （纯模块，可测；权威源在本文件，调用方：aiti-agent-manager）。
+ * agent-accounts — shared engine for multi-agent login account profiles (alias backup / one-click switch / automatic safety net)
+ * (pure module, testable; authoritative source is this file; caller: aiti-agent-manager).
  *
- * 设计（2026-09-13 拍板）：
- *   - **单文件存储**：所有 agent、所有账号档收在一个 JSON 文件里
- *     （默认 `<agent-manager configDir>/agent-accounts.json`，0600）——aiti-configs
- *     备份时一条 encrypt pattern（agent-accounts.json）即可全量加密，不散落多文件。
- *   - **slot**：每 agent 的登录凭据 = 一组「槽位」（key / label / 当前机器绝对路径），
- *     由调用方逐机器解析；快照只存 key + 内容，切回时按当前机器的路径写回（跨机备份可用）。
- *   - **自动保险档**：switch / login / logout 等覆盖性操作前，当前登录若未被任何档覆盖 →
- *     自动存 `_auto-before-<kind>`——永不因切换 / 重新登录丢账号，也无须用户先手动备份。
- *   - **current 判定**：内容签名（sha256）比对，不存额外状态，文件被外部改动也能感知。
- *   - **登出**：`clearSlots` 删除当前凭据文件（先经调用方自动保险）；feature/env 注入的
- *     凭据不在文件层，天然不受影响（调用方可提示）。
+ * Design (decided 2026-09-13):
+ *   - **Single-file store**: all agents, all account profiles live in one JSON file
+ *     (default `<agent-manager configDir>/agent-accounts.json`, 0600) — the aiti-configs backup can encrypt everything with a single
+ *     encrypt pattern (agent-accounts.json), nothing scattered across multiple files.
+ *   - **slot**: each agent's login credentials = a set of "slots" (key / label / current machine's absolute path),
+ *     resolved per machine by the caller; the snapshot stores only key + content, and switching back writes to the current machine's paths (usable for cross-machine backup).
+ *   - **Automatic safety profile**: before overriding operations like switch / login / logout, if the current login is not covered by any profile →
+ *     automatically store `_auto-before-<kind>` — never lose an account to switching / re-login, and no need for the user to back up manually first.
+ *   - **current determination**: content-signature (sha256) comparison, no extra state stored; external file changes are still noticed.
+ *   - **Logout**: `clearSlots` deletes the current credential files (after the caller's automatic safety net); credentials injected via feature/env
+ *     are not file-level and are naturally unaffected (the caller may warn).
  *
- * 存储结构：
+ * Storage structure:
  *   { version: 1,
  *     accounts: { <agent>: { <alias>: {
  *       savedAt: number, auto?: boolean, note?: string,
@@ -26,22 +26,22 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, sta
 import { dirname } from "node:path";
 
 export const ACCOUNTS_STORE_VERSION = 1;
-/** 单文件体积防御（正常几十 KB；超限说明误收大文件，拒绝写入并报错）。 */
+/** Single-file size defense (normally tens of KB; exceeding the limit means a large file was mistakenly collected — refuse the write and error). */
 export const MAX_STORE_BYTES = 4 * 1024 * 1024;
-/** 自动保险档前缀（用户手动别名禁以此开头）。 */
+/** Automatic safety-profile prefix (user manual aliases must not start with this). */
 export const AUTO_ALIAS_PREFIX = "_auto-";
 
-/** 一个凭据槽位（key 稳定逻辑标识，写入快照/切回时与当前机器路径解耦）。 */
+/** One credential slot (key is the stable logical identity; decoupled from the current machine's path when writing snapshots/switching back). */
 export interface AccountSlot {
   key: string;
   label: string;
-  /** 当前机器绝对路径（不存在 = 该槽位暂无内容）。 */
+  /** Current machine's absolute path (absent = this slot currently has no content). */
   path: string;
 }
 
 interface StoredFile {
   data: string;
-  /** true = data 为 base64（原文件非 UTF-8 文本）；缺省 = 纯文本 */
+  /** true = data is base64 (the original file was not UTF-8 text); default = plain text */
   b64?: boolean;
   label?: string;
 }
@@ -50,18 +50,18 @@ export interface StoredAccount {
   savedAt: number;
   auto?: boolean;
   note?: string;
-  /** 账号身份指纹（调用方构造，如 "李永|330116798388"）——token 自动刷新后仍能标记「当前」 */
+  /** Account identity fingerprint (built by the caller, e.g. "Li Yong|330116798388") — still marks "current" after automatic token refresh */
   identity?: string;
-  /** 账号展示元数据（user/uin/expiresAt；展示用，不含 token） */
+  /** Account display metadata (user/uin/expiresAt; for display, no token) */
   account?: AccountDisplay;
   files: Record<string, StoredFile>;
 }
 
-/** 账号展示元数据（各家 /login/status 提取；字段可缺）。 */
+/** Account display metadata (extracted from each vendor's /login/status; fields optional). */
 export interface AccountDisplay {
   user?: string;
   uin?: string;
-  /** 凭据有效期（ms 时间戳；token 过期时间） */
+  /** Credential validity (ms timestamp; token expiry time) */
   expiresAt?: number;
 }
 
@@ -70,18 +70,18 @@ export interface AccountsStore {
   accounts: Record<string, Record<string, StoredAccount>>;
 }
 
-/** 列表项（面板展示用；不含文件内容）。 */
+/** List entry (for panel display; no file content). */
 export interface AccountEntry {
   alias: string;
   savedAt: number;
   auto: boolean;
   note?: string;
-  /** 账号展示元数据（user/uin/expiresAt；旧档缺省时由调用方按身份回填） */
+  /** Account display metadata (user/uin/expiresAt; when missing in old profiles the caller backfills from identity) */
   user?: string;
   uin?: string;
   expiresAt?: number;
   slotCount: number;
-  /** 当前机器上已有内容的槽位数（档存了但本机没这个槽位时 < slotCount） */
+  /** Number of slots that already have content on the current machine (< slotCount when the profile stored it but this machine lacks the slot) */
   presentCount: number;
   current: boolean;
 }
@@ -90,7 +90,7 @@ export function emptyStore(): AccountsStore {
   return { version: ACCOUNTS_STORE_VERSION, accounts: {} };
 }
 
-/** 读单文件存储（缺失/坏 JSON/版本不符 → 空 store，不抛）。 */
+/** Reads the single-file store (missing/bad JSON/version mismatch → empty store, no throw). */
 export function readAccountsStore(file: string): AccountsStore {
   try {
     const j = JSON.parse(readFileSync(file, "utf8")) as AccountsStore;
@@ -101,20 +101,20 @@ export function readAccountsStore(file: string): AccountsStore {
   }
 }
 
-/** 原子写单文件存储（临时文件 + rename；0600；体积防御）。 */
+/** Atomically writes the single-file store (temp file + rename; 0600; size defense). */
 export function writeAccountsStore(file: string, store: AccountsStore): void {
   const body = JSON.stringify({ version: ACCOUNTS_STORE_VERSION, accounts: store.accounts }, null, 1);
   if (Buffer.byteLength(body) > MAX_STORE_BYTES) {
-    throw new Error(`账号档文件超限（>${Math.round(MAX_STORE_BYTES / 1024 / 1024)}MB）——检查槽位是否误收大文件`);
+    throw new Error(`account profile file over the size limit (>${Math.round(MAX_STORE_BYTES / 1024 / 1024)}MB) — check whether a slot mistakenly collected a large file`);
   }
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, body, { mode: 0o600 });
-  try { chmodSync(tmp, 0o600); } catch { /* 非 POSIX 容错 */ }
+  try { chmodSync(tmp, 0o600); } catch { /* non-POSIX tolerance */ }
   renameSync(tmp, file);
 }
 
-/** 用户输入别名净化：1-32 字符，中文/字母/数字/._- 空格，首字符非符号，禁保留前缀与路径分隔。 */
+/** User-input alias sanitization: 1-32 chars, Unicode letters/digits/._- spaces, first char not a symbol, reserved prefix and path separators forbidden. */
 export function sanitizeAlias(alias: unknown): string | null {
   const a = String(alias ?? "").trim();
   if (!a || a.length > 32) return null;
@@ -124,12 +124,12 @@ export function sanitizeAlias(alias: unknown): string | null {
   return a;
 }
 
-/** 自动保险档别名。 */
+/** Automatic safety-profile alias. */
 export function autoAlias(kind: "switch" | "login" | "logout"): string {
   return `${AUTO_ALIAS_PREFIX}before-${kind}`;
 }
 
-/** 槽位当前内容（文件不存在/空文件 → null；非 UTF-8 二进制 → base64）。 */
+/** Slot's current content (missing/empty file → null; non-UTF-8 binary → base64). */
 function readSlotData(slot: AccountSlot): StoredFile | null {
   try {
     if (!existsSync(slot.path)) return null;
@@ -148,7 +148,7 @@ function storedToBuffer(f: StoredFile): Buffer {
   return f.b64 ? Buffer.from(f.data, "base64") : Buffer.from(f.data, "utf8");
 }
 
-/** 槽位集合的内容签名（只含当前存在的内容；key 排序稳定）。 */
+/** Content signature of the slot set (only includes currently present content; keys sorted for stability). */
 export function currentSignature(slots: AccountSlot[]): string {
   const h = createHash("sha256");
   for (const s of [...slots].sort((a, b) => a.key.localeCompare(b.key))) {
@@ -168,22 +168,22 @@ function accountSignature(acct: StoredAccount): string {
   return h.digest("hex").slice(0, 16);
 }
 
-/** 当前槽位是否已有内容（有 = 可备份 / 需保险）。 */
+/** Whether the current slots have any content (yes = can back up / needs the safety net). */
 export function hasAnySlotContent(slots: AccountSlot[]): boolean {
   return slots.some((s) => readSlotData(s) !== null);
 }
 
-/** 当前登录是否已被某个档覆盖（用于自动保险前的判断；identity 相同也算覆盖）。 */
+/** Whether the current login is already covered by some profile (for the pre-auto-safety-net check; same identity also counts as covered). */
 export function isCurrentCovered(store: AccountsStore, agent: string, slots: AccountSlot[], identity?: string): boolean {
   const sig = currentSignature(slots);
-  if (sig === currentSignature([])) return false; // 当前无内容
+  if (sig === currentSignature([])) return false; // currently no content
   return Object.values(store.accounts[agent] ?? {}).some((a) =>
     accountSignature(a) === sig || Boolean(identity && a.identity && a.identity === identity));
 }
 
 /**
- * 列出某 agent 的账号档（savedAt 倒序）。
- * current = 内容签名一致，**或** identity 相同（token 自动刷新导致内容轮换时仍认得同一账号）。
+ * Lists an agent's account profiles (savedAt descending).
+ * current = content signature matches, **or** same identity (still recognizes the same account when automatic token refresh rotates the content).
  */
 export function listAccounts(
   store: AccountsStore,
@@ -212,8 +212,8 @@ export function listAccounts(
 }
 
 /**
- * 备份当前登录为账号档（覆盖同名档）。
- * @throws 当前无任何槽位内容时（没有可备份的登录态）
+ * Backs up the current login as an account profile (overwrites a same-named profile).
+ * @throws when no slot has any content (no login state to back up)
  */
 export function saveAccount(
   store: AccountsStore,
@@ -224,14 +224,14 @@ export function saveAccount(
 ): { entry: AccountEntry; overwritten: boolean } {
   const clean = opts.auto ? String(alias) : sanitizeAlias(alias);
   if (!clean || clean.includes("/") || clean.includes("\\") || clean.includes("..")) {
-    throw new Error("别名非法：1-32 字符，可用中文/字母/数字/./_/-/空格，且不得以 _auto- 开头");
+    throw new Error("invalid alias: 1-32 characters; Unicode letters/digits/./_/-/space allowed; must not start with _auto-");
   }
   const files: Record<string, StoredFile> = {};
   for (const s of slots) {
     const f = readSlotData(s);
     if (f) files[s.key] = f;
   }
-  if (!Object.keys(files).length) throw new Error("当前无登录态可备份（未检测到任何凭据文件）");
+  if (!Object.keys(files).length) throw new Error("no login state to back up (no credential files detected)");
   const prev = store.accounts[agent]?.[clean];
   const account = opts.account && (opts.account.user || opts.account.uin || typeof opts.account.expiresAt === "number") ? opts.account : undefined;
   store.accounts[agent] = store.accounts[agent] ?? {};
@@ -248,26 +248,26 @@ export function saveAccount(
   return { entry, overwritten: Boolean(prev) };
 }
 
-/** 把账号档内容恢复到槽位路径（档里没有的槽位 → 删除当前文件，保证切换后状态干净）。 */
+/** Restores profile content to slot paths (slots missing from the profile → delete the current file, keeping the post-switch state clean). */
 export function restoreAccount(store: AccountsStore, agent: string, alias: string, slots: AccountSlot[]): StoredAccount {
   const acct = store.accounts[agent]?.[alias];
-  if (!acct) throw new Error(`账号档不存在：${agent} / ${alias}`);
+  if (!acct) throw new Error(`account profile does not exist: ${agent} / ${alias}`);
   for (const s of slots) {
     const f = acct.files[s.key];
     if (f) {
       mkdirSync(dirname(s.path), { recursive: true, mode: 0o700 });
       writeFileSync(s.path, storedToBuffer(f), { mode: 0o600 });
-      try { chmodSync(s.path, 0o600); } catch { /* 非 POSIX 容错 */ }
+      try { chmodSync(s.path, 0o600); } catch { /* non-POSIX tolerance */ }
     } else {
-      try { rmSync(s.path, { force: true }); } catch { /* 已不在 */ }
+      try { rmSync(s.path, { force: true }); } catch { /* already gone */ }
     }
   }
   return acct;
 }
 
 /**
- * 切换到账号档：当前登录未被任何档覆盖时先自动存 `_auto-before-switch`，再恢复目标档。
- * @returns autoSaved = 是否生成了自动保险档
+ * Switches to an account profile: if the current login is not covered by any profile, first auto-stores `_auto-before-switch`, then restores the target profile.
+ * @returns autoSaved = whether an automatic safety profile was created
  */
 export function switchAccount(
   store: AccountsStore,
@@ -277,7 +277,7 @@ export function switchAccount(
   opts: { now?: number; note?: string; identity?: string; account?: AccountDisplay } = {},
 ): { entry: AccountEntry; autoSaved: boolean } {
   const clean = String(alias ?? "").trim();
-  if (!store.accounts[agent]?.[clean]) throw new Error(`账号档不存在：${clean}`);
+  if (!store.accounts[agent]?.[clean]) throw new Error(`account profile does not exist: ${clean}`);
   let autoSaved = false;
   if (hasAnySlotContent(slots) && !isCurrentCovered(store, agent, slots, opts.identity)) {
     try {
@@ -287,7 +287,7 @@ export function switchAccount(
         ...(opts.account ? { account: opts.account } : {}),
       });
       autoSaved = true;
-    } catch { /* 保险失败不阻断切换 */ }
+    } catch { /* safety-net failure does not block the switch */ }
   }
   restoreAccount(store, agent, clean, slots);
   const entries = listAccounts(store, agent, slots, { identity: opts.identity });
@@ -295,10 +295,10 @@ export function switchAccount(
   return { entry, autoSaved };
 }
 
-/** 删除账号档（含自动保险档）。 */
+/** Deletes an account profile (including automatic safety profiles). */
 export function removeAccount(store: AccountsStore, agent: string, alias: string): boolean {
   const clean = String(alias ?? "").trim();
-  if (!clean || clean.includes("/") || clean.includes("\\") || clean.includes("..")) throw new Error("别名非法");
+  if (!clean || clean.includes("/") || clean.includes("\\") || clean.includes("..")) throw new Error("invalid alias");
   const bag = store.accounts[agent];
   if (!bag?.[clean]) return false;
   delete bag[clean];
@@ -307,8 +307,8 @@ export function removeAccount(store: AccountsStore, agent: string, alias: string
 }
 
 /**
- * 登出（清空全部槽位文件）。调用方应先确保当前登录已存档（自动保险 `_auto-before-logout`）。
- * @returns 实际删除的文件路径
+ * Logout (clears all slot files). The caller should first ensure the current login is saved (automatic safety net `_auto-before-logout`).
+ * @returns the file paths actually deleted
  */
 export function clearSlots(slots: AccountSlot[]): string[] {
   const removed: string[] = [];
@@ -317,7 +317,7 @@ export function clearSlots(slots: AccountSlot[]): string[] {
       if (!existsSync(s.path)) continue;
       rmSync(s.path, { force: true });
       removed.push(s.path);
-    } catch { /* 删失败留给下次 */ }
+    } catch { /* deletion failed; left for next time */ }
   }
   return removed;
 }

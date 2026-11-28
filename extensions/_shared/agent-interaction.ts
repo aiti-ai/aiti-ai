@@ -1,19 +1,19 @@
 /**
- * _shared/agent-interaction — 会话「需用户应答的请求」统一语义（kind 裁决 + pending 账本 + 答案→线协议）。
+ * _shared/agent-interaction — unified semantics for session "requests needing a user answer" (kind arbitration + pending ledger + answer→wire protocol).
  *
- * 权威契约 docs/pi-web-ext-agent-interaction-unify-plan.md §2/§3。所有会话后端（CC 族
- * control_request/can_use_tool、ACP session/request_permission、zcode 反向请求、pi/omp fork-rpc）
- * 把各自协议里的 ask 转成同一个 `interaction_request` 事件，答案从同一个 `respondInteraction`
- * 回来；本层负责语义换算与生命周期，各家 handle 只留「认帧 + 写字节」。
+ * Authoritative contract docs/pi-web-ext-agent-interaction-unify-plan.md §2/§3. All session backends (the CC family's
+ * control_request/can_use_tool, ACP session/request_permission, zcode reverse requests, pi/omp fork-rpc)
+ * convert their protocol's ask into the same `interaction_request` event, and answers come back through the same `respondInteraction`;
+ * this layer handles semantic conversion and lifecycle, leaving each handle only "recognize the frame + write the bytes".
  *
- * 三条不可谈判的行为（都是事故/缺陷驱动，见方案 §0）：
- * 1. `answers`/`approved`/`feedback` 必须回填进工具入参（CC 的 execute() 就从 params 读答案与
- *    审批结论），否则 AskUserQuestion 是假支持——卡片能点、答案进不去；方案拒绝也丢反馈通道。
- * 2. 未决 ask 落 sidecar 且可 replay 补发（**复用原 requestId**）：handle 被重建/前端刷新后
- *    卡片若不再可点，CLI 会永久等一个没人回答的授权（qoder 会话挂 5 小时的根因）。
- * 3. 选项表缺失/未知 optionId 一律 fail-closed，绝不随便挑一个当用户同意。
+ * Three non-negotiable behaviors (all incident/defect driven; see plan §0):
+ * 1. `answers`/`approved`/`feedback` must be backfilled into the tool input params (CC's execute() reads the answers and
+ *    the approval verdict from params), otherwise AskUserQuestion is fake support — the card is clickable but the answers go nowhere; plan rejection also loses the feedback channel.
+ * 2. Pending asks land in a sidecar and can be replayed (**reusing the original requestId**): after the handle is rebuilt or the frontend refreshes,
+ *    if the card is no longer clickable the CLI waits forever for an authorization no one answers (root cause of the qoder session hanging 5 hours).
+ * 3. A missing options table / unknown optionId always fails closed — never just pick one and call it user consent.
  *
- * 测试：agent-interaction.test.mjs
+ * Tests: agent-interaction.test.mjs
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -40,7 +40,7 @@ export interface InteractionQuestion {
   options: InteractionQuestionOption[];
 }
 
-/** 后端广播的统一 ask 事件（宿主原样透传到前端 sessionRequestCard 插槽）。 */
+/** The unified ask event broadcast by the backend (the host passes it through verbatim to the frontend sessionRequestCard slot). */
 export interface InteractionRequestEvent {
   type: "interaction_request";
   requestId: string;
@@ -63,7 +63,7 @@ export interface InteractionExpiredEvent {
   reason: InteractionExpireReason;
 }
 
-/** 前端作答（宿主 respond_interaction 命令体）。 */
+/** The frontend answer (the host's respond_interaction command body). */
 export interface InteractionAnswer {
   action: "accept" | "decline";
   answers?: Record<string, string | string[]>;
@@ -71,7 +71,7 @@ export interface InteractionAnswer {
   optionId?: string;
 }
 
-/** 账本条目（sidecar 落盘形态 = 事件 + 落盘时间）。 */
+/** Ledger entry (sidecar persisted shape = event + persisted time). */
 export interface PendingAsk {
   requestId: string;
   kind: InteractionKind;
@@ -91,30 +91,30 @@ export interface InteractionRecord {
 }
 
 export interface InteractionLedger {
-  /** 记一笔未决并广播；requestId 给了就复用（应答必须回同一个 id）。 */
+  /** Records a pending ask and broadcasts; a given requestId is reused (the answer must come back to the same id). */
   open(partial: Partial<InteractionRequestEvent> & { kind?: InteractionKind; requestId?: string }): string;
-  /** 作答收口：命中返回账项并清账，未命中 null（重复应答幂等）。 */
+  /** Answer settlement: on hit returns the ledger entry and clears it; miss → null (duplicate answers idempotent). */
   settle(requestId: string, answer: InteractionAnswer): PendingAsk | null;
   pending(): PendingAsk[];
   /**
-   * 未决的广播帧（不发）：订阅者补发用——前端刷新后卡片丢了而 CLI 还在等，
-   * 拿这批帧重投即可（同 requestId，幂等，不新造）。
+   * The pending broadcast frames (not sent): for subscriber replay — after a frontend refresh the card is gone while the CLI still waits,
+   * so re-deliver with these frames (same requestId, idempotent, nothing new created).
    */
   replay(): InteractionRequestEvent[];
-  /** turn 收口 / 进程死亡：逐个 interaction_expired + 留痕 + 清空。 */
+  /** Turn settlement / process death: one interaction_expired each + leave a trace + clear. */
   failPending(reason: InteractionExpireReason): number;
-  /** 启动时从 sidecar 恢复未决，返回恢复条数（无 sidecar 路径返回 0）。 */
+  /** Restores pending asks from the sidecar at startup, returning the recovered count (0 when there is no sidecar path). */
   load(): number;
 }
 
-// ── kind 裁决 ──────────────────────────────────────────────────────────────
+// ── kind arbitration ──────────────────────────────────────────────────────
 
-/** 剥 mcp__server__ 前缀并归一大小写/分隔符，供工具名匹配。 */
+/** Strips the mcp__server__ prefix and normalizes case/separators for tool-name matching. */
 function normalizeToolName(name?: string): string {
   if (!name) return "";
   let base = name;
   if (base.startsWith("mcp__")) {
-    // server 名可含下划线（mcp__my_server__AskUserQuestion）→ 取最后一个分隔符之后
+    // the server name may contain underscores (mcp__my_server__AskUserQuestion) → take the part after the last separator
     const tail = base.lastIndexOf("__");
     base = tail > 5 ? base.slice(tail + 2) : base.slice(5);
   }
@@ -134,7 +134,7 @@ export function isValidQuestions(value: unknown): value is InteractionQuestion[]
   });
 }
 
-/** 后端显式标注（zcode schema.interaction）优先，其次工具名。 */
+/** The backend's explicit marker (zcode schema.interaction) takes priority, then the tool name. */
 export function deriveAskKind(toolName?: string, input?: unknown): InteractionKind {
   const marked = asRecord(input)?.interaction;
   if (marked === "plan_approval") return "plan_approval";
@@ -145,13 +145,13 @@ export function deriveAskKind(toolName?: string, input?: unknown): InteractionKi
   return "tool_auth";
 }
 
-// ── 答案 → 各家线协议 ───────────────────────────────────────────────────────
+// ── answers → each vendor's wire protocol ───────────────────────────────────────────────────
 
 function denyMessage(answer: InteractionAnswer): string {
   return answer.message && answer.message.trim() ? answer.message : "denied by user";
 }
 
-/** CC 族 control_response.response（allow/deny + updatedInput 回填）。 */
+/** The CC family's control_response.response (allow/deny + updatedInput backfill). */
 export function toControlResponse(
   ask: { kind: InteractionKind; input?: unknown; options?: InteractionOption[] },
   answer: InteractionAnswer,
@@ -164,8 +164,8 @@ export function toControlResponse(
       : { behavior: "allow" };
   }
   if (ask.kind === "plan_approval") {
-    // 审批的拒绝**不是**权限拒绝：deny 只会回一条「用户拒绝授权」，方案反馈通道（feedback）
-    // 与「修订再继续」的语义就丢了。ExitPlanMode 的 execute 读 params.approved/feedback。
+    // a plan-approval rejection is **not** a permission denial: deny would only return "user denied authorization", losing the plan feedback channel (feedback)
+    // and the "revise and continue" semantics. ExitPlanMode's execute reads params.approved/feedback.
     const base = asRecord(ask.input) ?? {};
     if (answer.action === "decline") {
       const feedback = answer.message && answer.message.trim() ? answer.message.trim() : undefined;
@@ -175,13 +175,13 @@ export function toControlResponse(
   }
   if (answer.action === "decline") return { behavior: "deny", message: denyMessage(answer) };
   if (ask.kind === "ask_user") {
-    // AskUserQuestion 的 execute 从 params.answers 读（键=问题文本），不回填=空答案
+    // AskUserQuestion's execute reads from params.answers (key = question text); not backfilling = empty answers
     return { behavior: "allow", updatedInput: { ...(asRecord(ask.input) ?? {}), answers: answer.answers ?? {} } };
   }
   return { behavior: "allow" };
 }
 
-/** ACP 族：作答必须落到具体 optionId，查不到就不应答（fail-closed）。 */
+/** ACP family: the answer must land on a concrete optionId; if not found, do not answer (fail-closed). */
 export function toAcpOptionId(options: InteractionOption[] | undefined, answer: InteractionAnswer): string | undefined {
   const list = (options ?? []).filter((o) => o && typeof o.optionId === "string");
   if (answer.optionId) return list.find((o) => o.optionId === answer.optionId)?.optionId;
@@ -194,7 +194,7 @@ function normalizeOptionKind(option: InteractionOption): "allow" | "reject" {
   return /reject|deny|cancel|refuse/.test(text) ? "reject" : "allow";
 }
 
-// ── pending 账本 ────────────────────────────────────────────────────────────
+// ── pending ledger ──────────────────────────────────────────────────────────
 
 const ALLOWED_KINDS = new Set<InteractionKind>(["tool_auth", "ask_user", "plan_approval", "open_url", "generic"]);
 const TEXT_FIELDS = ["plan", "url", "launchUrl", "prompt", "reason"] as const;
@@ -221,7 +221,7 @@ function sanitizeQuestions(value: unknown): InteractionQuestion[] | undefined {
   return list.length ? list : undefined;
 }
 
-/** 不信任外部输入：逐字段消毒后同时产出账项与广播事件（sidecar 读回也走这条路）。 */
+/** Distrusts external input: sanitizes field by field and produces both the ledger entry and the broadcast event (the sidecar read-back goes through here too). */
 function normalizeAsk(partial: Partial<InteractionRequestEvent> & { requestId?: string }, askedAt: number):
   { ask: PendingAsk; event: InteractionRequestEvent } {
   const requestId = sanitizeString(partial.requestId) ?? randomUUID();
@@ -242,14 +242,14 @@ function normalizeAsk(partial: Partial<InteractionRequestEvent> & { requestId?: 
   return { ask, event };
 }
 
-/** sidecar 落盘形态 = 广播事件 + 落盘时间（重连补发要发当初那一帧，不能只剩半截）。 */
+/** Sidecar persisted shape = broadcast event + persisted time (the reconnect replay must send the original frame, not just half of it). */
 type PersistedAsk = InteractionRequestEvent & { askedAt: number };
 
 export function createInteractionLedger(opts: {
   emit(event: InteractionRequestEvent | InteractionExpiredEvent): void;
   /**
-   * sidecar 文件路径（惰性取：handle 构造期会话 id 还是占位值，见各家队列 sidecar 同形注释）。
-   * 返 undefined = 不落盘（跨重建重发能力自动降级）。
+   * Sidecar file path (lazily fetched: at handle construction the session id is still the placeholder, see the same-shape comment in each vendor's queue sidecar).
+   * Returning undefined = no persistence (the cross-rebuild re-delivery capability degrades automatically).
    */
   sidecarFile?: () => string | undefined;
   record?(note: InteractionRecord): void;
@@ -261,7 +261,7 @@ export function createInteractionLedger(opts: {
   const persist = (): void => {
     const path = opts.sidecarFile?.();
     if (!path) return;
-    // 原子写顺序（windows-compat-lessons §0.5）：先写 tmp 再 rename
+    // atomic write order (windows-compat-lessons §0.5): write tmp first, then rename
     try {
       mkdirSync(dirname(path), { recursive: true });
       const rows: PersistedAsk[] = [...entries.values()].map(({ ask, event }) => ({ ...event, askedAt: ask.askedAt }));
@@ -269,7 +269,7 @@ export function createInteractionLedger(opts: {
       writeFileSync(tmp, JSON.stringify(rows), "utf8");
       renameSync(tmp, path);
     } catch {
-      /* sidecar 失败不得杀会话：重建时少一次重发而已 */
+      /* a sidecar failure must not kill the session: one fewer replay on rebuild */
     }
   };
 
@@ -277,7 +277,7 @@ export function createInteractionLedger(opts: {
     try {
       opts.record?.({ requestId: ask.requestId, kind: ask.kind, toolName: ask.toolName, input: ask.input, decision, note: msg });
     } catch {
-      /* 留痕是附加品，不能反噬应答链路 */
+      /* tracing is an accessory; it must not backfire on the answer chain */
     }
   };
 

@@ -1,7 +1,7 @@
 /**
- * remote-queue 共享层测试（docs/aiti-remote-queue-and-sidecar-plan.md §2）。
- * 镜像维护 / list / clear 返回清空前文本 / move·remove·requeue·convert 的
- * clear+重注入策略 / 索越界人话错误。
+ * remote-queue shared-layer tests (docs/aiti-remote-queue-and-sidecar-plan.md §2).
+ * Mirror maintenance / list / clear returning pre-clear text / the clear+re-inject strategy of
+ * move·remove·requeue·convert / human-readable out-of-range errors.
  *
  * Run: node --test pi-web-ext/_shared/pi-fork-rpc/remote-queue.test.mjs
  */
@@ -11,15 +11,16 @@ import test from "node:test";
 const modPath = new URL("./remote-queue.ts", import.meta.url).pathname;
 const { createRemotePiQueueSupport } = await import(modPath);
 
-/** 台架：可编程 clearRemote 返回 + 记录重注入调用。 */
+/** Rig: programmable clearRemote returns + reinjection call recording. */
 function rig() {
   const clears = [];
   const reinjections = [];
   const support = createRemotePiQueueSupport({
     clearRemote: async () => {
       clears.push(1);
-      // 语义：清空返回「清空前」的内容——用当前重注入目标队列模拟不现实，测试只断言调用次数，
-      // 文本返回值由用例自定义（见 clearRemoteResult 覆写）。
+      // Semantics: clear returns the "pre-clear" content — simulating it with the current
+      // re-injection target queue is unrealistic, so the test only asserts call counts; the text
+      // return value is customized per case (see the clearRemoteResult override).
       return rigClearResult;
     },
     reinject: async (text, kind) => { reinjections.push({ text, kind }); },
@@ -34,30 +35,30 @@ function rig() {
   };
 }
 
-test("镜像：observeFrame 只认 queue_update，快照返回拷贝", () => {
+test("mirror: observeFrame only accepts queue_update, snapshot returns a copy", () => {
   const t = rig();
   t.feed(["s1"], ["f1", "f2"]);
   assert.deepEqual(t.support.snapshot(), { steering: ["s1"], followUp: ["f1", "f2"] });
   t.support.observeFrame({ type: "message_update" });
   t.support.observeFrame({ type: "queue_update" });
-  assert.deepEqual(t.support.snapshot(), { steering: [], followUp: [] }, "缺数组按空归一");
+  assert.deepEqual(t.support.snapshot(), { steering: [], followUp: [] }, "missing arrays normalize to empty");
   const snap = t.support.snapshot();
   snap.followUp.push("mutated");
-  assert.deepEqual(t.support.snapshot().followUp, [], "快照须是拷贝");
+  assert.deepEqual(t.support.snapshot().followUp, [], "the snapshot must be a copy");
 });
 
-test("clear：远端权威清空 + 返回清空前文本 + 镜像复位", async () => {
+test("clear: remote-authoritative wipe + returns pre-clear text + mirror reset", async () => {
   const t = rig();
   t.feed([], ["a", "b"]);
   t.setClearResult({ steering: [], followUp: ["a", "b"] });
   const r = await t.support.queueManage({ action: "clear" });
   assert.equal(t.clearCount(), 1);
-  assert.deepEqual(r.followUp, ["a", "b"], "clear 返回清空前文本（recallAll 契约）");
+  assert.deepEqual(r.followUp, ["a", "b"], "clear returns the pre-clear text (recallAll contract)");
   assert.deepEqual(t.support.snapshot().followUp, []);
-  assert.deepEqual(t.reinjections, [], "clear 不重注入");
+  assert.deepEqual(t.reinjections, [], "clear does not re-inject");
 });
 
-test("move：镜像算新序 → clear + 按新序全量重注入", async () => {
+test("move: mirror computes the new order -> clear + full re-inject in that order", async () => {
   const t = rig();
   t.feed([], ["a", "b", "c"]);
   const r = await t.support.queueManage({ action: "move", from: 0, to: 2 });
@@ -68,7 +69,7 @@ test("move：镜像算新序 → clear + 按新序全量重注入", async () => 
   ]);
 });
 
-test("remove/recall：返回取回条目；requeue 插入；convert 跨组移动", async () => {
+test("remove/recall: returns the recalled entry; requeue inserts; convert moves across groups", async () => {
   const t = rig();
   t.feed(["s0"], ["a"]);
   const rm = await t.support.queueManage({ action: "remove", index: 0 });
@@ -78,7 +79,7 @@ test("remove/recall：返回取回条目；requeue 插入；convert 跨组移动
   const rq = await t.support.queueManage({ action: "requeue", index: 0, text: "back" });
   assert.deepEqual(rq.followUp, ["back"]);
   assert.deepEqual(t.reinjections.at(-1), { text: "back", kind: "followUp" });
-  assert.deepEqual(t.reinjections.at(-2), { text: "s0", kind: "steer" }, "steer 组须一并重注入");
+  assert.deepEqual(t.reinjections.at(-2), { text: "s0", kind: "steer" }, "the steer group must be re-injected too");
 
   t.feed(["s1"], []);
   const cv = await t.support.queueManage({ action: "convert", kind: "steer", targetKind: "followUp", index: 0 });
@@ -90,16 +91,16 @@ test("remove/recall：返回取回条目；requeue 插入；convert 跨组移动
   assert.equal(rc.entry.text, "s1");
 });
 
-test("越界 / 未知 action / convert 同组 → 人话错误", async () => {
+test("out of range / unknown action / convert same group -> human-readable errors", async () => {
   const t = rig();
   t.feed([], ["a"]);
-  await assert.rejects(() => t.support.queueManage({ action: "remove", index: 5 }), /越界/);
-  await assert.rejects(() => t.support.queueManage({ action: "requeue", index: 0, text: " " }), /非空/);
+  await assert.rejects(() => t.support.queueManage({ action: "remove", index: 5 }), /out of range/);
+  await assert.rejects(() => t.support.queueManage({ action: "requeue", index: 0, text: " " }), /non-empty/);
   await assert.rejects(() => t.support.queueManage({ action: "convert", kind: "steer", targetKind: "steer", index: 0 }), /targetKind/);
-  await assert.rejects(() => t.support.queueManage({ action: "nope" }), /未知 action/);
+  await assert.rejects(() => t.support.queueManage({ action: "nope" }), /unknown action/);
 });
 
-test("并发入队：clear 抹掉的「快照之后新入队」条目补注入回去（steer-send 与 remove 赛跑不丢消息）", async () => {
+test("concurrent enqueue: entries enqueued after the snapshot and wiped by the clear are re-injected (steer-send racing remove loses no message)", async () => {
   const t = rig();
   t.feed([], ["f1"]);
   // The panel's steer-send: the steer prompt lands first, then the follow-up
@@ -107,12 +108,12 @@ test("并发入队：clear 抹掉的「快照之后新入队」条目补注入�
   // landed after the plan's base and is therefore absent from that base.
   t.setClearResult({ steering: ["S-late"], followUp: ["f1"] });
   const r = await t.support.queueManage({ action: "remove", kind: "followUp", index: 0 });
-  assert.deepEqual(t.reinjections, [{ text: "S-late", kind: "steer" }], "快照后新入队的 steer 必须被补注入");
-  assert.deepEqual(r.steering, ["S-late"], "返回视图包含补注入的条目");
-  assert.deepEqual(r.entry, { text: "f1" }, "被摘除的仍是目标条目");
+  assert.deepEqual(t.reinjections, [{ text: "S-late", kind: "steer" }], "a steer enqueued after the snapshot must be re-injected");
+  assert.deepEqual(r.steering, ["S-late"], "the returned view includes the re-injected entry");
+  assert.deepEqual(r.entry, { text: "f1" }, "the removed entry is still the targeted one");
 });
 
-test("变更串行：两个变更不交错 clear/重注入（第二变更以第一变更后的镜像为起点）", async () => {
+test("mutation serialization: two mutations do not interleave clear/re-inject (the second starts from the mirror after the first)", async () => {
   const events = [];
   let clears = 0;
   const support = createRemotePiQueueSupport({
@@ -128,10 +129,10 @@ test("变更串行：两个变更不交错 clear/重注入（第二变更以第�
   const second = support.queueManage({ action: "remove", kind: "followUp", index: 0 });
   await Promise.all([first, second]);
   assert.deepEqual(events, ["clear1", "re:b", "re:a", "clear2", "re:a"]);
-  assert.equal((await second).entry.text, "b", "第二变更看到的是重排后的镜像（串行），不是旧快照");
+  assert.equal((await second).entry.text, "b", "the second mutation sees the reordered mirror (serialized), not the old snapshot");
 });
 
-test("重注入期间又入队的条目：以子进程帧为准，镜像与返回不被 plan 覆盖", async () => {
+test("entries enqueued mid-re-inject: child frames are authoritative; the mirror and return are not clobbered by the plan", async () => {
   let childFollow = [];
   let support;
   support = createRemotePiQueueSupport({
@@ -150,7 +151,7 @@ test("重注入期间又入队的条目：以子进程帧为准，镜像与返�
   });
   support.observeFrame({ type: "queue_update", steering: [], followUp: ["a", "b"] });
   const r = await support.queueManage({ action: "remove", kind: "followUp", index: 1 });
-  assert.deepEqual(r.followUp, ["a", "late"], "帧里存在的 late 不能被 plan 覆盖掉");
+  assert.deepEqual(r.followUp, ["a", "late"], "the late entry present in frames must not be clobbered by the plan");
   assert.deepEqual(support.snapshot().followUp, ["a", "late"]);
 });
 
@@ -159,7 +160,7 @@ test("重注入期间又入队的条目：以子进程帧为准，镜像与返�
 // empty mirror; the wrapper journal is a 4 MB ring, so a long session's last
 // queue_update is gone and the panel stays empty until the user queues a new message.
 
-test("hydrate：未观察到帧时 clear+重注入拉回子进程队列（镜像被回填）", async () => {
+test("hydrate: with no frames observed, clear+re-inject pulls back the child queue (mirror backfilled)", async () => {
   const t = rig();
   assert.equal(t.support.needsHydrate(), true, "never synced -> hydrate is needed");
   t.setClearResult({ steering: ["s1"], followUp: ["f1", "f2"] });
@@ -176,7 +177,7 @@ test("hydrate：未观察到帧时 clear+重注入拉回子进程队列（镜像
   assert.equal(t.clearCount(), 1, "already hydrated -> no-op");
 });
 
-test("hydrate：镜像已由帧同步 → no-op（不打扰子进程队列）", async () => {
+test("hydrate: mirror already synced by frames -> no-op (does not disturb the child queue)", async () => {
   const t = rig();
   t.feed([], ["keep-me"]);
   assert.equal(t.support.needsHydrate(), false);
@@ -185,7 +186,7 @@ test("hydrate：镜像已由帧同步 → no-op（不打扰子进程队列）", 
   assert.deepEqual(t.support.snapshot(), { steering: [], followUp: ["keep-me"] });
 });
 
-test("hydrate：子进程队列为空 → 不重注入，镜像保持空", async () => {
+test("hydrate: empty child queue -> no re-inject, mirror stays empty", async () => {
   const t = rig();
   t.setClearResult({ steering: [], followUp: [] });
   await t.support.hydrate();
@@ -195,7 +196,7 @@ test("hydrate：子进程队列为空 → 不重注入，镜像保持空", async
   assert.equal(t.support.needsHydrate(), false);
 });
 
-test("hydrate：排队的 clear 执行前已有帧到达 → 跳过（帧权威）", async () => {
+test("hydrate: a frame arrived before the queued clear runs -> skip (frames authoritative)", async () => {
   const t = rig();
   // Queue a mutation first, then feed a frame (a late journal replay) before it runs.
   const first = t.support.queueManage({ action: "clear" });

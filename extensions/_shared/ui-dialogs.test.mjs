@@ -1,12 +1,14 @@
 /**
- * ui-dialogs 单测（node --test；esbuild 打包 + DOM 桩，同 _shared 降级层测试范式）。
+ * ui-dialogs unit tests (node --test; esbuild bundling + DOM stub, same pattern as the _shared
+ * degradation-layer tests).
  *
- * 覆盖点：
- *   1. uiConfirm：确定→true / 取消→false / Esc→false；danger 样式（红确认按钮 + warn 图标）
- *   2. uiAlert：字符串快捷 + {kind:"error"}；确定关闭
- *   3. uiPrompt：确定回值 / 取消→null / Esc→null；required 空值拦截
- *   4. 队列串行：同发多个弹窗一次只显示一个，前一个 resolve 后下一个才出现
- *   5. data-ext-float 契约属性齐全（float/full/autoh/keepmask/max/persist）
+ * Coverage:
+ *   1. uiConfirm: OK→true / cancel→false / Esc→false; danger styling (red confirm button + warn icon)
+ *   2. uiAlert: string shortcut + {kind:"error"}; OK closes
+ *   3. uiPrompt: OK returns the value / cancel→null / Esc→null; required empty-value interception
+ *   4. Queue serialization: multiple dialogs sent together show one at a time; the next appears
+ *      only after the previous resolves
+ *   5. data-ext-float contract attributes all present (float/full/autoh/keepmask/max/persist)
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -48,7 +50,7 @@ function makeDomStub(opts) {
       select() { this.selected = true; },
       querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; },
       querySelectorAll(sel) {
-        if (sel !== "button") return []; // 只精确支持 button；其他选择器返回空（测试走 children 遍历）
+        if (sel !== "button") return []; // only "button" is supported precisely; other selectors return empty (tests walk children)
         const out = [];
         const walk = (n) => { for (const c of n.children) { if (c.tag === "button") out.push(c); walk(c); } };
         walk(this);
@@ -82,17 +84,17 @@ export * from ${JSON.stringify(join(here, "ui-dialogs.ts"))};
   const entry = join(dir, "entry.mjs");
   writeFileSync(entry, stub);
   const bundle = join(dir, "bundle.mjs");
-  // 派生形态（Linux 原生 ELF / Windows 官方 .exe，或 node 直跑 JS 入口）由 esbuild-bin 收口
+  // Derived form (Linux native ELF / Windows official .exe, or node running a JS entry directly) is settled by esbuild-bin
   await runEsbuild(join(here, "..", "aiti-float", "node_modules", "esbuild", "bin", "esbuild"),
     [entry, "--bundle", "--format=esm", "--platform=node", "--outfile=" + bundle]);
   const mod = await import(pathToFileURL(bundle).href);
   return { mod, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-// makeDomStub 序列化进 stub：借 Function.toString
+// makeDomStub is serialized into the stub via Function.toString
 const makeDomStubSource = makeDomStub.toString();
 
-/** 取当前显示的 overlay（body 最后一个子节点） */
+/** Get the currently shown overlay (last child of body) */
 function overlayOf(body) {
   return body.children[body.children.length - 1];
 }
@@ -106,34 +108,34 @@ test("ui-confirm-alert-prompt", async (t) => {
   const doc = globalThis.document;
   const body = doc.body;
 
-  await t.test("confirm：确定 → true", async () => {
-    const p = mod.uiConfirm({ message: "删除分组 X？" });
+  await t.test("confirm: OK → true", async () => {
+    const p = mod.uiConfirm({ message: "Delete group X?" });
     await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     const btns = buttons(panel);
     assert.equal(btns.length, 2);
-    btns[btns.length - 1].click(); // 主按钮在最后
+    btns[btns.length - 1].click(); // primary button is last
     assert.equal(await p, true);
-    assert.equal(body.children.length, 0, "确定后 overlay 应离场");
+    assert.equal(body.children.length, 0, "overlay should leave after OK");
   });
 
-  await t.test("confirm：取消 → false；danger 红按钮 + warn 图标 + 契约属性", async () => {
-    const p = mod.uiConfirm({ message: "确认执行？", detail: "$ rm -rf /", danger: true });
+  await t.test("confirm: cancel → false; danger red button + warn icon + contract attributes", async () => {
+    const p = mod.uiConfirm({ message: "Proceed?", detail: "$ rm -rf /", danger: true });
     await new Promise((r) => setTimeout(r, 150));
     const overlay = overlayOf(body);
     const panel = overlay.children[0];
-    // 契约属性
+    // Contract attributes
     assert.equal(panel.getAttribute("data-ext-float"), "1");
     assert.equal(panel.getAttribute("data-ext-float-full"), "1");
     assert.equal(panel.getAttribute("data-ext-float-keepmask"), "1");
     assert.equal(panel.getAttribute("data-ext-float-max"), "0");
     assert.equal(panel.getAttribute("data-ext-float-persist"), "0");
-    // danger 确认按钮红色
+    // danger confirm button is red
     const btns = buttons(panel);
-    assert.ok(btns[btns.length - 1].style.cssText.includes("#ef4444"), "danger 确认按钮应为红色");
-    // detail 等宽块
+    assert.ok(btns[btns.length - 1].style.cssText.includes("#ef4444"), "danger confirm button should be red");
+    // detail monospace block
     const pre = panel.children.find((c) => c.tag === "pre");
-    assert.ok(pre && pre.textContent.includes("rm -rf"), "detail 块应展示命令文本");
+    assert.ok(pre && pre.textContent.includes("rm -rf"), "detail block should show the command text");
     btns[0].click();
     assert.equal(await p, false);
   });
@@ -148,68 +150,68 @@ test("ui-confirm-alert-prompt", async (t) => {
     assert.equal(await p, false);
   });
 
-  await t.test("confirm：Esc → false", async () => {
-    const p = mod.uiConfirm("继续吗？");
+  await t.test("confirm: Esc → false", async () => {
+    const p = mod.uiConfirm("Continue?");
     await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     panel.keydown("Escape");
     assert.equal(await p, false);
   });
 
-  await t.test("alert：字符串快捷 + kind error", async () => {
-    const p1 = mod.uiAlert("已完成");
+  await t.test("alert: string shortcut + kind error", async () => {
+    const p1 = mod.uiAlert("Done");
     await new Promise((r) => setTimeout(r, 150));
     let panel = overlayOf(body).children[0];
     buttons(panel).at(-1).click();
     assert.equal(await p1, undefined);
 
-    const p2 = mod.uiAlert({ message: "保存失败", kind: "error" });
+    const p2 = mod.uiAlert({ message: "Save failed", kind: "error" });
     await new Promise((r) => setTimeout(r, 150));
     panel = overlayOf(body).children[0];
-    // error 图标为 svg（head 的首个子元素）
+    // error icon is an svg (first child of the head)
     const svg = panel.querySelector("svg") ?? panel.children[0].children[0];
-    assert.ok(svg && svg.tag === "svg", "error 弹窗应有 svg 图标");
+    assert.ok(svg && svg.tag === "svg", "error dialog should have an svg icon");
     buttons(panel).at(-1).click();
     assert.equal(await p2, undefined);
   });
 
-  await t.test("prompt：确定回值 / 取消 → null / Esc → null / 默认值聚焦全选", async () => {
-    const p1 = mod.uiPrompt({ message: "输入名称：", value: "草稿" });
+  await t.test("prompt: OK returns value / cancel → null / Esc → null / default focused+selected", async () => {
+    const p1 = mod.uiPrompt({ message: "Enter a name:", value: "Draft" });
     await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     const input = panel.children.find((c) => c.tag === "input");
-    assert.ok(input, "应有输入框");
-    assert.ok(input.focused && input.selected, "输入框应聚焦全选");
-    input.value = "新名字";
+    assert.ok(input, "should have an input");
+    assert.ok(input.focused && input.selected, "input should be focused and selected");
+    input.value = "New name";
     buttons(panel).at(-1).click();
-    assert.equal(await p1, "新名字");
+    assert.equal(await p1, "New name");
 
-    const p2 = mod.uiPrompt("再输入：");
+    const p2 = mod.uiPrompt("Type again:");
     await new Promise((r) => setTimeout(r, 150));
     buttons(overlayOf(body).children[0])[0].click();
     assert.equal(await p2, null);
 
-    const p3 = mod.uiPrompt("Esc 取消：");
+    const p3 = mod.uiPrompt("Esc cancels:");
     await new Promise((r) => setTimeout(r, 150));
     overlayOf(body).children[0].keydown("Escape");
     assert.equal(await p3, null);
   });
 
-  await t.test("队列串行：一次只显示一个", async () => {
-    const p1 = mod.uiConfirm("第一个");
-    const p2 = mod.uiConfirm("第二个");
+  await t.test("queue serialization: only one shown at a time", async () => {
+    const p1 = mod.uiConfirm("The first");
+    const p2 = mod.uiConfirm("The second");
     await new Promise((r) => setTimeout(r, 150));
-    assert.equal(body.children.length, 1, "同时只有一个 overlay");
+    assert.equal(body.children.length, 1, "only one overlay at a time");
     const panel1 = overlayOf(body).children[0];
-    // 第一个面板的正文应是「第一个」（panel.children = [head, msg, foot]）
+    // The first panel's body should be "The first" (panel.children = [head, msg, foot])
     const msg1 = panel1.children[1];
-    assert.ok((msg1?.textContent || "").includes("第一个"), "先显示第一个弹窗");
+    assert.ok((msg1?.textContent || "").includes("The first"), "the first dialog shows first");
     buttons(panel1).at(-1).click();
     assert.equal(await p1, true);
     await new Promise((r) => setTimeout(r, 150));
-    assert.equal(body.children.length, 1, "第一个结束后第二个才出现");
+    assert.equal(body.children.length, 1, "the second appears only after the first finishes");
     const panel2 = overlayOf(body).children[0];
-    assert.notEqual(panel2, panel1, "第二个是新实例");
+    assert.notEqual(panel2, panel1, "the second is a new instance");
     buttons(panel2)[0].click();
     assert.equal(await p2, false);
   });

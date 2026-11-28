@@ -1,12 +1,13 @@
 /**
- * new-session-cwd 共享判定单测（node --test；纯函数，--experimental-strip-types 直跑）。
+ * new-session-cwd shared resolution unit tests (node --test; pure functions, run directly with --experimental-strip-types).
  *
- * 方案：docs/pi-web-at-new-session-cwd-plan.md（v1）+ docs/pi-web-at-new-session-cwd-v2-plan.md（v2）
- * 覆盖（v2 语义）：pathCovers / stripCommonDirs / longestCovering / resolveNewSessionCwd 四档判定
- *   （保持 / 关注目录切走(repoRoot 优先、嵌套取最深) / 已知 workspace 最长匹配 / 常规目录剥离 /
- *    无 cwd 归一化）/ resolveNewSessionCwdClient 快路径短路 + sessions 派生 + git-trace 端点复核 +
- *    失败降级 / buildAtText / openNewSession / openNewSessionWithExtSvc 服务优先与降级。
- * 注意：fetchKnownWorkspaces 有模块级 TTL 缓存（60s），依赖它的用例开头必须 _resetWsCacheForTest()。
+ * Plans: docs/pi-web-at-new-session-cwd-plan.md (v1) + docs/pi-web-at-new-session-cwd-v2-plan.md (v2)
+ * Covered (v2 semantics): pathCovers / stripCommonDirs / longestCovering / resolveNewSessionCwd's four decision tiers
+ *   (keep / switch to a watched directory (repoRoot first, deepest on nesting) / longest match among known workspaces /
+ *    common-directory stripping / normalization without a cwd) / resolveNewSessionCwdClient fast-path short-circuit +
+ *    sessions derivation + git-trace endpoint cross-check + failure fallback / buildAtText / openNewSession /
+ *    openNewSessionWithExtSvc service-first and fallback.
+ * Note: fetchKnownWorkspaces has a module-level TTL cache (60s); cases depending on it must call _resetWsCacheForTest() first.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,60 +17,60 @@ import {
   _resetWsCacheForTest,
 } from "./new-session-cwd.ts";
 
-test("pathCovers：相等 / 互为前缀 / 无关", () => {
+test("pathCovers: equal / mutual prefix / unrelated", () => {
   assert.ok(pathCovers("/a/b", "/a/b"));
-  assert.ok(pathCovers("/a/b/c", "/a/b"));      // 子目录被父覆盖
-  assert.ok(pathCovers("/a/b", "/a/b/c"));      // 父被子覆盖（doc-center 双向 wsCovers 同款）
-  assert.ok(!pathCovers("/a/bc", "/a/b"));      // 非前缀边界（b 是 bc 前缀但不是目录边界）
+  assert.ok(pathCovers("/a/b/c", "/a/b"));      // child covered by parent
+  assert.ok(pathCovers("/a/b", "/a/b/c"));      // parent covered by child (same as doc-center's two-way wsCovers)
+  assert.ok(!pathCovers("/a/bc", "/a/b"));      // non-prefix boundary (b prefixes bc but not at a directory boundary)
   assert.ok(!pathCovers("/a", "/b"));
   assert.ok(!pathCovers("", "/b"));
   assert.ok(!pathCovers("/a", ""));
 });
 
-test("pathCovers：路径归一（尾斜杠 / win 反斜杠）", () => {
+test("pathCovers: path normalization (trailing slash / Windows backslash)", () => {
   assert.ok(pathCovers("/a/b/", "/a/b"));
   assert.ok(pathCovers("D:\\workspace\\proj", "D:/workspace/proj/src"));
   assert.ok(pathCovers("D:/workspace/proj/src", "D:\\workspace\\proj"));
 });
 
-test("DEFAULT_EXCLUDE_DIR_NAMES：v2 用户拍板清单", () => {
+test("DEFAULT_EXCLUDE_DIR_NAMES: v2 user-decided list", () => {
   assert.deepEqual(DEFAULT_EXCLUDE_DIR_NAMES, ["docs", "doc", "tmp", "temp", "design", "designs"]);
 });
 
-test("stripCommonDirs：单层常规目录剥离 / 多重 / 大小写 / 非常规不动 / win 反斜杠", () => {
+test("stripCommonDirs: single common-directory strip / multiple / case / non-common untouched / Windows backslash", () => {
   assert.equal(stripCommonDirs("/home/w/proj/docs"), "/home/w/proj");
-  assert.equal(stripCommonDirs("/home/w/proj/docs/design"), "/home/w/proj"); // 连续剥两层
-  assert.equal(stripCommonDirs("/home/w/proj/Design"), "/home/w/proj");      // 大小写不敏感
-  assert.equal(stripCommonDirs("/home/w/proj/src"), "/home/w/proj/src");     // 非常规名不动
+  assert.equal(stripCommonDirs("/home/w/proj/docs/design"), "/home/w/proj"); // strips two layers in a row
+  assert.equal(stripCommonDirs("/home/w/proj/Design"), "/home/w/proj");      // case-insensitive
+  assert.equal(stripCommonDirs("/home/w/proj/src"), "/home/w/proj/src");     // non-common names untouched
   assert.equal(stripCommonDirs("D:\\workspace\\proj\\tmp"), "D:/workspace/proj");
   assert.equal(stripCommonDirs("/home/w/proj"), "/home/w/proj");
 });
 
-test("longestCovering：最长（最深）覆盖 / 不选目标的子目录 / 空候选", () => {
+test("longestCovering: longest (deepest) cover / never selects a subdirectory of the target / empty candidates", () => {
   const cands = ["/home/w", "/home/w/proj", "/home/w/other"];
   assert.equal(longestCovering("/home/w/proj/src/x.ts", cands), "/home/w/proj");
-  assert.equal(longestCovering("/home/w/proj", cands), "/home/w/proj");       // 相等命中
+  assert.equal(longestCovering("/home/w/proj", cands), "/home/w/proj");       // equal counts as a hit
   assert.equal(longestCovering("/home/w/other/a", cands), "/home/w/other");
-  // 候选是目标的子目录（如 workspace 候选是 proj 内部的 src）→ 不得选（coversDir 单向）
+  // candidate is a subdirectory of the target (e.g. a workspace candidate inside proj's src) → must not be selected (coversDir is one-way)
   assert.equal(longestCovering("/home/w/proj", ["/home/w/proj/src"]), null);
   assert.equal(longestCovering("/x/y/z.ts", []), null);
   assert.equal(longestCovering("/x/y/z.ts", ["", null, undefined]), null);
 });
 
-test("resolveNewSessionCwd：目标在当前 CWD 内 → 保持", () => {
+test("resolveNewSessionCwd: target inside the current CWD → keep", () => {
   const r = resolveNewSessionCwd({ targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/a.ts", currentCwd: "/home/w/pi-web" });
   assert.equal(r.cwd, "/home/w/pi-web");
   assert.equal(r.switched, false);
 });
 
-test("resolveNewSessionCwd：当前 CWD 在目标内（目标=父层）→ 保持", () => {
+test("resolveNewSessionCwd: current CWD inside the target (target = parent level) → keep", () => {
   const r = resolveNewSessionCwd({ targetDir: "/home/w", currentCwd: "/home/w/pi-web" });
   assert.equal(r.cwd, "/home/w/pi-web");
   assert.equal(r.switched, false);
 });
 
-test("resolveNewSessionCwd v2：目标在关注路径内 → 切到关注路径（不再保持）", () => {
-  // 当前 cwd 在 A 仓，目标在 B 仓——B 是 A 的 watchPaths（git-trace 配置的跨仓关注）→ 切到 B
+test("resolveNewSessionCwd v2: target inside a watched path → switch to it (no longer keep)", () => {
+  // current cwd in repo A, target in repo B — B is among A's watchPaths (git-trace-configured cross-repo watching) → switch to B
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/other-proj/src", targetPath: "/home/w/other-proj/src/x.ts",
     currentCwd: "/home/w/pi-web",
@@ -79,8 +80,8 @@ test("resolveNewSessionCwd v2：目标在关注路径内 → 切到关注路径�
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd v2：关注路径 {path,repoRoot} 对象 → repoRoot 优先", () => {
-  // 用户关注的 path 是仓库子目录 → 命中时用 repoRoot（仓库根更符合 workspace 概念）
+test("resolveNewSessionCwd v2: watched path {path,repoRoot} object → repoRoot first", () => {
+  // the watched path is a repo subdirectory → on a hit use repoRoot (the repo root fits the workspace concept better)
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/other-proj/packages/core",
     targetPath: "/home/w/other-proj/packages/core/README.md",
@@ -91,17 +92,17 @@ test("resolveNewSessionCwd v2：关注路径 {path,repoRoot} 对象 → repoRoot
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd v2：关注路径嵌套取最深", () => {
+test("resolveNewSessionCwd v2: nested watched paths take the deepest", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/mono/apps/foo",
     targetPath: "/home/w/mono/apps/foo/x.ts",
     currentCwd: "/home/w/pi-web",
     watchPaths: ["/home/w/mono", { path: "/home/w/mono/apps/foo", repoRoot: "/home/w/mono/apps/foo" }],
   });
-  assert.equal(r.cwd, "/home/w/mono/apps/foo"); // 更深命中优先
+  assert.equal(r.cwd, "/home/w/mono/apps/foo"); // the deeper hit wins
 });
 
-test("resolveNewSessionCwd v2：关注路径配置在目标子层（目标目录是其父）→ 切到关注路径", () => {
+test("resolveNewSessionCwd v2: watched path configured below the target (target directory is its parent) → switch to the watched path", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/other-proj",
     targetPath: "/home/w/other-proj",
@@ -112,7 +113,7 @@ test("resolveNewSessionCwd v2：关注路径配置在目标子层（目标目录
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd v2：已知 workspace 覆盖 → 最长匹配", () => {
+test("resolveNewSessionCwd v2: covered by a known workspace → longest match", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/x.ts",
     currentCwd: "/home/w/demo-repo",
@@ -122,36 +123,36 @@ test("resolveNewSessionCwd v2：已知 workspace 覆盖 → 最长匹配", () =>
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd v2：常规目录剥离（无 workspace 命中）", () => {
+test("resolveNewSessionCwd v2: common-directory stripping (no workspace hit)", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/proj/docs", targetPath: "/home/w/proj/docs/guide.md",
     currentCwd: "/home/w/other",
     knownWorkspaces: ["/home/w/other", "/home/w/unrelated"],
   });
-  assert.equal(r.cwd, "/home/w/proj"); // docs 剥掉，proj 不在已知 workspace → 用剥离结果
+  assert.equal(r.cwd, "/home/w/proj"); // docs stripped; proj not among known workspaces → use the stripped result
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd v2：剥离后命中 workspace → 用 workspace", () => {
+test("resolveNewSessionCwd v2: stripped result hits a workspace → use that workspace", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
     currentCwd: "/home/w/demo-repo",
     knownWorkspaces: ["/home/w/demo-repo", "/home/w/pi-web"],
   });
-  assert.equal(r.cwd, "/home/w/pi-web"); // 剥 docs 后 /home/w/pi-web 命中已知 workspace
+  assert.equal(r.cwd, "/home/w/pi-web"); // after stripping docs, /home/w/pi-web hits a known workspace
 });
 
-test("resolveNewSessionCwd v2：无 CWD → 已知 workspace 命中（不落深目录，修 v1 bug）", () => {
+test("resolveNewSessionCwd v2: no CWD → known workspace hit (never lands in a deep directory; fixes the v1 bug)", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
     currentCwd: "",
     knownWorkspaces: ["/home/w/pi-web"],
   });
   assert.equal(r.cwd, "/home/w/pi-web");
-  assert.equal(r.switched, false); // 无当前 cwd → 恒 false
+  assert.equal(r.switched, false); // no current cwd → always false
 });
 
-test("resolveNewSessionCwd v2：无 CWD → 关注目录命中", () => {
+test("resolveNewSessionCwd v2: no CWD → watched directory hit", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/other-proj/src", targetPath: "/home/w/other-proj/src/x.ts",
     currentCwd: "",
@@ -161,7 +162,7 @@ test("resolveNewSessionCwd v2：无 CWD → 关注目录命中", () => {
   assert.equal(r.switched, false);
 });
 
-test("resolveNewSessionCwd v2：无 CWD 且无候选 → 剥离常规目录后的目录", () => {
+test("resolveNewSessionCwd v2: no CWD and no candidates → directory after stripping common names", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/proj/tmp", targetPath: "/home/w/proj/tmp/x.log",
     currentCwd: null,
@@ -170,13 +171,13 @@ test("resolveNewSessionCwd v2：无 CWD 且无候选 → 剥离常规目录后�
   assert.equal(r.switched, false);
 });
 
-test("resolveNewSessionCwd：目标属于其它工作区且无关注/已知 → 切走（剥离后）", () => {
+test("resolveNewSessionCwd: target belongs to another workspace with no watched/known entries → switch away (after stripping)", () => {
   const r = resolveNewSessionCwd({ targetDir: "/home/w/other-proj", currentCwd: "/home/w/pi-web" });
   assert.equal(r.cwd, "/home/w/other-proj");
   assert.equal(r.switched, true);
 });
 
-test("resolveNewSessionCwd：空 targetDir/targetPath → 返回当前 cwd", () => {
+test("resolveNewSessionCwd: empty targetDir/targetPath → return the current cwd", () => {
   const r = resolveNewSessionCwd({ targetDir: "", currentCwd: "/a" });
   assert.equal(r.cwd, "/a");
   assert.equal(r.switched, false);
@@ -184,8 +185,8 @@ test("resolveNewSessionCwd：空 targetDir/targetPath → 返回当前 cwd", () 
   assert.equal(r2.cwd, "");
 });
 
-test("resolveNewSessionCwd v2：文件在 CWD 内但 targetPath 更深（docs 子目录）→ 保持（不剥）", () => {
-  // 当前 CWD = 项目根，文件在项目 docs 子目录 → ① 命中保持（v2 原则：已在 CWD 内不随便切）
+test("resolveNewSessionCwd v2: file inside the CWD but targetPath deeper (docs subdirectory) → keep (no stripping)", () => {
+  // current CWD = project root, file in the project's docs subdirectory → ① hits and keeps (v2 principle: already inside the CWD, never switch casually)
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
     currentCwd: "/home/w/pi-web",
@@ -195,20 +196,20 @@ test("resolveNewSessionCwd v2：文件在 CWD 内但 targetPath 更深（docs �
   assert.equal(r.switched, false);
 });
 
-// ── client 流程（resolveNewSessionCwdClient）──────────────
-test("resolveNewSessionCwdClient：目标在当前 CWD 内 → 快路径短路，不发请求", async () => {
+// ── client flow (resolveNewSessionCwdClient) ──────────────
+test("resolveNewSessionCwdClient: target inside the current CWD → fast-path short-circuit, no request sent", async () => {
   let called = 0;
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/a.ts",
     currentCwd: "/home/w/pi-web",
     apiUrl: () => { called++; return "http://x/ext"; },
-    fetchFn: (async () => { throw new Error("不应发起请求"); })
+    fetchFn: (async () => { throw new Error("no request expected"); })
   });
   assert.equal(cwd, "/home/w/pi-web");
   assert.equal(called, 0);
 });
 
-test("resolveNewSessionCwdClient：切走时拉 sessions 派生 + 端点复核（关注命中 → 切关注目录）", async () => {
+test("resolveNewSessionCwdClient: on switch-away, derives from sessions + endpoint cross-check (watched hit → switch to the watched directory)", async () => {
   _resetWsCacheForTest();
   const calls = [];
   const cwd = await resolveNewSessionCwdClient({
@@ -223,11 +224,11 @@ test("resolveNewSessionCwdClient：切走时拉 sessions 派生 + 端点复核�
     })
   });
   assert.equal(cwd, "/home/w/other-proj");
-  // sessions 先（派生已知列表）→ 端点后
+  // sessions first (derives the known list) → endpoint after
   assert.deepEqual(calls, ["/api/sessions", "/api/extensions/aiti-git-trace/new-session-cwd"]);
 });
 
-test("resolveNewSessionCwdClient：端点复核命中切走 → 用端点结果", async () => {
+test("resolveNewSessionCwdClient: endpoint cross-check hits a switch → use the endpoint result", async () => {
   _resetWsCacheForTest();
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/other-proj",
@@ -241,9 +242,9 @@ test("resolveNewSessionCwdClient：端点复核命中切走 → 用端点结果"
   assert.equal(cwd, "/home/w/other-proj");
 });
 
-test("resolveNewSessionCwdClient：端点失败/缺席 → 本地判定兜底（已知列表在手）", async () => {
+test("resolveNewSessionCwdClient: endpoint fails/absent → local resolution fallback (known list in hand)", async () => {
   _resetWsCacheForTest();
-  // git-trace 端点 fetch 抛异常（未装/404）→ 兜底 = 本地 resolveNewSessionCwd（knownWorkspaces 已从 sessions 派生）
+  // git-trace endpoint fetch throws (not installed/404) → fallback = local resolveNewSessionCwd (knownWorkspaces already derived from sessions)
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
     currentCwd: "/home/w/demo-repo",
@@ -253,10 +254,10 @@ test("resolveNewSessionCwdClient：端点失败/缺席 → 本地判定兜底（
       throw new Error("network");
     })
   });
-  assert.equal(cwd, "/home/w/pi-web"); // 端点缺席 → 已知 workspace 命中，不落 docs 子目录
+  assert.equal(cwd, "/home/w/pi-web"); // endpoint absent → known workspace hit, never lands in the docs subdirectory
 });
 
-test("resolveNewSessionCwdClient：端点返回非 ok → 兜底", async () => {
+test("resolveNewSessionCwdClient: endpoint returns non-ok → fallback", async () => {
   _resetWsCacheForTest();
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/other-proj",
@@ -264,13 +265,13 @@ test("resolveNewSessionCwdClient：端点返回非 ok → 兜底", async () => {
     apiUrl: (p) => "http://host" + p,
     fetchFn: (async (url) => {
       if (String(url).includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [] }) };
-      return { ok: true, json: async () => ({ ok: false, error: "缺少 targetDir" }) };
+      return { ok: true, json: async () => ({ ok: false, error: "missing targetDir" }) };
     })
   });
   assert.equal(cwd, "/home/w/other-proj");
 });
 
-test("resolveNewSessionCwdClient：无 cwd → 不短路，sessions 命中归一化 workspace", async () => {
+test("resolveNewSessionCwdClient: no cwd → no short-circuit, sessions hit normalizes to the workspace", async () => {
   _resetWsCacheForTest();
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
@@ -284,37 +285,37 @@ test("resolveNewSessionCwdClient：无 cwd → 不短路，sessions 命中归一
   assert.equal(cwd, "/home/w/pi-web");
 });
 
-test("resolveNewSessionCwdClient：sessions 拉取失败 → 降级 []，本地判定仍工作", async () => {
+test("resolveNewSessionCwdClient: sessions fetch fails → degrade to [], local resolution still works", async () => {
   _resetWsCacheForTest();
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/proj/tmp", targetPath: "/home/w/proj/tmp/x.log",
     currentCwd: "/home/w/other",
     apiUrl: (p) => "http://host" + p,
     fetchFn: (async (url) => {
-      if (String(url).includes("/api/sessions")) throw new Error("sessions 挂了");
+      if (String(url).includes("/api/sessions")) throw new Error("sessions fetch failed");
       return { ok: true, json: async () => ({ ok: true, cwd: "/home/w/proj", switched: true }) };
     })
   });
-  assert.equal(cwd, "/home/w/proj"); // 端点结果优先；sessions 缺席不影响主流程
+  assert.equal(cwd, "/home/w/proj"); // endpoint result wins; sessions being absent does not affect the main flow
 });
 
-test("buildAtText：与宿主 buildAtMentionText 同格式（空格加引号、目录尾斜杠）", () => {
+test("buildAtText: same format as the host's buildAtMentionText (quotes around spaces, trailing slash for directories)", () => {
   assert.equal(buildAtText("docs/a.md"), "@docs/a.md ");
   assert.equal(buildAtText("my docs/a.md"), '@"my docs/a.md" ');
   assert.equal(buildAtText("proj", true), "@proj/ ");
   assert.equal(buildAtText("my proj", true), '@"my proj/" ');
-  assert.equal(buildAtText("proj/", true), "@proj/ "); // 尾斜杠归一
+  assert.equal(buildAtText("proj/", true), "@proj/ "); // trailing slash normalized
   assert.equal(buildAtText("D:/workspace/a b.md"), '@"D:/workspace/a b.md" ');
 });
 
-test("openNewSession：pendingComposer + CWD 判定 + 派发（dispatch 注入；node 无 window）", async () => {
+test("openNewSession: pendingComposer + CWD resolution + dispatch (dispatch injected; node has no window)", async () => {
   _resetWsCacheForTest();
   const win = {};
   const events = [];
   await openNewSession({
     text: "@docs/a.md ", targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/a.ts", currentCwd: "/home/w/pi-web",
     apiUrl: () => "http://x",
-    fetchFn: (async () => { throw new Error("不应发起请求（containment 保持）"); }),
+    fetchFn: (async () => { throw new Error("no request expected (containment keeps)"); }),
     dispatch: (evt) => events.push(evt),
     windowRef: win,
   });
@@ -323,10 +324,10 @@ test("openNewSession：pendingComposer + CWD 判定 + 派发（dispatch 注入�
   assert.ok(win.__piWebPendingComposer.at > 0);
   assert.equal(events.length, 1);
   assert.equal(events[0].type, "pi-web:new-session");
-  assert.equal(events[0].detail.cwd, "/home/w/pi-web"); // 保持当前
+  assert.equal(events[0].detail.cwd, "/home/w/pi-web"); // keeps current
 });
 
-test("openNewSession：切走路径（sessions + git-trace 端点复核后切到目标）", async () => {
+test("openNewSession: switch-away path (switches to the target after sessions + git-trace endpoint cross-check)", async () => {
   _resetWsCacheForTest();
   const events = [];
   await openNewSession({
@@ -342,7 +343,7 @@ test("openNewSession：切走路径（sessions + git-trace 端点复核后切到
   assert.equal(events[0].detail.cwd, "/home/w/other");
 });
 
-test("openNewSessionWithExtSvc：session-manager.mention 服务优先（targetPath 透传）", async () => {
+test("openNewSessionWithExtSvc: session-manager.mention service first (targetPath passed through)", async () => {
   let svcCalled = 0;
   const svc = {
     openNewSession: async (_t, o) => { svcCalled++; assert.equal(o.targetDir, "/home/w/pi-web/lib"); assert.equal(o.targetPath, "/home/w/pi-web/lib/a.ts"); assert.equal(o.currentCwd, "/home/w/pi-web"); },
@@ -355,24 +356,24 @@ test("openNewSessionWithExtSvc：session-manager.mention 服务优先（targetPa
   assert.equal(svcCalled, 1);
 });
 
-test("openNewSessionWithExtSvc：服务缺席 → 降级 _shared 同源实现", async () => {
+test("openNewSessionWithExtSvc: service absent → falls back to the same-source _shared implementation", async () => {
   _resetWsCacheForTest();
   let fetchCalled = 0;
   const events = [];
   await openNewSessionWithExtSvc({
     text: "@docs/a.md ", targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/a.ts", currentCwd: "/home/w/pi-web",
     apiUrl: () => "http://x",
-    extSvc: () => undefined, // session-manager 缺席
-    fetchFn: (async () => { fetchCalled++; throw new Error("不应有请求（containment 保持）"); }),
+    extSvc: () => undefined, // session-manager absent
+    fetchFn: (async () => { fetchCalled++; throw new Error("no request expected (containment keeps)"); }),
     dispatch: (evt) => events.push(evt),
     windowRef: {},
   });
   assert.equal(fetchCalled, 0);
   assert.equal(events.length, 1);
-  assert.equal(events[0].detail.cwd, "/home/w/pi-web"); // 降级路径行为与共享实现一致
+  assert.equal(events[0].detail.cwd, "/home/w/pi-web"); // fallback path behaves identically to the shared implementation
 });
 
-test("openNewSessionWithExtSvc：无 extSvc 注入 → 直接降级（切走全链路）", async () => {
+test("openNewSessionWithExtSvc: no extSvc injected → falls back directly (full switch-away chain)", async () => {
   _resetWsCacheForTest();
   const events = [];
   await openNewSessionWithExtSvc({

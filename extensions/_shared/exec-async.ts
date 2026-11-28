@@ -1,13 +1,15 @@
 /**
- * 共享异步子进程工具（execFileSync → execFile 全仓改造的权威实现）。
+ * Shared async subprocess utilities (the authoritative implementation of the
+ * execFileSync → execFile repo-wide migration).
  *
- * ⚠ 性能红线（2026-09-12 改造）：常驻进程（pi-web 服务端 / pi 扩展）内
- * 禁止 execFileSync/spawnSync/execSync——git/ps/soffice 等子进程跑多久，
- * 整个 HTTP 服务就阻塞多久。凡新代码需要跑子进程，一律 import 本文件。
- * 构建/部署/一次性 CLI 脚本不受此红线约束。
+ * ⚠ Performance red line (2026-09-12 migration): resident processes (the pi-web server /
+ * pi extensions) must not use execFileSync/spawnSync/execSync — for as long as a child
+ * process (git/ps/soffice etc.) runs, the whole HTTP service stays blocked. Any new code
+ * that needs to run a subprocess imports this file.
+ * Build/deploy/one-shot CLI scripts are exempt from this red line.
  *
- * 错误形态对齐 execFileSync：失败时抛出的 Error 附着 stdout/stderr/status，
- * 调用侧原有的 `catch (e) { e.stderr }` 读取逻辑不需要改。
+ * Error shape aligned with execFileSync: the Error thrown on failure carries
+ * stdout/stderr/status, so callers' existing `catch (e) { e.stderr }` reads need no change.
  */
 import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
@@ -17,16 +19,17 @@ import { join as pathJoin } from "node:path";
 export interface ExecAsyncOpts {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  /** 超时后 kill 子进程（默认 120s；超时错误 code=ETIMEOUT? 见 ETIMEOUT 处理） */
+  /** Kill the child after the timeout (default 120s; see the timeout handling for the
+   *  timeout error shape) */
   timeoutMs?: number;
   maxBuffer?: number;
-  /** stdin 写入（如 sqlcipher 解密）：传字符串则写完自动 end */
+  /** stdin input (e.g. sqlcipher decryption): a string is written then auto-ended */
   input?: string;
-  /** shell 直通（仅在参数无法数组化时使用，默认 false） */
+  /** shell passthrough (only when args cannot be an array; default false) */
   shell?: boolean;
 }
 
-/** execFileSync 兼容错误形态：调用侧 catch (e) { e.stderr/e.stdout/e.status } 原样可用 */
+/** execFileSync-compatible error shape: callers' catch (e) { e.stderr/e.stdout/e.status } works as-is */
 export type ExecAsyncError = Error & {
   stdout: string;
   stderr: string;
@@ -39,8 +42,9 @@ const DEFAULT_MAX_BUFFER = 64 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
- * Promise 版 execFile：返回 stdout；失败时抛出带 stdout/stderr/status 的错误。
- * 基于 spawn 实现（execFile 不支持 stdin input）。
+ * Promise-flavored execFile: resolves stdout; rejects with an error carrying
+ * stdout/stderr/status on failure.
+ * Built on spawn (execFile does not support stdin input).
  */
 export function execFileAsync(bin: string, args: string[], opts: ExecAsyncOpts = {}): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -64,22 +68,23 @@ export function execFileAsync(bin: string, args: string[], opts: ExecAsyncOpts =
     const timer = setTimeout(() => {
       killed = true;
       child.kill("SIGTERM");
-      // 宽限 5s 后升级 SIGKILL（子进程忽略 SIGTERM 时）
+      // escalate to SIGKILL after a 5s grace (when the child ignores SIGTERM)
       setTimeout(() => {
         if (!child.killed || child.exitCode === null) {
-          try { child.kill("SIGKILL"); } catch { /* 已退出 */ }
+          try { child.kill("SIGKILL"); } catch { /* already exited */ }
         }
       }, 5_000).unref?.();
     }, timeoutMs);
     timer.unref?.();
 
     if (opts.input != null && child.stdin) {
-      child.stdin.on("error", () => { /* EPIPE：子进程提前退出属正常 */ });
+      child.stdin.on("error", () => { /* EPIPE: an early child exit is normal */ });
       child.stdin.end(opts.input);
     }
 
-    // StringDecoder 跨 chunk 安全解码（加固 A1）：逐 chunk toString 会把跨 chunk
-    // 的多字节字符（中文）解码成 U+FFFD，损坏输出文本
+    // StringDecoder decodes safely across chunks (hardening A1): per-chunk toString
+    // would decode multi-byte characters split across chunks into U+FFFD, corrupting
+    // the output text
     const stdoutDec = new StringDecoder("utf8");
     const stderrDec = new StringDecoder("utf8");
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -87,7 +92,7 @@ export function execFileAsync(bin: string, args: string[], opts: ExecAsyncOpts =
       if (stdoutLen > maxBuffer) {
         overflowed = true;
         killed = true;
-        try { child.kill("SIGTERM"); } catch { /* 已退出 */ }
+        try { child.kill("SIGTERM"); } catch { /* already exited */ }
         return;
       }
       stdout += stdoutDec.write(chunk);
@@ -97,7 +102,7 @@ export function execFileAsync(bin: string, args: string[], opts: ExecAsyncOpts =
       if (stderrLen > maxBuffer) {
         overflowed = true;
         killed = true;
-        try { child.kill("SIGTERM"); } catch { /* 已退出 */ }
+        try { child.kill("SIGTERM"); } catch { /* already exited */ }
         return;
       }
       stderr += stderrDec.write(chunk);
@@ -135,11 +140,14 @@ export function execFileAsync(bin: string, args: string[], opts: ExecAsyncOpts =
 }
 
 /**
- * per-key 串行队列：同一资源（如同一 gitDir）的「读-改-写」序列原子化。
+ * Per-key serial queue: atomize the "read-modify-write" sequence of one resource
+ * (e.g. one gitDir).
  *
- * 异步化后同仓提交序列（rev-parse → add → write-tree → commit-tree →
- * update-ref）可能被并发事件交错；队列保证同 key 序列一个接一个跑。
- * 失败消化：单次失败不阻断后续（链条吞掉 rejection）。
+ * After asynchronization, a repo's commit sequence (rev-parse → add → write-tree →
+ * commit-tree → update-ref) can interleave with concurrent events; the queue guarantees
+ * same-key sequences run one after another.
+ * Failure absorption: a single failure does not block the rest (the chain swallows the
+ * rejection).
  */
 const queues = new Map<string, Promise<unknown>>();
 
@@ -151,9 +159,12 @@ export function queueRepo<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * 同步 PATH 探测（纯 fs，零 spawn）：命中返回绝对路径，未命中返回 null。
- * 语义同 `which <bin>`，但只读文件系统（毫秒级）——探针类调用严禁 execFileSync("which")。
- * 候选必须 isFile（目录 X_OK 恒真，qoder 同名目录误报教训）。
+ * Synchronous PATH probe (pure fs, zero spawn): returns the absolute path on a hit,
+ * null on a miss.
+ * Semantics of `which <bin>`, but read-only on the filesystem (millisecond scale) —
+ * probe-style calls must never execFileSync("which").
+ * Candidates must isFile (directories always pass X_OK; lesson from a same-named qoder
+ * directory false positive).
  */
 export function whichBin(bin: string): string | null {
   const isExecFile = (p: string): boolean => {

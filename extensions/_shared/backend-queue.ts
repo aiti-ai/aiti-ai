@@ -1,37 +1,37 @@
 /**
- * backend-queue — 后端会话队列共享实现层（docs/backend-queue-manager-plan.md §3）。
+ * backend-queue — shared implementation layer for backend session queues (docs/backend-queue-manager-plan.md §3).
  *
- * 把 aiti-zcode-agent handle 里验证过的「本地 followUp 队列 + steer 镜像 + queueManage
- * 全 action + settle 自动续轮 + user 气泡 + steer 失败降级」抽成组合式 helper：
- * 各后端 handle 以 ≤15 行接入（组合，不改 pi-web core）。
+ * Extracts the combination proven in the aiti-zcode-agent handle — "local followUp queue + steer mirror + queueManage
+ * full actions + settle-triggered auto follow-up turn + user bubble + steer-failure degradation" — into composable helpers:
+ * each backend handle wires in with ≤15 lines (composition, no pi-web core changes).
  *
- * ⚠ 权威源：本文件（pi-web-ext/_shared/backend-queue.ts）。部署时复制进各扩展目录
- *   （同 external-cli-governance 先例）——改动须同步全部副本，头部保留本注释。
+ * ⚠ Authoritative source: this file (pi-web-ext/_shared/backend-queue.ts). On deploy it is copied into each extension dir
+ *   (same precedent as external-cli-governance) — changes must be synced to all copies; keep this header comment.
  *
- * 语义要点：
- *  - 分流（routePrompt）：running + streamingBehavior==="followUp" → 本地队列（可撤回）；
- *    running + steer 注入可用 → steer()（协议相关，可缺省）；steer 失败 → 降级入本地队列
- *    （R9 泛化：消息不丢、不打断原轮、不产生双 settled）；空闲 → dispatch（由 handle 提供，
- *    support 只管队列，发送永远由 handle 执行）。
- *  - 队列条目带图片（{text, images}，闭环 zcode R4）；queue_update wire 仍只传文本
- *    （前端面板无需感知图片）；recall/remove 的 entry/removed 带 hasImages/images 供取回还原。
- *  - settled 轮账本无关：scheduleDrain 由 handle 在 settle/finally 后调用，幂等
- *    （running 中 no-op）——与各后端 settle 时序差异解耦（plan G2）。
- *  - rev 单调版本号（2026-09-18）：queue_update 事件与 queueManage 全结果携带同一
- *    数轴，前端据此丢弃迟到的旧 get_state 快照（竞态覆盖根修，见 BackendQueueManageResult.rev）。
+ * Semantics essentials:
+ *  - Routing (routePrompt): running + streamingBehavior==="followUp" → local queue (recalled-able);
+ *    running + steer injection available → steer() (protocol-specific, may be absent); steer failure → degrade into the local queue
+ *    (R9 generalization: message not lost, original turn not interrupted, no double settled); idle → dispatch (provided by the handle;
+ *    support only manages the queue — sending is always done by the handle).
+ *  - Queue entries carry images ({text, images}, closing the zcode R4 loop); the queue_update wire still carries text only
+ *    (the frontend panel need not know about images); recall/remove's entry/removed carry hasImages/images for retrieval and restoration.
+ *  - Independent of the settled-turn ledger: scheduleDrain is called by the handle after settle/finally, idempotent
+ *    (no-op while running) — decoupled from each backend's settle timing differences (plan G2).
+ *  - rev monotonic version (2026-09-18): the queue_update event and all queueManage results carry the same
+ *    number axis, so the frontend can drop stale out-of-order get_state snapshots (root fix for the race overwrite; see BackendQueueManageResult.rev).
  */
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** 最小图片结构（plan G5：共享层只定义最小形状，handle 侧适配自有 TurnImage）。 */
+/** Minimal image shape (plan G5: the shared layer defines only the minimal shape; the handle side adapts its own TurnImage). */
 export interface QueueTurnImageLike {
   data: string;
   mimeType: string;
   filename?: string;
 }
 
-/** 本地 followUp 队列条目（R4 闭环：带图片）。 */
+/** Local followUp queue entry (R4 closure: carries images). */
 export interface BackendQueueEntry {
   text: string;
   images?: QueueTurnImageLike[];
@@ -39,31 +39,31 @@ export interface BackendQueueEntry {
 }
 
 export interface BackendQueueOpts {
-  /** 运行中判定（handle 的 running + alive 组合；drain 幂等与分流都依赖它）。 */
+  /** Running check (the handle's running + alive combination; both drain idempotence and routing depend on it). */
   isRunning(): boolean;
-  /** 存活判定（可选，缺省恒 true）：dispose 后 drain/dispatch 不再启动。 */
+  /** Liveness check (optional, defaults to always true): after dispose, drain/dispatch no longer start. */
   alive?(): boolean;
-  /** 真正的发送（handle.runTurn / prompt 全簿记）——空闲分流与续轮都走这里。 */
+  /** The real send (handle.runTurn / prompt with full bookkeeping) — both the idle routing branch and follow-up turns go through here. */
   dispatch(text: string, images?: QueueTurnImageLike[]): Promise<void> | void;
-  /** wire 事件出口（queue_update 广播 / user 气泡 message_end）。 */
+  /** Wire event outlet (queue_update broadcast / user bubble message_end). */
   onEvent(ev: Record<string, unknown>): void;
   /**
-   * 运行中注入（协议相关，可选）。缺省 = 不支持 steer：运行中发送一律本地排队
-   * （降级语义收敛到面板，而不是静默丢消息——plan §1.3）。
-   * 服务端 steer 镜像由 handle 在协议事件回调里调 registerSteer/drainSteer 喂入。
+   * Injection while running (protocol-specific, optional). Default = steer unsupported: sends while running always queue locally
+   * (degradation semantics converge in the panel instead of silently dropping messages — plan §1.3).
+   * The server-side steer mirror is fed by the handle via protocol event callbacks calling registerSteer/drainSteer.
    */
   steer?(text: string, images?: QueueTurnImageLike[]): Promise<void> | void;
-  /** 降级/异常提示（可缺省）。 */
+  /** Degradation/anomaly notices (optional). */
   log?(msg: string): void;
   /**
-   * 崩溃恢复 sidecar（可选，docs/aiti-remote-queue-and-sidecar-plan.md §3）：挂上后
-   * pending 队列跨进程重启可恢复（恢复项 settle 后照常自动续轮发出——排队=要发的意图）；
-   * dispose = 会话正常关闭 → remove() 丢弃。用 createQueueFilePersistence() 构建文件实现。
+   * Crash-recovery sidecar (optional, docs/aiti-remote-queue-and-sidecar-plan.md §3): once attached,
+   * the pending queue survives process restarts (recovered entries are still auto-dispatched after settle — queued = intent to send);
+   * dispose = session closed normally → remove() discards. Build the file implementation with createQueueFilePersistence().
    */
   persistence?: BackendQueuePersistence;
 }
 
-/** 队列持久化口（save/load/remove 全同步小文件写；实现须原子写——tmp+rename，Windows 兼容 §0）。 */
+/** Queue persistence port (save/load/remove all synchronous small-file writes; implementations must write atomically — tmp+rename, Windows compat §0). */
 export interface BackendQueuePersistence {
   save(entries: BackendQueueEntry[]): void;
   load(): BackendQueueEntry[];
@@ -71,14 +71,14 @@ export interface BackendQueuePersistence {
 }
 
 const QUEUE_SIDECAR_VERSION = 1;
-/** sidecar 残留清理阈值：崩溃恢复窗口 7 天（同 pi-web agent sessions 清理 TTL）。 */
+/** Sidecar residue cleanup threshold: 7-day crash-recovery window (same TTL as pi-web agent sessions cleanup). */
 const QUEUE_SIDECAR_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * sidecar 文件名：Windows 上冒号是 NTFS ADS 流分隔符——`claude:new-1.json` 会写成
- * 基名 `claude` + 匿名流（rename/existsSync 语义全乱，教训见 backend-queue.test）。
- * win32 把 id 中的冒号替换为 `_`；调用方（createQueueFilePersistence 的 getFile）
- * 必须用同一函数，否则迁移/恢复互不认识。
+ * Sidecar file name: on Windows the colon is the NTFS ADS stream separator — `claude:new-1.json` would be written as
+ * base name `claude` + an anonymous stream (rename/existsSync semantics all break; lesson in backend-queue.test).
+ * win32 replaces colons in the id with `_`; the caller (createQueueFilePersistence's getFile)
+ * must use the same function, otherwise migration/recovery would not recognize each other.
  */
 export function sidecarFileName(id: string): string {
   const safe = process.platform === "win32" ? id.replace(/:/g, "_") : id;
@@ -86,9 +86,9 @@ export function sidecarFileName(id: string): string {
 }
 
 /**
- * 文件版队列持久化（<stateDir>/queues/<sessionId>.json）。getFile 惰性求值——
- * 扩展 handle 以 field 初始化器构建 support、文件路径在 ctor body 才能确定，
- * 惰性闭包同时规避 init 顺序问题与「未传路径 = 不持久化」的缺省语义。
+ * File-backed queue persistence (<stateDir>/queues/<sessionId>.json). getFile is lazily evaluated —
+ * extension handles build the support in a field initializer and the file path is only known in the ctor body;
+ * the lazy closure avoids both the init-order problem and the "no path passed = no persistence" default semantics.
  */
 export function createQueueFilePersistence(
   getFile: () => string | undefined,
@@ -102,11 +102,11 @@ export function createQueueFilePersistence(
       if (raw.version !== QUEUE_SIDECAR_VERSION || !Array.isArray(raw.entries)) return [];
       return raw.entries.filter((e) => e && typeof e.text === "string" && typeof e.queuedAt === "number");
     } catch (e) {
-      log?.(`[backend-queue] sidecar 读取失败（忽略恢复）: ${e instanceof Error ? e.message : String(e)}`);
+      log?.(`[backend-queue] sidecar read failed (recovery ignored): ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   };
-  /** 事件驱动的残留清理（非轮询）：只在 save 时顺手扫一次同目录，删 >7 天的旧 sidecar。 */
+  /** Event-driven residue cleanup (no polling): on save, opportunistically scans the sibling directory once, deleting sidecars older than 7 days. */
   const prune = (dir: string): void => {
     try {
       for (const name of readdirSync(dir)) {
@@ -114,9 +114,9 @@ export function createQueueFilePersistence(
         const p = join(dir, name);
         try {
           if (Date.now() - statSync(p).mtimeMs > QUEUE_SIDECAR_TTL_MS) rmSync(p, { force: true });
-        } catch { /* 单文件失败不影响其余 */ }
+        } catch { /* a single-file failure does not affect the rest */ }
       }
-    } catch { /* 目录不存在等 */ }
+    } catch { /* directory missing etc. */ }
   };
   return {
     save(entries) {
@@ -129,7 +129,7 @@ export function createQueueFilePersistence(
         renameSync(tmp, file);
         prune(dirname(file));
       } catch (e) {
-        log?.(`[backend-queue] sidecar 写入失败（队列照常，仅崩溃恢复受损）: ${e instanceof Error ? e.message : String(e)}`);
+        log?.(`[backend-queue] sidecar write failed (queue unaffected, only crash recovery degraded): ${e instanceof Error ? e.message : String(e)}`);
       }
     },
     load: read,
@@ -142,12 +142,12 @@ export function createQueueFilePersistence(
 }
 
 /**
- * id 换绑时迁移队列 sidecar（占位 id → 真实 id）：各 handle 走「懒持久化」模式——真实
- * 会话 id 在首个后端帧才出现（claude system/init、zcode/codebuddy rebindSessionId、
- * codex thread.started、cursor extractChatId），此前排队的条目落在随机占位 id 文件里，
- * 不迁移则崩溃恢复永远找不到（只能等 7 天 prune）。与 renameExtModelState 状态文件
- * 换绑同构，在各 handle 真实 id 捕获点调用。acp 无此窗口（id 在宿主拿到 handle 前
- * 同步赋真实值）。
+ * Migrates the queue sidecar on id rebinding (placeholder id → real id): handles use the "lazy persistence" mode — the real
+ * session id only appears with the first backend frame (claude system/init, zcode/codebuddy rebindSessionId,
+ * codex thread.started, cursor extractChatId); entries queued before that land in a random placeholder-id file,
+ * and without migration crash recovery would never find them (only the 7-day prune would). Same shape as the renameExtModelState
+ * state-file rebinding; called at each handle's real-id capture point. acp has no such window (the id is
+ * assigned its real value synchronously before the host gets the handle).
  */
 export function migrateQueueSidecar(
   dir: string | undefined,
@@ -160,12 +160,12 @@ export function migrateQueueSidecar(
     const from = join(dir, "queues", sidecarFileName(fromId));
     if (!existsSync(from)) return;
     const to = join(dir, "queues", sidecarFileName(toId));
-    // Windows renameSync 不覆盖已有目标：先删（迁移内容 ⊆ 内存 pending，最终以内存 save 为准）
+    // Windows renameSync does not overwrite an existing target: delete first (migration content ⊆ in-memory pending; the final in-memory save wins)
     if (existsSync(to)) rmSync(to, { force: true });
     renameSync(from, to);
-    log?.(`[backend-queue] sidecar 随 id 换绑迁移: ${fromId} → ${toId}`);
+    log?.(`[backend-queue] sidecar migrated on id rebinding: ${fromId} → ${toId}`);
   } catch (e) {
-    log?.(`[backend-queue] sidecar 迁移失败（忽略，崩溃恢复降级）: ${e instanceof Error ? e.message : String(e)}`);
+    log?.(`[backend-queue] sidecar migration failed (ignored, crash recovery degraded): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -188,52 +188,52 @@ export interface BackendQueueManageResult {
   steering: string[];
   followUp: string[];
   /**
-   * 队列内容单调版本号（跨仓契约，pi-web useAgentSession 消费）：任意一次内容变化后
-   * 递增，queue_update 事件与 queueManage/get_state 快照同源携带同一数轴。前端据此
-   * 丢弃乱序/迟到的旧快照（异步 get_state 响应与实时 queue_update 竞态覆盖——
-   * 2026-09-18 「队列条目不显示直到手动刷新」根因修复）。
+   * Monotonic version of the queue content (cross-repo contract, consumed by pi-web useAgentSession): incremented after
+   * any content change; the queue_update event and queueManage/get_state snapshots carry the same axis from the same source. The frontend uses it to
+   * drop out-of-order/stale old snapshots (async get_state responses racing the live queue_update —
+   * root fix for 2026-09-18 "queue entries not showing until manual refresh").
    */
   rev: number;
   entry?: { text: string; images?: QueueTurnImageLike[] };
-  /** remove 的 QueueTrashItem 形状（pi-web core SessionHandle.queueManage 契约）。 */
+  /** The remove action's QueueTrashItem shape (pi-web core SessionHandle.queueManage contract). */
   removed?: { id: string; kind: string; text: string; hasImages: boolean; queuedAt: number };
 }
 
 export interface BackendQueue {
-  /** prompt 入口分流（handle 仅在 running 时调用；空闲分支供 steer/followUp 能力方法直达 dispatch）。 */
+  /** Prompt-entry routing (the handle calls it only while running; the idle branch lets the steer/followUp capability methods go straight to dispatch). */
   routePrompt(text: string, opts?: BackendQueueRouteOpts): Promise<"dispatched" | "queued" | "steered">;
-  /** 运行中入本地队列（settle 后自动续轮，可撤回）；空闲等同 dispatch。 */
+  /** Enqueue locally while running (auto follow-up turn after settle, recalled-able); when idle, same as dispatch. */
   enqueueFollowUp(text: string, images?: QueueTurnImageLike[]): void;
-  /** @capability queueManage（SessionHandle.queueManage 直接转发至此）。 */
+  /** @capability queueManage (SessionHandle.queueManage is forwarded here directly). */
   queueManage(req: BackendQueueManageReq): Promise<BackendQueueManageResult>;
-  /** 服务端 steer 镜像喂入（zcode：steerQueued/steerDrained/steerDiscarded 事件；其他后端可缺省不喂）。 */
+  /** Server-side steer mirror feed (zcode: steerQueued/steerDrained/steerDiscarded events; other backends may omit feeding). */
   registerSteer(pendingInputId: string, input: string): void;
   drainSteer(pendingInputIds: string[]): void;
   clearSteerMirror(): void;
-  /** settle 后由 handle 调（finally / agent_settled）——幂等，running 中 no-op。 */
+  /** Called by the handle after settle (finally / agent_settled) — idempotent, no-op while running. */
   scheduleDrain(): void;
-  /** 向前端同步排队区（queue_update 契约：steering/followUp 两组文本）。 */
+  /** Sync the queue area to the frontend (queue_update contract: the steering/followUp text groups). */
   emitUpdate(): void;
-  /** user 气泡（message_end role=user，blocks content——adapter string 防御已兼容）。 */
+  /** User bubble (message_end role=user, blocks content — the adapter's string defense already tolerates it). */
   userBubble(text: string): void;
   snapshot(): { steering: string[]; followUp: string[] };
-  /** 清 pending + 镜像 + 停止未决续轮。 */
+  /** Clear pending + mirror + stop pending follow-up turns. */
   dispose(): void;
 }
 
 export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue {
   const alive = () => (opts.alive ? opts.alive() : true);
-  /** 本地 followUp 队列（带图片，R4 闭环）。 */
+  /** Local followUp queue (with images, R4 closure). */
   let pending: BackendQueueEntry[] = [];
-  /** 服务端 steer 队列镜像（已交给后端、尚未 drain 的输入；全量快照，只读展示）。 */
+  /** Server-side steer queue mirror (inputs already handed to the backend but not yet drained; full snapshot, read-only display). */
   let steerMirror: Array<{ pendingInputId: string; input: string }> = [];
-  /** 队列内容版本号（emitUpdate 即变化出口，每次递增；快照读取不递增）。 */
+  /** Queue content version (emitUpdate is the only mutation outlet, incremented each time; snapshot reads do not increment). */
   let rev = 0;
   let disposed = false;
-  /** sidecar 恢复懒加载标记（ensureRestored 幂等；规避 field 初始化早于 ctor 的顺序问题）。 */
+  /** Sidecar recovery lazy-load flag (ensureRestored is idempotent; avoids the field-initializer-before-ctor order problem). */
   let restored = false;
-  const persist = (): void => { try { opts.persistence?.save(pending); } catch { /* 持久化不阻塞队列 */ } };
-  /** 恢复：崩溃前排队的条目回到队首（当前进程内尚未入队任何条目，实际即整队还原）。 */
+  const persist = (): void => { try { opts.persistence?.save(pending); } catch { /* persistence never blocks the queue */ } };
+  /** Recovery: entries queued before the crash return to the queue head (nothing has been enqueued in this process yet, so in practice the whole queue is restored). */
   const ensureRestored = (): void => {
     if (restored || disposed) return;
     restored = true;
@@ -241,10 +241,10 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
       const saved = opts.persistence?.load() ?? [];
       if (saved.length > 0) {
         pending = [...saved.filter((e) => !pending.some((p) => p.queuedAt === e.queuedAt && p.text === e.text)), ...pending];
-        opts.log?.(`[backend-queue] sidecar 恢复 ${saved.length} 条排队消息`);
+        opts.log?.(`[backend-queue] sidecar restored ${saved.length} queued messages`);
         emitUpdate();
       }
-    } catch { /* 恢复失败不阻塞队列 */ }
+    } catch { /* recovery failure does not block the queue */ }
   };
 
   const snapshot = () => ({
@@ -264,9 +264,9 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
     emitUpdate();
   };
 
-  /** steer 失败降级（R9 泛化）：转回本地 followUp 队列——消息不丢、不打断原轮。 */
+  /** Steer-failure degradation (R9 generalization): back into the local followUp queue — message not lost, original turn not interrupted. */
   const degradeToQueue = (text: string, images?: QueueTurnImageLike[], reason?: unknown): void => {
-    opts.log?.(`[backend-queue] steer 发送失败，转本地队列待续轮: ${reason instanceof Error ? reason.message : String(reason ?? "")}`);
+    opts.log?.(`[backend-queue] steer send failed, moved to the local queue awaiting the follow-up turn: ${reason instanceof Error ? reason.message : String(reason ?? "")}`);
     enqueueFollowUp(text, images);
   };
 
@@ -275,12 +275,12 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
     routeOpts?: BackendQueueRouteOpts,
   ): Promise<"dispatched" | "queued" | "steered"> => {
     if (opts.isRunning()) {
-      // followUp：本地持有（queue keeper 可撤回/排序），settle 后自动续轮
+      // followUp: held locally (queue keeper can recall/reorder), auto follow-up turn after settle
       if (routeOpts?.streamingBehavior === "followUp") {
         enqueueFollowUp(text, routeOpts?.images);
         return "queued";
       }
-      // steer / 缺省：运行中注入可用则注入（镜像由 handle 经协议事件喂入）；失败降级本地队列
+      // steer / default: inject while running if injection is available (the mirror is fed by the handle via protocol events); on failure degrade to the local queue
       if (opts.steer) {
         try {
           await opts.steer(text, routeOpts?.images);
@@ -293,14 +293,14 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
       enqueueFollowUp(text, routeOpts?.images);
       return "queued";
     }
-    // 空闲：直接开新轮（dispatch 闭包 = handle 的完整簿记入口，如 prompt()）
+    // idle: start a new turn directly (the dispatch closure = the handle's full bookkeeping entry, e.g. prompt())
     await opts.dispatch(text, routeOpts?.images);
     return "dispatched";
   };
 
   const at = (i: number | undefined): number => {
     const n = Number(i);
-    if (!Number.isInteger(n) || n < 0 || n >= pending.length) throw new Error("队列索引越界");
+    if (!Number.isInteger(n) || n < 0 || n >= pending.length) throw new Error("queue index out of range");
     return n;
   };
 
@@ -309,11 +309,11 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
     if (req.action === "list") return { ...snapshot(), rev };
     const kind = req.kind ?? "followUp";
     if (kind === "steer") {
-      throw new Error("该条目已注入后端服务端 steer 队列（当前轮工具间隙自动消费），协议不支持撤回/移动；如需取消请停止本轮（stop）");
+      throw new Error("this entry was already injected into the backend's server-side steer queue (consumed automatically in the current turn's tool gaps); the protocol does not support recall/move; to cancel, stop this turn (stop)");
     }
     let entry: BackendQueueEntry | undefined;
-    /** clear 前暂存被清空的 followUp 文本——pi clearQueue() 契约返回「被清掉的内容」，
-     * 前端「全部编辑」（recallAll）靠它回填输入框；漏存会静默丢消息（2026-09-16 实测）。 */
+    /** Stash the cleared followUp texts before clear — the pi clearQueue() contract returns "what was cleared",
+     * and the frontend's "edit all" (recallAll) relies on it to backfill the input box; omitting it silently loses messages (observed 2026-09-16). */
     let clearedFollowUp: string[] | undefined;
     switch (req.action) {
       case "clear": {
@@ -337,17 +337,17 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
       case "requeue": {
         const i = Number(req.index);
         const text = String(req.text ?? "");
-        if (!Number.isInteger(i) || i < 0 || i > pending.length) throw new Error("队列索引越界");
-        if (!text.trim()) throw new Error("requeue 需要非空文本");
+        if (!Number.isInteger(i) || i < 0 || i > pending.length) throw new Error("queue index out of range");
+        if (!text.trim()) throw new Error("requeue requires non-empty text");
         pending.splice(i, 0, { text, queuedAt: Date.now() });
         break;
       }
       case "convert": {
         const i = at(req.index);
         const target = req.targetKind ?? "steer";
-        if (target === "followUp") break; // 已在 followUp 组，no-op
+        if (target === "followUp") break; // already in the followUp group, no-op
         if (opts.isRunning() && opts.steer) {
-          // 原生 steer 可用：取出并立即注入
+          // native steer available: pick and inject immediately
           const picked = pending.splice(i, 1)[0];
           try {
             await opts.steer(picked.text, picked.images);
@@ -355,35 +355,35 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
             degradeToQueue(picked.text, picked.images, e);
           }
         } else if (opts.isRunning()) {
-          // 无原生 steer：插队 = 移到队首（settle 后 scheduleDrain 优先续轮发出）。
-          // zcode 3.11.2 协议 steer 实测不投递（2026-09-10 探针，见 handle steer:false 注释），
-          // 本地队首是协议下唯一能兑现的插队语义。
+          // no native steer: jump the queue = move to the queue head (scheduleDrain sends it first after settle).
+          // zcode 3.11.2 protocol steer observed not delivering (2026-09-10 probe; see the handle steer:false comment),
+          // so the local queue head is the only jump-the-queue semantics the protocol can honor.
           const [picked] = pending.splice(i, 1);
           pending.unshift(picked);
         } else {
-          // 空闲：开新轮
+          // idle: start a new turn
           const picked = pending.splice(i, 1)[0];
           await opts.dispatch(picked.text, picked.images);
         }
         break;
       }
       default:
-        throw new Error(`queueManage: 未知 action "${req.action}"`);
+        throw new Error(`queueManage: unknown action "${req.action}"`);
     }
     persist();
     emitUpdate();
-    // 空闲且有排队的边角（convert/clear 后 settle 已过）：不动——空闲入队由调用方的 scheduleDrain 负责
+    // idle-with-queue edge case (settle already passed after convert/clear): leave it — idle enqueue is the caller's scheduleDrain's job
     return {
       ...snapshot(),
-      // 变更类 action 的 rev 在 emitUpdate 里已递增——此处读取即变更后版本，与刚发的
-      // queue_update 同值；前端据此判定 RPC 结果与事件流的先后。
+      // mutating actions' rev was already incremented in emitUpdate — reading it here yields the post-change version, the same value as the
+      // queue_update just emitted; the frontend uses it to order the RPC result against the event stream.
       rev,
-      // clear：followUp 报「清空前」的内容（snapshot 已空）——对齐 pi clearQueue 返回约定
+      // clear: followUp reports the "pre-clear" content (snapshot already empty) — aligned with the pi clearQueue return convention
       ...(clearedFollowUp ? { followUp: clearedFollowUp } : {}),
       ...(entry
         ? {
             entry: { text: entry.text, ...(entry.images ? { images: entry.images } : {}) },
-            // remove → QueueTrashItem（pi-web core 契约；recall 只有 entry）
+            // remove → QueueTrashItem (pi-web core contract; recall has only entry)
             ...(req.action === "remove"
               ? {
                   removed: {
@@ -420,8 +420,8 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
     }
   };
 
-  /** settle 后自动续轮（followUp 队列排空；幂等——running 中直接返回）。
-   *  微任务让 agent_settled 先到达前端（流式状态复位）再开新一轮（zcode 实测模式）。 */
+  /** Auto follow-up turn after settle (drains the followUp queue; idempotent — returns directly while running).
+   *  The microtask lets agent_settled reach the frontend first (streaming state reset) before starting the new turn (zcode-proven pattern). */
   const scheduleDrain = (): void => {
     if (disposed || !alive() || opts.isRunning()) return;
     ensureRestored();
@@ -432,7 +432,7 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
       queueMicrotask(() => {
         if (disposed || !alive()) return;
         void Promise.resolve(opts.dispatch(next.text, next.images)).catch((e) => {
-          opts.log?.(`[backend-queue] 续轮 dispatch 失败: ${e instanceof Error ? e.message : String(e)}`);
+          opts.log?.(`[backend-queue] follow-up dispatch failed: ${e instanceof Error ? e.message : String(e)}`);
         });
       });
     }
@@ -449,7 +449,7 @@ export function createBackendQueueSupport(opts: BackendQueueOpts): BackendQueue 
     disposed = true;
     pending = [];
     steerMirror = [];
-    // 会话正常关闭：崩溃恢复 sidecar 一并丢弃（崩溃时未走到这里 → sidecar 留待恢复）
+    // session closed normally: drop the crash-recovery sidecar too (a crash never reaches here → the sidecar remains for recovery)
     try { opts.persistence?.remove(); } catch { /* best effort */ }
   };
 

@@ -1,24 +1,24 @@
 /**
  * pi-web extension protocol version — canonical definition (this repo).
  *
- * 用途：
- *   - 扩展在 package.json 声明 `"aitiExtProtocol": "1.0"`（字符串 MAJOR.MINOR）；
- *   - 检查脚本 / extman / 未来安装筛查器共用本模块的解析与状态计算；
- *   - 宿主 pi-web 镜像实现 `lib/ext/protocol.ts`（同语义，规范见 docs/pi-web-ext-protocol.md）。
+ * Purpose:
+ *   - extensions declare `"aitiExtProtocol": "1.0"` (string MAJOR.MINOR) in package.json;
+ *   - check scripts / extman / future install screeners share this module's parsing and state computation;
+ *   - the host pi-web mirrors the implementation in `lib/ext/protocol.ts` (same semantics; spec in docs/pi-web-ext-protocol.md).
  *
- * 本文件被 extman deploy 拷贝进扩展目录（ext-protocol.mjs）供运行时使用——保持零依赖纯 ESM。
- * bump 规则（docs/pi-web-ext-protocol.md §2.1）：仅**明显改动已有接口且影响现有功能**时 MAJOR+1；
- * 纯增项不 bump。bump 流程见规范 §7（改本文件常量 + 变更记录 + 迁移手册；宿主镜像同步改）。
+ * extman deploy copies this file into extension directories (ext-protocol.mjs) for runtime use — keep it zero-dependency pure ESM.
+ * Bump rule (docs/pi-web-ext-protocol.md §2.1): MAJOR+1 only for changes that **clearly alter an existing interface and affect current functionality**;
+ * pure additions do not bump. The bump process is in spec §7 (change this file's constants + changelog + migration manuals; sync the host mirror).
  */
 
-/** 当前协议版本（字符串 MAJOR.MINOR）。 */
+/** Current protocol version (string MAJOR.MINOR). */
 export const EXT_PROTOCOL_VERSION = "1.0";
 
-/** 宿主最低支持的协议 MAJOR（声明 major < 此值 = incompatible；首次 bump 时按兼容策略提高）。 */
+/** Lowest protocol MAJOR the host supports (declared major < this = incompatible; raised per the compatibility policy on the first bump). */
 export const EXT_PROTOCOL_MIN_MAJOR = 1;
 
 /**
- * 解析协议版本声明。仅接受字符串 "MAJOR.MINOR"（数字类型/其他格式 → null）。
+ * Parses a protocol version declaration. Accepts only the string "MAJOR.MINOR" (number types/other formats → null).
  * @param {unknown} v
  * @returns {{ major: number, minor: number, raw: string } | null}
  */
@@ -31,9 +31,9 @@ export function parseExtProtocol(v) {
 }
 
 /**
- * 声明 → 当前协议之间的迁移手册引用（逐跳；声明缺失视为 legacy）。
- * 例：声明 "1.0" + 当前 "2.1" → ["v1-to-v2"]；缺失 + 当前 "1.0" → ["legacy-to-v1"]。
- * 手册位于 pi-web-ext/aiti-extman/skills/ext-protocol-upgrade/references/。
+ * Migration-manual references between a declaration and the current protocol (hop by hop; a missing declaration counts as legacy).
+ * Example: declared "1.0" + current "2.1" → ["v1-to-v2"]; missing + current "1.0" → ["legacy-to-v1"].
+ * Manuals live in pi-web-ext/aiti-extman/skills/ext-protocol-upgrade/references/.
  * @param {unknown} declared
  * @param {{ current?: string }} [opts]
  * @returns {string[]}
@@ -43,7 +43,7 @@ export function extProtocolUpgradeRefs(declared, opts = {}) {
   if (!cur) return [];
   const d = parseExtProtocol(declared);
   const refs = [];
-  // 声明缺失/非法/0.x（版本化前谱系）→ 先补 legacy 手册；迁移手册按 major 逐跳。
+  // declaration missing/invalid/0.x (pre-versioning lineage) → prepend the legacy manual; migration manuals hop per major.
   const legacy = !d || d.major < 1;
   let fromMajor = legacy ? 1 : d.major;
   if (legacy) refs.push("legacy-to-v1");
@@ -52,15 +52,15 @@ export function extProtocolUpgradeRefs(declared, opts = {}) {
 }
 
 /**
- * 兼容状态计算（唯一裁决口径）。
+ * Compatibility state computation (the single arbiter).
  *
  * state：
- *   ok            同 major（扩展 minor 高于宿主 minor 时 minorAhead=true，仅黄提示）
- *   stale         声明 major < 当前 major 且 >= minMajor（宿主保留兼容层，仍可运行）
- *   incompatible  声明 major < minMajor（宿主已不再兼容）
- *   too_new       声明 major > 当前 major（宿主过旧，需升级 pi-web）
- *   missing       无声明（版本化前遗留，视为 legacy v0）
- *   invalid       声明非法（非 "M.m" 字符串）
+ *   ok            same major (when the extension's minor exceeds the host's minor, minorAhead=true — yellow hint only)
+ *   stale         declared major < current major and >= minMajor (the host keeps a compatibility layer; still runs)
+ *   incompatible  declared major < minMajor (the host no longer supports it)
+ *   too_new       declared major > current major (host too old; pi-web needs upgrading)
+ *   missing       no declaration (pre-versioning leftover, counted as legacy v0)
+ *   invalid       declaration invalid (not an "M.m" string)
  *
  * @param {unknown} declared
  * @param {{ current?: string, minMajor?: number }} [opts]
@@ -88,26 +88,26 @@ export function extProtocolInfo(declared, opts = {}) {
     upgradeRefs: [],
   };
   if (declared === undefined || declared === null || declared === "") {
-    return { ...base, state: "missing", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: "未声明协议版本（legacy）" };
+    return { ...base, state: "missing", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: "No protocol version declared (legacy)" };
   }
   const d = parseExtProtocol(declared);
   if (!d) {
-    return { ...base, state: "invalid", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: '声明必须是 "MAJOR.MINOR" 字符串' };
+    return { ...base, state: "invalid", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: 'Declaration must be a "MAJOR.MINOR" string' };
   }
   if (d.major > current.major) {
-    return { ...base, state: "too_new", detail: `扩展声明协议 ${d.raw} 高于宿主 ${current.raw}——请升级 pi-web 宿主` };
+    return { ...base, state: "too_new", detail: `Extension declares protocol ${d.raw} above host ${current.raw} — upgrade the pi-web host` };
   }
   if (d.major < minMajor) {
-    return { ...base, state: "incompatible", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: `声明 ${d.raw} 低于宿主最低支持 ${minSupported}` };
+    return { ...base, state: "incompatible", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: `Declared ${d.raw} is below the host's minimum supported ${minSupported}` };
   }
   if (d.major < current.major) {
-    return { ...base, state: "stale", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: `声明 ${d.raw} 落后当前 ${current.raw}` };
+    return { ...base, state: "stale", needsUpgrade: true, upgradeRefs: extProtocolUpgradeRefs(declared, opts), detail: `Declared ${d.raw} is behind the current ${current.raw}` };
   }
   const minorAhead = d.minor > current.minor;
   return {
     ...base,
     state: "ok",
     minorAhead,
-    detail: minorAhead ? `扩展用到 ${d.raw} 的新增能力（宿主 ${current.raw}）——宿主可升级以启用` : undefined,
+    detail: minorAhead ? `Extension uses new capabilities of ${d.raw} (host ${current.raw}) — the host can upgrade to enable them` : undefined,
   };
 }

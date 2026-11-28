@@ -1,18 +1,21 @@
 /**
- * soffice-panel —— soffice 缺失时的降级说明面板（共享客户端模块，构建期内联）。
+ * soffice-panel — the degradation explainer panel shown when soffice is missing (shared client
+ * module, inlined at build time).
  *
- * 场景：老格式转换（.doc→.docx/.pdf、.xls/.ods→.xlsx）依赖服务器端 LibreOffice；
- * 未安装/未配置时，不甩一句报错，而是给出：
- *   - 为什么需要它（一句话）
- *   - 各平台安装命令
- *   - 配置指引（extman → aiti-editor → 功能 → soffice 路径）
- *   - 替代动作：⬇ 下载到本机编辑；🖥 虚拟环境打开（远程查看，需 aiti-ui-env）
+ * Scenario: legacy-format conversion (.doc -> .docx/.pdf, .xls/.ods -> .xlsx) depends on server-side
+ * LibreOffice; when it is not installed/configured, instead of throwing one error line the panel gives:
+ *   - why it is needed (one sentence)
+ *   - per-platform install commands
+ *   - configuration guidance (extman -> aiti-editor -> Features -> soffice path)
+ *   - alternative actions: ⬇ download and edit locally; 🖥 open in the virtual environment (remote
+ *     viewing, requires aiti-ui-env)
  *
- * 纯 DOM（无 JSX/无框架依赖），aiti-editor 与 aiti-sheet-univer bundle 共用。
+ * Pure DOM (no JSX / no framework deps), shared by the aiti-editor and aiti-sheet-univer bundles.
  *
- * i18n（2026-11-17 ext-i18n convention）：copy uses Chinese raw text as t() keys; the
- * consumer injects its own ctx.t via opts.t (per-extension ui.i18n table carries the
- * zh-CN identity + en translation entries). Absent opts.t → raw text (current behavior).
+ * i18n (2026-11-17 ext-i18n convention): copy uses Chinese raw text as t() keys; the consumer
+ * injects its own ctx.t via opts.t (per-extension ui.i18n table carries the zh-CN identity + en
+ * translation entries). Absent opts.t -> raw text (current behavior). The tr("...") key strings below
+ * must stay in Chinese — they are lookup keys matched by the consumers' i18n tables.
  */
 
 /** Consumer-injected translate fn (host ctx.t shape; params interpolation {name}). */
@@ -26,7 +29,7 @@ export interface SofficeStatus {
   installHints?: Partial<Record<"linux" | "macos" | "windows" | "feature", string>>;
 }
 
-/** GET /soffice-status（aiti-editor 或 aiti-sheet-univer 均提供同构端点） */
+/** GET /soffice-status (aiti-editor and aiti-sheet-univer both expose the same-shaped endpoint) */
 export async function fetchSofficeStatus(apiUrl: (p: string) => string, extId = "aiti-editor"): Promise<SofficeStatus | null> {
   try {
     const r = await fetch(apiUrl(`/api/extensions/${extId}/soffice-status`), { cache: "no-store" });
@@ -39,15 +42,15 @@ export async function fetchSofficeStatus(apiUrl: (p: string) => string, extId = 
 }
 
 export interface SofficePanelOpts {
-  /** basePath 感知地址构造 */
+  /** basePath-aware URL builder */
   apiUrl: (p: string) => string;
-  /** 源文件绝对路径（下载 / 虚拟环境打开用） */
+  /** Source file absolute path (used by download / virtual-environment open) */
   filePath: string;
-  /** 转换目标描述（如 ".xlsx" / ".docx / PDF"），仅展示 */
+  /** Conversion target description (e.g. ".xlsx" / ".docx / PDF"), display only */
   targetLabel?: string;
-  /** 关闭回调（面板内 ✕ 时）；不传则不显示 ✕ */
+  /** Close callback (when the panel's ✕ is clicked); when omitted no ✕ is shown */
   onClose?: () => void;
-  /** 转换重试：提供则在面板底部显示「重试转换」按钮 */
+  /** Conversion retry: when provided, shows a "retry conversion" button at the panel's bottom */
   onRetry?: () => void;
   /** i18n translate (consumer's ctx.t); absent → raw text fallback */
   t?: SofficePanelT;
@@ -72,7 +75,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
     { target: opts.targetLabel ? tr("转换成 {label}", { label: opts.targetLabel }) : "" });
   el.appendChild(why);
 
-  // 安装指引
+  // Install guidance
   const btnStyle = "display:inline-flex;align-items:center;gap:6px;padding:6px 14px;font-size:12px;font-weight:600;border:1px solid var(--border,#d0d0d0);border-radius:8px;background:var(--bg-selected,#eef2ff);color:var(--text,#1a1a1a);cursor:pointer;font-family:inherit;";
   const box = (label: string) => {
     const d = document.createElement("div");
@@ -100,9 +103,11 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
     el.appendChild(row);
   }
 
-  // AI 一键安装（aiti-helper 帮助点 install-soffice：点击 → 打开 helper 弹窗 → 自动选中该帮助点 →
-  // 预填并自动发送，AI 全程检测平台/安装/验证）。window.__aitiHelperInvoke 是 aiti-helper 薄 entry
-  // 注册的稳定入口（stub 期即受理，重 UI 按需加载后重放）；未部署时降级为手动指引文案。
+  // One-click AI install (aiti-helper help point install-soffice: click -> opens the helper dialog ->
+  // auto-selects that help point -> prefills and auto-sends; the AI detects the platform / installs /
+  // verifies end to end). window.__aitiHelperInvoke is the stable entry registered by aiti-helper's thin
+  // entry (accepted even during the stub phase, replayed once the heavy UI loads on demand); degrades to
+  // manual-guidance copy when not deployed.
   const aiRow = document.createElement("div");
   aiRow.style.cssText = "margin-top:8px;display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border,#e4e7ef);border-radius:8px;background:var(--bg-selected,#f6f8ff);flex-wrap:wrap;";
   const aiBtn = document.createElement("button");
@@ -132,14 +137,14 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   aiRow.append(aiBtn, aiTipText);
   el.appendChild(aiRow);
 
-  // 配置指引
+  // Configuration guidance
   box(tr("已安装但不在 PATH？配置路径"));
   const cfg = document.createElement("div");
   cfg.style.cssText = "font-size:12px;";
   cfg.textContent = tr("扩展管理器 → aiti-editor → 功能 → 「soffice 路径（LibreOffice）」填入绝对路径（如 /opt/libreoffice/program/soffice），保存后刷新页面重试。");
   el.appendChild(cfg);
 
-  // 分隔
+  // Separator
   const sep = document.createElement("div");
   sep.style.cssText = "height:1px;background:var(--border,#eee);margin:14px 0;";
   el.appendChild(sep);
@@ -148,7 +153,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   const btns = document.createElement("div");
   btns.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;";
 
-  // ① 下载到本机编辑
+  // (1) Download and edit locally
   const dl = document.createElement("button");
   dl.type = "button";
   dl.style.cssText = btnStyle;
@@ -177,7 +182,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   };
   btns.appendChild(dl);
 
-  // ② 虚拟环境打开（远程查看，需 aiti-ui-env）
+  // (2) Open in the virtual environment (remote viewing, requires aiti-ui-env)
   const venv = document.createElement("button");
   venv.type = "button";
   venv.style.cssText = btnStyle;
@@ -189,16 +194,16 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
     const progress = (m: string) => { venv.textContent = m; };
     try {
       const ui = apiUrl("/api/extensions/aiti-ui-env");
-      // 1) 虚拟屏就绪
+      // 1) Virtual display ready
       const hd = await fetch(ui + "/headless", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "start" }) }).then((r) => r.json());
       if (!hd.ok) throw new Error(tr("虚拟屏启动失败：{msg}", { msg: hd.error || tr("未知") }));
-      // 2) 虚拟桌面里用 LibreOffice 打开文件
+      // 2) Open the file with LibreOffice inside the virtual desktop
       const run = await fetch(ui + "/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd: "soffice --norestore " + shellQuote(filePath), prefer: "headless" }) }).then((r) => r.json());
       if (!run.ok) throw new Error(tr("LibreOffice 启动失败：{msg}", { msg: run.error || tr("未知") }));
-      // 3) VNC 起桥
+      // 3) Bridge VNC
       const vnc = await fetch(ui + "/vnc", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "start" }) }).then((r) => r.json());
       if (!vnc.ok) throw new Error(tr("VNC 启动失败：{msg}", { msg: vnc.error || tr("未知") }));
-      // 4) 会话 cookie + 查看页路径
+      // 4) Session cookie + viewer page path
       const sess = await fetch(ui + "/vnc-session", { method: "POST" }).then((r) => r.json());
       if (!sess.ok || !sess.path) throw new Error(tr("VNC 会话获取失败"));
       progress(tr("已在虚拟环境打开，正在跳转远程查看…"));
@@ -222,7 +227,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   note.textContent = tr("「虚拟环境打开」在服务器的虚拟桌面上运行 LibreOffice 并经浏览器 VNC 远程查看——适合不想在本地装 Office、且服务器已配置虚拟屏（aiti-ui-env）的场景。");
   el.appendChild(note);
 
-  // 重试 / 关闭
+  // Retry / close
   if (opts.onRetry || opts.onClose) {
     const row = document.createElement("div");
     row.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:14px;";

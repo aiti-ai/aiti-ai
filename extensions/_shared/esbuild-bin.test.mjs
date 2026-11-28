@@ -1,10 +1,13 @@
 /**
- * esbuild-bin 共享层用例——钉死「派生形态按平台解析」这条契约。
+ * esbuild-bin shared-layer cases — pinning the "derived form resolves per platform"
+ * contract.
  *
- * 回归背景：esbuild 的 `bin/esbuild` 在 Linux/macOS 被 postinstall 换成原生二进制（`node <bin>` 必炸），
- * 在 Windows 是带 shebang 的 JS 包装（CreateProcess 不认，直接 exec 报 ENOENT），
- * `.bin/esbuild` 在 Windows 又是 /bin/sh 垫片（spawn 必 ENOENT）。两侧各修一次的 ping-pong
- * 发生过两回（本仓 node 直跑 → 48 端改直接 exec 2026-09-19），收口到本层后由这里把关。
+ * Regression background: esbuild's `bin/esbuild` gets swapped to a native binary by
+ * postinstall on Linux/macOS (`node <bin>` blows up), on Windows it is a JS wrapper with
+ * a shebang (CreateProcess rejects it; direct exec fails ENOENT), and `.bin/esbuild` on
+ * Windows is a /bin/sh shim (spawn always ENOENT). The fix-one-side-break-the-other
+ * ping-pong happened twice (this repo ran node directly → the 48-port deployment moved
+ * to direct exec 2026-09-19); after converging into this layer, this test guards it.
  *
  * Run: node scripts/test-web-ext.mjs --only _shared
  */
@@ -24,30 +27,31 @@ const expectedVersion = existsSync(join(nm, "esbuild", "package.json"))
   : null;
 
 const cases = [
-  ["包内入口 esbuild/bin/esbuild", pkgEntry],
-  [".bin 垫片（Windows 上是 sh 脚本）", shimEntry],
+  ["package entry esbuild/bin/esbuild", pkgEntry],
+  [".bin shim (a sh script on Windows)", shimEntry],
 ];
 
-// 官方平台包在位时，两种入口都必须解析到它（曾经写死「上溯两级」，对三级深度的
-// esbuild/bin/esbuild 恒不命中，平台分支形同虚设）。
+// When the official platform package is present, both entries must resolve to it (an
+// earlier hardcoded "walk up two levels" never hit the three-level-deep
+// esbuild/bin/esbuild, leaving the platform branch dead).
 const platformPkg = join(nm, "@esbuild", `${process.platform}-${process.arch}`);
 const wantPlatformBin = existsSync(platformPkg);
 
 for (const [label, bin] of cases) {
-  if (!existsSync(bin)) continue; // 未装该扩展依赖的环境干净跳过
-  test(`esbuild 派生可跑通：${label}`, async () => {
+  if (!existsSync(bin)) continue; // environments without this extension dependency skip cleanly
+  test(`esbuild derived binary runs: ${label}`, async () => {
     const { cmd } = resolveEsbuildSpawn(bin);
-    assert.ok(existsSync(cmd), `解析出的 cmd 必须真实存在：${cmd}`);
+    assert.ok(existsSync(cmd), `the resolved cmd must actually exist: ${cmd}`);
     if (wantPlatformBin) {
-      assert.ok(cmd.startsWith(platformPkg), `平台包在位时必须走它，实际 ${cmd}`);
+      assert.ok(cmd.startsWith(platformPkg), `with the platform package present it must be used; got ${cmd}`);
     }
-    // 派生的本体不能是「要 shell 才认」的脚本（Windows CreateProcess 会 ENOENT）：
-    // 要么原生二进制，要么走 node 直跑（prefix 非空）。
+    // The spawned body must not be a "shell-required" script (Windows CreateProcess
+    // would ENOENT): either a native binary, or go through node (non-empty prefix).
     if (process.platform === "win32") {
       const head = readFileSync(cmd).subarray(0, 2).toString("utf8");
-      assert.notEqual(head, "#!", `win32 上直接 exec 的目标不能是 shebang 文本：${cmd}`);
+      assert.notEqual(head, "#!", `on win32 a directly exec'd target must not be a shebang text file: ${cmd}`);
     }
     const out = await runEsbuild(bin, ["--version"]);
-    assert.equal(out.trim(), expectedVersion, "两种写法必须解析到同一个 esbuild");
+    assert.equal(out.trim(), expectedVersion, "both entry forms must resolve to the same esbuild");
   });
 }

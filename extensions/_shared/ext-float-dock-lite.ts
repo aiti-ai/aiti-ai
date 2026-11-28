@@ -1,20 +1,25 @@
 /**
- * _shared/ext-float-dock-lite.ts — dock/present 状态机的 **壳用薄层**（P1-3，方案
- * pi-web-eager-ext-split-plan.md §6 P1-3）。
+ * _shared/ext-float-dock-lite.ts — the dock/present state machine's **thin shell layer**
+ * (P1-3, plan pi-web-eager-ext-split-plan.md §6 P1-3).
  *
- * eager 薄壳（拆包扩展 entry）只需要：usePresent/useGate（门控 hooks）+ present
- * 状态机小 API（openFloat/closePanel/seedDockDefault/declareDockZones…）。
- * 本模块 = 这层最小面（hooks 在此、状态机 re-export 自 ext-float-dock-core），
- * **不含 DockBody/头行 UI**——那些留在 ext-float-dock.ts（重模块，随懒 chunk 走）。
- * 拆包扩展的壳 import 本文件，首屏不再连带 17+ KB 的 dock UI 层。
+ * An eager thin shell (split-extension entry) only needs: usePresent/useGate (gate
+ * hooks) + the present state machine's small API (openFloat/closePanel/seedDockDefault/
+ * declareDockZones…).
+ * This module = that minimal surface (hooks here; the state machine re-exported from
+ * ext-float-dock-core), **without DockBody/header UI** — those stay in
+ * ext-float-dock.ts (the heavy module, carried by the lazy chunk).
+ * Split extensions' shells import this file, so first paint no longer drags in the
+ * 17+ KB dock UI layer.
  *
- * 未拆包扩展可继续 import ext-float-dock.ts（全量面，re-export 本模块，行为不变）。
+ * Unsplit extensions can keep importing ext-float-dock.ts (the full surface, which
+ * re-exports this module; behavior unchanged).
  */
 import { useEffect, useState } from "react";
 import { presentState, onPresentChange, CHANGE_EVENT } from "./ext-float-dock-core";
 import type { PresentState, DockZone } from "./ext-float-dock-core";
 
-// 纯状态层全量转出：壳只 import 本模块即可覆盖 register 期 + 门控 + 开关
+// Full re-export of the pure state layer: importing only this module covers the
+// register phase + gating + open/close
 export {
   present, presentState, onPresentChange, dockPref,
   openFloat, closePanel, dockTo, dockToSidebar, undockToFloat,
@@ -28,12 +33,14 @@ export function usePresent(itemKey: string): PresentState {
   const [state, setState] = useState<PresentState>(() => presentState(itemKey));
   useEffect(() => {
     setState(presentState(itemKey));
-    // 双通道订阅（时序免疫，2026-09-12 修「All Sessions 打不开」）：本组件挂载若早于
-    // aiti-float install（bundle 就绪顺序竞态），floatApi() 为 null → onPresentChange
-    // 订阅落进下方降级 store，此后 __piweFloat 状态机的更新永远收不到 → 面板 gate
-    // 恒 closed 打不开。两条状态机（api 状态机与降级 localPresent）都广播同名
-    // window CHANGE_EVENT，挂 window 兜底监听即可双向覆盖；api 在场时双通道同值
-    // 触发，setState 同值幂等无害。
+    // Two-channel subscription (timing-immune; fixed "All Sessions won't open"
+    // 2026-09-12): if this component mounts before aiti-float installs (bundle-readiness
+    // order race), floatApi() is null → the onPresentChange subscription lands in the
+    // fallback store below, and updates from the __piweFloat state machine would never
+    // arrive → the panel gate stays closed and won't open. Both state machines (the api
+    // machine and the fallback localPresent) broadcast the same-name window
+    // CHANGE_EVENT, so a window backstop listener covers both directions; with the api
+    // present the two channels fire the same value and setState is idempotent — harmless.
     const h = ((e: CustomEvent<{ key: string; state: PresentState }>) => {
       if (e.detail?.key === itemKey) setState(e.detail.state);
     }) as EventListener;
@@ -44,7 +51,8 @@ export function usePresent(itemKey: string): PresentState {
   return state;
 }
 
-/** 渲染门控（结构性防双开）：face="float" → 仅浮窗态渲染；face={dock:zone} → 仅对应嵌入态渲染。 */
+/** Render gate (structural double-open prevention): face="float" renders only in the
+ *  floating state; face={dock:zone} renders only in the matching docked state. */
 export function useGate(itemKey: string, face: "float" | { dock: DockZone }): boolean {
   const state = usePresent(itemKey);
   if (face === "float") return state === "floating";

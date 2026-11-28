@@ -1,33 +1,33 @@
 /**
- * ext-model-state — 外部 agent 会话的「临时模型状态文件」共享模块（权威源）。
+ * ext-model-state — shared module for external agent sessions' "temporary model state file" (authoritative source).
  *
- * 每个外部 agent 会话 handle 一份 JSON：
+ * Each external agent session handle owns one JSON file:
  *   ~/.pi/agent/ext-agents/<agentKey>/<sanitized-handle-id>.json
  *
- * 职责（需求：启动或切换时，把 pi 的 models 存到临时配置文件，引导外部 agent）：
- *   1. 记录当前选中模型（selected）→ 各扩展 spawn 参数（--model/-m）从它派生，
- *      会话重开/进程重启后模型选择不丢；
- *   2. 携带合并模型目录（外部自身 + pi 的 models.json 扁平化）→
- *      getAvailableModels 从这里拿 pi 部分，模型选择器外部/pi 同屏分组；
- *   3. 原子写（tmp + rename），坏 JSON/缺目录一律 fail-soft（返回 null/[]）；
- *   4. 每次写入顺手维护该 agent 的「上次使用模型」KV（`<agentKey>/_last-model.json`）——
- *      各 agent 新建会话的默认模型（per-agent last used，对齐 pi 的 defaultModel 语义）
- *      读它即可，不需要每个扩展自己记录/扫描。
+ * Responsibilities (requirement: on startup or switch, persist pi's models into a temporary config file to steer the external agent):
+ *   1. Records the currently selected model (selected) → each extension's spawn args (--model/-m) derive from it,
+ *      so the model choice survives session reopen / process restart;
+ *   2. Carries the merged model catalog (external's own + pi's flattened models.json) →
+ *      getAvailableModels takes the pi part from here, so the model picker groups external/pi on one screen;
+ *   3. Atomic writes (tmp + rename); bad JSON/missing directory always fail-soft (return null/[]);
+ *   4. Every write also maintains the agent's "last used model" KV (`<agentKey>/_last-model.json`) —
+ *      the default model for each agent's new sessions (per-agent last used, matching pi's defaultModel semantics)
+ *      can be read from it; extensions need not track/scan on their own.
  *
- * 本文件按部署单元复制进各扩展目录（aiti-*-agent/ext-model-state.ts），
- * 修改后同步副本（与 cursor-cli-store.ts 同一模式）。
+ * This file is copied per deployment unit into each extension directory (aiti-*-agent/ext-model-state.ts);
+ * sync the copies after changing it (same pattern as cursor-cli-store.ts).
  */
 
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** pi 的模型注册表（~/.pi/agent/models.json，{providers:{<key>:{models:[…]}}}）。 */
+/** pi's model registry (~/.pi/agent/models.json, {providers:{<key>:{models:[…]}}}). */
 export function piModelsConfigPath(): string {
   return process.env.PI_MODELS_CONFIG_PATH || join(homedir(), ".pi", "agent", "models.json");
 }
 
-/** 读 pi models.json 并扁平化为合并目录条目（读不到/坏 JSON → []，fail-soft）。 */
+/** Reads pi models.json and flattens it into merged catalog entries (unreadable/bad JSON → [], fail-soft). */
 export async function readPiModels(): Promise<ExtModelEntry[]> {
   try {
     const raw = await readFile(piModelsConfigPath(), "utf8");
@@ -37,7 +37,7 @@ export async function readPiModels(): Promise<ExtModelEntry[]> {
   }
 }
 
-/** 合并目录条目：source 区分外部自身目录与 pi 目录。 */
+/** Merged catalog entry: source distinguishes the external's own catalog from pi's. */
 export type ExtModelEntry = {
   id: string;
   provider: string;
@@ -63,12 +63,12 @@ export type ExtModelState = {
   updatedAt: string;
 };
 
-/** 状态文件根目录（可用 EXT_MODEL_STATE_DIR 覆盖，测试用）。 */
+/** State file root directory (overridable via EXT_MODEL_STATE_DIR, for tests). */
 export function extModelStateDir(): string {
   return process.env.EXT_MODEL_STATE_DIR || join(homedir(), ".pi", "agent", "ext-agents");
 }
 
-/** handle id → 安全文件名（复合 id 形如 claude:<uuid>，冒号/斜杠等一律消毒；无字母数字时回退 session）。 */
+/** handle id → safe file name (composite ids like claude:<uuid>; colons/slashes etc. all sanitized; falls back to "session" when no alphanumerics remain). */
 export function sanitizeId(id: string): string {
   const cleaned = id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
   return /[A-Za-z0-9]/.test(cleaned) ? cleaned : "session";
@@ -78,7 +78,7 @@ export function extModelStatePath(agentKey: string, sessionId: string): string {
   return join(extModelStateDir(), sanitizeId(agentKey), `${sanitizeId(sessionId)}.json`);
 }
 
-/** 该 agent「上次使用模型」KV 文件名（agent 目录内保留名，不参与状态 GC/扫描）。 */
+/** The agent's "last used model" KV file name (reserved name inside the agent directory; excluded from state GC/scans). */
 export const AGENT_LAST_MODEL_FILE = "_last-model.json";
 
 export function agentLastModelPath(agentKey: string): string {
@@ -86,28 +86,31 @@ export function agentLastModelPath(agentKey: string): string {
 }
 
 /**
- * 进程内 last-used 快照（agentKey → 最近一次已知值 + 文件 mtime）：
- *  - 读：内存快照优先（不重读内容；命中时只做一次 mtime 校验——文件被删/被其它进程
- *    （dev/prod 双实例共享状态目录）改写才回退读 KV 文件），miss 时读文件并回填；
- *  - 写：同值重复写直接跳过（不落盘）；命中时同样用 mtime 校验文件未被别处改写。
- * 状态写入在 setModel/建会话时都会触发，同一模型反复读/写不应放大文件 IO。
+ * In-process last-used snapshot (agentKey → most recently known value + file mtime):
+ *  - read: the in-memory snapshot wins (no content re-read; on a hit a single mtime check runs —
+ *    only if the file was deleted or rewritten by another process (dev/prod dual instances share the
+ *    state directory) does it fall back to reading the KV file), on miss it reads the file and backfills;
+ *  - write: identical repeated writes are skipped outright (no disk write); on a hit the same mtime
+ *    check verifies the file was not rewritten elsewhere.
+ * State writes trigger on setModel/session creation; repeated reads/writes of the same model must not
+ * amplify file IO.
  */
 const lastModelCache = new Map<string, { provider: string; id: string; mtimeMs: number }>();
 
-/** 测试钩子：清空进程内 last-used 快照（读/跳写行为跨用例隔离）。 */
+/** Test hook: clears the in-process last-used snapshot (isolates read/skip-write behavior across cases). */
 export function resetAgentLastModelCacheForTests(): void {
   lastModelCache.clear();
 }
 
-/** 原子写「该 agent 上次使用的模型」（目录不存在自动建；同值重复写跳过；失败仅告警）。 */
+/** Atomic write of "this agent's last used model" (directory auto-created; identical repeated writes skipped; failure only warns). */
 export async function writeAgentLastModel(agentKey: string, selected: { provider: string; id: string }): Promise<void> {
   const file = agentLastModelPath(agentKey);
   const cached = lastModelCache.get(agentKey);
   if (cached && cached.provider === selected.provider && cached.id === selected.id) {
     try {
       const st = await stat(file);
-      if (st.mtimeMs === cached.mtimeMs) return; // 未变且文件没被别处改写 → 不写
-    } catch { /* 文件被删/不可读 → 重写 */ }
+      if (st.mtimeMs === cached.mtimeMs) return; // unchanged and not rewritten elsewhere → skip write
+    } catch { /* file deleted/unreadable → rewrite */ }
   }
   try {
     await mkdir(join(file, ".."), { recursive: true });
@@ -122,10 +125,12 @@ export async function writeAgentLastModel(agentKey: string, selected: { provider
 }
 
 /**
- * 读「该 agent 上次使用的模型」：内存快照优先（不读文件内容；命中时只做一次 mtime
- * 校验——文件被删/被其它实例（dev/prod 共享目录）改写才回退读盘）；miss 时读专用 KV
- * （`_last-model.json`）并回填内存；存量安装（KV 尚未生成）回退扫描目录内 mtime 最新的
- * 状态文件。缺失/损坏 → null（fail-soft）。调用方负责合法性校验（通道/目录内存在）。
+ * Reads "this agent's last used model": the in-memory snapshot wins (no file content read; on a hit a
+ * single mtime check runs — only if the file was deleted or rewritten by another instance (dev/prod
+ * shared directory) does it fall back to disk); on miss it reads the dedicated KV (`_last-model.json`)
+ * and backfills memory; pre-existing installs (KV not yet created) fall back to scanning the directory
+ * for the state file with the newest mtime. Missing/corrupt → null (fail-soft). The caller validates
+ * legitimacy (channel/directory presence).
  */
 export async function readAgentLastUsedModel(agentKey: string): Promise<{ provider: string; id: string } | null> {
   const file = agentLastModelPath(agentKey);
@@ -134,7 +139,7 @@ export async function readAgentLastUsedModel(agentKey: string): Promise<{ provid
     try {
       const st = await stat(file);
       if (st.mtimeMs === cached.mtimeMs) return { provider: cached.provider, id: cached.id };
-    } catch { /* 文件被删 → 落到下面读盘/回退扫描 */ }
+    } catch { /* file deleted → falls through to the disk read/fallback scan below */ }
   }
   try {
     const parsed = JSON.parse(await readFile(file, "utf8")) as { selected?: { provider?: unknown; id?: unknown } };
@@ -148,39 +153,39 @@ export async function readAgentLastUsedModel(agentKey: string): Promise<{ provid
       lastModelCache.set(agentKey, { ...value, mtimeMs: st?.mtimeMs ?? 0 });
       return value;
     }
-  } catch { /* KV 不存在/损坏 → 回退扫描 */ }
+  } catch { /* KV missing/corrupt → fallback scan */ }
   return readLatestSelectedModel(agentKey);
 }
 
-/** 原子写状态（目录不存在自动建；失败仅告警——状态文件永不阻断主流程）。 */
+/** Atomic state write (directory auto-created; failure only warns — the state file never blocks the main flow). */
 let writeSeq = 0;
 export async function writeExtModelState(state: ExtModelState): Promise<void> {
   const file = extModelStatePath(state.agentKey, state.sessionId);
   const dir = join(file, "..");
   try {
     await mkdir(dir, { recursive: true });
-    // 并发写防撞：同 pid 同毫秒的两次写不能共用同一个 tmp 名
+    // Concurrent-write collision guard: two writes with the same pid in the same millisecond must not share a tmp name
     const tmp = `${file}.${process.pid}.${Date.now()}.${++writeSeq}.tmp`;
     await writeFile(tmp, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2));
     await rename(tmp, file);
-    // 顺手更新该 agent 的「上次使用模型」KV（专用小文件；前端/新建页默认项与 pi 的
-    // defaultModel 同语义）。写失败不阻断主流程——KV 缺失时读取端会回退 mtime 扫描。
+    // Also updates the agent's "last used model" KV (dedicated small file; the frontend/new-session-page default
+    // entry matches pi's defaultModel semantics). A failed write does not block the main flow — the reader falls back to the mtime scan when the KV is missing.
     if (state.selected?.id) await writeAgentLastModel(state.agentKey, state.selected);
   } catch (e) {
     console.warn(`[ext-model-state] write failed (${file}):`, e instanceof Error ? e.message : e);
     return;
   }
-  // 机会式 GC：写成功后顺手清理过期状态（不阻塞、失败静默）
+  // Opportunistic GC: after a successful write, clean up expired states (non-blocking, silent on failure)
   void pruneExpiredStates(dir, file);
 }
 
-/** 状态保留期：30 天未更新的会话状态视为陈旧（会话早已不存在）。 */
+/** State retention: session states not updated for 30 days count as stale (the session long gone). */
 export const EXT_MODEL_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** 目录级节流：每目录每进程至多扫一次（避免每次写都 stat 风暴）。 */
+/** Directory-level throttle: at most one scan per directory per process (avoids a stat storm on every write). */
 const prunedDirs = new Set<string>();
 
-/** 删除目录下超过保留期的旧状态文件（keepFile 除外）。清理永不抛错。 */
+/** Deletes old state files past the retention period under the directory (keepFile excepted). Cleanup never throws. */
 export async function pruneExpiredStates(dir: string, keepFile?: string): Promise<number> {
   if (prunedDirs.has(dir)) return 0;
   prunedDirs.add(dir);
@@ -189,7 +194,7 @@ export async function pruneExpiredStates(dir: string, keepFile?: string): Promis
     const now = Date.now();
     for (const f of await readdir(dir)) {
       if (!f.endsWith(".json")) continue;
-      if (f === AGENT_LAST_MODEL_FILE) continue; // last-used KV 长期保留（不代表会话存在）
+      if (f === AGENT_LAST_MODEL_FILE) continue; // last-used KV kept long-term (does not represent an existing session)
       const p = join(dir, f);
       if (p === keepFile) continue;
       try {
@@ -198,13 +203,13 @@ export async function pruneExpiredStates(dir: string, keepFile?: string): Promis
           await rm(p, { force: true });
           removed++;
         }
-      } catch { /* 单文件失败不影响其余 */ }
+      } catch { /* single-file failure does not affect the rest */ }
     }
-  } catch { /* 目录不存在等 —— 静默 */ }
+  } catch { /* directory missing etc. — silent */ }
   return removed;
 }
 
-/** 读状态；缺失/损坏返回 null（fail-soft）。 */
+/** Reads state; returns null when missing/corrupt (fail-soft). */
 export async function readExtModelState(agentKey: string, sessionId: string): Promise<ExtModelState | null> {
   try {
     const raw = await readFile(extModelStatePath(agentKey, sessionId), "utf8");
@@ -217,10 +222,11 @@ export async function readExtModelState(agentKey: string, sessionId: string): Pr
 }
 
 /**
- * 读「该 agent 上次使用的模型」（per-agent last used，pi 的 defaultModel 同语义）：
- * 取 agentKey 目录下 mtime 最新的状态文件的 selected——状态文件在 createSession 与每次
- * setModel 时写入，所以最新的那份即该 agent 最近一次实际使用的模型。
- * 目录缺失/无文件/坏 JSON → null（fail-soft）。调用方负责合法性校验（通道/目录内存在）。
+ * Reads "this agent's last used model" (per-agent last used, matching pi's defaultModel semantics):
+ * takes selected from the state file with the newest mtime under the agentKey directory — state files
+ * are written on createSession and on every setModel, so the newest one is the model the agent last
+ * actually used. Missing directory/no files/bad JSON → null (fail-soft). The caller validates
+ * legitimacy (channel/directory presence).
  */
 export async function readLatestSelectedModel(agentKey: string): Promise<{ provider: string; id: string } | null> {
   const dir = join(extModelStateDir(), sanitizeId(agentKey));
@@ -231,7 +237,7 @@ export async function readLatestSelectedModel(agentKey: string): Promise<{ provi
       try {
         const st = await stat(join(dir, f));
         if (!newest || st.mtimeMs > newest.mtimeMs) newest = { file: f, mtimeMs: st.mtimeMs };
-      } catch { /* 单文件失败跳过 */ }
+      } catch { /* skip on single-file failure */ }
     }
     if (!newest) return null;
     const parsed = JSON.parse(await readFile(join(dir, newest.file), "utf8")) as ExtModelState;
@@ -246,7 +252,7 @@ export async function readLatestSelectedModel(agentKey: string): Promise<{ provi
   }
 }
 
-/** 换绑真实 id（session_backend_ready）：旧文件搬到新 id 名下。 */
+/** Rebinds to the real id (session_backend_ready): moves the old file under the new id's name. */
 export async function renameExtModelState(agentKey: string, fromId: string, toId: string): Promise<void> {
   if (fromId === toId) return;
   const from = extModelStatePath(agentKey, fromId);
@@ -255,11 +261,11 @@ export async function renameExtModelState(agentKey: string, fromId: string, toId
     await mkdir(join(to, ".."), { recursive: true });
     await rename(from, to);
   } catch {
-    // 旧文件不存在（fresh 会话首次写）或跨设备——忽略，下次 write 覆盖
+    // old file missing (fresh session's first write) or cross-device — ignore; the next write overwrites
   }
 }
 
-/** 删除状态（dispose 时调用可选；缺省保留供重开恢复）。 */
+/** Deletes state (optional call on dispose; by default kept for reopen recovery). */
 export async function removeExtModelState(agentKey: string, sessionId: string): Promise<void> {
   try {
     await rm(extModelStatePath(agentKey, sessionId), { force: true });
@@ -267,8 +273,8 @@ export async function removeExtModelState(agentKey: string, sessionId: string): 
 }
 
 /**
- * pi 的 models.json（{providers:{<key>:{apiKey,api,baseUrl,models:[{id,name,api,contextWindow,…}]}}})
- * 扁平化为合并目录条目：provider 统一 "pi"（选择器独立分组），label 尾注协议/窗口。
+ * Flattens pi's models.json ({providers:{<key>:{apiKey,api,baseUrl,models:[{id,name,api,contextWindow,…}]}}})
+ * into merged catalog entries: provider normalized to "pi" (picker groups it separately), label annotated with protocol/window.
  */
 export function piModelsFromModelsConfig(config: unknown): ExtModelEntry[] {
   const providers = (config as { providers?: Record<string, unknown> } | null)?.providers;
@@ -290,16 +296,16 @@ export function piModelsFromModelsConfig(config: unknown): ExtModelEntry[] {
         source: "pi",
         ...(hint ? { hint } : {}),
       });
-      void provKey; // pi 目录按模型平铺；来源 provider key 不进 UI（避免与 provider 分组语义冲突）
+      void provKey; // pi's catalog is flattened per model; the source provider key stays out of the UI (avoids clashing with provider-grouping semantics)
     }
   }
   return out;
 }
 
 /**
- * models.json 模型的 cost（pi ModelCost，美元/百万 token）→ 选择器行 hint（"$0.6/$2.2 per M"）。
- * 格式与宿主 lib/model-visibility.ts 的 formatModelCostHint 一致（跨层复制，改格式两处同步）；
- * cache 费率/分档不进（槽位窄）；缺失/全零 → 无 hint（不编数据）。
+ * A models.json model's cost (pi ModelCost, USD per million tokens) → picker row hint ("$0.6/$2.2 per M").
+ * Format matches the host's lib/model-visibility.ts formatModelCostHint (cross-layer copy; sync both when changing format);
+ * cache rates/tiers excluded (slot too narrow); missing/all-zero → no hint (no invented data).
  */
 function piCostHint(m: { cost?: { input?: unknown; output?: unknown } | null }): string | undefined {
   const c = m.cost;
@@ -313,8 +319,8 @@ function piCostHint(m: { cost?: { input?: unknown; output?: unknown } | null }):
 }
 
 /**
- * 合并目录：外部自身条目在前（source:"ext"），pi 条目在后（source:"pi"）；
- * 以 provider+id 去重（先到先得——外部自身目录优先）。
+ * Merged catalog: the external's own entries first (source:"ext"), pi's entries after (source:"pi");
+ * deduplicated by provider+id (first come first served — the external's own catalog wins).
  */
 export function mergeModelCatalogs(external: ExtModelEntry[], piModels: ExtModelEntry[]): ExtModelEntry[] {
   const seen = new Set<string>();
@@ -328,9 +334,9 @@ export function mergeModelCatalogs(external: ExtModelEntry[], piModels: ExtModel
   return out;
 }
 
-/** 当前模型排最前的目录整理（选择器默认高亮当前项）。
- *  目录内命中当前模型时整体前移（保留 label 等元数据——合成条目会丢 label 产生裸 ref 行）；
- *  不在目录中（如通道折叠前的旧 ref）才合成最小条目前置。 */
+/** Catalog ordering with the current model first (the picker highlights the current entry by default).
+ *  When the catalog contains the current model, that entry moves to the front (keeping label and other metadata — a synthesized entry would lose the label and produce a bare ref row);
+ *  only when absent from the catalog (e.g. an old ref before channel collapse) is a minimal entry synthesized to the front. */
 export function withCurrentFirst(models: ExtModelEntry[], current?: { id: string; provider: string; label?: string }): ExtModelEntry[] {
   if (!current?.id) return models;
   const idx = models.findIndex((m) => m.id === current.id && m.provider === current.provider);
@@ -339,10 +345,11 @@ export function withCurrentFirst(models: ExtModelEntry[], current?: { id: string
 }
 
 /**
- * 静态目录把「上次使用的模型」置顶——只在目录内按 id 命中时前移（保留原条目的
- * provider/label），不合成条目。静态目录供新建页默认项（前端取 list[0]），
- * 若用 withCurrentFirst 会为 provider 不匹配的 pi 模型合成裸条目 → 列表重复。
- * 无命中/已在首位 → 原数组。
+ * Static catalog with the "last used model" pinned to the top — promoted only when hit by id within the
+ * catalog (keeping the original entry's provider/label), never synthesized. The static catalog feeds the
+ * new-session page's default entry (the frontend takes list[0]); using withCurrentFirst would synthesize
+ * a bare entry for a pi model whose provider mismatches → duplicated list rows.
+ * No hit / already first → original array.
  *  If the hit row is disabled (server-disabled, quota exhausted, etc.) it must not be
  *  promoted — the default entry has to be selectable; promote the first enabled row
  *  instead and leave disabled rows in place (still listed, see ExtModelEntry.disabled).

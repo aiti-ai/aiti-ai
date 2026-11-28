@@ -1,27 +1,31 @@
 /**
- * task-list — 会话任务列表（TodoWrite working plan）只读镜像的共享派生层。
+ * task-list — shared derivation layer for the read-only mirror of a session's task list (TodoWrite
+ * working plan).
  *
- * ⚠ 权威源：本文件（pi-web-ext/_shared/task-list.ts）。扩展经
- *   `@aiti-ai/ext-shared/task-list` 导入（extman reconcile 装进共享根）——**新增/改名
- *   导出必须发布新版 ext-shared 并 reconcile，否则运行期拿到 undefined**（同
- *   backend-queue 侧的 jiti 缓存教训）。
+ * ⚠ Authoritative source: this file (pi-web-ext/_shared/task-list.ts). Extensions import via
+ *   `@aiti-ai/ext-shared/task-list` (extman reconcile installs it into the shared root) — **adding or
+ *   renaming an export requires publishing a new ext-shared version and reconciling, or the runtime
+ *   gets undefined** (same lesson as the jiti cache on the backend-queue side).
  *
- * 出处：aiti-zcode-agent 的桌面端逆向（docs/aiti-zcode-agent-task-list-plan.md §1）——
- * 协议里没有专门的 todo 事件，任务列表是从 TodoWrite 族工具调用的 input/output 派生的
- * 只读镜像。CC 族（claude/qoder/codebuddy…）与 zcode 的 wire 形状一致，故各家共用：
- *  - 解析语义 = ZCode 桌面端同款（对象取 content/step/title/text/activeForm + status 归一；
- *    纯字符串条目首项 in_progress 其余 pending；集合键 todos|plan|steps|items，all-or-nothing）；
- *  - 更新语义 = 全量替换 + JSON 对比去重（防重放/重复帧把同一份列表反复推给前端）。
+ * Origin: desktop-app reverse engineering of aiti-zcode-agent (docs/aiti-zcode-agent-task-list-plan.md
+ * §1) — the protocol has no dedicated todo event; the task list is a read-only mirror derived from the
+ * input/output of TodoWrite-family tool calls. The CC family (claude/qoder/codebuddy...) shares zcode's
+ * wire shape, so all of them use this:
+ *  - parse semantics = the ZCode desktop's own (objects take content/step/title/text/activeForm +
+ *    status normalization; pure-string entries make the first in_progress and the rest pending;
+ *    collection keys todos|plan|steps|items, all-or-nothing);
+ *  - update semantics = full replacement + JSON-compare dedupe (prevents replays/duplicate frames from
+ *    pushing the same list to the front end over and over).
  */
 
-/** 任务条目（session/resume 快照 `todos` wire 同构；priority 来自工具 input，可缺）。 */
+/** Task entry (same wire shape as the session/resume snapshot `todos`; priority comes from the tool input and may be absent). */
 export interface TaskEntry {
   content: string;
   status: "pending" | "in_progress" | "completed";
   priority?: string;
 }
 
-/** TodoWrite 族工具名（桌面端同款正则：内置 TodoWrite/TodoRead + MCP update_plan 变体）。 */
+/** TodoWrite-family tool names (the desktop's own regex: built-in TodoWrite/TodoRead + MCP update_plan variants). */
 export const TODO_PLAN_TOOL_RE = /(?:^|[_\s-])(?:todo[_\s-]*(?:read|write)|update[_\s-]*plan)(?:$|[_\s-])/i;
 
 export function normalizeTaskStatus(v: unknown): TaskEntry["status"] | null {
@@ -30,8 +34,9 @@ export function normalizeTaskStatus(v: unknown): TaskEntry["status"] | null {
 }
 
 /**
- * 单条任务解析（桌面 _Cn 同款）：对象取 content/step/title/text/activeForm + status 归一
- * （非法整条弃）；纯字符串条目缺省首项 in_progress 其余 pending。
+ * Parse one task entry (same as the desktop's _Cn): objects take content/step/title/text/activeForm +
+ * status normalization (invalid entries are dropped whole); pure-string entries default to the first
+ * in_progress and the rest pending.
  */
 export function parseTaskEntry(raw: unknown, index: number): TaskEntry | null {
   if (typeof raw === "string") {
@@ -49,8 +54,9 @@ export function parseTaskEntry(raw: unknown, index: number): TaskEntry | null {
 }
 
 /**
- * 任务集合提取（桌面 kPt/yCn 同款）：对象（字符串先 JSON.parse）下首个 todos|plan|steps|items
- * 数组，全部条目可解析才生效（all-or-nothing）；空数组/解析失败返回 null（保持现状不更新）。
+ * Extract the task collection (same as the desktop's kPt/yCn): the first todos|plan|steps|items array
+ * under the object (strings JSON.parse first) takes effect only when every entry parses
+ * (all-or-nothing); empty arrays / parse failures return null (keep the current state, no update).
  */
 export function extractTaskList(value: unknown): TaskEntry[] | null {
   let obj = value;
@@ -73,15 +79,15 @@ export function extractTaskList(value: unknown): TaskEntry[] | null {
   return null;
 }
 
-/** 任务列表镜像（跨轮持续；onChange 只在内容真变化时收到全量副本）。 */
+/** Task-list mirror (persists across turns; onChange receives a full copy only when the content really changed). */
 export interface TaskListMirror {
-  /** 当前列表（内部引用，调用方只读）。 */
+  /** The current list (internal reference, read-only for callers). */
   current(): TaskEntry[];
-  /** 全量替换（JSON 对比去重；变化时回调副本）。 */
+  /** Full replacement (JSON-compare dedupe; calls back with a copy on change). */
   apply(todos: TaskEntry[]): void;
-  /** 工具事件派生：非 TodoWrite 族工具名或全部候选值解析失败 → 保持现状。 */
+  /** Tool-event derivation: non-TodoWrite-family tool names or all candidate values failing to parse -> keep the current state. */
   fromToolEvent(toolName: string, ...values: unknown[]): void;
-  /** 快照种子（resume/重启恢复；`todos` 数组 wire 同构，防御式逐条解析）。 */
+  /** Snapshot seed (resume/restart recovery; same wire shape as the `todos` array, defensively parsed per entry). */
   seed(rawArray: unknown): void;
 }
 

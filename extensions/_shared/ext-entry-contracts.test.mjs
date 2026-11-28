@@ -1,15 +1,15 @@
 /**
- * ext-entry-contracts.test.mjs —— 全量扩展入口契约巡检（覆盖所有官方扩展）。
+ * ext-entry-contracts.test.mjs — full extension entry contract sweep (covers all official extensions).
  *
- * E2E 实测沉淀的回归闸门（2026-11-06）：
- *   1. package.json 必须声明 aitiExtProtocol（协议红线，全仓校验的仓库内等价断言）；
- *   2. registerItems/registerItems?. 调用的插槽名必须是宿主 ExtSlotName 联合的合法成员
- *      （拼错插槽 = 条目永远不渲染 = 死入口）；
- *   3. registerItems 引用的 feature 必须在扩展 features 声明里存在（引用不存在的
- *      feature id = 条目被永远隐藏的死卡——aiti-app-center feature-gate 过滤按此口径）；
- *   4. index.ts 静态 ui 声明的插槽键同样是合法插槽名；
+ * Regression gate distilled from E2E measurements (2026-11-06):
+ *   1. package.json must declare aitiExtProtocol (protocol red line, the in-repo equivalent of the whole-repo check);
+ *   2. slot names in registerItems/registerItems?. calls must be valid members of the host's ExtSlotName union
+ *      (a misspelled slot = the entry never renders = a dead entry point);
+ *   3. features referenced by registerItems must exist in the extension's features declarations (a nonexistent
+ *      feature id = a dead card hidden forever — the aiti-app-center feature-gate filter works on this basis);
+ *   4. slot keys declared in index.ts's static ui must likewise be valid slot names;
  *
- * Run: node --test extensions/_shared/ext-entry-contracts.test.mjs（aiti-ai 仓根跑）
+ * Run: node --test extensions/_shared/ext-entry-contracts.test.mjs (from the aiti-ai repo root)
  */
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -21,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const extRoot = join(here, "..");
 const workRoot = join(extRoot, "..");
 
-/** 宿主 ExtSlotName 联合镜像（pi-web lib/ext/types.ts；扩宿主插槽时同步此处）。 */
+/** Mirror of the host's ExtSlotName union (pi-web lib/ext/types.ts; sync here when host slots grow). */
 const VALID_SLOTS = new Set([
   "toolbar", "sidebar", "sidebarFooter", "sessionTopbar", "sessionRowActions",
   // topbarMobileLeading (2026-11-23): small-screen leading top-bar actions (host renders only when isMobile,
@@ -29,8 +29,8 @@ const VALID_SLOTS = new Set([
   "topbarMobileLeading",
   "sessionRowLeading", "sessionRowMeta", "sidebarProjects", "sidebarContent",
   "dialogs", "banners", "pages", "chatInputTop", "chatOverlay",
-  // commands 目录槽：host registry.ts UI_SLOT_KEYS 已收录（ec06564a），消费方 = aiti-app-center /
-  // input 命令提示；aiti-folder 首用（2026-11-15）
+  // commands directory slot: already recorded in the host registry.ts UI_SLOT_KEYS (ec06564a); consumers = aiti-app-center /
+  // input command hints; first user aiti-folder (2026-11-15)
   "commands",
   "userMessageActions", "assistantMessageActions", "assistantMessageFooter",
   "fileViewer", "pathPicker", "newSessionBackendOptions", "sessionStats",
@@ -47,11 +47,11 @@ const VALID_SLOTS = new Set([
   // first-class host slot (types.ts + registry.ts) rendered by AppShell's ExtSlot —
   // first user = aiti-provider-usage panel (+ its account-quota details)
   "sessionInfoPanel",
-  "noWorkspaceGuide",  // v3 新增：fresh 首屏整页引导替换槽（AppShell 消费；aiti-quickstart 首用）
+  "noWorkspaceGuide",  // v3 addition: whole-page fresh-first-screen guide replacement slot (consumed by AppShell; first user aiti-quickstart)
 ]);
 
 function listExts() {
-  // 并发套件里 sync-mirror 测试会临时创建/删除夹具扩展目录——ENOENT 视为已消失，跳过
+  // the sync-mirror test in the concurrent suite temporarily creates/deletes fixture extension directories — treat ENOENT as vanished and skip
   const dirs = readdirSync(extRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== "_shared" && e.name !== "node_modules")
     .map((e) => e.name);
@@ -66,28 +66,28 @@ function* clientFiles(dir) {
   for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) {
-      // assets/ + chunk-*.mjs = vite 构建产物（vendor 库内部 feature: 字符串会
-      // 造成契约扫描假阳性）——契约检查只看手写源码
+      // assets/ + chunk-*.mjs = vite build artifacts (feature: strings inside vendored libraries
+      // cause contract-scan false positives) — contract checks look at hand-written sources only
       if (e.name === "node_modules" || e.name === "dist" || e.name === "vendor" || e.name === "assets") continue;
       yield* clientFiles(p);
     } else if (/\.(tsx?|js|mjs)$/.test(e.name) && !/\.test\.(mjs|js)$/.test(e.name) && !/\.min\.(js|mjs)$/.test(e.name) && !/-chunk-[A-Za-z0-9_-]+\.mjs$/.test(e.name)) {
-      // -chunk-<hash>.mjs = vite 构建产物（vendor 库内部的 feature: 字符串会造成
-      // 契约扫描假阳性）——契约检查只看手写源码
+      // -chunk-<hash>.mjs = vite build artifacts (feature: strings inside vendored libraries cause
+      // contract-scan false positives) — contract checks look at hand-written sources only
       yield p;
     }
   }
 }
 
-test("每个官方扩展的 package.json 声明 aitiExtProtocol", () => {
+test("every official extension's package.json declares aitiExtProtocol", () => {
   const bad = [];
   for (const name of listExts()) {
     const pkg = JSON.parse(readFileSync(join(extRoot, name, "package.json"), "utf8"));
-    if (!/^1\.\d+$/.test(String(pkg.aitiExtProtocol ?? ""))) bad.push(`${name}: ${pkg.aitiExtProtocol ?? "缺失"}`);
+    if (!/^1\.\d+$/.test(String(pkg.aitiExtProtocol ?? ""))) bad.push(`${name}: ${pkg.aitiExtProtocol ?? "missing"}`);
   }
-  assert.deepEqual(bad, [], "缺少/非法 aitiExtProtocol 的扩展");
+  assert.deepEqual(bad, [], "extensions with a missing/invalid aitiExtProtocol");
 });
 
-test("registerItems 插槽名全部合法（拼错 = 死入口）", () => {
+test("registerItems slot names are all valid (a misspelling = a dead entry point)", () => {
   const bad = [];
   for (const name of listExts()) {
     const dir = join(extRoot, name);
@@ -98,10 +98,10 @@ test("registerItems 插槽名全部合法（拼错 = 死入口）", () => {
       }
     }
   }
-  assert.deepEqual(bad, [], "引用了不存在插槽的 registerItems 调用");
+  assert.deepEqual(bad, [], "registerItems calls referencing nonexistent slots");
 });
 
-test("registerItems 引用的 feature 必须在 features 声明里存在", () => {
+test("features referenced by registerItems must exist in the features declarations", () => {
   const bad = [];
   for (const name of listExts()) {
     const dir = join(extRoot, name);
@@ -110,14 +110,14 @@ test("registerItems 引用的 feature 必须在 features 声明里存在", () =>
     for (const f of clientFiles(dir)) {
       const src = readFileSync(f, "utf8");
       for (const m of src.matchAll(/\bfeature:\s*["'`]([a-zA-Z0-9._-]+)["'`]/g)) {
-        if (!declared.has(m[1])) bad.push(`${name}: feature "${m[1]}"（${f.split("pi-web-ext/")[1]}）不在 features 声明`);
+        if (!declared.has(m[1])) bad.push(`${name}: feature "${m[1]}" (${f.split("pi-web-ext/")[1]}) not in the features declaration`);
       }
     }
   }
-  assert.deepEqual(bad, [], "引用了未声明 feature 的条目");
+  assert.deepEqual(bad, [], "entries referencing undeclared features");
 });
 
-test("index.ts 静态 ui 声明的插槽键全部合法", () => {
+test("slot keys declared in index.ts's static ui are all valid", () => {
   const bad = [];
   for (const name of listExts()) {
     const indexSrc = existsSync(join(extRoot, name, "index.ts")) ? readFileSync(join(extRoot, name, "index.ts"), "utf8") : null;
@@ -135,5 +135,5 @@ test("index.ts 静态 ui 声明的插槽键全部合法", () => {
       if (!VALID_SLOTS.has(m[1]) && !UI_META_KEYS.has(m[1])) bad.push(`${name}: ui.${m[1]}`);
     }
   }
-  assert.deepEqual(bad, [], "静态 ui 声明使用了未知插槽键");
+  assert.deepEqual(bad, [], "static ui declarations using unknown slot keys");
 });

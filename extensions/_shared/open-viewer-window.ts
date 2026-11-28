@@ -1,33 +1,36 @@
 /**
- * open-viewer-window — 「在新窗口打开」共享实现（aiti-viewer 协议 + 大窗口居中）。
+ * open-viewer-window — shared implementation of "open in a new window" (aiti-viewer protocol + a
+ * large centered window).
  *
- * 使用方：aiti-editor（文件查看器工具条）/ aiti-folder（文件夹树右键）——两处原本
- * 各自内联同款逻辑（ticket 换票 + ready 握手 + window.open），收敛于此，改窗口策略
- * 一处生效。经相对路径 import（../../_shared/，同 aiti-editor-inject.mjs 先例），
- * 各扩展 vite 构建自行打包，无运行时共享。
+ * Users: aiti-editor (file-viewer toolbar) / aiti-folder (folder tree context menu) — both used to
+ * inline the same logic (ticket exchange + ready handshake + window.open); now consolidated here so
+ * a window-strategy change lands in one place. Imported via relative paths (../../_shared/, same
+ * precedent as aiti-editor-inject.mjs); each extension's vite build bundles it itself, no runtime sharing.
  *
- * aiti-viewer 协议（路径不进 URL）：
- *   1. POST /api/files/ticket 换一次性票（TTL 5 分钟）；
- *   2. window.open("/viewer") 开空白窗；
- *   3. 子窗加载后向 opener 发 {source:"aiti-viewer",type:"ready"}；
- *   4. 本侧回 {source:"aiti-viewer",type:"init",ticket}，子窗兑票打开目标。
- * 注意不能带 noopener——子窗需要 window.opener 完成握手（同源可信）。
+ * aiti-viewer protocol (the path never enters a URL):
+ *   1. POST /api/files/ticket to exchange for a one-time ticket (TTL 5 minutes);
+ *   2. window.open("/viewer") opens a blank window;
+ *   3. after the child window loads it sends the opener {source:"aiti-viewer",type:"ready"};
+ *   4. this side replies {source:"aiti-viewer",type:"init",ticket} and the child redeems the ticket to open the target.
+ * Note: noopener must NOT be passed — the child window needs window.opener for the handshake (same-origin, trusted).
  *
- * 窗口尺寸：屏幕可用区 ~90% 并居中（含多屏 availLeft/Top 偏移）。不传 features 时
- * 浏览器按默认弹窗尺寸开窗（实测 ~880px 且位置随缘），viewer 大面积查看
- * （md 全宽 / 代码 / 表格）体验差——这是 2026-09-06「viewer 居左受限宽度」的根因。
- * 已知边界：Chrome 把 height 当窗口外框高度（扣掉地址栏后 viewport 略小于请求值，
- * ~85-90% 屏高），宽度精确命中；不再补偿（地址栏高度随浏览器/缩放变化，补死值不稳）。
+ * Window size: ~90% of the screen's available area, centered (including multi-screen availLeft/Top
+ * offsets). Without features the browser opens at the default popup size (measured ~880px, position
+ * arbitrary), which is poor for the viewer's large-area reading (full-width md / code / tables) —
+ * that was the root cause of the 2026-09-06 "viewer docked left at constrained width".
+ * Known edge: Chrome treats height as the outer window frame height (after subtracting the address
+ * bar the viewport is slightly smaller than requested, ~85-90% of screen height); width hits
+ * exactly. Not compensated (address-bar height varies by browser/zoom; hard-coded offsets are unstable).
  */
 
-/** 计算 /viewer 新窗口的 window.open features：屏幕可用区 ~90% 居中。 */
+/** Compute the window.open features for a new /viewer window: ~90% of the available screen area, centered. */
 export function viewerWindowFeatures(): string {
   const scr = window.screen;
   const aw = scr.availWidth || 1280;
   const ah = scr.availHeight || 800;
   const vw = Math.round(aw * 0.9);
   const vh = Math.round(ah * 0.9);
-  // availLeft/Top：多屏场景当前屏原点（TS lib.dom 未收录，运行时广泛支持）
+  // availLeft/Top: the current screen's origin in multi-screen setups (missing from TS lib.dom, widely supported at runtime)
   const sl = (scr as unknown as { availLeft?: number }).availLeft ?? 0;
   const st = (scr as unknown as { availTop?: number }).availTop ?? 0;
   const left = sl + Math.max(0, Math.round((aw - vw) / 2));
@@ -35,15 +38,16 @@ export function viewerWindowFeatures(): string {
   return `width=${vw},height=${vh},left=${left},top=${top}`;
 }
 
-/** 打开独立查看窗口（pi-web /viewer）：换票 → 开窗 → ready 握手交票。失败静默（调用方 UI 无感知路径）。 */
+/** Open a standalone viewer window (pi-web /viewer): exchange ticket -> open window -> hand over the ticket in the ready handshake. Fails silently (no caller-UI feedback path). */
 export function openViewerWindow(
   apiUrl: (p: string) => string,
   target: { path: string; kind: "file" | "folder"; cwd?: string },
 ): void {
   try {
-    // 换票 type：folder 必须显式传 "list"——缺省 type="download" 会对目标做 isFile 校验，
-    // 文件夹恒 400 "Not a file"（aiti-folder 开文件夹长期无响应的根因，2026-09-06 深审逮到）。
-    // list 允许目录目标；file 走缺省 download（与既有 aiti-editor 行为一致）。
+    // Ticket type: folder must pass "list" explicitly — the default type="download" runs an isFile
+    // check on the target, so folders always 400 "Not a file" (the root cause of aiti-folder opening
+    // folders with no response for ages, caught in the 2026-09-06 deep review).
+    // list allows directory targets; file uses the default download (consistent with existing aiti-editor behavior).
     const type = target.kind === "folder" ? "list" : undefined;
     fetch(apiUrl("/api/files/ticket"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: target.path, ...(type ? { type } : {}), kind: target.kind, cwd: target.cwd }) })
       .then((r) => r.json()).then((d: { ticket?: string }) => {

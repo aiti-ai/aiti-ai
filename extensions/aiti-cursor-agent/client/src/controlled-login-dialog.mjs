@@ -1,40 +1,40 @@
 /**
- * controlled-login — 外部 Agent 受控登录标准 · 前端统一弹窗（原生 h() 渲染，零构建步骤）。
+ * controlled-login — External agent controlled login standard · unified frontend dialog (native h() rendering, zero build step).
  *
- * ⚠ 副本同步（字节级拷贝，改动须同步到全部副本；测试 `_shared/controlled-login.test.mjs` 钉住一致性）。
- * 权威源：pi-web-ext/_shared/controlled-login-dialog.mjs
- * 部署副本（client 侧走部署树内相对导入 —— 零构建 client 无法像 vite 客户端那样在构建期
- * 内联 ../../_shared（资产路由拒绝越目录穿越），与 draft-keeper 的 ./core.mjs 同一惯例）：
+ * ⚠ Copy sync (byte-level copies; changes must be synced to all copies; test `_shared/controlled-login.test.mjs` pins consistency).
+ * Authoritative source: pi-web-ext/_shared/controlled-login-dialog.mjs
+ * Deployed copies (client side imports relative to the deployment tree — a zero-build client cannot inline ../../_shared
+ * at build time the way a vite client can; the asset route rejects traversal above the tree; same convention as draft-keeper's ./core.mjs):
  *   pi-web-ext/aiti-{zcode,cursor,qoder,claude-code,codex}-agent/client/controlled-login-dialog.mjs
  *
- * 契约（docs/ext-controlled-login-standard.md §3.5）：
- *   🔗「打开授权页」按钮（target=_blank）+ URL 文本可复制 + 模式说明行
- *   + 状态区（waiting 转圈 / success ✅ 用户名 / failed / timeout / cancelled，均带重试）
- *   + B 模式（paste）专属 code 输入框+提交。
- * 状态刷新：弹窗打开期间每 2s 轮询 GET /login/status，关闭即停
- * （方案 §3.6 已论证并拍板的轮询例外：登录是分钟级一次性交互）。
+ * Contract (docs/ext-controlled-login-standard.md §3.5):
+ *   🔗 "Open authorization page" button (target=_blank) + copyable URL text + mode explanation line
+ *   + status area (waiting spinner / success ✅ username / failed / timeout / cancelled, all with retry)
+ *   + B mode (paste)-only code input + submit.
+ * Status refresh: while the dialog is open, poll GET /login/status every 2s; stops on close
+ * (the polling exception argued and decided in plan §3.6: login is a minutes-scale one-shot interaction).
  *
- * 浮动契约：面板根节点 data-ext-float="1" + data-ext-float-w/-h + data-ext-float-full="1"
- * （aiti-float 接管拖拽/缩放/持久化/小屏全屏；未装时自身 style 居中兜底）。
+ * Float contract: panel root node data-ext-float="1" + data-ext-float-w/-h + data-ext-float-full="1"
+ * (aiti-float takes over dragging/resizing/persistence/small-screen fullscreen; without it, its own style centers as a fallback).
  *
- * 接入（各扩展 client/controlled-login-client.mjs，两行）：
+ * Wiring (each extension's client/controlled-login-client.mjs, two lines):
  *   import { registerControlledLoginClient } from "./controlled-login-dialog.mjs";
  *   export default function register(ctx) { registerControlledLoginClient(ctx, { … }); }
  */
 
-// ---------- 模块内 open 状态（toolbar 入口与 dialogs 条目同模块共享，不落 window 全局） ----------
+// ---------- Module-scoped open state (shared by the toolbar entry and the dialogs entry within one module; never a window global) ----------
 let moduleSetOpen = null;
-// 懒加载（clientImmediately:false）下 toolbar 静态条目点击时弹窗组件可能尚未挂载：
-// 记 pending，挂载 effect 消费——避免首点失效。
+// Under lazy loading (clientImmediately:false) the dialog component may not be mounted yet when the toolbar static entry is clicked:
+// record pending; the mount effect consumes it — avoids a dead first click.
 let pendingOpen = false;
 
-/** 打开本扩展的受控登录弹窗（toolbar 🔑 按钮 / 静态条目 meta.onClick 用）。 */
+/** Opens this extension's controlled login dialog (for the toolbar 🔑 button / static entry meta.onClick). */
 export function openControlledLogin() {
   if (moduleSetOpen) moduleSetOpen(true);
   else pendingOpen = true;
 }
 
-// ---------- 自持样式层（幂等注入；clg- 前缀 + var(--x, 兜底)，零宿主耦合） ----------
+// ---------- Self-contained style layer (idempotent injection; clg- prefix + var(--x, fallback), zero host coupling) ----------
 const STYLE_ID = "aiti-controlled-login-styles";
 const STYLES = `
 .clg-mask { position: fixed; inset: 0; z-index: 2147483000; background: rgba(0,0,0,.32); display: flex; align-items: center; justify-content: center; }
@@ -93,16 +93,16 @@ function ensureStyles() {
 }
 
 /**
- * 统一弹窗注册（每扩展 client 的薄壳调用一次）。
+ * Unified dialog registration (called once from each extension client's thin shell).
  *
- * @param {*} ctx 宿主 client 上下文（h/useState/useEffect/apiUrl/registerItems）
+ * @param {*} ctx host client context (h/useState/useEffect/apiUrl/registerItems)
  * @param {object} config
- * @param {string} config.extId        扩展 id（API 前缀 / toolbar item id 用）
- * @param {string} config.toolbarLabel 工具条按钮 title/label（如 "登录 ZCode"）
- * @param {string} config.title        弹窗标题
- * @param {string} [config.urlHint]    A url-only 模式说明行
- * @param {string} [config.pasteHint]  B paste-relay 模式说明行
- * @param {string} [config.successHint] 成功后的补充说明（如凭据换 key 提示）
+ * @param {string} config.extId        extension id (used for API prefix / toolbar item id)
+ * @param {string} config.toolbarLabel toolbar button title/label (e.g. "Sign in to ZCode")
+ * @param {string} config.title        dialog title
+ * @param {string} [config.urlHint]    A url-only mode explanation line
+ * @param {string} [config.pasteHint]  B paste-relay mode explanation line
+ * @param {string} [config.successHint] supplementary note after success (e.g. credentials-to-key hint)
  */
 export function registerControlledLoginClient(ctx, config) {
   ensureStyles();
@@ -112,7 +112,7 @@ export function registerControlledLoginClient(ctx, config) {
   const api = (p, init) => fetch(ctx.apiUrl("/api/extensions/" + config.extId + p), { cache: "no-store", ...init });
   const jsonInit = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
-  // ---- 工具条入口：声明式图标按钮（meta.icon + meta.onClick、无 render —— 宿主统一渲染 36×36 线图按钮，禁 emoji） ----
+  // ---- Toolbar entry: declarative icon button (meta.icon + meta.onClick, no render — the host uniformly renders 36×36 line-icon buttons, emoji forbidden) ----
   ctx.registerItems("toolbar", [{
     id: `${config.extId}-controlled-login`,
     meta: {
@@ -122,7 +122,7 @@ export function registerControlledLoginClient(ctx, config) {
       onClick: () => openControlledLogin(),
     },
   }]);
-  // ---- 弹窗条目（dialogs slot；宿主包 display:contents 壳，float 持久化键认它） ----
+  // ---- Dialog entry (dialogs slot; the host wraps it in a display:contents shell, the float persistence key keys on it) ----
   ctx.registerItems("dialogs", [{
     id: `${config.extId}-controlled-login-dialog`,
     render: () => h(ControlledLoginDialog),
@@ -130,9 +130,9 @@ export function registerControlledLoginClient(ctx, config) {
 
   function ControlledLoginDialog() {
     const [open, setOpen] = useState(false);
-    const [status, setStatus] = useState(null);   // /login/status 响应（{state,...}）
+    const [status, setStatus] = useState(null);   // /login/status response ({state,...})
     const [busy, setBusy] = useState(false);
-    const [reqError, setReqError] = useState(null); // 请求层错误（网络/400）
+    const [reqError, setReqError] = useState(null); // request-layer error (network/400)
     const [code, setCode] = useState("");
     const [copied, setCopied] = useState(false);
 
@@ -142,7 +142,7 @@ export function registerControlledLoginClient(ctx, config) {
       return () => { if (moduleSetOpen === setOpen) moduleSetOpen = null; };
     }, []);
 
-    // 打开期间 2s 轮询 /login/status（§3.6 拍板例外）；关闭即停
+    // While open, poll /login/status every 2s (§3.6 decided exception); stops on close
     useEffect(() => {
       if (!open) return;
       let stopped = false;
@@ -152,7 +152,7 @@ export function registerControlledLoginClient(ctx, config) {
           const r = await api("/login/status");
           const d = await r.json();
           if (!stopped) { setStatus(d); setReqError(null); }
-        } catch { /* 网络抖动忽略，下轮再试 */ }
+        } catch { /* ignore network jitter; retry next round */ }
         if (!stopped) timer = setTimeout(tick, 2000);
       };
       tick();
@@ -184,26 +184,26 @@ export function registerControlledLoginClient(ctx, config) {
     async function copyUrl() {
       const url = status?.url || "";
       if (!url) return;
-      try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* 剪贴板不可用：URL 文本本身可选中复制 */ }
+      try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard unavailable: the URL text itself stays selectable/copyable */ }
     }
 
-    // ---- 状态区 ----
+    // ---- Status area ----
     let statusLine = null;
     if (st === "idle") {
-      statusLine = h("div", { className: "clg-status waiting" }, "尚未发起登录");
+      statusLine = h("div", { className: "clg-status waiting" }, "No login started yet");
     } else if (st === "waiting") {
       statusLine = h("div", { className: "clg-status waiting" },
         h("span", { className: "clg-spin" }),
-        status?.url ? "等待你在浏览器完成授权…（本页自动感知，约 2s 内）" : "正在启动官方登录进程，等待授权链接…",
-        h("button", { className: "clg-btn", disabled: busy, style: { marginLeft: "auto" }, onClick: cancelLogin }, "取消"),
+        status?.url ? "Waiting for you to complete authorization in the browser… (auto-detected on this page, within ~2s)" : "Starting the official login process, waiting for the authorization link…",
+        h("button", { className: "clg-btn", disabled: busy, style: { marginLeft: "auto" }, onClick: cancelLogin }, "Cancel"),
       );
     } else if (st === "success") {
       statusLine = h("div", { className: "clg-status success" },
-        "登录成功", status?.user ? h("span", { style: { fontWeight: 700 } }, status.user) : null,
+        "Login successful", status?.user ? h("span", { style: { fontWeight: 700 } }, status.user) : null,
         config.successHint ? h("span", { className: "clg-hint", style: { color: "inherit" } }, config.successHint) : null,
       );
     } else if (st === "failed" || st === "timeout" || st === "cancelled") {
-      const label = st === "failed" ? "登录失败" : st === "timeout" ? "登录超时" : "已取消";
+      const label = st === "failed" ? "Login failed" : st === "timeout" ? "Login timed out" : "Cancelled";
       statusLine = h("div", { className: "clg-status " + st },
         h("span", null, (st === "timeout" ? "⏱ " : st === "cancelled" ? "⚪ " : "❌ ") + label),
         status?.error ? h("span", { className: "clg-errline" }, status.error) : null,
@@ -216,52 +216,52 @@ export function registerControlledLoginClient(ctx, config) {
         "data-ext-float": "1", "data-ext-float-w": 520, "data-ext-float-h": 380, "data-ext-float-full": "1",
         onClick: (e) => e.stopPropagation(),
       },
-        // ── 标题栏（首个子元素 = float 拖拽把手）──
+        // ── Title bar (first child = float drag handle) ──
         h("div", { className: "clg-head" },
           h("span", { className: "clg-title" }, "🔑 " + config.title),
-          h("button", { className: "clg-x", title: "关闭", onClick: () => setOpen(false) }, "✕"),
+          h("button", { className: "clg-x", title: "Close", onClick: () => setOpen(false) }, "✕"),
         ),
         h("div", { className: "clg-body" },
           config.urlHint && !pasteMode ? h("div", { className: "clg-intro" }, config.urlHint) : null,
           pasteMode && config.pasteHint ? h("div", { className: "clg-intro" }, config.pasteHint) : null,
 
-          // ── URL 区（waiting 且已抓到链接）──
+          // ── URL area (waiting and link captured) ──
           st === "waiting" && status?.url
             ? h("div", { className: "clg-urlrow" },
-                h("a", { className: "clg-open", href: status.url, target: "_blank", rel: "noopener noreferrer" }, "打开授权页"),
-                h("span", { className: "clg-url", title: "点击复制链接", onClick: copyUrl }, status.url),
-                copied ? h("span", { className: "clg-copied" }, "已复制") : null,
+                h("a", { className: "clg-open", href: status.url, target: "_blank", rel: "noopener noreferrer" }, "Open authorization page"),
+                h("span", { className: "clg-url", title: "Click to copy link", onClick: copyUrl }, status.url),
+                copied ? h("span", { className: "clg-copied" }, "Copied") : null,
               )
             : null,
 
-          // ── B 模式 code 输入（paste 且 waiting）──
+          // ── B mode code input (paste and waiting) ──
           pasteMode && st === "waiting"
             ? h("div", { className: "clg-coderow" },
                 h("input", {
                   className: "clg-input",
-                  placeholder: "粘贴授权完成页显示的 code（或完整回调链接）",
+                  placeholder: "Paste the code shown on the authorization-completed page (or the full callback link)",
                   value: code,
                   onChange: (e) => setCode(e.target.value),
                   onKeyDown: (e) => { if (e.key === "Enter") submitCode(); },
                 }),
-                h("button", { className: "clg-btn primary", disabled: busy || !code.trim(), onClick: submitCode }, busy ? "…" : "提交 code"),
+                h("button", { className: "clg-btn primary", disabled: busy || !code.trim(), onClick: submitCode }, busy ? "…" : "Submit code"),
               )
             : null,
 
           statusLine,
           reqError ? h("div", { className: "clg-errline" }, reqError) : null,
 
-          // CLI 升级改输出格式导致 URL 抓取失败时：原文透出（人工可读可复制，方案 §7）
+          // When a CLI upgrade changes the output format and URL capture fails: surface the raw text (human-readable and copyable, plan §7)
           (st === "failed" || st === "timeout") && status?.outputTail
             ? h("div", { className: "clg-tail" }, status.outputTail)
             : null,
 
-          // ── 底部动作：idle/终态带（重）试 ──
+          // ── Footer actions: idle/terminal states get a start/(re)try button ──
           h("div", { className: "clg-foot" },
             st === "idle" || st === "failed" || st === "timeout" || st === "cancelled" || st === "success"
-              ? h("button", { className: "clg-btn primary", disabled: busy, onClick: startLogin }, busy ? "…" : st === "idle" ? "发起登录" : "重试")
+              ? h("button", { className: "clg-btn primary", disabled: busy, onClick: startLogin }, busy ? "…" : st === "idle" ? "Start login" : "Retry")
               : null,
-            h("span", { className: "clg-hint" }, "授权在浏览器完成，凭据由官方 CLI 落盘；本页关闭不影响进行中的登录。"),
+            h("span", { className: "clg-hint" }, "Authorization completes in the browser; credentials are persisted by the official CLI. Closing this page does not affect a login in progress."),
           ),
         ),
       ),

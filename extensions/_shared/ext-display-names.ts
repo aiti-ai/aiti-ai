@@ -23,7 +23,7 @@ export function currentUiLocale(): "zh-CN" | "zh-TW" | "en" {
   try {
     const v = window.localStorage.getItem("pi-locale");
     if (v === "zh-CN" || v === "zh-TW" || v === "en") return v;
-  } catch { /* 存储不可用时用缺省 */ }
+  } catch { /* use the default when storage is unavailable */ }
   return "en";
 }
 

@@ -1,18 +1,19 @@
 /**
- * 错字容忍搜索（typo-tolerant matching）。
+ * Typo-tolerant search.
  *
- * 场景：扩展搜索框输入 servcie / sevice 等错字也要命中 service-tunnels。
- * 设计：
- *   - OSA 距离（Damerau-Levenshtein 受限版）：相邻转置算 1 步——servcie→service=1、
- *     sevice→service=1（纯 Levenshtein 转置=2，短词阈值会漏）。
- *   - 阈值按 query 长度自适应（typo-tolerance 惯例）：≤3 字符不启用模糊（噪音大），
- *     4-7 允 1 错，8+ 允 2 错。
- *   - 只对无空格短 query 启用；候选文本切成 token（字母数字/中文段）逐个比距离，
- *     长度差剪枝 + 超长 token（中文长句整段）跳过。
- * 纯函数无依赖：client bundle（vite）与 node --test 直接跑同一份实现。
+ * Scenario: typing typos like servcie / sevice in an extension search box must still hit service-tunnels.
+ * Design:
+ *   - OSA distance (restricted Damerau-Levenshtein): adjacent transpositions count as 1 step —
+ *     servcie->service=1, sevice->service=1 (pure Levenshtein counts the transposition as 2, which short-word
+ *     thresholds would miss).
+ *   - Threshold adapts to query length (typo-tolerance convention): <=3 chars disables fuzzing (too noisy),
+ *     4-7 allow 1 error, 8+ allow 2.
+ *   - Enabled only for space-free short queries; candidate text is tokenized (alphanumeric / CJK segments)
+ *     and compared per token, with length-gap pruning + overlong tokens (whole CJK sentences) skipped.
+ * Pure functions, no deps: the client bundle (vite) and node --test run the same implementation directly.
  */
 
-/** OSA（optimal string alignment）编辑距离。 */
+/** OSA (optimal string alignment) edit distance. */
 export function osaDistance(a, b) {
   const m = a.length;
   const n = b.length;
@@ -36,7 +37,7 @@ export function osaDistance(a, b) {
   return prev[n];
 }
 
-/** query 允许的错字数（按长度自适应；≤3 返回 0 = 不启用模糊）。 */
+/** Typos a query may contain (adaptive by length; <=3 returns 0 = fuzzing disabled). */
 export function typoThreshold(q) {
   const len = [...String(q)].length;
   if (len <= 3) return 0;
@@ -45,7 +46,7 @@ export function typoThreshold(q) {
 }
 
 const TOKEN_SPLIT = /[^a-z0-9\u4e00-\u9fa5]+/;
-const MAX_TOKEN_LEN = 24; // 超长 token（无分隔的中文长句等）不做模糊：DP 开销与误命中噪音都不划算
+const MAX_TOKEN_LEN = 24; // overlong tokens (unseparated CJK sentences etc.) skip fuzzing: the DP cost and false-hit noise are not worth it
 
 function* candidateTokens(text) {
   for (const tok of String(text || "").toLowerCase().split(TOKEN_SPLIT)) {
@@ -54,10 +55,12 @@ function* candidateTokens(text) {
 }
 
 /**
- * 错字容忍命中判断：query 为无空格短词时，对候选文本的 token 逐个比 OSA 距离。
- * 除常规 token 外还检查「去分隔符形态」（service-tunnels → servicetunnels），
- * 让漏连字符/错连字符的 query 也能命中。不满足启用条件（多词/超短）一律返回
- * false，调用方回退精确 includes 行为（本函数不含 includes 语义）。
+ * Typo-tolerant hit decision: when the query is a short space-free word, compare the OSA distance
+ * against each token of the candidate text.
+ * Besides regular tokens, also checks the "separator-stripped form" (service-tunnels -> servicetunnels)
+ * so queries with missing/wrong hyphens still hit. When the enable conditions aren't met (multi-word /
+ * too short) it always returns false; the caller falls back to exact includes behavior (this function
+ * carries no includes semantics).
  */
 export function typoMatch(q, text) {
   const query = String(q || "").trim().toLowerCase();
@@ -67,7 +70,7 @@ export function typoMatch(q, text) {
   const raw = String(text || "");
   for (const src of [raw, raw.replace(/[-_/]/g, "")]) {
     for (const tok of candidateTokens(src)) {
-      if (Math.abs(tok.length - query.length) > 2) continue; // 长度差剪枝（上限 2：为双错漏字放宽保留）
+      if (Math.abs(tok.length - query.length) > 2) continue; // length-gap pruning (cap 2: kept loose for the two-error missing-char case)
       const d = osaDistance(query, tok);
       if (d <= threshold) return true;
       // Missing-character relaxation to 2 edits (sevic→service, tunel→tunnels). The candidate token

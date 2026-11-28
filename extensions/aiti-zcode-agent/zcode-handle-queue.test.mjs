@@ -222,7 +222,7 @@ test("handle 队列行为：v4 steer 注入 + followUp 分流 + queueManage + st
   // steering group ops → human-readable error (already handed to the v4 queue; the protocol has no per-entry recall)
   await assert.rejects(
     () => handle.queueManage({ action: "remove", kind: "steer", index: 0 }),
-    /协议不支持撤回/,
+    /does not support recall\/move/,
   );
 
   // exactly 1 session/send (turn 1 itself): steer went via v4, followUp did not leak a send

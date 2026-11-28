@@ -1,9 +1,11 @@
 /**
- * git-ops-client · REST 封装（方案 docs/aiti-git-ops-shared-plan.md §2）。
+ * git-ops-client · REST wrapper (plan docs/aiti-git-ops-shared-plan.md §2).
  *
- * 两扩展（session-manager / aiti-folder）bundle 源引共享（构建期内联，ext-float-dock 范式）。
- * apiUrl 由消费方注入（host-shim 透出，basePath 感知）；全部 POST + JSON body（cwd 不落 URL）。
- * 返回统一 { status, data }，网络失败 → { status: 0, data: { ok:false, error } }——不 throw。
+ * Shared via bundle-source inlining by the two extensions (session-manager / aiti-folder; built at
+ * build time, ext-float-dock pattern).
+ * apiUrl is injected by the consumer (exposed via host-shim, basePath-aware); everything is POST +
+ * JSON body (cwd never lands in a URL).
+ * Returns a uniform { status, data }; network failure → { status: 0, data: { ok:false, error } } — never throws.
  */
 const BASE = "/api/extensions/aiti-git-ops/git";
 
@@ -50,7 +52,7 @@ export function createGitOpsApi({ apiUrl = (p) => p, fetchImpl = (...a) => fetch
   };
 }
 
-/** 引擎在位探测（挂载门控）：任一调 404 = aiti-git-ops 缺席/禁用。 */
+/** Engine presence probe (mount gate): any call returning 404 = aiti-git-ops absent/disabled. */
 export async function probeGitOps(apiUrl, fetchImpl) {
   const api = createGitOpsApi({ apiUrl, fetchImpl });
   const r = await api.refs("");

@@ -1,33 +1,36 @@
 /**
- * cursor-cli-store —— Cursor Agent CLI 会话存储读取器（纯函数、零依赖）。
+ * cursor-cli-store — Cursor Agent CLI session store reader (pure functions, zero deps).
  *
- * 权威源：pi-web-ext/_shared/cursor-cli-store.ts（改动后同步到各扩展副本）。
- * 当前副本：pi-web-ext/session-manager/lib/agents/cursor-cli-store.ts、
- *          pi-web-ext/aiti-cursor-agent/cursor-cli-store.ts
+ * Authority: pi-web-ext/_shared/cursor-cli-store.ts (sync copies after changes).
+ * Current copies: pi-web-ext/session-manager/lib/agents/cursor-cli-store.ts,
+ *                 pi-web-ext/aiti-cursor-agent/cursor-cli-store.ts
  *
- * 格式（clean-room 对齐本机数据 + xhluca/session-migrate 文档；官方私有格式，可能漂移）：
+ * Format (clean-room aligned against local data + the xhluca/session-migrate docs;
+ * official private format, may drift):
  *
  *   config root: $CURSOR_CONFIG_DIR → $XDG_CONFIG_HOME/cursor → ~/.cursor
- *   <root>/chats/<workspaceKey>/<chatId>/store.db    ← 权威 resume 存储
- *   <root>/chats/<workspaceKey>/<chatId>/meta.json   ← 廉价摘要（title/cwd/时间；title 可缺省）
- *   <root>/projects/<pathSlug>/agent-transcripts/<chatId>/<chatId>.jsonl ← 可读镜像
+ *   <root>/chats/<workspaceKey>/<chatId>/store.db    ← authoritative resume store
+ *   <root>/chats/<workspaceKey>/<chatId>/meta.json   ← cheap summary (title/cwd/times; title optional)
+ *   <root>/projects/<pathSlug>/agent-transcripts/<chatId>/<chatId>.jsonl ← readable mirror
  *
- * store.db：blobs(id=sha256hex(data), data BLOB) + meta(key '0', hex JSON
- * {agentId, latestRootBlobId, name, createdAt ms, mode, lastUsedModel, ...})。
- * blob 图为 protobuf wire：
+ * store.db: blobs(id=sha256hex(data), data BLOB) + meta(key '0', hex JSON
+ * {agentId, latestRootBlobId, name, createdAt ms, mode, lastUsedModel, ...}).
+ * The blob graph is protobuf wire format:
  *
- *   root: repeated f8 = turn 引用（f1 = system/context 引用 — 忽略）
+ *   root: repeated f8 = turn refs (f1 = system/context refs — ignored)
  *   turn: f1 = agent-turn
- *   agent-turn: f1 = user 消息（f1 文本, f2 uuid, f25/f26 ts ms）；
- *               repeated f2 = steps（f1 assistant{f1 text,f2 ts}，f2 工具调用，f3 thinking 摘要）
+ *   agent-turn: f1 = user message (f1 text, f2 uuid, f25/f26 ts ms);
+ *               repeated f2 = steps (f1 assistant{f1 text, f2 ts}, f2 tool call, f3 thinking summary)
  *
- * 读取策略：store.db 图解码优先（权威，含 🛠 工具行 / 💭 thinking 摘要）；
- * 不可解时兑底可读 JSONL 转录（解 <timestamp>/<user_query> 包装）。
+ * Read strategy: store.db graph decoding first (authoritative, includes 🛠 tool lines /
+ * 💭 thinking summaries); when undecodable, fall back to the readable JSONL transcript
+ * (unwrapping <timestamp>/<user_query> wrappers).
  *
- * 格式回归测试：session-manager/lib/agents/cursor-cli-store.test.mjs ——
- * 自带独立 protobuf 编码器从零合成 store.db fixture 钉死本文件的 wire
- * 假设（多轮/思考/工具/fork 去重/兑底/损坏兼容）；改本文件或怀疑 cursor
- * 升级破坏格式时先跑它。
+ * Format regression test: session-manager/lib/agents/cursor-cli-store.test.mjs —
+ * it synthesizes a store.db fixture from scratch with its own protobuf encoder to pin this
+ * file's wire assumptions (multi-turn/thinking/tools/fork dedupe/fallback/corruption
+ * tolerance); run it first when changing this file or suspecting a cursor upgrade broke
+ * the format.
  */
 import { existsSync, mkdirSync, copyFileSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
@@ -71,7 +74,7 @@ export interface CursorCliChatRef {
   kind?: "chats" | "acp";
 }
 
-/** 单个 chat 目录的更新时间（meta.updatedAtMs 优先，兑底 store.db mtime）。 */
+/** Last-updated time of a single chat directory (meta.updatedAtMs first, store.db mtime fallback). */
 function chatUpdatedAtMs({ db, summary }: CursorCliChatRef): number {
   try {
     const d = JSON.parse(readFileSync(summary, "utf8")) as { updatedAtMs?: number };
@@ -123,7 +126,7 @@ export function listCursorCliChats(): CursorCliChatRef[] {
         try {
           const d = JSON.parse(readFileSync(summary, "utf8")) as { hasConversation?: boolean };
           if (d.hasConversation === false) continue;
-        } catch { /* corrupt meta — 仍列出，parse 兑底 */ }
+        } catch { /* corrupt meta — still listed, parse falls back */ }
       }
       add({ sid, dir, db, summary, kind: "chats" });
     }
@@ -148,7 +151,7 @@ export function listCursorCliChats(): CursorCliChatRef[] {
   return [...bySid.values()];
 }
 
-// ── protobuf wire 走读（有界、防御式） ─────────────────────────────────────
+// ── protobuf wire walk (bounded, defensive) ─────────────────────────────────────
 
 interface PbField { no: number; wt: number; varint?: number; bytes?: Uint8Array }
 
@@ -185,7 +188,7 @@ function pbFields(d: Uint8Array): PbField[] {
       i = start + len.v;
     } else if (wt === 1) { out.push({ no, wt, bytes: d.subarray(i, i + 8) }); i += 8; }
     else if (wt === 5) { out.push({ no, wt, bytes: d.subarray(i, i + 4) }); i += 4; }
-    else break; // groups 不支持 — 防御式停走
+    else break; // groups unsupported — defensive stop
   }
   return out;
 }
@@ -200,14 +203,14 @@ function utf8(d: Uint8Array): string | null {
 
 const hex = (d: Uint8Array): string => Buffer.from(d).toString("hex");
 
-/** 字段值解析：32 字节 = blob 引用；更短的可能是内联子消息。 */
+/** Field value resolution: 32 bytes = blob ref; shorter may be an inline sub-message. */
 function resolveBlob(blobs: Map<string, Uint8Array>, f: PbField): Uint8Array | null {
   if (!f.bytes) return null;
   if (f.bytes.length === 32) return blobs.get(hex(f.bytes)) ?? null;
   return f.bytes;
 }
 
-/** 从「{f1 text} 子消息或裸字符串」节点提取展示文本。 */
+/** Extract display text from a "{f1 text} sub-message or bare string" node. */
 function textField(d: Uint8Array): string | null {
   for (const f of pbFields(d)) {
     if (f.no === 1 && f.wt === 2 && f.bytes) {
@@ -218,7 +221,7 @@ function textField(d: Uint8Array): string | null {
   return utf8(d);
 }
 
-/** 从不透明节点收割可读 utf-8 字符串字段（工具调用）。 */
+/** Harvest readable utf-8 string fields from an opaque node (tool calls). */
 function harvestTexts(d: Uint8Array, depth = 0): string[] {
   const out: string[] = [];
   if (depth > 6) return out;
@@ -231,7 +234,7 @@ function harvestTexts(d: Uint8Array, depth = 0): string[] {
   return out;
 }
 
-// ── store.db 图解码 ─────────────────────────────────────────────────────────
+// ── store.db graph decoding ─────────────────────────────────────────────────────────
 
 export interface CursorCliStoreMeta {
   agentId?: string; latestRootBlobId?: string; name?: string;
@@ -240,7 +243,7 @@ export interface CursorCliStoreMeta {
 
 interface StoreRead { meta: CursorCliStoreMeta; copied: string }
 
-/** mtime 门控 tmp 快照（+wal/shm），永不锁 cursor 的活文件。0700：含会话内容。 */
+/** mtime-gated tmp snapshot (+wal/shm); never locks cursor's live files. 0700: holds session content. */
 function snapshotDb(src: string): string | null {
   try {
     mkdirSync(CACHE(), { recursive: true, mode: 0o700 });
@@ -288,7 +291,7 @@ function decodeStoreGraph(copied: string, rootId: string): CursorCliMessage[] | 
     const root = blobs.get(rootId);
     if (!root) return null;
     const turnRefs = pbFields(root).filter((f) => f.no === 8 && f.wt === 2);
-    if (!turnRefs.length) return null; // 未知布局 → jsonl 兑底
+    if (!turnRefs.length) return null; // unknown layout → jsonl fallback
 
     const msgs: CursorCliMessage[] = [];
     for (const tr of turnRefs) {
@@ -311,7 +314,7 @@ function decodeStoreGraph(copied: string, rootId: string): CursorCliMessage[] | 
               const t = utf8(uf.bytes);
               if (t !== null) userText = t;
             } else if ((uf.no === 25 || uf.no === 26) && uf.varint && !userTs) {
-              userTs = uf.varint > 1e12 ? uf.varint : null; // ms epoch 合理性
+              userTs = uf.varint > 1e12 ? uf.varint : null; // ms epoch sanity
             }
           }
         } else if (f.no === 2) {
@@ -320,8 +323,8 @@ function decodeStoreGraph(copied: string, rootId: string): CursorCliMessage[] | 
             const sub = resolveBlob(blobs, sf);
             const text = sub ? textField(sub) : utf8(sf.bytes);
             if (sf.no === 1 && text) stepTexts.push(text);                        // assistant
-            else if (sf.no === 3 && text) stepTexts.push("💭 " + text);           // thinking 摘要
-            else if (sf.no === 2) {                                               // 工具调用（不透明）
+            else if (sf.no === 3 && text) stepTexts.push("💭 " + text);           // thinking summary
+            else if (sf.no === 2) {                                               // tool call (opaque)
               const parts = sub ? harvestTexts(sub) : [];
               stepTexts.push("🛠 " + (parts.join(" ").slice(0, 300) || "(tool call)"));
             }
@@ -336,7 +339,7 @@ function decodeStoreGraph(copied: string, rootId: string): CursorCliMessage[] | 
   } finally { db.close(); }
 }
 
-// ── 可读 JSONL 转录兑底 ─────────────────────────────────────────────────────
+// ── readable JSONL transcript fallback ─────────────────────────────────────────────────────
 
 function findTranscript(sid: string): string | null {
   const projRoot = join(cursorCliConfigRoot(), "projects");
@@ -345,7 +348,7 @@ function findTranscript(sid: string): string | null {
   try { slugs = readdirSync(projRoot); } catch { return null; }
   let best: { p: string; m: number } | null = null;
   for (const slug of slugs) {
-    // 同 sid 可能因 --resume 换 cwd 分叉出多份转录 —— 取 mtime 最新
+    // The same sid may have multiple transcripts forked by --resume cwd switches — take the newest mtime
     const p = join(projRoot, slug, "agent-transcripts", sid, `${sid}.jsonl`);
     if (!existsSync(p)) continue;
     try {
@@ -371,7 +374,7 @@ function decodeTranscript(path: string): CursorCliMessage[] | null {
         .map((c) => (c as { text?: string }).text ?? "").join("\n")
       : "";
     if (!text.trim()) continue;
-    // 解 "<timestamp>…</timestamp>\n<user_query>\n…\n</user_query>" 包装
+    // Unwrap the "<timestamp>…</timestamp>\n<user_query>\n…\n</user_query>" wrapper
     const m = text.match(/<user_query>\n?([\s\S]*?)\n?<\/user_query>/);
     const clean = (m ? m[1] : text).trim();
     if (!clean) continue;
@@ -380,7 +383,7 @@ function decodeTranscript(path: string): CursorCliMessage[] | null {
   return msgs.length ? msgs : null;
 }
 
-// ── 会话级读取 ──────────────────────────────────────────────────────────────
+// ── session-level read ──────────────────────────────────────────────────────────────
 
 export interface CursorCliSession {
   sid: string;
@@ -394,7 +397,7 @@ export interface CursorCliSession {
   messages: CursorCliMessage[];
 }
 
-/** 读一个 CLI 会话（store.db 权威 → jsonl 兑底）。dir 缺省时按 sid 扫描。 */
+/** Read one CLI session (store.db authoritative → jsonl fallback). Scans by sid when dir is omitted. */
 export function readCursorCliChat(sid: string, dir?: string): CursorCliSession | null {
   let chatDir = dir;
   if (!chatDir || !existsSync(chatDir)) {

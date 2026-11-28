@@ -1,12 +1,16 @@
 /**
- * pi-fork-rpc — pi 系 fork 家族 RPC spawn 的最小公共层（载体无关）。
+ * pi-fork-rpc — the minimal carrier-agnostic common layer for RPC spawning of the pi fork family.
  *
- * 拆分背景（docs/aiti-pi-agent-split-plan.md）：aiti-pi-agent 曾用一份 PiForkSpec
- * 参数化同时承载 pi / omp 两个后端，差异已大到「共享抽象反而耦合」——拆成两个独立
- * 扩展后，本层只保留「线协议解析 + CLI 解析 + spawn env + 家族类型」，不含任何 fork
- * 语义（命令映射 / 能力面 / 生命周期收口由各扩展自己的 handle 实现负责）。
+ * Split background (docs/aiti-pi-agent-split-plan.md): aiti-pi-agent once used a single PiForkSpec
+ * parameterization to carry both the pi and omp backends, and the differences grew large enough
+ * that "the shared abstraction became the coupling" — after splitting into two independent
+ * extensions, this layer keeps only "wire-protocol parsing + CLI resolution + spawn env + family
+ * types", with no fork semantics at all (command mapping / capability surface / lifecycle closeout
+ * are each extension's own handle implementation's responsibility).
  *
- * 权威源在本目录（git 管理）；消费扩展（aiti-pi-agent / aiti-omp-agent）以**副本**
- * 形式携带（fork-rpc/ 子目录，deploy 时随扩展拷入部署目录；同步见 scripts/sync-pi-fork-rpc.mjs）。
- * 本层无宿主依赖（不 import pi-web lib），可被 node:test 直载（--experimental-strip-types）。
+ * The authoritative source lives in this directory (git-managed); consumer extensions
+ * (aiti-pi-agent / aiti-omp-agent) carry **copies** (the fork-rpc/ subdirectory, copied into the
+ * deployment directory with the extension at deploy time; syncing via scripts/sync-pi-fork-rpc.mjs).
+ * This layer has no host dependencies (does not import pi-web lib) and can be loaded directly by
+ * node:test (--experimental-strip-types).
  */

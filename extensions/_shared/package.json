@@ -2,7 +2,7 @@
   "name": "@aiti-ai/ext-shared",
   "version": "0.1.23",
   "type": "module",
-  "description": "pi-web 扩展共享层（_shared 原地 package 化）——exports 子路径逐文件暴露",
+  "description": "pi-web extension shared layer (_shared packaged in place) — per-file exposure via exports subpaths",
   "exports": {
     "./agent-accounts": "./agent-accounts.ts",
     "./agent-interaction": "./agent-interaction.ts",
