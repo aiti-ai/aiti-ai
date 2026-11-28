@@ -48,24 +48,21 @@ const REAL_PAYLOAD = {
 test("quotaLimitToQuotaView parses the real payload shape", () => {
   const v = quotaLimitToQuotaView(REAL_PAYLOAD, 1_000);
   assert.equal(v.available, true);
-  // binding window = weekly (50% > 5%)
+  // headline = BINDING bucket (highest usedPercent → lowest remaining ratio = weekly 50%)
   assert.equal(v.usedPercent, 50);
+  assert.equal(v.remaining, 50);
+  assert.equal(v.total, 100);
+  assert.equal(v.used, 50);
+  assert.equal(v.unit, "%");
   assert.equal(v.expiresAt, 1796081416984);
-  // monthly credits surface as remaining/used/total/unit for the numeric fallback
-  assert.equal(v.remaining, 3927);
-  assert.equal(v.used, 73);
-  assert.equal(v.total, 4000);
-  assert.equal(v.unit, "次");
   assert.equal(v.plan, "max");
-  assert.match(String(v.note), /max/);
+  assert.equal(v.note, "max");
+  // packages = stable keys (consumers translate via their i18n tables)
   const pkg = v.packages;
   assert.equal(pkg.length, 3);
-  assert.deepEqual(pkg.map((p) => p.name), ["5小时窗口", "周窗口", "月度额度"]);
+  assert.deepEqual(pkg.map((p) => p.name), ["five_hour", "weekly", "monthly_credits"]);
   assert.equal(pkg[2].remaining, 3927);
   assert.equal(pkg[2].used, 73);
-  // display: windows sorted worst-first (weekly 50% binds harder than 5h 5%) + monthly remaining
-  const display = String(v.display);
-  assert.match(display, /额度 周窗口已用 50% · 5小时窗口已用 5% · 月度额度剩余 3,927 次/);
 });
 
 test("quotaLimitToQuotaView degrades without limits", () => {
@@ -77,15 +74,18 @@ test("quotaLimitToQuotaView degrades without limits", () => {
   assert.equal(v2.available, false);
 });
 
-test("quotaLimitToQuotaView handles monthly-only payloads", () => {
+test("quotaLimitToQuotaView handles monthly-only payloads (real-count binding)", () => {
   const payload = {
     data: { level: "lite", limits: [{ type: "TIME_LIMIT", unit: 5, usage: 100, currentValue: 10, remaining: 90, percentage: 10 }] },
   };
   const v = quotaLimitToQuotaView(payload, 1_000);
   assert.equal(v.available, true);
-  assert.equal(v.usedPercent, undefined);
+  // binding = the monthly bucket itself → real counts, unit "credits"
+  assert.equal(v.usedPercent, 10);
   assert.equal(v.remaining, 90);
-  assert.match(String(v.display), /月度额度剩余 90 次/);
+  assert.equal(v.total, 100);
+  assert.equal(v.used, 10);
+  assert.equal(v.unit, "credits");
   assert.match(String(v.note), /lite/);
 });
 
@@ -144,14 +144,14 @@ test("backendUsageFromQuotaView maps the view into the get_usage snapshot shape"
   assert.equal(snap.plan, "max");
   assert.equal(snap.inputTokens, 11); // per-turn tokens ride along
   assert.equal(snap.outputTokens, 7);
-  // credits = the countable monthly bucket + binding-window pressure for the chip color
-  assert.deepEqual(snap.credits, { remaining: 3927, used: 73, usedPercent: 50, unit: "次", expiresAt: 1796081416984 });
+  // credits = the BINDING bucket (weekly 50% used → 50% left), driving chip value + color
+  assert.deepEqual(snap.credits, { remaining: 50, used: 50, usedPercent: 50, unit: "%", expiresAt: 1796081416984 });
   assert.equal(snap.quotaExceeded, undefined);
   // token windows become share buckets (x/100) so consumers can render a bar; package order preserved
   assert.deepEqual(snap.buckets, [
-    { name: "5小时窗口", remaining: 95, total: 100, used: 5, usedPercent: 5, nextResetTime: 1795853416090 },
-    { name: "周窗口", remaining: 50, total: 100, used: 50, usedPercent: 50, nextResetTime: 1796081416984 },
-    { name: "月度额度", remaining: 3927, total: 4000, used: 73, usedPercent: 1, nextResetTime: 1798187711998 },
+    { name: "five_hour", remaining: 95, total: 100, used: 5, usedPercent: 5, nextResetTime: 1795853416090 },
+    { name: "weekly", remaining: 50, total: 100, used: 50, usedPercent: 50, nextResetTime: 1796081416984 },
+    { name: "monthly_credits", remaining: 3927, total: 4000, used: 73, usedPercent: 1, nextResetTime: 1798187711998 },
   ]);
 });
 
