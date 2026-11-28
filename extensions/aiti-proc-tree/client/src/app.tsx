@@ -329,8 +329,9 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
 
   // Listening ports are fetched separately, on demand (one request per drawer
   // row — zero cost in the sampling loop). Hard client-side timeout so a hung
-  // backend tool can never leave the drawer waiting forever.
-  const [listen, setListen] = useState<{ ports: string[]; note?: string } | null>(null);
+  // backend tool can never leave the drawer waiting forever. Each port may
+  // carry an identity tag from service-tunnels (protocol probe + tunnel info).
+  const [listen, setListen] = useState<{ ports: ListenPort[]; note?: string } | null>(null);
   useEffect(() => {
     let stopped = false;
     const ctrl = new AbortController();
@@ -388,7 +389,21 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
             {data.sessionName ? <Field k={t("会话")} v={data.sessionName} /> : null}
             {node?.url ? <Field k="URL" v={node.url} /> : null}
             {node?.socket ? <Field k={t("套接字 / Unit")} v={node.socket} /> : null}
-            {listen && listen.ports.length ? <Field k={t("监听端口")} v={listen.ports.join("  ")} /> : null}
+            {listen && listen.ports.length ? (
+              <div style={{ display: "flex", gap: 8, padding: "2px 0", alignItems: "baseline" }}>
+                <span style={{ color: "var(--text-dim,#888)", width: 78, flexShrink: 0 }}>{t("监听端口")}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+                  {listen.ports.map((p) => (
+                    <div key={p.addr} style={{ fontSize: 10, lineHeight: 1.6, wordBreak: "break-all" }}>
+                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{p.addr}</span>
+                      {p.protocol ? <ProtoTag proto={p.protocol} /> : null}
+                      {p.tunnel ? <span style={{ color: "#39c5cf" }}> · {p.tunnel}{p.tunnelType ? " · " + p.tunnelType : ""}</span> : null}
+                      {p.title ? <span style={{ color: "var(--text-dim,#888)" }}> · {p.title}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {listen && !listen.ports.length && listen.note ? (
               <div style={{ display: "flex", gap: 8, padding: "2px 0", alignItems: "baseline", flexWrap: "wrap" }}>
                 <span style={{ color: "var(--text-dim,#888)", width: 78, flexShrink: 0 }}>{t("监听端口")}</span>
@@ -554,6 +569,25 @@ function MemBar(props: { self: any }) {
       </div>
     </div>
   );
+}
+
+/** Protocol pill for a listen port: http green / https blue / tcp dim. */
+function ProtoTag(props: { proto: string }) {
+  const color = props.proto === "http" ? "#3fb950" : props.proto === "https" ? "#4c8bf5" : "var(--text-dim,#888)";
+  return (
+    <span style={{ marginLeft: 5, fontSize: 9, padding: "0 4px", borderRadius: 3, border: "1px solid " + color, color, fontVariantNumeric: "tabular-nums" }}>{props.proto}</span>
+  );
+}
+
+interface ListenPort {
+  addr: string;
+  port: number;
+  protocol?: string;
+  title?: string;
+  tunnel?: string;
+  tunnelType?: string;
+  tunnelProtocol?: string;
+  tunnelUrl?: string;
 }
 
 function Field(props: { k: string; v: string; extra?: any }) {

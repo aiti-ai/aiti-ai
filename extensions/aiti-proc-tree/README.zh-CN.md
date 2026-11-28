@@ -26,7 +26,9 @@
   操作；终端行可「打开终端」（双击行同效），外部 Agent 行可「打开会话」。监听端口按需查询
   （每个抽屉行一次 `/listen/<pid>` 请求，采样循环零开销）：Linux 读 `/proc/net/tcp{,6}` +
   fd socket inode 反查（纯 /proc 无 spawn），macOS 用 `lsof`、Windows 用 `netstat -ano`
-  （异步 spawn，TTL 缓存；工具缺失/超时降级为可见提示，绝不阻塞）。
+  （异步 spawn，TTL 缓存；工具缺失/超时降级为可见提示，绝不阻塞）。装了
+  service-tunnels 时每个端口附带身份标注：隧道对齐（名称/类型/协议/URL）+ 回环
+  协议探测（http/https/tcp + 页面标题）。
 - kill 护栏：同 uid、保护名单（init / 扩展宿主 / pi-web CLI / 其它实例）、仅已识别
   归属、二次确认、`kill-audit.jsonl` 审计。
 
