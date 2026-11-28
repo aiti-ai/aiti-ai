@@ -1,0 +1,39 @@
+name: Unpublish Versions (emergency redact)
+
+# Emergency tool: remove specific published versions whose tarballs carry
+# internal values (security redact). Requires NPM_TOKEN with unpublish rights.
+# Dispatch with packages="pkg@ver,pkg@ver,..." — one unpublish per entry.
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Comma-separated pkg@version list to unpublish"
+        required: true
+        type: string
+
+jobs:
+  unpublish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+      - name: Unpublish each listed version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          IFS=',' read -ra ENTRIES <<< "${{ inputs.packages }}"
+          rc=0
+          for entry in "${ENTRIES[@]}"; do
+            entry="$(echo "$entry" | xargs)"
+            [ -z "$entry" ] && continue
+            echo "::group::unpublish $entry"
+            npm unpublish "$entry" --registry https://registry.npmjs.org/ --force 2>&1 | tee /tmp/last.log || rc=1
+            echo "::endgroup::"
+          done
+          echo "=== final rc=$rc ==="
+          exit $rc

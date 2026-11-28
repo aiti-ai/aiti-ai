@@ -79,6 +79,38 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - name: A1 redact scan (main-package files that will enter the tarball)
+        env:
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
+        run: |
+          # Same gate as publish-npm.yml's audit, for the main package: scan every
+          # file npm pack would include against the PRIV scan patterns (internal
+          # domains / RFC1918 hosts / usernames / private repo names). Fails the job
+          # on any hit — the tarball must never carry internal values.
+          node -e '
+            const { execSync } = require("node:child_process");
+            const { readFileSync } = require("node:fs");
+            const priv = JSON.parse(process.env.AITI_RELEASE_REDACT || "null");
+            if (!priv || !Array.isArray(priv.scan)) { console.error("::error::AITI_RELEASE_REDACT.scan missing"); process.exit(1); }
+            const patterns = priv.scan.map(r => [new RegExp(r.pattern, "gm"), r.label || ""]);
+            const listing = JSON.parse(execSync("npm pack --dry-run --json", { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }));
+            const files = (listing[0] && listing[0].files || []).map(f => f.path);
+            let hits = 0;
+            for (const rel of files) {
+              let text; try { text = require("node:fs").readFileSync(rel, "utf8"); } catch { continue; }
+              for (const [re, label] of patterns) {
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(text))) {
+                  const line = text.slice(0, m.index).split("\n").length;
+                  console.error(`::error::${rel}:${line} ${label}`); hits++;
+                  if (hits > 20) process.exit(1);
+                }
+              }
+            }
+            if (hits) process.exit(1);
+            console.log(`A1 scan: ${files.length} files clean`);
+          '
       - uses: actions/setup-node@v4
         with:
           # Trusted Publishing needs npm 11.5.1 or later; Node 24 bundles it.
