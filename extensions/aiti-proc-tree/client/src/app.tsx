@@ -333,6 +333,9 @@ function DetailDrawer(props: { pid: number; onClose: () => void; onTerminal: (no
   // carry an identity tag from service-tunnels (protocol probe + tunnel info).
   const [listen, setListen] = useState<{ ports: ListenPort[]; note?: string } | null>(null);
   useEffect(() => {
+    // Virtual nodes (negative pids, e.g. attached subagents) have no process —
+    // skip the request entirely instead of surfacing an HTTP 400 note.
+    if (!(props.pid > 0)) { setListen(null); return; }
     let stopped = false;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
