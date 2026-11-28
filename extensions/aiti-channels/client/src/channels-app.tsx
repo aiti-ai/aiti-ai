@@ -16,9 +16,9 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { apiUrl, t } from "./host-shim";
-import { openFloat, closePanel, usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
+import { present, closePanel, usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
-import { TabBots, openRemote } from "./bots";
+import { TabBots, RemoteView } from "./bots";
 import { TabCron, TabProviders, TabSkills, TabSystem, ProjectDetailPanel } from "./mgmt-tabs";
 import { TabChat } from "./chat";
 import { qrDataUrl } from "./qr";
@@ -53,10 +53,12 @@ const state: Record<string, any> = {
 };
 const listeners = new Set<() => void>();
 function notify() { for (const l of listeners) l(); }
-function setState(patch: Record<string, unknown>) {
+/** exported: bots.tsx cross-view tab switches (openBotsNew) go through the same state machine */
+export function setState(patch: Record<string, unknown>) {
   if ("open" in patch) {
     const { open, ...rest } = patch;
-    if (open) openFloat(CHANNELS_KEY); else closePanel(CHANNELS_KEY);
+    // F1: toolbar open is a forced float — no dock states exist for this panel anymore
+    if (open) present(CHANNELS_KEY, "float"); else closePanel(CHANNELS_KEY);
     patch = rest;
     if (Object.keys(patch).length === 0) return;
   }
@@ -219,6 +221,7 @@ function TABS(): [string, string, string][] {
     ["overview", "home", t("总览")],
     ["install", "package", t("安装")],
     ["bots", "bot", t("机器人")],
+    ["remote", "phone", t("远程")],
     ["config", "fileEdit", t("配置")],
     ["projects", "folder", t("项目")],
     ["channels", "plug", t("渠道")],
@@ -240,6 +243,7 @@ function renderTab() {
     case "overview": return <TabOverview />;
     case "install": return <TabInstall />;
     case "bots": return <TabBots instance={state.curInstance} />;
+    case "remote": return <RemoteView />;
     case "config": return <TabConfig />;
     case "projects": return <TabProjects />;
     case "channels": return <TabChannels />;
@@ -361,7 +365,7 @@ function TabOverview() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[["projects", "folder", t("新建项目")], ["bots", "bot", t("机器人管理")], ["chat", "msg", t("聊天")], ["sessions", "msg", t("发消息")], ["msglog", "scroll", t("消息日志")], ["config", "fileEdit", t("编辑配置")], ["original", "monitor", t("打开管理台")]].map(([k, icon, l]) =>
             <button key={k} style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={() => setState({ tab: k })}>{l}</button>)}
-          <button style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={() => openRemote()}>{"📱 " + t("移动端远程控制")}</button>
+          <button style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={openRemote}>{"📱 " + t("移动端远程控制")}</button>
         </div>
       </div>
       {/* 配置摘要 */}
@@ -946,7 +950,7 @@ function TabSessions() {
       {sessions.length === 0 && <div style={{ ...cardStyle, textAlign: "center", color: C.muted, fontSize: 12 }}>{t("无活跃会话（IM 里给机器人发消息激活）")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sessions.map((s: any, i: number) => (
-          <div key={s.session_key || i} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
+          <div key={`${s.project || ""}:${s.session_key || i}`} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
             onClick={() => setState({ sendForm: { ...f, project: s.project || f.project, session_key: s.session_key || "" } })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{s.project || "-"}</span>
@@ -1091,11 +1095,9 @@ function TopBar() {
 // ---------- Panel shell (float / left / right faces) ----------
 function ChannelsPanel({ face = "float" }: { face?: string }) {
   const st = usePresent(CHANNELS_KEY);
-  const open = face === "float" ? st === "floating"
-    : face === "right" ? st === "docked:right-panel"
-      : isSidebarDockState(st);
-  if (!open) return null;
-  const floating = face === "float";
+  // F1: the only face is floating — dock faces retired with their registrations
+  if (face !== "float" || st !== "floating") return null;
+  const floating = true;
   // Docked narrow containers always use the bottom nav bar (132px side nav eats too much width).
   const leftNav = floating && state.nav === "left";
   const content = (
@@ -1121,22 +1123,22 @@ function ChannelsPanel({ face = "float" }: { face?: string }) {
   if (floating) {
     return (
       <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
-        <div style={panelBox(state)} data-ext-float="1" data-ext-float-key={CHANNELS_KEY} data-ext-float-dock={`${sidebarZoneOf(CHANNELS_KEY)} right-panel`} data-ext-float-dock-default={sidebarZoneOf(CHANNELS_KEY)} data-ext-float-w={1100} data-ext-float-h={760} data-ext-float-min-w={480} data-ext-float-min-h={360} data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
+        <div style={panelBox(state)} data-ext-float="1" data-ext-float-key={CHANNELS_KEY} data-ext-float-w={1100} data-ext-float-h={760} data-ext-float-min-w={480} data-ext-float-min-h={360} data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
           {content}
         </div>
       </div>
     );
   }
-  const zones = [sidebarZoneOf(CHANNELS_KEY), "right-panel"];
-  const inner = <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: C.panelBg, overflow: "hidden" }}>{content}</div>;
-  if (face === "right") {
-    return <DockBody itemKey={CHANNELS_KEY} zone="right-panel" title={t("it.aiti-channels-panel.label")} chrome="tab" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
-  }
-  return <DockBody itemKey={CHANNELS_KEY} title={t("it.aiti-channels-panel.label")} icon="message-circle" chrome="section" kind="dockable" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
+  return null;
 }
 
 function panelBox(_s: Record<string, unknown>) {
   return { width: "min(1100px, 94vw)", height: "min(760px, 90vh)", maxWidth: "94vw", maxHeight: "90vh", display: "flex", flexDirection: "column", background: C.panelBg, overflow: "hidden", borderRadius: 12 };
+}
+
+/** F2: remote is a panel tab now — open the panel straight onto it */
+function openRemote() {
+  setState({ tab: "remote", open: true, error: null, msg: null });
 }
 
 // ---------- register 辅助（entry.tsx 调用；matchMedia 导航模式监听与手写版同位） ----------
@@ -1188,7 +1190,14 @@ function SubscribedPanel({ face }: { face?: string }) {
   return <ChannelsPanel face={face} />;
 }
 
+/** Host slot entry (dialogs render): the host hands the current session so the
+ *  mobile deep link can carry ?session=<id> (F6). */
+let hostSession: { id?: string } | null = null;
+export function getHostSessionId(): string {
+  return (hostSession && hostSession.id) || "";
+}
 export function ChannelsPanelComp() { return <SubscribedPanel face="float" />; }
-export function ChannelsPanelSlot() { return <SubscribedPanel face="float" />; }
-export function ChannelsDockLeft() { return <SubscribedPanel face="left" />; }
-export function ChannelsDockRight() { return <SubscribedPanel face="right" />; }
+export function ChannelsPanelSlot({ currentSession }: { currentSession?: { id?: string } | null } = {}) {
+  hostSession = currentSession || null;
+  return <SubscribedPanel face="float" />;
+}

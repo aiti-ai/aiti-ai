@@ -16,8 +16,11 @@ import * as installer from "./lib/installer.js";
 import { renderConfig } from "./lib/config-gen.js";
 import { readConfigFile } from "./lib/config.js";
 import { readCardModes, setCardMode } from "./lib/bot-edit.js";
+import { deriveAdminUrl } from "./lib/admin-url.js";
 import * as chatRelay from "./lib/chat-relay.js";
 import * as acp from "./lib/acp-server.js";
+import * as procRunner from "./lib/proc-runner.js";
+import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -73,11 +76,39 @@ function mgr(): typeof manager {
   return g[key] as typeof manager;
 }
 
-// iframe 嵌入地址（带 management token 自动登录）。端口随 config。
-function iframeUrl(cfg: any): string {
-  const port = cfg?.management?.port || 9820;
-  const token = cfg?.management?.token || "";
-  return `https://cc.pi.example.com:8443/?token=${encodeURIComponent(token)}`;
+function settingsFile(): string {
+  // getManager() = the globalThis-cached singleton the load hook configured —
+  // the bare module import can be a fresh evaluation after hot reload with an
+  // empty _dataDir (the same module-split pitfall acp-server.ts guards against)
+  return path.join(mgr().getDataDir(), "settings.json");
+}
+function readSettings(): Record<string, any> {
+  try { return JSON.parse(fs.readFileSync(settingsFile(), "utf8")) || {}; } catch { return {}; }
+}
+function writeSettings(patch: Record<string, any>): void {
+  const next = { ...readSettings(), ...patch };
+  fs.mkdirSync(mgr().getDataDir(), { recursive: true });
+  fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2));
+}
+
+function pageOrigin(req: Request): string {
+  try {
+    const proto = req.headers.get("x-forwarded-proto") || "http";
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    return host ? `${proto}://${host}` : "";
+  } catch { return ""; }
+}
+
+/** journald tail for a systemd-run unit (async spawn — no event-loop blocking).
+ *  Runs with the user-manager env from probeRunner so --user units resolve. */
+async function journalTail(unit: string, n: number): Promise<string[]> {
+  return new Promise((resolve) => {
+    procRunner.probeRunner().then((probe) => {
+      execFile("journalctl", ["--user", "-u", unit, "-n", String(n), "--no-pager", "-o", "cat"],
+        { timeout: 5000, env: { ...process.env, ...probe.env }, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+        (err, stdout) => resolve(err ? [] : String(stdout).split(/\r?\n/).filter(Boolean)));
+    }).catch(() => resolve([]));
+  });
 }
 
 export default {
@@ -114,8 +145,6 @@ export default {
     rightFileDock: [{ id: "panel", label: "i18n:it.aiti-channels-panel.label" }],
     dialogs: [
       { id: "aiti-channels-panel", label: "i18n:it.aiti-channels-panel.label" },
-      { id: "aiti-channels-remote", label: "i18n:it.aiti-channels-remote.label", hideOnMobile: true },
-      { id: "aiti-channels-bots", label: "i18n:it.aiti-channels-bots.label" },
     ],
     i18n: {
       en: {
@@ -456,6 +485,16 @@ export default {
         "用手机相机扫码，在手机上打开这个工作区（登录后接管当前会话）。": "Scan with your phone camera to open this workspace on mobile (sign in to take over the current session).",
         "确认删除机器人": "Confirm bot deletion",
         "确认删除项目": "Confirm project deletion",
+        "远程": "Remote",
+        "扫码或在手机上打开链接，远程控制此工作台。": "Scan or open the link on your phone to control this workspace remotely.",
+        "配置机器人通道 →": "Configure a bot channel →",
+        "用手机相机扫码，在移动端打开此工作台（登录后接管当前会话）。": "Scan with your phone camera to open this workspace on mobile (sign in to take over the current session).",
+        "携带当前会话": "carrying current session",
+        "工作台首页": "workspace home",
+        "打开手机访问卡（service-tunnels）": "Open the phone access card (service-tunnels)",
+        "用机器人通道": "Use Bot Channel",
+        "连接一个聊天机器人，适合长时移动接入。": "Connect a chat bot for longer-running mobile access.",
+        "扫码连接": "Scan to connect",
         "移动端远程控制": "Mobile remote control",
         "移除这个机器人（DELETE project，重启实例生效）。": "Remove this bot (DELETE project; applies after instance restart).",
         "移除项目 Provider": "Remove project provider",
@@ -570,6 +609,16 @@ export default {
       "⟳ 刷新": "⟳ 刷新",
       "暂无消息记录 — 经本面板/aiti-im-send 发出的消息都会记录": "暂无消息记录 — 经本面板/aiti-im-send 发出的消息都会记录",
       "cc-connect 运行日志": "cc-connect 运行日志",
+      "远程": "远程",
+      "扫码或在手机上打开链接，远程控制此工作台。": "扫码或在手机上打开链接，远程控制此工作台。",
+      "配置机器人通道 →": "配置机器人通道 →",
+      "用手机相机扫码，在移动端打开此工作台（登录后接管当前会话）。": "用手机相机扫码，在移动端打开此工作台（登录后接管当前会话）。",
+      "携带当前会话": "携带当前会话",
+      "工作台首页": "工作台首页",
+      "打开手机访问卡（service-tunnels）": "打开手机访问卡（service-tunnels）",
+      "用机器人通道": "用机器人通道",
+      "连接一个聊天机器人，适合长时移动接入。": "连接一个聊天机器人，适合长时移动接入。",
+      "扫码连接": "扫码连接",
       "cc-connect 原生管理台（独立子域 iframe，共享登录态，含实时聊天）": "cc-connect 原生管理台（独立子域 iframe，共享登录态，含实时聊天）",
       "↗ 新窗打开": "↗ 新窗打开",
       "管理台地址未就绪（需 cc-connect 启用 [management]）": "管理台地址未就绪（需 cc-connect 启用 [management]）",
@@ -721,7 +770,7 @@ export default {
       // 状态 + 探测（进程/端口/socket/版本/config）
       if (action === "status") {
         const st = await m.probe(mOpts);
-        return json({ ok: true, instance: instId, instanceName: inst.name, ...st, iframeUrl: iframeUrl(st.cfg) });
+        return json({ ok: true, instance: instId, instanceName: inst.name, ...st, iframeUrl: deriveAdminUrl(st.cfg, pageOrigin(req), readSettings().adminOrigin) });
       }
 
       // 添加配置向导：名字 → 自动分配 id/dataDir/端口（避开已有实例与本机占用），不落盘
@@ -788,14 +837,25 @@ export default {
       if (action === "config-gen" && req.method === "POST") {
         const b = await parseBody(req);
         try {
+          // H1 guards: this endpoint rewrites the WHOLE config — without guards an
+          // empty/malformed body wipes a live config (2026-11-28 audit: two probes
+          // destroyed the 89-line config and rotated the mgmt token mid-flight).
+          const genProjects = Array.isArray(b.projects) ? b.projects.filter((x: any) => x && String(x.name || "").trim()) : [];
+          if (!genProjects.length) return json({ ok: false, error: "projects 为空：拒绝生成（本端点整份覆盖 config）。请带 projects 数组，或走 config 手动编辑。" }, 400);
+          const exists = fs.existsSync(inst.config);
+          if (exists && !b.confirmOverwrite) return json({ ok: false, error: `配置已存在（${inst.config}）：整份生成会覆盖现有文件。确认覆盖请带 confirmOverwrite:true 重发。`, overwriteRequired: true }, 409);
+          // token preservation: reuse the existing management/bridge token unless the form provides one explicitly
+          const prevCfg = exists ? readConfigFile(inst.config) : null;
+          const mgmtToken = b.management?.token || prevCfg?.management?.token || randomUUID().replace(/-/g, "").slice(0, 24);
+          const bridgeToken = b.bridge?.token || prevCfg?.bridge?.token || mgmtToken;
           const toml = renderConfig({
             dataDir: inst.dataDir,
             language: b.language || "zh",
             logLevel: b.logLevel || "info",
-            management: b.management === false ? undefined : { enabled: true, port: Number(b.management?.port) || 9820, token: b.management?.token || randomUUID().replace(/-/g, "").slice(0, 24) },
-            bridge: b.bridge === false ? undefined : { enabled: true, port: Number(b.bridge?.port) || 9810, token: b.bridge?.token || (b.management?.token || randomUUID().replace(/-/g, "").slice(0, 24)) },
+            management: b.management === false ? undefined : { enabled: true, port: Number(b.management?.port) || 9820, token: mgmtToken },
+            bridge: b.bridge === false ? undefined : { enabled: true, port: Number(b.bridge?.port) || 9810, token: bridgeToken },
             acp: { connector: acp.connectorBin(), socketPath: acp.primaryEndpoint(instId).socket, connectorSocket: acp.acpSocketPath(instId) },
-            projects: Array.isArray(b.projects) ? b.projects.map((x: any) => ({
+            projects: genProjects.map((x: any) => ({
               name: String(x.name || ""),
               agent: x.agent || "piweb",
               work_dir: x.work_dir ? String(x.work_dir) : "",
@@ -807,8 +867,8 @@ export default {
                 fields: y.fields && typeof y.fields === "object" ? y.fields : undefined,
                 // 旧平铺字段（兼容）：config-gen 会合入 fields
                 client_id: y.client_id, client_secret: y.client_secret, agent_id: y.agent_id, bot_name: y.bot_name,
-              })) : [],
-            })) : [],
+              })) : []
+            })),
           });
           fs.mkdirSync(path.dirname(inst.config), { recursive: true });
           if (fs.existsSync(inst.config)) fs.copyFileSync(inst.config, inst.config + ".bak-" + Date.now());
@@ -945,7 +1005,10 @@ export default {
       // POST bot-cardmode: reply granularity (card_mode legacy|rich; the ONLY local TOML-edit scenario)
       if (action === "bot-cardmode" && req.method === "POST") {
         const b = await parseBody(req);
-        const mode = String(b.mode || "") === "rich" ? "rich" : "legacy";
+        // H1 guard: an unlisted mode used to silently coerce to "legacy" and write —
+        // an empty/mistyped body must not touch the config at all
+        const mode = String(b.mode || "");
+        if (mode !== "rich" && mode !== "legacy") return json({ ok: false, error: "mode 仅接受 legacy|rich（收到空/非法值一律拒绝写配置）" }, 400);
         const project = b.project ? String(b.project) : null;
         const cfgPath = mOpts.config || manager.DEFAULTS.config;
         let raw = "";
@@ -1013,7 +1076,30 @@ export default {
       if (action === "restart" && req.method === "POST") return json(await m.restart(mOpts));
       if (action === "log") {
         const n = Math.min(Number(ctx.searchParams.get("n")) || 80, 300);
+        // F8: systemd-run managed instances read journald — the flat log file can
+        // be stale (rotated away / never written by the unit), which showed month-
+        // old lines. Plain-spawned instances keep the file tail.
+        const rt = procRunner.readRuntime(mOpts.dataDir);
+        if (rt && rt.runner === "systemd-run" && rt.unit) {
+          const lines = await journalTail(rt.unit, n);
+          return json({ ok: true, file: `journal:${rt.unit}`, lines, exists: lines.length > 0 });
+        }
         return json({ ok: true, ...m.logTail(mOpts, n) });
+      }
+
+      // admin origin override for the embedded original admin (F4): explicit
+      // same-origin deployment / unusual domain; empty value clears the override
+      if (action === "admin-origin") {
+        if (req.method === "POST") {
+          const b = await parseBody(req);
+          const origin = String(b.origin || "").trim();
+          if (origin) {
+            try { const u = new URL(origin); if (!/^https?:$/.test(u.protocol)) throw new Error("protocol"); } catch { return json({ ok: false, error: "origin 需为合法 http(s) URL（如 https://example.com:57442）" }, 400); }
+          }
+          writeSettings({ adminOrigin: origin || null });
+          return json({ ok: true, adminOrigin: origin || null, note: origin ? "已设置显式管理台地址" : "已清除显式地址（回到自动推导）" });
+        }
+        return json({ ok: true, adminOrigin: readSettings().adminOrigin || null });
       }
 
       // 配置读取（GET 返回解析后 cfg + 原文 raw）/ 保存（POST 写回 config.toml 原文）
@@ -1039,36 +1125,47 @@ export default {
         return json({ ok: !!cfg, cfg, raw });
       }
 
-      // 发消息（socket API）——成功/失败都写消息日志；session_key 可留空自动选该项目第一个活跃会话
+      // Outbound send (F3): text goes through the management API
+      // (projects/{name}/send); attachments fall back to the socket/TCP channel
+      // (the mgmt endpoint is text-only). Both outcomes are msg-logged;
+      // empty session_key auto-picks the project's first live session.
       if (action === "send" && req.method === "POST") {
         const b = await parseBody(req);
         const project = String(b.project || "");
         let sessionKey = String(b.session_key || "");
         const message = String(b.message || "");
         const filePath = b.filePath ? String(b.filePath) : undefined;
-        // cc-connect api_addr patch：实例配置 api_addr → 出站走 TCP（Windows 可达通道）
-        const ccApiAddr = readConfigFile(mOpts.config || manager.DEFAULTS.config)?.apiAddr || undefined;
         if (!project || !message) return json({ ok: false, error: "需要 project + message" }, 400);
-        // session_key 留空 → 自动取该项目第一个活跃会话（与 aiti-im-send 工具一致）
+        // empty session_key → auto-pick the project's first live session (mgmt)
         if (!sessionKey) {
           try {
-            const r = await m.listSessions(mOpts.sock, ccApiAddr);
-            const raw: any = r.data;
-            const sessions: any[] = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.sessions) ? raw.sessions : []);
-            const hit = sessions.find((s: any) => s.project === project) || sessions[0];
+            const sr = await mgmtApi(mOpts, "GET", `projects/${encodeURIComponent(project)}/sessions`);
+            const sp = sr.data?.data ?? sr.data;
+            const list: any[] = Array.isArray(sp) ? sp : Array.isArray(sp?.sessions) ? sp.sessions : [];
+            const hit = list[0];
             if (hit && (hit.session_key || hit.id)) sessionKey = hit.session_key || hit.id;
           } catch { /* 保持空 */ }
         }
         if (!sessionKey) return json({ ok: false, error: "无活跃会话可自动选择，请先给目标机器人发消息激活会话（或用 aiti-im-list 拿 session_key）" }, 400);
-        try {
-          const r = await m.sendMessage({ project, sessionKey, message, filePath, fileName: b.fileName ? String(b.fileName) : undefined, mimeType: b.mimeType ? String(b.mimeType) : undefined, sock: mOpts.sock, tcpAddr: ccApiAddr });
-          const ok = r.data && (r.data as any).status === "ok";
-          m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath || null, result: ok ? "ok" : "error", detail: r });
-          return json({ ok: true, socket: r, logged: true });
-        } catch (e: any) {
-          m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath || null, result: "error", detail: { error: e.message } });
-          return json({ ok: false, error: e.message }, 500);
+        if (filePath) {
+          // attachment path: the mgmt send endpoint is text-only; keep the
+          // legacy socket/TCP channel for files (aiti-im-* migrates in P2)
+          const ccApiAddr = readConfigFile(mOpts.config || manager.DEFAULTS.config)?.apiAddr || undefined;
+          try {
+            const r = await m.sendMessage({ project, sessionKey, message, filePath, fileName: b.fileName ? String(b.fileName) : undefined, mimeType: b.mimeType ? String(b.mimeType) : undefined, sock: mOpts.sock, tcpAddr: ccApiAddr });
+            const ok = r.data && (r.data as any).status === "ok";
+            m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath, result: ok ? "ok" : "error", detail: r });
+            return json({ ok: true, data: r.data, logged: true, via: "api-file" });
+          } catch (e: any) {
+            m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath, result: "error", detail: { error: e.message } });
+            return json({ ok: false, error: e.message }, 500);
+          }
         }
+        const r = await mgmtApi(mOpts, "POST", `projects/${encodeURIComponent(project)}/send`, { session_key: sessionKey, message }, 60000);
+        const payload = r.data?.data ?? r.data;
+        const ok = r.status >= 200 && r.status < 300;
+        m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: null, result: ok ? "ok" : "error", detail: r });
+        return json({ ok, status: r.status, data: payload, logged: true, via: "mgmt" });
       }
 
       // 消息日志（我们平台经 cc-connect 发的消息记录）
@@ -1077,12 +1174,23 @@ export default {
         return json({ ok: true, logs: m.readMsgLogs(mOpts, n) });
       }
 
-      // 活跃会话（socket API）
+      // Live sessions (F3): aggregated from the management API across all
+      // projects — the api.sock branch is retired; action name kept for clients.
       if (action === "sessions") {
-        try {
-          const r = await m.listSessions(mOpts.sock);
-          return json({ ok: true, data: r.data });
-        } catch (e: any) { return json({ ok: false, error: e.message }, 500); }
+        const r = await mgmtApi(mOpts, "GET", "projects");
+        if (r.status !== 200) return json({ ok: false, error: r.data?.message || r.error || `mgmt ${r.status}`, data: [] }, r.status === 0 ? 502 : r.status);
+        const payload = r.data?.data ?? r.data;
+        const projects: any[] = Array.isArray(payload?.projects) ? payload.projects : [];
+        const all: any[] = [];
+        for (const pj of projects) {
+          try {
+            const sr = await mgmtApi(mOpts, "GET", `projects/${encodeURIComponent(pj.name)}/sessions`);
+            const sp = sr.data?.data ?? sr.data;
+            if (Array.isArray(sp)) all.push(...sp);
+            else if (Array.isArray(sp?.sessions)) all.push(...sp.sessions);
+          } catch { /* per-project isolation */ }
+        }
+        return json({ ok: true, data: all });
       }
 
       // 触发 cc-connect 配置 reload（POST /api/v1/reload，经服务端转发带 token）

@@ -14,11 +14,11 @@
  * branding, which is EXPECTED; both the list row and the wizard say so.
  */
 import { useState, useEffect, useRef } from "react";
-import { apiUrl, t, extSvc } from "./host-shim";
-import { openFloat, closePanel, usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
+import { apiUrl, t, extSvc, ensureMaterialized } from "./host-shim";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { qrDataUrl } from "./qr";
-import { btnStyle, cardStyle, inp, sectionTitle, chip } from "./channels-app";
+import { buildDeepLink } from "../../lib/deep-link.ts";
+import { btnStyle, cardStyle, inp, sectionTitle, chip, setState as setStatePub, getHostSessionId } from "./channels-app";
 
 const API = (p: string) => apiUrl(p);
 
@@ -152,12 +152,14 @@ function workDirOf(): string | undefined {
 }
 
 // ---------- TabBots ----------
-/** Cross-dialog handoff: the remote dialog's Configure button opens the bots dialog with a
- *  preselected platform (consumed once on TabBots mount, then cleared). */
+/** Cross-view handoff: the remote view's Configure button switches to the bots tab
+ *  with a preselected platform (consumed once on TabBots mount, then cleared). */
 let autoNewPlatform: string | null = null;
 export function openBotsNew(platform?: string) {
   autoNewPlatform = platform || null;
-  openFloat(BOTS_KEY);
+  // F2: the bots dialog is retired — switch the panel tab instead
+  // (setState's open branch itself forces the float present)
+  setStatePub({ tab: "bots", open: true, error: null, msg: null });
 }
 
 export function TabBots({ instance }: { instance: string }) {
@@ -218,12 +220,14 @@ export function TabBots({ instance }: { instance: string }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* header */}
+      {/* header — F7: the create button lives here (it was only reachable from the retired
+          bots dialog before, i.e. unreachable); opens the create form in place */}
       <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>{t("Bots")}</span>
         <span style={chip("rgba(99,102,241,0.12)", "#6366f1")}>{`${meta.version || t("unknown")} · ${meta.running ? t("running") : t("not running")}`}</span>
         {!meta.mgmtReachable && meta.mgmtError && <span style={{ fontSize: 11, color: "#ea580c" }}>{meta.mgmtError}</span>}
-        <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => void reload()}>{t("Refresh")}</button>
+        <button style={{ ...btnStyle, marginLeft: "auto", color: "#4f46e5" }} onClick={() => startCreate("telegram")}>{"+ " + t("New bot")}</button>
+        <button style={{ ...btnStyle }} onClick={() => void reload()}>{t("Refresh")}</button>
       </div>
 
       {/* bot list */}
@@ -372,110 +376,84 @@ export function TabBots({ instance }: { instance: string }) {
 }
 
 // ---------- remote control dialog ----------
-export const REMOTE_KEY = "aiti-channels:remote";
-export const BOTS_KEY = "aiti-channels:bots";
 
-export function openRemote() { openFloat(REMOTE_KEY); }
-
-export function RemoteDialogSlot() {
-  const st = usePresent(REMOTE_KEY);
-  if (st !== "floating") return null;
-  return <RemoteDialogBody />;
-}
-
-function RemoteDialogBody() {
+/** Mobile remote view — an in-panel tab since v3 (F2): the old full-screen dialog
+ *  used to be buried under the panel portal (cross stacking-context z is
+ *  meaningless); as a tab it can't lose that fight. */
+export function RemoteView() {
+  const sessionId = getHostSessionId();
+  const deepLink = buildDeepLink((() => { try { return window.location.href; } catch { return ""; } })(), sessionId);
   const [qr, setQr] = useState<string | null>(null);
-  const deepLink = (() => { try { return window.location.href; } catch { return ""; } })();
   useEffect(() => {
     let alive = true;
     qrDataUrl(deepLink, { size: 200 }).then((d) => { if (alive) setQr(d); }).catch(() => {});
     return () => { alive = false; };
   }, [deepLink]);
+  // F6: service-tunnels is a lazy extension (clientImmediately:false) — its mobile
+  // service only registers after its own entry is first opened. ensureMaterialized
+  // then re-fetch (aiti-pair openOnPhone pattern); still absent → explicit error
+  // instead of the silent clipboard fallback the v2 audit flagged as a dud.
   const openPhoneCard = () => {
-    // service-tunnels.mobile extension point (Open-on-Phone card with its
-    // reachability/auth options); absent → clipboard copy (the inline QR above
-    // is the primary render and always works).
-    const svc = extSvc<(o: { url: string; title?: string }) => void>("service-tunnels.mobile");
-    if (typeof svc === "function") svc({ url: deepLink, title: t("Mobile remote control") });
-    else void navigator.clipboard?.writeText?.(deepLink).catch(() => {});
+    const lookup = () => (typeof extSvc === "function" ? extSvc<(o: { url: string; title?: string }) => void>("service-tunnels.mobile") : null);
+    const direct = typeof lookup() === "function" ? lookup() : null;
+    if (typeof direct === "function") { direct({ url: deepLink, title: t("移动端远程控制") }); return; }
+    const mat = ensureMaterialized("service-tunnels");
+    if (mat) {
+      mat.then(() => {
+        const svc = lookup();
+        if (typeof svc !== "function") throw new Error("service-tunnels.mobile still absent after materialize (deployed/disabled?)");
+        svc({ url: deepLink, title: t("移动端远程控制") });
+      }).catch((e: Error) => { void navigator.clipboard?.writeText?.(deepLink).catch(() => {}); console.warn("[aiti-channels] phone card:", e.message); });
+      return;
+    }
+    void navigator.clipboard?.writeText?.(deepLink).catch(() => {});
   };
   const copy = () => { void navigator.clipboard?.writeText?.(deepLink).catch(() => {}); };
-  const gotoBots = (p?: string) => { closePanel(REMOTE_KEY); openBotsNew(p); };
   const quick = ["weixin", "feishu", "lark", "telegram"];
-  const dlgBox = {
-    width: "min(880px, 94vw)", maxHeight: "90vh", overflow: "auto", display: "flex", flexDirection: "column",
-    background: "var(--bg, #fff)", border: "1px solid var(--border, rgba(127,127,127,0.2))", borderRadius: 12,
-  } as Record<string, string>;
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: 12 }}>
-      <div data-ext-float="1" data-ext-float-key={REMOTE_KEY} data-ext-float-w={880} data-ext-float-h={520} data-ext-float-full="1" style={dlgBox}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 10px" }}>
-          <span style={{ fontSize: 20 }}>📱</span>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{t("Mobile remote control")}</div>
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{t("Scan or open the link on your phone to control this workspace remotely.")}</div>
-          </div>
-          <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => closePanel(REMOTE_KEY)}>{t("Close")}</button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 18 }}>{"📱"}</span>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{t("移动端远程控制")}</div>
+          <div style={{ fontSize: 11.5, color: "#6b7280", marginTop: 2 }}>{t("扫码或在手机上打开链接，远程控制此工作台。")}</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, padding: "6px 20px 20px" }}>
-          {/* left: scan to open */}
-          <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{"📱 " + t("Scan to connect")}</div>
-            <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("Scan with your phone camera to open this workspace on mobile (sign in to take over the current session).")}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 8, background: "#22c55e" }} />
-              <span style={{ fontSize: 12 }}>{t("Ready") + " · " + t("scan or copy the link")}</span>
-              <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={copy}>{"📋 " + t("Copy link")}</button>
-            </div>
-            <div style={{ background: "#fff", borderRadius: 12, width: 216, height: 216, margin: "8px auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {qr ? <img src={qr} alt="QR" width={188} height={188} style={{ borderRadius: 6 }} /> : <span style={{ color: "#9ca3af", fontSize: 11 }}>{t("Generating QR…")}</span>}
-            </div>
-            <div style={{ fontSize: 10.5, color: "#6b7280", textAlign: "center", lineHeight: 1.6, wordBreak: "break-all" }}>{deepLink}</div>
-            <button style={{ ...btnStyle }} onClick={openPhoneCard}>{t("Open the phone access card (service-tunnels)")}</button>
-          </div>
-          {/* right: bot channel */}
-          <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{"🤖 " + t("Use Bot Channel")}</div>
-            <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("Connect a chat bot for longer-running mobile access.")}</div>
-            {quick.map((p) => (
-              <div key={p} style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--bg-hover, rgba(127,127,127,0.06))", borderRadius: 10, padding: "8px 10px" }}>
-                <span style={{ fontSize: 15 }}>{pfIcon(p)}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700 }}>{pfName(p)}</div>
-                  <div style={{ fontSize: 10.5, color: "#6b7280", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(PLATFORM_SRC[p]?.src || "")}</div>
-                </div>
-                <button style={{ ...btnStyle, color: "#4f46e5" }} onClick={() => gotoBots(p)}>{t("Configure")}</button>
-              </div>
-            ))}
-            <div style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.6, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 8, padding: "6px 8px" }}>
-              {t("Channel sources: all channels connect via cc-connect through official platform APIs; the OpenClaw wording on the WeChat scan page = the ilink gateway shared with the OpenClaw plugin — expected behavior.")}
-            </div>
-            <button style={{ ...btnStyle, marginTop: "auto" }} onClick={() => gotoBots()}>{"🤖 " + t("Bot management")}</button>
-          </div>
-        </div>
+        <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => openBotsNew()}>{t("配置机器人通道 →")}</button>
       </div>
-    </div>
-  );
-}
-
-// ---------- bots dialog (same content as the tab, float chrome) ----------
-export function BotsDialogSlot({ instance }: { instance?: string }) {
-  const st = usePresent(BOTS_KEY);
-  if (st !== "floating") return null;
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: 12 }}>
-      <div data-ext-float="1" data-ext-float-key={BOTS_KEY} data-ext-float-w={960} data-ext-float-h={640} data-ext-float-full="1"
-        style={{ width: "min(960px, 94vw)", maxHeight: "90vh", overflow: "auto", display: "flex", flexDirection: "column", background: "var(--bg, #fff)", border: "1px solid var(--border, rgba(127,127,127,0.2))", borderRadius: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 6px" }}>
-          <span style={{ fontSize: 20 }}>🤖</span>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{t("Bots")}</div>
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{t("Connect external chat tools to your aiti bots (each bot = one cc-connect project).")}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+        {/* left: scan to open */}
+        <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>{"📱 " + t("扫码连接")}</div>
+          <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("用手机相机扫码，在移动端打开此工作台（登录后接管当前会话）。")}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 8, background: "#22c55e" }} />
+            <span style={{ fontSize: 12 }}>{(sessionId ? t("携带当前会话") : t("工作台首页")) + " · " + t("扫码或复制链接")}</span>
+            <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={copy}>{"📋 " + t("复制链接")}</button>
           </div>
-          <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => closePanel(BOTS_KEY)}>{t("Close")}</button>
+          <div style={{ background: "#fff", borderRadius: 12, width: 216, height: 216, margin: "8px auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {qr ? <img src={qr} alt="QR" width={188} height={188} style={{ borderRadius: 6 }} /> : <span style={{ color: "#9ca3af", fontSize: 11 }}>{t("二维码生成中…")}</span>}
+          </div>
+          <div style={{ fontSize: 10.5, color: "#6b7280", textAlign: "center", lineHeight: 1.6, wordBreak: "break-all" }}>{deepLink}</div>
+          <button style={{ ...btnStyle }} onClick={openPhoneCard}>{t("打开手机访问卡（service-tunnels）")}</button>
         </div>
-        <div style={{ padding: "6px 20px 20px" }}>
-          <TabBots instance={instance || "default"} />
+        {/* right: bot channel */}
+        <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>{"🤖 " + t("用机器人通道")}</div>
+          <div style={{ fontSize: 11.5, color: "#6b7280", lineHeight: 1.6 }}>{t("连接一个聊天机器人，适合长时移动接入。")}</div>
+          {quick.map((p) => (
+            <div key={p} style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--bg-hover, rgba(127,127,127,0.06))", borderRadius: 10, padding: "8px 10px" }}>
+              <span style={{ fontSize: 15 }}>{pfIcon(p)}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700 }}>{pfName(p)}</div>
+                <div style={{ fontSize: 10.5, color: "#6b7280", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(PLATFORM_SRC[p]?.src || "")}</div>
+              </div>
+              <button style={{ ...btnStyle, color: "#4f46e5" }} onClick={() => openBotsNew(p)}>{t("去配置")}</button>
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: "#6b7280", lineHeight: 1.6, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 8, padding: "6px 8px" }}>
+            {t("通道来源：所有渠道经 cc-connect 走官方平台 API；微信扫码页出现 OpenClaw 字样 = 与 OpenClaw 插件共用的 ilink 网关——属预期行为。")}
+          </div>
+          <button style={{ ...btnStyle, marginTop: "auto" }} onClick={() => openBotsNew()}>{"🤖 " + t("机器人管理")}</button>
         </div>
       </div>
     </div>
