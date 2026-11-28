@@ -117,6 +117,13 @@ export function present(key: string, mode: PresentMode, opts?: { auto?: boolean 
   if (after === cur && after.startsWith("docked:")) {
     try { window.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: { key, state: after, ...(opts?.auto ? { auto: true } : {}) } })); } catch { /* ignore */ }
   }
+  // Raise fix (v3 P2): an explicit "open" landing on an ALREADY-floating panel is a
+  // "bring it to me" too — broadcast activation so float bringToFront runs, instead
+  // of a silent same-state no-op that leaves the panel buried under newer floats.
+  // auto (restorative sync) must not raise.
+  else if (after === cur && after === "floating" && mode === "open" && !opts?.auto) {
+    try { window.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: { key, state: after } })); } catch { /* ignore */ }
+  }
 }
 
 export function presented(key: string): PresentState {

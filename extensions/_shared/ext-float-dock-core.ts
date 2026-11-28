@@ -605,6 +605,9 @@ function flashDockContainer(k: string): void {
   } catch { /* ignore */ }
 }
 
+/** open = user-facing "bring it to me": lands per preference, and an already-
+ *  floating panel is RAISED (aiti-float broadcasts activation on the idempotent
+ *  floating branch; v3 P2 raise fix). Docked opens flash the container instead. */
 export function openFloat(k: string) {
   // idempotent open while docked: don't open a second one, flash hint (plan §3.2); the
   // float state machine is idempotent the same way inside

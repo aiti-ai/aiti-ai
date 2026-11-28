@@ -901,6 +901,15 @@ export function install(): () => void {
   mo.observe(document.body, { childList: true, subtree: true });
   // ⛵ 命令事件监听（dock 方案 §5.2：外部经 COMMAND_EVENT 触发 present；teardown 反注册）
   const disposeCommand = dock.installCommandListener();
+  // Raise fix (v3 P2): dock.present broadcasts activation for idempotent floating
+  // "open" — bring that panel to front (a repeated open = user asking for it).
+  const onActivateRaise = (e: Event) => {
+    const key = (e as CustomEvent<{ key?: string }>).detail?.key;
+    if (!key) return;
+    const p = document.querySelector<HTMLElement>(`[data-ext-float-key="${key}"]`);
+    if (p && enhancedPanels.has(p)) bringToFront(p);
+  };
+  window.addEventListener(dock.ACTIVATE_EVENT_NAME, onActivateRaise);
   // ⛵ TabBar ⇱ → 位置菜单（宿主只报 key+锚点；菜单数据 resolveMenuData，交互同浮窗 ⇱）
   const onDockMenu = (e: Event) => {
     const detail = (e as CustomEvent<{ key: string; rect?: { left: number; bottom: number } }>).detail;
@@ -968,6 +977,7 @@ export function install(): () => void {
   const teardown = () => {
     mo.disconnect();
     disposeCommand();
+    window.removeEventListener(dock.ACTIVATE_EVENT_NAME, onActivateRaise);
     window.removeEventListener(dock.DOCK_MENU_EVENT, onDockMenu);
     window.removeEventListener("resize", onResize);
     if (resizeTimer) clearTimeout(resizeTimer);
