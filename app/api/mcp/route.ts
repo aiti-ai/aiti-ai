@@ -619,6 +619,10 @@ export async function POST(req: Request) {
 
   try {
     switch (body.action) {
+      // Read-only overview: the same payload GET /api/mcp answers, with cwd in the body so
+      // the project folder never lands in a URL/access log. Writes below act as before.
+      case "overview":
+        return await overviewResponse(agentDir, project);
       case "enable":
       case "disable":
       case "remove":
@@ -670,7 +674,7 @@ export async function POST(req: Request) {
       case "add":
         return await addServer(agentDir, project, internals, body);
       default:
-        return mcpRefusalResponse(400, "invalid-request", "action must be add, enable, disable, remove, set-enabled, set-exposure, set-excluded-tools, set-in-project, undo or sign-out");
+        return mcpRefusalResponse(400, "invalid-request", "action must be overview, add, enable, disable, remove, set-enabled, set-exposure, set-excluded-tools, set-in-project, undo or sign-out");
     }
   } catch (error) {
     return mcpRefusalResponse(500, "internal", errorMessage(error));

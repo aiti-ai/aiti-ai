@@ -9,6 +9,7 @@ import type {
   McpConfigFileInfo,
   McpConfigFileProblem,
   McpProjectInfo,
+  ProjectMcpListing,
   McpResponse,
   McpScope,
   McpServerInfo,
@@ -736,6 +737,23 @@ export interface ProjectMcpServers {
  * is trusted. The global file is read too, only to tell which project entries
  * replace a global one of their name.
  */
+/** Trust dialog listing: the servers the project's `.pi/mcp.json` declares, or the read
+ *  error. Files only — no server is spawned and no value resolved (ADR 0006), same stance
+ *  as GET /api/mcp. Shared by GET /api/project-trust and POST /api/project-trust/status so
+ *  the dialog can fetch it without a query string. */
+export async function listProjectMcpServers(
+  agentDir: string,
+  cwd: string,
+  allowedRoots: Set<string>,
+): Promise<ProjectMcpListing> {
+  try {
+    const { file, servers } = await readProjectMcpServers({ agentDir, cwd, allowedRoots });
+    return { mcpFile: file, mcpServers: servers };
+  } catch (error) {
+    return { mcpServers: [], mcpError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function readProjectMcpServers(options: {
   agentDir: string;
   cwd: string;

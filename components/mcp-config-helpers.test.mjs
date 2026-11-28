@@ -39,7 +39,7 @@ const {
   mcpGroupSwitchChecked,
   mcpGroupSwitchTargets,
   mcpInProjectView,
-  mcpOverviewUrl,
+  mcpOverviewRequest,
   mcpProjectServersLoad,
   mcpProjectTrustable,
   mcpRowContext,
@@ -540,22 +540,29 @@ const overview = {
 };
 
 test("the overview is loaded for the panel's project, or for the global file alone", async () => {
-  assert.equal(mcpOverviewUrl(null), "/api/mcp");
-  assert.equal(mcpOverviewUrl("/a b/c&d"), "/api/mcp?cwd=%2Fa%20b%2Fc%26d");
+  // POST: the path is constant, the folder (if any) travels in the JSON body — never a URL.
+  assert.equal(mcpOverviewRequest(null).url, "/api/mcp");
+  assert.equal(mcpOverviewRequest("/a b/c&d").url, "/api/mcp");
+  assert.deepEqual(JSON.parse(String(mcpOverviewRequest(null).init.body)), { action: "overview" });
+  assert.deepEqual(JSON.parse(String(mcpOverviewRequest("/a b/c&d").init.body)), { action: "overview", cwd: "/a b/c&d" });
+  assert.equal(mcpOverviewRequest("/repo").init.method, "POST");
 
   const global = fakeFetch([{ status: 200, body: overview }]);
   assert.deepEqual(await loadMcpOverview(null, global.fetchImpl), { ok: true, data: overview });
   assert.equal(global.calls.length, 1);
   assert.equal(global.calls[0].input, "/api/mcp");
+  assert.equal(global.calls[0].init.method, "POST");
   // Always read fresh: the files change outside the page.
   assert.equal(global.calls[0].init.cache, "no-store");
-  assert.equal(global.calls[0].init.method, undefined);
+  assert.deepEqual(JSON.parse(String(global.calls[0].init.body)), { action: "overview" });
 
   const project = fakeFetch([{ status: 200, body: { ...overview, project: { cwd: "/repo" } } }]);
   const loaded = await loadMcpOverview("/repo", project.fetchImpl);
   assert.equal(loaded.ok, true);
   assert.equal(loaded.projectError, undefined);
-  assert.deepEqual(project.calls.map((call) => call.input), ["/api/mcp?cwd=%2Frepo"]);
+  // Same URL with or without a project; the folder is in the body, so no query string.
+  assert.deepEqual(project.calls.map((call) => call.input), ["/api/mcp"]);
+  assert.deepEqual(JSON.parse(String(project.calls[0].init.body)), { action: "overview", cwd: "/repo" });
 });
 
 test("a project folder the route refuses still leaves the global servers listed", async () => {
@@ -566,7 +573,10 @@ test("a project folder the route refuses still leaves the global servers listed"
     ]);
     const result = await loadMcpOverview("/gone", fetchImpl);
     assert.deepEqual(result, { ok: true, data: overview, projectError: { error: "Access denied", reason } }, reason);
-    assert.deepEqual(calls.map((call) => call.input), ["/api/mcp?cwd=%2Fgone", "/api/mcp"]);
+    // Both requests hit one path; the folder of the first one is in its JSON body.
+    assert.deepEqual(calls.map((call) => call.input), ["/api/mcp", "/api/mcp"]);
+    assert.deepEqual(JSON.parse(String(calls[0].init.body)), { action: "overview", cwd: "/gone" });
+    assert.deepEqual(JSON.parse(String(calls[1].init.body)), { action: "overview" });
   }
   // Without a project there is nothing to fall back from.
   const noProject = fakeFetch([{ status: 403, body: { error: "Access denied", reason: "cwd-denied" } }]);

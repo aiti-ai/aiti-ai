@@ -208,15 +208,18 @@ export async function GET(req: Request) {
   return handleModels(url.searchParams.get("cwd"), url.searchParams.get("scope") === "all");
 }
 
-// POST /api/models  body: { cwd? } — same semantics; when cwd is omitted, process.cwd()
-// is used (consistent with GET without the cwd parameter).
+// POST /api/models  body: { cwd?, scope? } — same semantics; when cwd is omitted, process.cwd()
+// is used (consistent with GET without the cwd parameter). `scope: "all"` mirrors the GET
+// form's ?scope=all (the model picker's "all" scope), so callers never need the query string.
 export async function POST(req: Request) {
   let bodyCwd: string | null = null;
+  let scopeAll = false;
   try {
-    const body = (await req.json()) as { cwd?: unknown };
+    const body = (await req.json()) as { cwd?: unknown; scope?: unknown; scopeAll?: unknown };
     if (typeof body.cwd === "string" && body.cwd.trim()) bodyCwd = body.cwd;
+    scopeAll = body.scope === "all" || body.scopeAll === true;
   } catch {
     // Empty/non-JSON body → default cwd
   }
-  return handleModels(bodyCwd);
+  return handleModels(bodyCwd, scopeAll);
 }

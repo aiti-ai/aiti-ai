@@ -868,13 +868,24 @@ function isMcpResponse(value: unknown): value is McpResponse {
     && Array.isArray(data.files) && Array.isArray(data.servers);
 }
 
-/** The URL of the overview: the global file alone without a project. */
-export function mcpOverviewUrl(cwd: string | null): string {
-  return apiUrl(cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp");
+/** The overview request: one path, the project (if any) in the JSON body.
+ *  POST keeps the folder out of URLs — query strings land in access logs, bodies do not.
+ *  Without a project the body still names the action, so one shape serves both cases. */
+export function mcpOverviewRequest(cwd: string | null, signal?: AbortSignal): { url: string; init: RequestInit } {
+  return {
+    url: apiUrl("/api/mcp"),
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cwd ? { action: "overview", cwd } : { action: "overview" }),
+      signal,
+    },
+  };
 }
 
 async function requestMcpOverview(cwd: string | null, fetchImpl: FetchLike, signal?: AbortSignal): Promise<McpLoadResult> {
-  return requestMcpJson(mcpOverviewUrl(cwd), { signal }, fetchImpl, (data) => (isMcpResponse(data) ? data : undefined));
+  const { url, init } = mcpOverviewRequest(cwd, signal);
+  return requestMcpJson(url, init, fetchImpl, (data) => (isMcpResponse(data) ? data : undefined));
 }
 
 const CWD_REFUSALS = new Set<McpRefusalReason>(["cwd-invalid", "cwd-denied", "cwd-not-directory"]);

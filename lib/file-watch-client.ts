@@ -14,6 +14,8 @@ import { getEventBus, type BusEventSource } from "./event-bus-client.ts";
 import { apiUrl } from "./base-path.ts";
 
 export function openFileWatchBus(filePath: string): BusEventSource | null {
+  // SSE cannot POST; this is the fallback used only when the event bus is absent (the normal
+  // path registers a ticket). Tokenizing it is tracked in the plan's §11.      url-path-ok-next
   const bus = getEventBus(`/api/files/watch?path=${encodeURIComponent(filePath)}`, {
     topic: "file-watch",
   });

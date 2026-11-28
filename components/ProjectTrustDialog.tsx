@@ -137,7 +137,15 @@ export function ProjectTrustDialog({
       timedOut = true;
       controller.abort();
     }, MCP_LISTING_TIMEOUT_MS);
-    fetch(apiUrl(`/api/project-trust?cwd=${encodeURIComponent(cwd)}`), { signal: controller.signal, cache: "no-store" })
+    // cwd travels in the JSON body: query strings land in access logs. includeListing keeps
+    // the "what trusting would connect" list the dialog shows (ADR 0006).
+    fetch(apiUrl("/api/project-trust/status"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd, includeListing: true }),
+      signal: controller.signal,
+      cache: "no-store",
+    })
       .then(async (response) => {
         const data = await response.json() as Partial<ProjectTrustResponse & McpErrorResponse>;
         if (!active) return;

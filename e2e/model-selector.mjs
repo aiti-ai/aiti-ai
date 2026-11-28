@@ -34,6 +34,7 @@ export async function checkModelSelector(page, { base, project, artifacts }) {
   };
 
   try {
+  // url-path-ok-next — the page URL restores a project by design (plan §7 exception).
     await page.goto(`${base}/?cwd=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
     await trigger.filter({ hasText: "Model 0" }).waitFor();
     await trigger.click();
@@ -68,6 +69,7 @@ export async function checkModelSelector(page, { base, project, artifacts }) {
       if (all) allRequests.push(route.request().url());
       route.fulfill({ json: all ? body([...models.slice(0, 2), { provider: "other", id: "x-1", name: "Other X" }]) : body(models.slice(0, 2), true) });
     });
+  // url-path-ok-next — the page URL restores a project by design (plan §7 exception).
     await page.goto(`${base}/?cwd=${encodeURIComponent(project)}`, { waitUntil: "domcontentloaded" });
     await trigger.filter({ hasText: "Model 0" }).waitFor();
     await trigger.click();

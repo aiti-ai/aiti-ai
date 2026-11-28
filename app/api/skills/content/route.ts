@@ -14,15 +14,27 @@ const SKILL_CONTENT_MAX_BYTES = 1024 * 1024;
 const MARKDOWN_FILE = /\.(md|markdown)$/i;
 
 // GET /api/skills/content?cwd=<path>&filePath=<loaded skill path>[&document=<path in the skill folder>]
+// POST /api/skills/content  body: { cwd, filePath, document? } — same read; new code uses
+// this one so no filesystem path lands in a URL (access logs / proxy logs).
 // The resource loader is the allow-list: accepting any readable Markdown path
 // here would turn the Skills panel into a general filesystem reader. `document`
 // is another Markdown file under that skill's folder, where pi resolves the
 // skill's relative links; its refusals name no filesystem path.
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const cwd = searchParams.get("cwd");
-  const filePath = searchParams.get("filePath");
-  const document = searchParams.get("document");
+  return skillContent(searchParams.get("cwd"), searchParams.get("filePath"), searchParams.get("document"));
+}
+
+export async function POST(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as { cwd?: unknown; filePath?: unknown; document?: unknown };
+  return skillContent(
+    typeof body.cwd === "string" ? body.cwd : null,
+    typeof body.filePath === "string" ? body.filePath : null,
+    typeof body.document === "string" ? body.document : null,
+  );
+}
+
+async function skillContent(cwd: string | null, filePath: string | null, document: string | null): Promise<Response> {
   if (!cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
   if (!filePath) return NextResponse.json({ error: "filePath required" }, { status: 400 });
 

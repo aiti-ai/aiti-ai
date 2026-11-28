@@ -128,10 +128,12 @@ async function fetchEntries(dirPath: string, showHidden = false): Promise<FileNo
 // Sends the target the operator was shown, so a link pointed elsewhere since
 // the listing is refused instead of granting a directory nobody looked at.
 async function allowOutsideLink(linkPath: string, target: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/files/${encodeFilePathForApi(linkPath)}?type=allow-link`), {
+  // The link's absolute path travels in the body under the reserved `link` segment: a
+  // catch-all path segment would put it into every access log that sees this request.
+  const res = await fetch(apiUrl("/api/files/link?type=allow-link"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ target }),
+    body: JSON.stringify({ linkPath, target }),
   });
   if (!res.ok) throw await responseError(res, "Failed to allow the linked folder");
 }

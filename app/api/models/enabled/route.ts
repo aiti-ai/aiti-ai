@@ -91,8 +91,26 @@ async function resolveCwd(raw: string | null): Promise<{ cwd: string } | { error
   return { cwd };
 }
 
+// GET /api/models/enabled?cwd= — kept for existing callers; new code must use POST
+// (the folder travels in the JSON body, never in a URL that access logs record).
 export async function GET(req: Request) {
-  const resolved = await resolveCwd(new URL(req.url).searchParams.get("cwd"));
+  return enabledView(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/models/enabled  body: { cwd? } — same read as GET. PUT stays the write path.
+export async function POST(req: Request) {
+  let bodyCwd: string | null = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    if (typeof body.cwd === "string" && body.cwd.trim()) bodyCwd = body.cwd;
+  } catch {
+    // Empty/non-JSON body → default cwd, like GET without the parameter.
+  }
+  return enabledView(bodyCwd);
+}
+
+async function enabledView(requestedCwd: string | null): Promise<Response> {
+  const resolved = await resolveCwd(requestedCwd);
   if ("error" in resolved) return resolved.error;
 
   try {

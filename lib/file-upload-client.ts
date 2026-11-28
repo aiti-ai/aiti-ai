@@ -1,7 +1,8 @@
 import { buildAtMentionText } from "./file-fuzzy.ts";
-import { encodeFilePathForApi } from "./file-paths.ts";
 
-/** Browser side of `POST /api/files/[...path]?type=upload`; mirrors `lib/file-upload.ts`. */
+/** Browser side of `POST /api/files/upload` (reserved segment, target directory in the form
+ *  body); mirrors `lib/file-upload.ts`. The directory is a form field rather than a URL path
+ *  segment so no absolute filesystem path reaches an access log. */
 export type UploadConflictStrategy = "error" | "overwrite" | "skip";
 
 export interface UploadError {
@@ -40,11 +41,13 @@ export function uploadFiles(
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file, file.name));
 
+    // The target directory travels as a form field, not in the URL: a catch-all path
+    // segment would put an absolute filesystem path into every access log that sees this
+    // request. `/api/files/upload` is the reserved segment the route dispatches on.
+    formData.append("directory", targetDirectory);
+
     const xhr = new XMLHttpRequest();
-    xhr.open(
-      "POST",
-      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}${ensureDir ? "&ensure=1" : ""}`,
-    );
+    xhr.open("POST", `/api/files/upload?conflict=${strategy}${ensureDir ? "&ensure=1" : ""}`);
     xhr.upload.onprogress = (event) => {
       if (onProgress && event.lengthComputable && event.total > 0) {
         onProgress(Math.round((event.loaded / event.total) * 100));

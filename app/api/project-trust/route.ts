@@ -5,7 +5,7 @@ import type {
   ProjectTrustResponse,
   ProjectTrustUnreadableResponse,
 } from "@/lib/api-types";
-import { readProjectMcpServers } from "@/lib/mcp-config-read";
+import { listProjectMcpServers } from "@/lib/mcp-config-read";
 import { isMcpEntryRefusal, mcpEntryRefusalResponse, mcpRefusalResponse, validateMcpProject } from "@/lib/mcp-entry-request";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { getProjectTrustStatus, trustProject } from "@/lib/project-trust";
@@ -28,15 +28,6 @@ async function validateCwd(value: unknown): Promise<
   const result = await validateMcpProject(value);
   if (isMcpEntryRefusal(result)) return { response: mcpEntryRefusalResponse(result) };
   return result;
-}
-
-async function listProjectMcpServers(agentDir: string, cwd: string, allowedRoots: Set<string>): Promise<ProjectMcpListing> {
-  try {
-    const { file, servers } = await readProjectMcpServers({ agentDir, cwd, allowedRoots });
-    return { mcpFile: file, mcpServers: servers };
-  } catch (error) {
-    return { mcpServers: [], mcpError: errorMessage(error) };
-  }
 }
 
 // GET /api/project-trust?cwd=<folder>: the trust status, and the servers the

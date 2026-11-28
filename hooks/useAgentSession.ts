@@ -4583,7 +4583,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const load = {};
     allModelsLoadRef.current = load;
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
-    fetch(apiUrl(`/api/models?scope=all${modelCwd ? `&cwd=${encodeURIComponent(modelCwd)}` : ""}`))
+    // cwd travels in the JSON body (never in the URL): query strings land in access logs.
+    fetch(apiUrl("/api/models"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "all", ...(modelCwd ? { cwd: modelCwd } : {}) }),
+    })
       .then(async (res) => {
         if (!res.ok) throw new Error(`Failed to load models (HTTP ${res.status})`);
         const d = await res.json() as ModelsResponse;

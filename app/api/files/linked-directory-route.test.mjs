@@ -47,7 +47,17 @@ function request(method, filePath, type, body, contentType = "application/json")
   return POST(new NextRequest(url, init), context);
 }
 
+/** The current wire form: reserved `link` segment, the link's absolute path in the body. */
 function allowLink(linkPath, target) {
+  return POST(new NextRequest("http://localhost/api/files/link?type=allow-link", {
+    method: "POST",
+    headers: { host: "localhost", "content-type": "application/json" },
+    body: JSON.stringify({ linkPath, target }),
+  }), { params: Promise.resolve({ path: ["link"] }) });
+}
+
+/** The legacy segment form, kept for clients still on the old bundle. */
+function allowLinkLegacy(linkPath, target) {
   return request("POST", linkPath, "allow-link", { target });
 }
 
@@ -201,4 +211,26 @@ test("a cwd that climbs out through a link is refused by the other routes too", 
     { headers: { host: "localhost" } },
   ));
   assert.equal(response.status, 403);
+});
+
+test("the legacy segment form still grants the same target (compatibility window)", async (t) => {
+  const fixture = createHub(t);
+  if (!fixture) return;
+  const { hub, elsewhere } = fixture;
+  const allowed = await allowLinkLegacy(path.join(hub, "linked"), elsewhere);
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(await allowed.json(), { path: elsewhere });
+});
+
+test("the body form refuses a missing linkPath instead of guessing one", async (t) => {
+  const fixture = createHub(t);
+  if (!fixture) return;
+  const { elsewhere } = fixture;
+  const refused = await POST(new NextRequest("http://localhost/api/files/link?type=allow-link", {
+    method: "POST",
+    headers: { host: "localhost", "content-type": "application/json" },
+    body: JSON.stringify({ target: elsewhere }),
+  }), { params: Promise.resolve({ path: ["link"] }) });
+  assert.equal(refused.status, 400);
+  assert.match((await refused.json()).error, /linkPath/);
 });

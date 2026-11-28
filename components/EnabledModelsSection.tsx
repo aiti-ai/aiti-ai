@@ -91,8 +91,13 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
-    fetch(apiUrl(`/api/models/enabled${query}`), { signal: controller.signal })
+    // POST: the folder travels in the JSON body — query strings land in access logs.
+    fetch(apiUrl("/api/models/enabled"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cwd ? { cwd } : {}),
+      signal: controller.signal,
+    })
       .then(async (res) => {
         const data = await readJsonOrThrow<EnabledModelsView>(res);
         setView(data);

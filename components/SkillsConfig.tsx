@@ -200,9 +200,18 @@ function SkillDetail({
 
     const load = async () => {
       try {
-        const params = new URLSearchParams({ cwd, filePath: skill.filePath });
-        if (documentPath !== rootDocument) params.set("document", documentPath);
-        const response = await fetch(apiUrl(`/api/skills/content?${params}`), { signal: controller.signal });
+        // POST: cwd/filePath/document go in the JSON body — a filesystem path must never
+        // appear in a URL (access logs / proxy logs).
+        const response = await fetch(apiUrl("/api/skills/content"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cwd,
+            filePath: skill.filePath,
+            ...(documentPath !== rootDocument ? { document: documentPath } : {}),
+          }),
+          signal: controller.signal,
+        });
         const data = (await response.json()) as Partial<SkillContentResponse> & { error?: string };
         if (!response.ok || data.error || typeof data.content !== "string") {
           throw new Error(data.error ?? `HTTP ${response.status}`);

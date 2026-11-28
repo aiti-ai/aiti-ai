@@ -194,19 +194,29 @@ async function validateUploadDirectory(directory: string, ensure = false): Promi
 // A directory link whose target is outside the allowed roots is listed but not
 // browsable. Allowing it is the operator's explicit choice, the same one as
 // selecting that directory as a workspace, and lasts until the server restarts.
+/** Body: { linkPath, target }. `linkPath` is an absolute filesystem path, so it must travel
+ *  in the body: a catch-all path segment would put it into every access log that sees the
+ *  request. `segments` (the legacy /api/files/<path>?type=allow-link form) carries it for
+ *  clients on the old bundle. */
 async function allowLinkedDirectory(
   request: NextRequest,
-  segments: string[],
+  segments: string[] | null,
 ): Promise<NextResponse> {
   if (!hasJsonContentType(request)) {
     return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
   }
-  const body = await request.json().catch(() => null) as { target?: unknown } | null;
+  const body = await request.json().catch(() => null) as { target?: unknown; linkPath?: unknown } | null;
   if (typeof body?.target !== "string" || !body.target) {
     return NextResponse.json({ error: "target must be the link target shown in the listing" }, { status: 400 });
   }
+  const linkPath = segments
+    ? filePathFromApiSegments(segments)
+    : typeof body.linkPath === "string" ? body.linkPath : "";
+  if (!linkPath) {
+    return NextResponse.json({ error: "linkPath must be the absolute path of the link" }, { status: 400 });
+  }
   const approval = checkLinkedDirectoryApproval(
-    filePathFromApiSegments(segments),
+    linkPath,
     body.target,
     await getAllowedFileRoots(),
   );
@@ -232,6 +242,13 @@ export async function POST(
 
   try {
     let { path: segments } = await params;
+    // allow-link (granting a symlinked directory outside the roots): the reserved `link`
+    // segment carries the link's absolute path in the JSON body, so no filesystem path
+    // reaches a URL/access log. The legacy /api/files/<path>?type=allow-link form below is
+    // kept for clients still running the old bundle.
+    if (segments[0] === "link") {
+      return allowLinkedDirectory(request, null);
+    }
     // allow-link（上游符号链目录授权）：type=allow-link + 段路径 → 授权后才能浏览根外目标
     if (request.nextUrl.searchParams.get("type") === "allow-link") {
       return allowLinkedDirectory(request, segments);
