@@ -309,6 +309,9 @@ function childFrom(handshake: Handshake, options: FacadeOptions): SocketChild {
       agentKey: hello.agentKey ?? options.agentKey,
       spawnfile: options.command,
       spawnargs: options.args,
+      replayBytes: typeof (hello as { journalBytes?: unknown }).journalBytes === "number"
+        ? (hello as { journalBytes: number }).journalBytes
+        : 0,
     },
     prelude,
   );

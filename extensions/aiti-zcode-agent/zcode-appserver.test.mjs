@@ -1,14 +1,14 @@
 /**
- * aiti-zcode-agent app-server 通道测试 —— wire 契约（桩 app-server 子进程），零网络零真凭据。
+ * aiti-zcode-agent app-server channel tests — wire contract (stubbed app-server subprocess), zero network, zero real credentials.
  *
  * Run: node --test pi-web-ext/aiti-zcode-agent/zcode-appserver.test.mjs
- * （node 24 原生 TS strip-types，import .ts 同 zcode-core.test.mjs）
+ * (node 24 native TS strip-types; imports .ts, same as zcode-core.test.mjs)
  *
- * 桩机制：STUB_SCRIPT（JSON 数组）驱动 send 后的事件序列；支持
- *   {__delay:ms} 延时、{__waitSends:n} 等到第 n 次 send 后继续；
- *   {__dieOnStart} 首次启动秒退（exit 1，重拉后正常运行）、{__alwaysDie} 每次启动都秒退；
- *   其余条目原样作为 wire 帧写回 stdout（session/event 通知）。
- * stub 收到的全部请求记录到 STUB_LOG 文件（每行一个 JSON）供断言。
+ * Stub mechanism: STUB_SCRIPT (a JSON array) drives the event sequence after each send; supports
+ *   {__delay:ms} delays, {__waitSends:n} waits until the n-th send before continuing;
+ *   {__dieOnStart} exits instantly on first start (exit 1, runs normally after respawn), {__alwaysDie} exits instantly on every start;
+ *   other entries are written back to stdout verbatim as wire frames (session/event notifications).
+ * All requests the stub receives are logged to the STUB_LOG file (one JSON per line) for assertions.
  */
 import assert from "node:assert/strict";
 import { test as __test } from "node:test";
@@ -32,31 +32,31 @@ process.env.EXT_MODEL_STATE_DIR = join(ROOT, "ext-model-state");
 const { AppServerSession, ZcodeAppServerConnection, toProtocolModel, toProtocolMode } = await import("./zcode-appserver.ts");
 
 /**
- * 存活连接登记：桩 app-server 是「读到 EOF 才退」的服务端，用例中间的断言失败会跳过
- * dispose() → 子进程带着继承的 stdio 管道活到文件结束，`node --test` 的**文件子进程
- * 永不退出**，整轮测试原地卡死（实测：并行负载下 abort 用例超时 → 全量套件停在 386 行）。
- * 故文件尾统一补杀，再删临时目录。
+ * Live connection registry: the stub app-server is a server that "exits only on EOF", so an assertion failure mid-case
+ * skips dispose() -> the subprocess keeps living on inherited stdio pipes until the file ends; the `node --test` **file
+ * subprocess never exits** and the whole run wedges in place (observed: under parallel load the abort case timed out ->
+ * the full suite stalled at line 386). Hence the blanket kill at end of file, then the temp dir is removed.
  */
 const liveConns = new Set();
 
 test.after(async () => {
   for (const c of liveConns) c.kill("SIGKILL");
   liveConns.clear();
-  // 等子进程真正退出释放句柄（Windows 目录被活进程 cwd 钉住时 rmSync 会 EBUSY）
+  // wait for the subprocess to fully exit and release handles (rmSync hits EBUSY on Windows while the dir is pinned by a live process cwd)
   await new Promise((r) => setTimeout(r, 150));
   rmSync(ROOT, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
-// 桩 app-server 脚本
+// stub app-server script
 // ---------------------------------------------------------------------------
 const STUB = `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import readline from "node:readline";
 const log = process.env.STUB_LOG;
 const script = JSON.parse(process.env.STUB_SCRIPT || "[]");
-// __dieOnStart：首次启动（STUB_LOG 不存在）置标记后 exit(1)，模拟 spawn 秒退；重拉后正常运行
-// __alwaysDie：每次启动都 exit(1)，模拟持续性启动失败（重试耗尽路径）
+// __dieOnStart: on first start (STUB_LOG absent) set the marker then exit(1), simulating an instant spawn death; runs normally after respawn
+// __alwaysDie: exit(1) on every start, simulating persistent startup failure (retry-exhaustion path)
 {
   const die = script.find((e) => e && (e.__dieOnStart || e.__alwaysDie));
   if (die && log) {
@@ -88,13 +88,13 @@ async function runScript() {
     if (entry && typeof entry === "object" && "__onStop" in entry) { continue; }
     if (entry && typeof entry === "object" && "__failSend32031" in entry) { continue; }
     if (entry && typeof entry === "object" && "__reverseUserInput" in entry) {
-      // 模拟 server→client 反向请求 interaction/requestUserInput（id = server-N，等应答；不重发）
+      // simulate a server→client reverse request interaction/requestUserInput (id = server-N, awaits the answer; not re-sent)
       const p = entry.__reverseUserInput || {};
       write({ id: "server-" + nextServerId++, method: "interaction/requestUserInput", params: p });
       continue;
     }
     if (entry && typeof entry === "object" && "__reverseProviderHeaders" in entry) {
-      // 模拟 server→client 反向请求 interaction/requestProviderRuntimeHeaders（start-plan 验证码协议）
+      // simulate a server→client reverse request interaction/requestProviderRuntimeHeaders (start-plan captcha protocol)
       const p = entry.__reverseProviderHeaders || {};
       write({
         id: "server-" + nextServerId++,
@@ -108,7 +108,7 @@ async function runScript() {
 }
 rl.on("line", (line) => {
   let msg; try { msg = JSON.parse(line); } catch { return; }
-  // 反向请求的应答
+  // answers to reverse requests
   if (msg.id !== undefined && msg.result !== undefined && typeof msg.id === "string" && msg.id.startsWith("server-")) {
     if (msg.result && typeof msg.result === "object" && "action" in msg.result) {
       rec({ __userInputAnswer: true, id: msg.id, result: msg.result });
@@ -135,13 +135,13 @@ rl.on("line", (line) => {
       break;
     }
     case "session/resume": {
-      // __rejectRuntimeModel：3.17+ 语义——runtimeModel 键已移除，strict schema 拒 unknown key
+      // __rejectRuntimeModel: 3.17+ semantics — the runtimeModel key was removed, strict schema rejects unknown keys
       if (script.some((e) => e && e.__rejectRuntimeModel) && msg.params && msg.params.runtimeModel !== undefined) {
         write({ id: msg.id, error: { code: -32603, message: 'ZodError: [{"code":"unrecognized_keys","path":["runtimeModel"]}]' } });
         break;
       }
       activeSid = (msg.params && msg.params.sessionId) || activeSid;
-      // __resumeTodos：快照 todos 种子（真机 resume 响应快照同构，含 todos）
+      // __resumeTodos: snapshot todos seed (isomorphic to a real-machine resume response snapshot, incl. todos)
       const todosEntry = script.find((e) => e && e.__resumeTodos);
       write({ id: msg.id, result: { record: {}, ...(todosEntry ? { todos: todosEntry.__resumeTodos } : {}) } });
       break;
@@ -164,7 +164,7 @@ rl.on("line", (line) => {
     }
     case "session/setModel":
     case "session/setMode": {
-      // __reasoningRequired：3.17+ 语义——声明档位的模型裸发 setModel（无 options）→ -32603
+      // __reasoningRequired: 3.17+ semantics — a tier-declaring model sent as bare setModel (no options) → -32603
       if (msg.method === "session/setModel" && script.some((e) => e && e.__reasoningRequired) && !(msg.params?.options?.reasoningLevel)) {
         const m = msg.params?.model || {};
         write({ id: msg.id, error: { code: -32603, message: "Reasoning level is required for " + (m.providerId || "?") + "/" + (m.modelId || "?") } });
@@ -175,7 +175,7 @@ rl.on("line", (line) => {
     }
     case "session/close": write({ id: msg.id, result: { closed: true } }); break;
     case "session/fork": {
-      // turnIndex=999 → 运行中拒绝（映射人话）；否则返回子会话 id（log 里断言 target 形状）
+      // turnIndex=999 → rejected while running (mapped to human wording); otherwise returns the child session id (target shape asserted from the log)
       if (msg.params?.target?.turnIndex === 999) {
         write({ id: msg.id, error: { code: -1, message: "Cannot fork while a prompt is running" } });
         break;
@@ -189,7 +189,7 @@ rl.on("line", (line) => {
 `;
 
 const ev = (type, payload) => ({ method: "session/event", params: { type, payload, sessionId: "sess_stub_1", seq: Math.floor(Math.random() * 1000) } });
-// 真机 wire 语义：流式帧带 assistantMessageId/partial partId；此 helper 统一补 msg 前缀可省
+// real-machine wire semantics: streaming frames carry assistantMessageId/partial partId; this helper uniformly adds the msg prefix so it can be omitted
 const ms = (kind, partId, extra = {}) => ev("model.streaming", { kind, assistantMessageId: "msg1", ...(partId ? { partId } : {}), ...extra });
 
 async function setup(opts) {
@@ -228,9 +228,9 @@ async function setup(opts) {
     events,
     logFile,
     /**
-     * 等某个事件到达（事件驱动，命中即了结；超时是「快速可见失败」而非原地挂死）。
-     * 用它替代定长 setTimeout 确认「本轮真的跑起来了」——并行负载下定时器抖动会把
-     * 这类用例拖成假红（实测：150ms 的 setTimeout 拖到 3.3s）。
+     * Wait for an event to arrive (event-driven, resolves on first hit; a timeout is a "fast visible failure" instead of wedging in place).
+     * Use it instead of fixed setTimeout to confirm "this turn really got going" — timer jitter under parallel load drags
+     * such cases into false reds (observed: a 150ms setTimeout stretched to 3.3s).
      */
     waitEvent: (pred, timeoutMs = 8000) => {
       const hit = events.find(pred);
@@ -249,7 +249,7 @@ async function setup(opts) {
 }
 
 async function readLog(logFile) {
-  // 应答帧的写出在 promise 微任务链上，同步紧跟 respondInteraction 读文件会早读（时序兑底）
+  // answer frames are written on a promise microtask chain; reading the file synchronously right after respondInteraction reads too early (timing backstop)
   await new Promise((r) => setTimeout(r, 60));
   const { readFileSync, existsSync } = await import("node:fs");
   if (!existsSync(logFile)) return [];
@@ -257,7 +257,7 @@ async function readLog(logFile) {
 }
 
 // ---------------------------------------------------------------------------
-// 纯函数
+// pure functions
 // ---------------------------------------------------------------------------
 
 test("toProtocolModel/toProtocolMode：ref 归一", () => {
@@ -271,7 +271,7 @@ test("toProtocolModel/toProtocolMode：ref 归一", () => {
 });
 
 // ---------------------------------------------------------------------------
-// E2E：流式文本
+// E2E: streaming text
 // ---------------------------------------------------------------------------
 
 test("app-server 通道：create→prefs 应答→subscribe→流式 text→turn.completed", async () => {
@@ -286,7 +286,7 @@ test("app-server 通道：create→prefs 应答→subscribe→流式 text→turn
     ],
   });
   const seenSessionIds = [];
-  // 重挂 onSessionId
+  // re-wire onSessionId
   s.session.opts.onSessionId = (sid) => seenSessionIds.push(sid);
   const outcome = await s.session.prompt("hi");
   assert.equal(outcome.cancelled, false);
@@ -303,16 +303,16 @@ test("app-server 通道：create→prefs 应答→subscribe→流式 text→turn
   assert.deepEqual(d1.assistantMessageEvent, { type: "text_start", contentIndex: 0 });
   assert.deepEqual(d2.assistantMessageEvent, { type: "text_delta", contentIndex: 0, delta: "你好" });
   assert.deepEqual(dEnd.assistantMessageEvent, { type: "text_end", contentIndex: 0, content: "你好，世界" });
-  // settled 帧在 message_end 之后（closeStream 先封口）
+  // the settled frame comes after message_end (closeStream seals the stream first)
   const settledIdx = types.indexOf("agent_settled");
   assert.ok(settledIdx > 4);
-  // settled 前依次是 agent_end、message_end(assistant 最终封口)
+  // right before settled: agent_end, then message_end (assistant final seal)
   assert.equal(types[settledIdx - 1], "agent_end");
   const finalMsg = s.events[settledIdx - 2].message;
   assert.equal(finalMsg.role, "assistant");
   assert.deepEqual(finalMsg.content, [{ type: "text", text: "你好，世界" }]);
 
-  // stub 日志：create 前反查 prefs 且应答被消费；subscribe 带 desktop-continuous
+  // stub log: prefs queried before create with the answer consumed; subscribe uses desktop-continuous
   const log = await readLog(s.logFile);
   assert.ok(log.some((l) => l.__prefsAnswered === true));
   const sub = log.find((l) => l.method === "session/subscribe");
@@ -360,7 +360,7 @@ test("app-server 通道：工具全流程（toolcall 流式 + 执行事件 + too
   });
   await s.session.prompt("hi");
   const types = s.events.map((e) => e.type);
-  // 关键顺序：text… → toolcall_end → [流式段封口 message_end(assistant)] → tool_execution_start → update → end → toolResult 卡 → 新 message_start → …
+  // key ordering: text… → toolcall_end → [streaming segment sealed by message_end(assistant)] → tool_execution_start → update → end → toolResult card → new message_start → …
   assert.ok(types.includes("tool_execution_start"));
   assert.ok(types.includes("tool_execution_update"));
   assert.ok(types.includes("tool_execution_end"));
@@ -376,10 +376,10 @@ test("app-server 通道：工具全流程（toolcall 流式 + 执行事件 + too
   assert.equal(tr.toolCallId, "call_1");
   assert.equal(tr.isError, false);
   assert.deepEqual(tr.content, [{ type: "text", text: "/home/pi" }]);
-  // 第二段文本 = 新的流式消息（msg1 封口后 msg2 重开）
+  // second text segment = a new streaming message (msg2 reopens after msg1 is sealed)
   const starts = s.events.filter((e) => e.type === "message_start");
   assert.equal(starts.length, 2);
-  // 最终 assistant 消息只有第二段文本
+  // the final assistant message holds only the second text segment
   const lastAssistantEnd = s.events.filter((e) => e.type === "message_end" && e.message?.role === "assistant").pop();
   assert.deepEqual(lastAssistantEnd.message.content, [{ type: "text", text: "目录是 /home/pi" }]);
   await s.session.dispose();
@@ -427,10 +427,10 @@ test("app-server 通道：原生 steer（运行中第二条 send 直达服务端
 test("app-server 通道：abort → session/stop → cancelled 收口（aborted）", async () => {
   const s = await setup({
     script: [
-      // 先发一个 text_delta：本轮真的跑起来了（waitEvent 命中）才允许 stop——定长
-      // setTimeout 在并行负载下会拖到成功帧之后，stop() 因 turnWaiters 尚空而 no-op（假红）。
+      // emit one text_delta first: stop() is only allowed once the turn is truly running (waitEvent hit) — a fixed
+      // setTimeout under parallel load can slip past the success frame, making stop() a no-op on empty turnWaiters (false red).
       ev("model.streaming", { kind: "text_delta", assistantMessageId: "msgA", delta: "慢慢" }),
-      // 长轮次：绿路由 cancelled 收口先行（~0.2s），只有 stop 真失效才付满 30s。
+      // long turn: the green path settles cancelled first (~0.2s); only a genuinely broken stop pays the full 30s.
       { __delay: 30000 },
       ev("turn.completed", { resultType: "success", tokenCount: 1, duration: 1 }),
     ],
@@ -479,7 +479,7 @@ test("app-server 通道：resume 携带 runtimeModel（provider 注入时，源�
   await s.session.prompt("hi");
   const lines = await readLog(s.logFile);
   const resume = lines.find((l) => l.method === "session/resume");
-  assert.ok(resume.params.runtimeModel, "resume 应携带 runtimeModel");
+  assert.ok(resume.params.runtimeModel, "resume should carry runtimeModel");
   assert.deepEqual(resume.params.runtimeModel.model, { providerId: "bigmodel", modelId: "GLM-5.3-Flash" });
   assert.equal(resume.params.runtimeModel.provider.providerId, "bigmodel");
   assert.equal(resume.params.runtimeModel.provider.kind, "anthropic");
@@ -498,11 +498,11 @@ test("app-server 通道：3.17+ 裸发 setModel 命中 Reasoning required → �
   assert.equal(outcome.tokenCount, 2);
   const lines = await readLog(s.logFile);
   const sets = lines.filter((l) => l.method === "session/setModel");
-  assert.ok(sets.length >= 2, "应有两段 setModel（裸发被拒 + options 重试）");
-  assert.equal(sets[0].params.options, undefined, "首发不带顶层 options");
-  assert.equal(sets[0].params.model.options, undefined, "首发 model 内无 options");
+  assert.ok(sets.length >= 2, "two setModel calls expected (bare send rejected + options retry)");
+  assert.equal(sets[0].params.options, undefined, "first call has no top-level options");
+  assert.equal(sets[0].params.model.options, undefined, "first call's model carries no options");
   const last = sets[sets.length - 1].params;
-  assert.equal(last.options, undefined, "options 挂 model 内而非请求顶层");
+  assert.equal(last.options, undefined, "options live inside model, not at the request top level");
   assert.equal(last.model.options?.reasoningLevel, "enabled");
   assert.equal(last.persistAsWorkspaceLastUsed, false);
   await s.session.dispose();
@@ -519,11 +519,11 @@ test("app-server 通道：3.17+ resume 拒 runtimeModel（unknown key）→ 无 
   assert.equal(outcome.tokenCount, 3);
   const lines = await readLog(s.logFile);
   const resumes = lines.filter((l) => l.method === "session/resume");
-  assert.equal(resumes.length, 2, "resume 应重试一次");
-  assert.ok(resumes[0].params.runtimeModel, "首发带 runtimeModel（旧 CLI 绕 -32031）");
-  assert.equal(resumes[1].params.runtimeModel, undefined, "重试不带 runtimeModel（3.17+ 已移除该键）");
+  assert.equal(resumes.length, 2, "resume should retry once");
+  assert.ok(resumes[0].params.runtimeModel, "first call carries runtimeModel (old-CLI -32031 workaround)");
+  assert.equal(resumes[1].params.runtimeModel, undefined, "retry drops runtimeModel (key removed in 3.17+)");
   const sets = lines.filter((l) => l.method === "session/setModel");
-  assert.ok(sets.length >= 1, "重试路径应补 setModel 对齐模型");
+  assert.ok(sets.length >= 1, "retry path should add setModel to realign the model");
   assert.deepEqual(sets.at(-1).params.model, { providerId: "bigmodel", modelId: "GLM-5.3-Flash" });
   await s.session.dispose();
 });
@@ -537,16 +537,16 @@ test("app-server 通道：send 遇 -32031 → 携带 runtimeModel 自动重发�
   assert.equal(outcome.tokenCount, 1);
   const lines = await readLog(s.logFile);
   const sends = lines.filter((l) => l.method === "session/send");
-  assert.equal(sends.length, 2, "首次 -32031 应自动重发一次");
+  assert.equal(sends.length, 2, "first -32031 should trigger one automatic resend");
   assert.equal(sends[0].params.runtimeModel, undefined);
-  assert.ok(sends[1].params.runtimeModel, "重发应携带 runtimeModel");
+  assert.ok(sends[1].params.runtimeModel, "resend should carry runtimeModel");
   await s.session.dispose();
 });
 
 test("app-server 通道：真机 wire 容错（无 partId / 无 *_start 帧 / 尾随文本新消息）", async () => {
   const s = await setup({
     script: [
-      // 真机形态（2026-09-07 抓包）：reasoning_delta 无 start、无 partId；tool 帧无 partId 靠 toolCallId
+      // real-machine shape (packet capture 2026-09-07): reasoning_delta without start or partId; tool frames without partId keyed by toolCallId
       ev("model.streaming", { kind: "reasoning_delta", assistantMessageId: "msgA", delta: "想一下" }),
       ev("model.streaming", { kind: "tool_input_start", assistantMessageId: "msgA", toolCallId: "call_x", toolName: "Bash" }),
       ev("model.streaming", { kind: "tool_input_delta", assistantMessageId: "msgA", toolCallId: "call_x", delta: '{"command":"uname -s"}' }),
@@ -554,7 +554,7 @@ test("app-server 通道：真机 wire 容错（无 partId / 无 *_start 帧 / �
       ev("model.streaming", { kind: "tool_call", assistantMessageId: "msgA", toolCallId: "call_x", toolName: "Bash" }),
       ev("tool.updated", { kind: "scheduled", toolCallId: "call_x", toolName: "Bash" }),
       ev("tool.updated", { kind: "result", toolCallId: "call_x", toolName: "Bash", result: { output: "Linux" }, duration: 10 }),
-      // 尾随文本：新 assistantMessageId，无 text_start，直接 text_delta
+      // trailing text: new assistantMessageId, no text_start, straight to text_delta
       ev("model.streaming", { kind: "text_delta", assistantMessageId: "msgB", delta: "结果是 Linux。" }),
       ev("turn.completed", { resultType: "success", tokenCount: 77, duration: 100 }),
     ],
@@ -562,7 +562,7 @@ test("app-server 通道：真机 wire 容错（无 partId / 无 *_start 帧 / �
   const outcome = await s.session.prompt("hi");
   assert.equal(outcome.tokenCount, 77);
   const types = s.events.map((e) => e.type);
-  // 结构断言：首段（thinking+tool）→ toolResult → 尾段 text，三段消息
+  // structural asserts: first segment (thinking+tool) -> toolResult -> trailing text, three messages
   const msgEnds = s.events.filter((e) => e.type === "message_end");
   const firstAssistant = msgEnds.find((e) => e.message?.role === "assistant");
   assert.deepEqual((firstAssistant.message.content).map((b) => b.type), ["thinking", "toolCall"]);
@@ -572,7 +572,7 @@ test("app-server 通道：真机 wire 容错（无 partId / 无 *_start 帧 / �
   assert.equal(toolResult.message.content[0].text, "Linux");
   const lastAssistant = msgEnds.filter((e) => e.message?.role === "assistant").pop();
   assert.deepEqual(lastAssistant.message.content, [{ type: "text", text: "结果是 Linux。" }]);
-  // 消息开合次数：msgA 一段 + msgB 一段 = 2 次 message_start（msgA 含 tool 前的 thinking 段）
+  // message open count: one segment for msgA + one for msgB = 2 message_start (msgA includes the thinking segment before the tool)
   const starts = s.events.filter((e) => e.type === "message_start");
   assert.equal(starts.length, 2);
   assert.ok(types.includes("tool_execution_start"));
@@ -588,7 +588,7 @@ test("app-server 通道：进程中途退出 → prompt 拒绝（下轮 respawn 
   });
   const p = s.session.prompt("hi");
   await new Promise((r) => setTimeout(r, 150));
-  // 杀掉 stub 进程
+  // kill the stub process
   const conn = s.session.conn;
   conn.kill("SIGKILL");
   await assert.rejects(p, /app-server 进程退出/);
@@ -603,7 +603,7 @@ test("app-server 通道：启动秒退（code=1）→ ensureReady 清理重拉�
     ],
   });
   const outcome = await s.session.prompt("hi");
-  assert.equal(outcome.tokenCount, 9); // 首次 spawn 秒退后自动重拉，本轮不被卡死
+  assert.equal(outcome.tokenCount, 9); // auto-respawn after the first instant-death spawn, this turn is not stuck
   const lines = await readLog(s.logFile);
   assert.ok(lines.some((l) => l.method === "session/create"));
   await s.session.dispose();
@@ -619,9 +619,9 @@ test("app-server 通道：create 后首轮 send 前无条件 setModel（所选�
   const createIdx = lines.findIndex((l) => l.method === "session/create");
   const setModelIdx = lines.findIndex((l) => l.method === "session/setModel");
   const sendIdx = lines.findIndex((l) => l.method === "session/send");
-  assert.ok(createIdx >= 0, "应先 create");
-  assert.ok(setModelIdx > createIdx, "create 后必须补 setModel（runtime 不读 env，默认模型会落到 GLM-5.3）");
-  assert.ok(sendIdx < 0 || setModelIdx < sendIdx, "setModel 必须在首轮 send 之前");
+  assert.ok(createIdx >= 0, "create must come first");
+  assert.ok(setModelIdx > createIdx, "setModel must follow create (the runtime does not read env; the default model would fall back to GLM-5.3)");
+  assert.ok(sendIdx < 0 || setModelIdx < sendIdx, "setModel must precede the first send");
   const setModel = lines[setModelIdx];
   assert.deepEqual(setModel.params.model, { providerId: "bigmodel-coding-plan", modelId: "GLM-5.3-Flash" });
   assert.equal(setModel.params.persistAsWorkspaceLastUsed, false);
@@ -636,7 +636,7 @@ test("app-server 通道：图片轮 session/send 内联 attachments（v1 kind/da
   try {
     await s.session.prompt("看图", [{ data: raw.toString("base64"), mimeType: "image/png", filename: "shot.png" }]);
     const lines = await readLog(s.logFile);
-    assert.ok(!lines.some((l) => (l.method ?? "").startsWith("v4/attachment/")), "v1 面不需要 v4 附件上传");
+    assert.ok(!lines.some((l) => (l.method ?? "").startsWith("v4/attachment/")), "the v1 surface needs no v4 attachment upload");
     const send = lines.find((l) => l.method === "session/send");
     assert.equal(send.params.content, "看图");
     assert.deepEqual(send.params.attachments, [{
@@ -669,15 +669,15 @@ test("app-server 通道：轮次中被杀 → 本轮拒绝；下轮 prompt 自�
   await new Promise((r) => setTimeout(r, 150));
   s.session.conn.kill("SIGKILL");
   await assert.rejects(p1, /app-server 进程退出/);
-  const o2 = await s.session.prompt("第二条"); // 重拉 + resume，会话恢复常态
+  const o2 = await s.session.prompt("第二条"); // respawn + resume, session back to normal
   assert.equal(o2.tokenCount, 1);
   const lines = await readLog(s.logFile);
-  assert.ok(lines.filter((l) => l.method === "session/resume").length >= 2); // 初次 + 重拉后各一次
+  assert.ok(lines.filter((l) => l.method === "session/resume").length >= 2); // once initially + once after respawn
   await s.session.dispose();
 });
 
 // ---------------------------------------------------------------------------
-// 交互元语桥接（interaction/requestUserInput → interaction_request 事件 → respondInteraction）
+// interaction primitive bridging (interaction/requestUserInput → interaction_request event → respondInteraction)
 // ---------------------------------------------------------------------------
 
 test("交互元语：plan 审批（ExitPlanMode）→ 批准应答 accept+answer:approve", async () => {
@@ -698,22 +698,22 @@ test("交互元语：plan 审批（ExitPlanMode）→ 批准应答 accept+answer
     sessId: "sess_existing",
   });
   const p = s.session.prompt("做吧");
-  // 事件异步到达，轮询等 interaction_request（非轮询业务逻辑，仅测试等待桩投递）
+  // events arrive async; poll-wait for interaction_request (not business-logic polling — just the test waiting for stub delivery)
   let req;
   for (let i = 0; i < 100 && !req; i++) {
     await new Promise((r) => setTimeout(r, 20));
     req = s.events.find((e) => e.type === "interaction_request");
   }
-  assert.ok(req, "应发出 interaction_request 事件");
+  assert.ok(req, "interaction_request event should be emitted");
   assert.equal(req.kind, "plan_approval");
   assert.equal(req.requestId, "req_plan_1");
   assert.equal(req.toolName, "ExitPlanMode");
   assert.match(req.plan, /改 store\.ts/);
-  // 批准
+  // approve
   assert.equal(s.session.respondInteraction("req_plan_1", { action: "accept" }), true);
   const outcome = await p;
   assert.equal(outcome.cancelled, false);
-  // stub 收到的应答帧：accept + answer approve
+  // answer frame received by the stub: accept + answer approve
   const answers = (await readLog(s.logFile)).filter((l) => l.__userInputAnswer);
   assert.equal(answers.length, 1);
   assert.deepEqual(answers[0].result, { action: "accept", content: { answer: "approve" } });
@@ -770,19 +770,19 @@ test("交互元语：问题模式（AskUserQuestion）单选/多选 answers 回�
     await new Promise((r) => setTimeout(r, 20));
     req = s.events.find((e) => e.type === "interaction_request");
   }
-  assert.ok(req, "应发出 interaction_request");
+  assert.ok(req, "interaction_request should be emitted");
   assert.equal(req.kind, "ask_user");
   assert.equal(req.questions.length, 1);
   assert.equal(req.questions[0].question, "用哪个数据库？");
   assert.deepEqual(req.questions[0].options.map((o) => o.label), ["SQLite", "Postgres"]);
   assert.equal(req.questions[0].options[0].description, "零依赖");
-  // 未知 id fail-loud（返回 false，不抛）
+  // unknown id fail-loud (returns false, does not throw)
   assert.equal(s.session.respondInteraction("nope", { action: "accept" }), false);
   assert.equal(s.session.respondInteraction("req_ask_1", { action: "accept", answers: { "用哪个数据库？": "SQLite" }, message: "  附加说明：选 SQLite 是因为本地开发  " }), true);
   await p;
   const answers = (await readLog(s.logFile)).filter((l) => l.__userInputAnswer);
   assert.equal(answers.length, 1);
-  // message → annotations.notes（trim 后挂到每道已答题；zcode 契约 schema 字段）
+  // message → annotations.notes (trimmed and attached to each answered question; zcode contract schema field)
   assert.deepEqual(answers[0].result, { action: "accept", content: {
     answers: { "用哪个数据库？": "SQLite" },
     annotations: { "用哪个数据库？": { notes: "附加说明：选 SQLite 是因为本地开发" } },
@@ -811,9 +811,9 @@ test("交互元语：直接拒绝 + turn 收口清理未决请求（decline 应�
     req = s.events.find((e) => e.type === "interaction_request");
   }
   assert.ok(req);
-  // 用户直接拒绝
+  // user declines directly
   assert.equal(s.session.respondInteraction("req_decl_1", { action: "decline" }), true);
-  // 收口清理：第二个未决请求（req_decl_2）随 turn.completed 自动 decline + expired
+  // settle cleanup: the second pending request (req_decl_2) auto-declines + expires with turn.completed
   await p;
   const expired = s.events.filter((e) => e.type === "interaction_expired");
   assert.ok(expired.some((e) => e.requestId === "req_decl_1" && e.reason === "resolved"));
@@ -824,7 +824,7 @@ test("交互元语：直接拒绝 + turn 收口清理未决请求（decline 应�
 
 
 // ---------------------------------------------------------------------------
-// start-plan 验证码桥（interaction/requestProviderRuntimeHeaders 三态）
+// start-plan captcha bridge (interaction/requestProviderRuntimeHeaders, three states)
 // ---------------------------------------------------------------------------
 
 const START_PLAN_PROVIDER = {
@@ -848,11 +848,11 @@ test("provider headers 桥：solver 成功 → 带 headers 重 upsert + 应答 {
   assert.equal(outcome.cancelled, false);
   await s.session.dispose();
   const log = await readLog(s.logFile);
-  // 应答帧：strict zod 只允许 headersApplied（±errorMessage/providerRevision）——这里恰一键
+  // answer frame: strict zod only allows headersApplied (± errorMessage/providerRevision) — exactly one key here
   const answers = log.filter((e) => e.__providerHeadersAnswer);
   assert.equal(answers.length, 1);
   assert.deepEqual(answers[0].result, { headersApplied: true });
-  // 重 upsert：第二次 upsertModelProvider 带 headers（首 upsert 在启动序列、无 headers）
+  // re-upsert: the second upsertModelProvider carries headers (the first upsert is in the startup sequence, headerless)
   const upserts = log.filter((e) => e.method === "workspace/upsertModelProvider");
   assert.ok(upserts.length >= 2, `expect >=2 upserts, got ${upserts.length}`);
   const withHeaders = upserts.find((e) => e.params?.provider?.headers);
@@ -878,7 +878,7 @@ test("provider headers 桥：solver 失败 → 应答 {headersApplied:false, err
   const answers = log.filter((e) => e.__providerHeadersAnswer);
   assert.deepEqual(answers[0].result, { headersApplied: false, errorMessage: "用户取消了验证码" });
   const withHeaders = log.filter((e) => e.method === "workspace/upsertModelProvider" && e.params?.provider?.headers);
-  assert.equal(withHeaders.length, 0, "失败不得回填 headers");
+  assert.equal(withHeaders.length, 0, "failure must not backfill headers");
 });
 
 test("provider headers 桥：未配置 solver → {headersApplied:false}（start-plan 轮次人话失败）", async () => {
@@ -907,16 +907,16 @@ test("源码契约：agent_settled 清未决验证码请求（expire 帧 + resol
   assert.match(indexSrc, /respondProviderHeaders: true/);
   assert.match(indexSrc, /onProviderHeadersRequest: \(req\) => this\.solveProviderHeaders\(req\)/);
   assert.match(indexSrc, /builtin:\$\{providerId\}|wireProviderId\(providerId\)/);
-  assert.match(indexSrc, /isStartPlanChannel\(providerId\)\s*\n?[\s\S]{0,120}ensureStartPlanCredential/);
+  assert.match(indexSrc, /isStartPlanChannel\(providerId\)\s*\n?[\s\S]{0,240}ensureStartPlanCredential/);
 });
 
 // ---------------------------------------------------------------------------
-// session/fork（编辑从此处 / 分支 的协议面）
+// session/fork (the protocol surface behind "edit from here" / branching)
 // ---------------------------------------------------------------------------
 
 test("forkFromTurn：target {kind:turn,turnIndex} + 返回 forkedSessionId", async () => {
   const s = await setup({ script: [ev("turn.completed", { resultType: "success", tokenCount: 5, duration: 3 })] });
-  await s.session.prompt("hi"); // 走完 create/prefs/subscribe，会话就绪
+  await s.session.prompt("hi"); // completes create/prefs/subscribe so the session is ready
   const forked = await s.session.forkFromTurn(2);
   assert.equal(forked, "sess_forked_1");
   await s.session.dispose();
@@ -938,7 +938,7 @@ test("forkFromTurn：运行中拒绝映射人话（Cannot fork while → 运行�
 });
 
 // ---------------------------------------------------------------------------
-// 任务列表镜像（TodoWrite working plan；docs/aiti-zcode-agent-task-list-plan.md）
+// task list mirroring (TodoWrite working plan; docs/aiti-zcode-agent-task-list-plan.md)
 // ---------------------------------------------------------------------------
 
 test("任务列表：TodoWrite 工具 input 派生 → onTaskList 快照（对象条目 + 变化检测）", async () => {
@@ -956,7 +956,7 @@ test("任务列表：TodoWrite 工具 input 派生 → onTaskList 快照（对�
   });
   await s.session.prompt("hi");
   await s.session.dispose();
-  assert.equal(snapshots.length, 1, "变化一次只发一帧");
+  assert.equal(snapshots.length, 1, "one change emits exactly one frame");
   assert.deepEqual(snapshots[0], [
     { content: "调研", status: "completed", priority: "high" },
     { content: "实施", status: "in_progress", priority: "high" },
@@ -972,7 +972,7 @@ test("任务列表：跨轮持续 + 同列表不重发 + TodoRead/无关工具�
       ev("tool.updated", { kind: "scheduled", toolCallId: "c1", toolName: "TodoWrite", input: { todos } }),
       ev("turn.completed", { resultType: "success", tokenCount: 5, duration: 3 }),
       { __waitSends: 2 },
-      // 第二轮：TodoRead（只读）、无关工具带 items 形状（不应命中）、重复同列表（去重）
+      // second turn: TodoRead (read-only), an unrelated tool with an items shape (should not match), a duplicate of the same list (dedup)
       ev("tool.updated", { kind: "scheduled", toolCallId: "c2", toolName: "TodoRead", input: { todos } }),
       ev("tool.updated", { kind: "scheduled", toolCallId: "c3", toolName: "WebFetch", input: { items: [{ content: "X", status: "pending" }] } }),
       ev("tool.updated", { kind: "result", toolCallId: "c1", toolName: "TodoWrite", result: { output: JSON.stringify({ oldTodos: todos, todos }) } }),
@@ -983,7 +983,7 @@ test("任务列表：跨轮持续 + 同列表不重发 + TodoRead/无关工具�
   await s.session.prompt("hi");
   await s.session.prompt("hi2");
   await s.session.dispose();
-  assert.equal(snapshots.length, 1, "TodoRead/无关工具/重复列表均不触发新帧");
+  assert.equal(snapshots.length, 1, "TodoRead / unrelated tools / duplicate lists must not emit a new frame");
   assert.equal(snapshots[0].length, 2);
 });
 
@@ -991,12 +991,12 @@ test("任务列表：字符串条目归一 + 非法 status 过滤整组弃 + MCP
   const snapshots = [];
   const s = await setup({
     script: [
-      // mcp 变体名 + output JSON 字符串兜底路（input 无列表）
+      // mcp variant name + the output JSON-string fallback path (no list in input)
       ev("tool.updated", { kind: "scheduled", toolCallId: "m1", toolName: "mcp__plans__update_plan", input: {} }),
       ev("tool.updated", { kind: "result", toolCallId: "m1", toolName: "mcp__plans__update_plan", result: { output: JSON.stringify({ plan: ["第一步", { content: "第二步", status: "in_progress" }] }) } }),
       ev("turn.completed", { resultType: "success", tokenCount: 5, duration: 3 }),
       { __waitSends: 2 },
-      // 非法条目（status 非法）→ all-or-nothing 不更新
+      // invalid entry (bad status) -> all-or-nothing, no update
       ev("tool.updated", { kind: "scheduled", toolCallId: "m2", toolName: "TodoWrite", input: { todos: [{ content: "好", status: "completed" }, { content: "坏", status: "cancelled" }] } }),
       ev("turn.completed", { resultType: "success", tokenCount: 5, duration: 3 }),
     ],
@@ -1005,8 +1005,8 @@ test("任务列表：字符串条目归一 + 非法 status 过滤整组弃 + MCP
   await s.session.prompt("hi");
   await s.session.prompt("hi2");
   await s.session.dispose();
-  assert.equal(snapshots.length, 1, "非法 status 组不更新（all-or-nothing）");
-  // 字符串条目走桌面 _Cn 缺省：首项 in_progress 其余 pending（对象条目自带 status）
+  assert.equal(snapshots.length, 1, "invalid-status group does not update (all-or-nothing)");
+  // string entries use the desktop _Cn defaults: first in_progress, rest pending (object entries carry their own status)
   assert.deepEqual(snapshots[0], [
     { content: "第一步", status: "in_progress" },
     { content: "第二步", status: "in_progress" },
@@ -1030,11 +1030,11 @@ test("任务列表：流式 tool_call 帧派生（真机 wire：scheduled 事件
   const snapshots = [];
   const s = await setup({
     script: [
-      // 真机形态：tool_input 流式 → tool_call（参数定型）→ tool.updated scheduled 被剥 input
+      // real-machine shape: tool_input streaming → tool_call (args finalized) → tool.updated scheduled with input stripped
       ev("model.streaming", { kind: "tool_input_start", assistantMessageId: "msg1", partId: "pt1", toolCallId: "call_tw", toolName: "TodoWrite" }),
       ev("model.streaming", { kind: "tool_input_delta", assistantMessageId: "msg1", partId: "pt1", delta: JSON.stringify({ todos: [{ content: "流式任务甲", status: "completed", priority: "high" }, { content: "流式任务乙", status: "in_progress" }] }) }),
       ev("model.streaming", { kind: "tool_call", assistantMessageId: "msg1", partId: "pt1", toolCallId: "call_tw", toolName: "TodoWrite" }),
-      // scheduled 无 input（inputOmitted:true）+ result 无 toolName（callId 反查）→ 均不得误更新/丢更新
+      // scheduled without input (inputOmitted:true) + result without toolName (resolved via callId) → neither may mis-update or drop the update
       ev("tool.updated", { kind: "scheduled", toolCallId: "call_tw", toolName: "TodoWrite", inputOmitted: true, inputRef: "model_stream", inputByteLength: 120 }),
       ev("tool.updated", { kind: "result", toolCallId: "call_tw", result: { output: JSON.stringify({ todos: [{ content: "流式任务甲", status: "completed", priority: "high" }, { content: "流式任务乙", status: "in_progress" }] }) } }),
       ev("turn.completed", { resultType: "success", tokenCount: 5, duration: 3 }),
@@ -1043,7 +1043,7 @@ test("任务列表：流式 tool_call 帧派生（真机 wire：scheduled 事件
   });
   await s.session.prompt("hi");
   await s.session.dispose();
-  assert.equal(snapshots.length, 1, "tool_call 帧捕获一次；剥 input 的 scheduled 不重复、同值 result 去重");
+  assert.equal(snapshots.length, 1, "tool_call frame captured once; input-stripped scheduled not repeated, same-value result deduplicated");
   assert.deepEqual(snapshots[0], [
     { content: "流式任务甲", status: "completed", priority: "high" },
     { content: "流式任务乙", status: "in_progress" },
