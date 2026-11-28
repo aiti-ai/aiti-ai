@@ -3,20 +3,21 @@
 import { createContext, memo, useContext, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
-import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
+import { parsePdfPageFragment, resolveLocalFileHref, resolveLocalFileLink, shouldOpenLocalFileInApp, type FileLinkTarget } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { blockPlainText } from "@/lib/markdown-block-text";
 import { isAudioPath, isVideoPath } from "@/lib/file-types";
-import { createMarkdownUrlTransform, isExternalMarkdownHref, jumpToMarkdownFragment, markdownDocumentRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownTextLayoutRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { parseFenceBlock, splitMarkdownBlocks } from "@/lib/markdown-blocks";
+import { createMarkdownUrlTransform, escapeRawHtmlTags, isExternalMarkdownHref, jumpToMarkdownFragment, markdownAppUrlTransform, markdownDocumentRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownTextLayoutRemarkPlugins, markdownUrlTransform, markdownUserRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
+import { isPlantUmlLang } from "@/lib/plantuml.ts";
+import { useI18n } from "@/hooks/useI18n";
+import { copyText } from "@/lib/clipboard";
 import { ImagePreview } from "./ImagePreview.tsx";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock.tsx";
 import { SvgBlock } from "./SvgBlock.tsx";
 import { PlantUmlBlock } from "./PlantUmlBlock.tsx";
-import { isPlantUmlLang } from "@/lib/plantuml.ts";
-import { useI18n } from "@/hooks/useI18n";
-import { copyText } from "@/lib/clipboard";
 import { useParagraphClickHandlers } from "./ExtSlots.tsx";
 
 // Minimum interval between two full Markdown parses while streaming: text deltas within
@@ -30,7 +31,7 @@ interface MarkdownBodyProps {
   className?: string;
   isStreaming?: boolean;
   cwd?: string;
-  onOpenFile?: (filePath: string, page?: number) => void;
+  onOpenFile?: (filePath: string, target?: FileLinkTarget) => void;
   /** Message role ("user" / "assistant" / undefined) — consumed by the paragraph-click recognizer (e.g. show actions only for user input) */
   messageRole?: string;
   /** Session/message the paragraph belongs to (optional passthrough; filled into ParagraphClickInfo when the extension needs it) */
@@ -186,9 +187,9 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
           </MarkdownLinkContext.Provider>
         );
       }
-      const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
+      const fileLink = onOpenFile ? resolveLocalFileLink(href, cwd) : null;
       const openFile = onOpenFile;
-      if (!filePath || !openFile) {
+      if (!fileLink || !openFile) {
         return (
           <MarkdownLinkContext.Provider value={true}>
             <a href={href} {...props} target="_blank" rel="noopener noreferrer">
@@ -203,7 +204,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         const target = event.currentTarget.getAttribute("target");
         if (target && target !== "_self") return;
         event.preventDefault();
-        openFile(filePath, parsePdfPageFragment(href) ?? undefined);
+        openFile(fileLink.path, fileLink.target);
       };
 
       return (

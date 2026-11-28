@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, memo, Suspense, useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
 import { apiUrl } from "@/lib/base-path";
 
 // Subpath imports (not via the main entry): the main entry re-exports the full Prism
@@ -30,7 +30,7 @@ import { FILE_WATCH_HEARTBEAT_MS, fileVersion, fileVersionChanged } from "@/lib/
 import { injectSandboxedHtmlPolyfill } from "@/lib/html-sandbox-polyfill";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
 import { pageId, trackEventSource } from "@/lib/page-debug";
-import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
+import { resolveLocalFileHref, resolveLocalFileLink, shouldOpenLocalFileInApp, type FileLineRange, type FileLinkTarget } from "@/lib/file-links";
 import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots.tsx";
 import { parseFrontmatter } from "@/lib/frontmatter";
@@ -42,7 +42,8 @@ import { isPlantUmlLang } from "@/lib/plantuml";
 import { DelimitedTable } from "./DelimitedTable.tsx";
 import { isDelimitedTablePath } from "@/lib/delimited-table";
 import { FrontmatterCard } from "./FrontmatterCard.tsx";
-import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
+import { MentionIcon } from "./SidebarIcons.tsx";
+import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, type SplitDiffCellType, type SplitDiffGap, type SplitDiffRow, type UnifiedDiffLine } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
 import { useConnStarvation } from "@/hooks/useConnStarvation";
@@ -61,11 +62,11 @@ interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
+  onOpenFile?: (filePath: string, target?: FileLinkTarget) => void;
   /** Revision view (OpenFileOptions.atRevision): read a git blob instead of the working-tree file (read-only; no watch, no git diff tab). */
   atRevision?: RevisionRef;
   /** "file" (default) or "folder" — folder kind delegates to a fileViewer slot takeover (the folder-viewer extension). */
   kind?: "file" | "folder";
-  onOpenFile?: (filePath: string, page?: number) => void;
   onOpenFolder?: (folderPath: string, folderName: string) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   /** Insert this file's relative path into the chat input (@ mention). */
@@ -74,6 +75,8 @@ interface Props {
   initialDisplayMode?: DisplayMode;
   /** PDF page to open on first render (`#page=N` from a markdown link). */
   initialPage?: number;
+  /** Source lines to show and mark on first render (`:42`, `:10-20` from a link). */
+  initialLines?: FileLineRange;
   initialState?: FileViewerState;
   onStateChange?: (state: FileViewerState) => void;
   watchEnabled?: boolean;
@@ -154,20 +157,39 @@ const FILE_PINNED_LINE_NUMBER_STYLE: CSSProperties = {
 
 type SourceCodeRendererProps = Parameters<NonNullable<SyntaxHighlighterProps["renderer"]>>[0] & {
   wrapLines: boolean;
+  targetLines?: FileLineRange;
 };
+
+/** The class of a source row: a row among the lines a link pointed at is marked. */
+function sourceLineClassName(lineNumber: number, targetLines: FileLineRange | undefined): string {
+  return targetLines && lineNumber >= targetLines.start && lineNumber <= targetLines.end
+    ? "file-source-line is-link-target"
+    : "file-source-line";
+}
+
+/**
+ * Scroll the viewer's own box to a link's lines: a range that fits is centred,
+ * a longer one starts a line below the top. Never `scrollIntoView()`, which
+ * also scrolls the panel's `overflow: hidden` ancestors. False while the first
+ * line is not rendered (not loaded yet, or past the end of the file).
+ */
+function scrollToSourceLines(content: HTMLElement, lines: FileLineRange): boolean {
+  const row = (line: number) => content.querySelector<HTMLElement>(`.file-source-line[data-line-number="${line}"]`);
+  const first = row(lines.start);
+  if (!first) return false;
+  const last = row(lines.end) ?? first;
+  const box = content.getBoundingClientRect();
+  const top = first.getBoundingClientRect().top - box.top + content.scrollTop;
+  const height = last.getBoundingClientRect().bottom - box.top + content.scrollTop - top;
+  const room = content.clientHeight;
+  content.scrollTop = Math.max(0, height <= room ? top - (room - height) / 2 : top - first.offsetHeight);
+  content.scrollLeft = 0;
+  return true;
+}
 
 interface SelectedLineRange {
   startLine: number;
   endLine: number;
-}
-
-function MentionIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
-    </svg>
-  );
 }
 
 function closestSourceLine(node: Node): HTMLElement | null {
@@ -228,7 +250,7 @@ function getSelectedSourceLineRange(root: HTMLElement, selection: Selection | nu
   return { startLine, endLine };
 }
 
-function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: SourceCodeRendererProps) {
+function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines, targetLines }: SourceCodeRendererProps) {
   return rows.map((row, lineIndex) => {
     const children = row.children ?? [];
     const firstChildClasses = children[0]?.properties?.className;
@@ -239,7 +261,7 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
 
     return (
       <span
-        className="file-source-line"
+        className={sourceLineClassName(lineIndex + 1, targetLines)}
         data-line-number={lineIndex + 1}
         key={`source-line-${lineIndex}`}
         style={{ display: "flex", minWidth: "100%" }}
@@ -417,24 +439,152 @@ const DiffLineCode = memo(function DiffLineCode({
   );
 });
 
+/** Two code columns side by side, or one column; the chat's patch cards take the same two. */
+type DiffLayout = "split" | "stacked";
+
+// Two columns where each still holds about 25 characters of code beside its
+// gutter: the panel's default width on a desktop (42% of the window, at least
+// 360px) has them, a phone's full-screen panel and one dragged narrow do not.
+// Narrower, a split view wraps nearly every line of each column.
+const SPLIT_DIFF_MIN_WIDTH = 520;
+
+/**
+ * The diff layout the viewer's own box has room for. Its width, not the
+ * window's: a desktop window can hold a file panel as narrow as a phone.
+ */
+function useDiffLayout(box: HTMLElement | null): DiffLayout {
+  const [layout, setLayout] = useState<DiffLayout>("stacked");
+  useLayoutEffect(() => {
+    if (!box) return;
+    const update = () => setLayout(box.clientWidth >= SPLIT_DIFF_MIN_WIDTH ? "split" : "stacked");
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [box]);
+  return layout;
+}
+
+// A row of the two-column diff: the old line beside the new one. Hunk headers
+// carry no file content and are dropped, as in the one-column view.
+type DiffRow = Extract<SplitDiffRow, { type: "line" }>;
+
+function diffRows(patch: string): Array<DiffRow | DiffGap> {
+  const files = parseUnifiedPatch(patch);
+  if (!files) return [];
+  return files.flatMap((file) => file.rows.filter((row): row is DiffRow | DiffGap => row.type !== "hunk"));
+}
+
+type DiffSegment<T> = { hidden: true; count: number | null } | { hidden: false; items: T[] };
+
+// Show DIFF_CONTEXT lines around each change and fold the rest. Folded lines
+// and the lines the patch leaves out between hunks share one marker; its count
+// is unknown when a gap's is.
+const DIFF_CONTEXT = 3;
+
+function collapseDiff<T extends { type: string }>(
+  diff: Array<T | DiffGap>,
+  isChange: (item: T) => boolean,
+): { segments: DiffSegment<T>[]; shown: number } {
+  const isGap = (item: T | DiffGap): item is DiffGap => item.type === "gap";
+  const visible = new Set<number>();
+  diff.forEach((item, index) => {
+    if (isGap(item) || !isChange(item)) return;
+    for (let j = Math.max(0, index - DIFF_CONTEXT); j <= Math.min(diff.length - 1, index + DIFF_CONTEXT); j++) {
+      visible.add(j);
+    }
+  });
+  const isShown = (j: number) => !isGap(diff[j]) && visible.has(j);
+  const segments: DiffSegment<T>[] = [];
+  let shown = 0;
+  let i = 0;
+  while (i < diff.length) {
+    if (isShown(i)) {
+      const items: T[] = [];
+      while (i < diff.length && isShown(i)) {
+        const item = diff[i];
+        if (!isGap(item)) items.push(item);
+        i++;
+      }
+      shown += items.length;
+      segments.push({ hidden: false, items });
+    } else {
+      let count: number | null = 0;
+      while (i < diff.length && !isShown(i)) {
+        const item = diff[i];
+        const skipped = isGap(item) ? item.count : 1;
+        count = count === null || skipped === null ? null : count + skipped;
+        i++;
+      }
+      segments.push({ hidden: true, count });
+    }
+  }
+  return { segments, shown };
+}
+
+const DIFF_ADDED_BACKGROUND = "rgba(0,200,80,0.12)";
+const DIFF_REMOVED_BACKGROUND = "rgba(240,60,60,0.14)";
+
+function diffChangeBackground(type: SplitDiffCellType): string {
+  return type === "added"
+    ? DIFF_ADDED_BACKGROUND
+    : type === "removed"
+    ? DIFF_REMOVED_BACKGROUND
+    : type === "empty"
+    ? "var(--bg-subtle)"
+    : "transparent";
+}
+
+function diffChangeBorder(type: SplitDiffCellType): string {
+  return type === "added"
+    ? "3px solid #4ade80"
+    : type === "removed"
+    ? "3px solid #f87171"
+    : "3px solid transparent";
+}
+
+function DiffGapMarker({ count }: { count: number | null }) {
+  const { t } = useI18n();
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        padding: "2px 16px",
+        color: "var(--text-dim)",
+        background: "var(--bg-panel)",
+        fontSize: 11,
+        borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      {count === null ? "⋯" : `⋯ ${diffGapLabel(count, t)}`}
+    </div>
+  );
+}
+
 function DiffView({
   patch,
   wrapLines,
   language = "text",
   prismReady = false,
   isDark = false,
+  layout = "stacked",
 }: {
   patch: string;
   wrapLines: boolean;
   language?: string;
   prismReady?: boolean;
   isDark?: boolean;
+  layout?: DiffLayout;
 }) {
   const { t } = useI18n();
+  if (layout === "split") {
+    return <SplitDiffView patch={patch} language={language} prismReady={prismReady} isDark={isDark} />;
+  }
   const diff = diffLines(patch);
 
   const isChange = (l: DiffLine | DiffGap) => l.type === "added" || l.type === "removed";
-  const hasChanges = diff.some(isChange);
+  const hasChanges = diff.some((l) => l.type !== "gap" && isChange(l));
   if (!hasChanges) {
     return (
       <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
@@ -485,7 +635,6 @@ function DiffView({
       segments.push({ hidden: true, count });
     }
   }
-
   return (
     <div
       className="file-diff-view"
@@ -496,31 +645,8 @@ function DiffView({
       }}
     >
       {segments.map((seg, si) => {
-        if (seg.hidden) {
-          const result = (
-            <div
-              key={si}
-              style={{
-                padding: "2px 16px",
-                color: "var(--text-dim)",
-                background: "var(--bg-panel)",
-                fontSize: 11,
-                borderTop: "1px solid var(--border)",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              {seg.count === null ? "⋯" : `⋯ ${diffGapLabel(seg.count, t)}`}
-            </div>
-          );
-          return result;
-        }
+        if (seg.hidden) return <DiffGapMarker key={si} count={seg.count} />;
         const lines = seg.lines.map((line, li) => {
-          const bg =
-            line.type === "added"
-              ? "rgba(0,200,80,0.12)"
-              : line.type === "removed"
-              ? "rgba(240,60,60,0.14)"
-              : "transparent";
           const prefix =
             line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
           const prefixColor =
@@ -533,12 +659,8 @@ function DiffView({
               style={{
                 display: "flex",
                 minWidth: "100%",
-                background: bg,
-                borderLeft: line.type === "added"
-                  ? "3px solid #4ade80"
-                  : line.type === "removed"
-                  ? "3px solid #f87171"
-                  : "3px solid transparent",
+                background: diffChangeBackground(line.type),
+                borderLeft: diffChangeBorder(line.type),
               }}
             >
               <span
@@ -569,8 +691,7 @@ function DiffView({
                   color: "var(--text)",
                 }}
               >
-                <DiffLineCode text={line.text} language={language} prismReady={highlight} isDark={isDark} wrapLines={wrapLines} />
-              </span>
+                <DiffLineCode text={line.text} language={language} prismReady={highlight} isDark={isDark} wrapLines={wrapLines} />              </span>
             </div>
           );
         });
@@ -580,6 +701,103 @@ function DiffView({
   );
 }
 
+/**
+ * The old file beside the new one, from the rows the chat's patch cards parse.
+ * One grid of two equal columns, so a line keeps its neighbour on the other
+ * side level with it. Its lines always wrap, as the patch cards' do: unwrapped,
+ * a column must be as wide as the longest line on either side, and in a panel
+ * narrower than one long line the new side sat wholly off screen.
+ */
+function SplitDiffView({
+  patch,
+  language,
+  prismReady,
+  isDark,
+}: {
+  patch: string;
+  language: string;
+  prismReady: boolean;
+  isDark: boolean;
+}) {
+  const { t } = useI18n();
+  const rows = diffRows(patch);
+  const isChange = (row: DiffRow) => row.left.type !== "context" || row.right.type !== "context";
+  if (!rows.some((row) => row.type !== "gap" && isChange(row))) {
+    return (
+      <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+        {t("i18n.noChanges")}
+      </div>
+    );
+  }
+
+  const { segments, shown } = collapseDiff(rows, isChange);
+  // Each row is two highlighted lines: the same budget of lines as one column.
+  const highlight = language !== "text" && prismReady && shown * 2 <= SOURCE_HIGHLIGHT_MAX_LINES;
+  const cell = (cell: SplitDiffCell, side: "left" | "right", key: string) => (
+    <div
+      key={key}
+      className="file-diff-line"
+      style={{
+        display: "flex",
+        minWidth: 0,
+        background: diffChangeBackground(cell.type),
+        borderLeft: diffChangeBorder(cell.type),
+        borderRight: side === "left" ? "1px solid var(--border)" : undefined,
+      }}
+    >
+      <span style={FILE_LINE_NUMBER_STYLE}>{cell.lineNo ?? ""}</span>
+      <span
+        style={{
+          minWidth: 16,
+          padding: "0 6px",
+          color: cell.type === "added" ? "#4ade80" : cell.type === "removed" ? "#f87171" : "var(--text-dim)",
+          userSelect: "none",
+          flexShrink: 0,
+          fontWeight: 600,
+        }}
+      >
+        {cell.type === "added" ? "+" : cell.type === "removed" ? "-" : " "}
+      </span>
+      <span
+        className="file-diff-line-content"
+        style={{
+          flex: "1 1 auto",
+          minWidth: 0,
+          padding: "0 8px 0 0",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          color: "var(--text)",
+        }}
+      >
+        {highlight && cell.type !== "empty"
+          ? <DiffLineCode text={cell.text} language={language} prismReady={prismReady} isDark={isDark} wrapLines />
+          : (cell.text || " ")}
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      className="file-diff-view is-split"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+        ...FILE_CODE_STYLE,
+      }}
+    >
+      {segments.flatMap((seg, si) => seg.hidden
+        ? [<DiffGapMarker key={si} count={seg.count} />]
+        : seg.items.flatMap((row, ri) => [
+          cell(row.left, "left", `${si}-${ri}-left`),
+          cell(row.right, "right", `${si}-${ri}-right`),
+        ]))}
+    </div>
+  );
+}
+
+// Only primitive props: the viewer re-renders for reasons of its own (the
+// sidebar toggled, a watch reconnecting), which must not tokenize up to
+// SOURCE_HIGHLIGHT_MAX_LINES lines again.
 const MemoizedDiffView = memo(DiffView);
 
 /**
@@ -1403,6 +1621,7 @@ export function FileViewer({
   initialDisplayMode,
   initialState,
   initialPage,
+  initialLines,
   onStateChange,
   watchEnabled: watchRequested = true,
 }: Props) {
@@ -1495,6 +1714,7 @@ export function FileViewer({
       gitRefreshKey={gitRefreshKey}
       initialDisplayMode={initialDisplayMode}
       initialState={initialState}
+      initialLines={initialLines}
       onStateChange={onStateChange}
       watchEnabled={watchEnabled && !atRevision}
     />
@@ -1523,6 +1743,7 @@ function TextFileViewer({
   gitRefreshKey,
   initialDisplayMode,
   initialState,
+  initialLines,
   onStateChange,
   watchEnabled = true,
 }: Props) {
@@ -1556,11 +1777,22 @@ function TextFileViewer({
   const shownVersionRef = useRef<string | null>(null);
   const gitDiffRequestRef = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  // The content box as state too, so its width can choose the diff's columns.
+  const [contentBox, setContentBox] = useState<HTMLDivElement | null>(null);
+  const attachContentBox = useCallback((element: HTMLDivElement | null) => {
+    contentRef.current = element;
+    setContentBox(element);
+  }, []);
+  const diffLayout = useDiffLayout(contentBox);
   const autoDiffAppliedRef = useRef(false);
   const defaultPreviewEligibleRef = useRef(
     initialState === undefined && initialDisplayMode === undefined,
   );
   const scrollRestorePendingRef = useRef(true);
+  // The lines a link opened this viewer at, kept for its life: the tab forgets
+  // them once the viewer reports its state, so a later remount restores the
+  // reader's own scroll instead of jumping back.
+  const [targetLines] = useState(initialLines);
   const viewerStateRef = useRef<FileViewerState>({
     displayMode: requestedInitialDisplayMode,
     wrapLines: initialWrapLines,
@@ -1911,7 +2143,7 @@ function TextFileViewer({
           },
         }}
         renderer={(rendererProps) => (
-          <SourceCodeRenderer {...rendererProps} wrapLines={wrapLines} />
+          <SourceCodeRenderer {...rendererProps} wrapLines={wrapLines} targetLines={targetLines} />
         )}
         wrapLongLines={wrapLines}
       >
@@ -1919,12 +2151,12 @@ function TextFileViewer({
         </SyntaxHighlighter>
       </Suspense>
     ),
-    [isDark, language, viewerContent, wrapLines],
+    [isDark, language, prismReady, targetLines, viewerContent, wrapLines],
   );
   const lightweightSourceLines = useMemo(
     () => useLightweightSource ? sourceLines.map((line, lineIndex) => (
       <span
-        className="file-source-line"
+        className={sourceLineClassName(lineIndex + 1, targetLines)}
         data-line-number={lineIndex + 1}
         key={`source-line-${lineIndex}`}
         style={{ display: "flex", minWidth: "100%" }}
@@ -1945,7 +2177,7 @@ function TextFileViewer({
         </span>
       </span>
     )) : null,
-    [sourceLines, useLightweightSource, wrapLines],
+    [sourceLines, targetLines, useLightweightSource, wrapLines],
   );
 
   useEffect(() => {
@@ -2009,19 +2241,44 @@ function TextFileViewer({
     const content = contentRef.current;
     if (!content) return;
 
+    // A link's lines take the place of the saved scroll. A line not loaded yet
+    // waits for the chunks the effect below fetches; one past the end of the
+    // file opens at the top.
+    if (targetLines && effectiveDisplayMode === "source" && !isBinary) {
+      if (scrollToSourceLines(content, targetLines)) {
+        scrollRestorePendingRef.current = false;
+        return;
+      }
+      if (data?.truncated) return;
+    }
+
     content.scrollTop = viewerStateRef.current.scrollTop;
     content.scrollLeft = viewerStateRef.current.scrollLeft;
     scrollRestorePendingRef.current = false;
   }, [
     data?.content,
+    data?.truncated,
     displayMode,
+    effectiveDisplayMode,
     error,
     gitDiffResolved,
     hasGitDiff,
+    isBinary,
     isDeletedDiff,
     loading,
     requestedInitialDisplayMode,
+    targetLines,
   ]);
+
+  // Load more by itself until a link's first line is loaded whole. A chunk
+  // that failed stops it: each failure ends `loadingMore`, which would fire
+  // this again with the same offset, hundreds of requests a second.
+  const targetLineLoaded = !targetLines || !data?.truncated || sourceLines.length > targetLines.start;
+  useEffect(() => {
+    if (targetLineLoaded || error || !scrollRestorePendingRef.current || loadingMore || !data?.truncated) return;
+    setLoadingMore(true);
+    void fetchContent(filePath, data.nextOffset).finally(() => setLoadingMore(false));
+  }, [data, error, fetchContent, filePath, loadingMore, targetLineLoaded]);
 
   // One renderer set per file: a new object each render would remount every
   // block of the preview (a rendered diagram back to its source) whenever
@@ -2057,7 +2314,7 @@ function TextFileViewer({
       a({ href, children, ...props }) {
         delete props.node;
         const linkedFile = hasOpenFile
-          ? resolveLocalFileHref(href, markdownDirectory, cwd ?? markdownDirectory)
+          ? resolveLocalFileLink(href, markdownDirectory, cwd ?? markdownDirectory)
           : null;
         if (!linkedFile || !hasOpenFile) {
           // Like chat links: a web or app link must not replace Pi Web.
@@ -2069,7 +2326,7 @@ function TextFileViewer({
         const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
           if (!shouldOpenLocalFileInApp(event)) return;
           event.preventDefault();
-          onOpenFileRef.current?.(linkedFile, parsePdfPageFragment(href) ?? undefined);
+          onOpenFileRef.current?.(linkedFile.path, linkedFile.target);
         };
 
         return <a href={href} {...props} onClick={handleClick}>{children}</a>;
@@ -2232,10 +2489,11 @@ function TextFileViewer({
                 disabled={!onAtMention && !onMentionLines}
                 className="file-viewer-icon-button"
               >
-                <MentionIcon />
+                <MentionIcon size={14} />
               </button>
             )}
-            {(effectiveDisplayMode === "source" || effectiveDisplayMode === "diff") && !isBinary && (
+            {/* A split diff always wraps (see SplitDiffView): no wrap choice to offer there. */}
+            {(effectiveDisplayMode === "source" || (effectiveDisplayMode === "diff" && diffLayout === "stacked")) && !isBinary && (
               <>
                 <button
                   type="button"
@@ -2296,7 +2554,7 @@ function TextFileViewer({
 
       {/* Content area */}
       <div
-        ref={contentRef}
+        ref={attachContentBox}
         className="file-viewer-content"
         onScroll={(event) => {
           viewerStateRef.current.scrollTop = event.currentTarget.scrollTop;
@@ -2305,7 +2563,14 @@ function TextFileViewer({
         style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: showLoadMore ? 48 : undefined }}
       >
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
-          <MemoizedDiffView patch={gitDiff.patch!} wrapLines={wrapLines} language={language} prismReady={prismReady} isDark={isDark} />
+          <MemoizedDiffView
+            patch={gitDiff.patch!}
+            wrapLines={wrapLines}
+            language={language}
+            prismReady={prismReady}
+            isDark={isDark}
+            layout={diffLayout}
+          />
         ) : isHtml && effectiveDisplayMode === "preview" && data?.truncated && !htmlFull?.text ? (
           <div style={{ padding: 24, color: "var(--text-dim)", fontSize: 12 }}>
             {htmlFull?.error ?? t("i18n.loading")}

@@ -29,10 +29,11 @@ import {
 import { sessionPathKey } from "./session-path.ts";
 import { forgetSessionUiState } from "./session-ui-state.ts";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents.ts";
+import { readSideRelation } from "./side-session.ts";
+import type { SessionEntry } from "./types.ts";
+import { errorMessage } from "./errors.ts";
 import { removeQueue } from "./queue-store.ts";
 import { trashFileSync } from "./session-trash.ts";
-import type { SessionEntry } from "./types.ts";
-import { readSideRelation } from "./side-session.ts";
 import { clearDetachedPreference, getWrapperStarter } from "./agent-starter/index.ts";
 import { getHandle, removeHandle } from "./session/handle-store.ts";
 
@@ -320,7 +321,7 @@ export async function deleteSessions(
   try {
     await forgetSessionUiState(deletedSessionIds);
   } catch (error) {
-    console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${errorMessage(error)}`);
   }
   // A deleted session keeps no hosting preference: every detached spawn records one,
   // so the markers would otherwise pile up per killed session forever (and a reused

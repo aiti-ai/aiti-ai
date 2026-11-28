@@ -31,17 +31,17 @@ import {
   invalidateSessionListCache,
   invalidateSessionManagerCache,
   openSessionManager,
-} from "./session-reader";
-import { resolveAnySession, resolveAttachBySessionId } from "./session";
-import { listProviders, type SessionProvider } from "./session/providers";
+} from "./session-reader.ts";
+import { resolveAnySession, resolveAttachBySessionId } from "./session/index.ts";
+import { listProviders, type SessionProvider } from "./session/providers.ts";
 import {
   buildTitleTranscript,
   generateSessionTitleFromTranscript,
   TITLE_MAX_TOKENS,
   type GeneratedSessionTitle,
   type TitleInvocator,
-} from "./session-title";
-import { invokeAI } from "./ai-invoke";
+} from "./session-title.ts";
+import { invokeAI } from "./ai-invoke.ts";
 
 /** Find the provider that single-writer claims this session file (probe failures = not owned). */
 export async function findSessionFileOwner(filePath: string): Promise<SessionProvider | undefined> {

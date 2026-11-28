@@ -611,13 +611,31 @@ export async function attachIfBridged(
   if (inflight) return inflight;
   const flight = attachIfBridgedUncached(sessionFile, { create });
   attachInflight().set(flightKey, flight);
-  try {
-    return await flight;
-  } finally {
+  // Bound the whole flight. An attach that hangs forever (a lost-wakeup race in
+  // a backend connect, a provider probe wedged) used to stick in the in-flight
+  // map: every later caller of this session joined the same never-settling
+  // promise, and the instance's session/agent state routes wedged with it.
+  // On timeout the flight degrades to undefined (every caller already treats
+  // that as "no live handle — fall through to the disk view") and logs the
+  // call site; the underlying operation keeps running and, when it lands, the
+  // alive-handle lookup picks it up on a later request.
+  const attachTimeoutMs = create ? 60_000 : 15_000;
+  const __callSite = new Error("attach-call-site").stack;
+  const bounded = Promise.race([
+    flight,
+    new Promise<undefined>((resolve) => setTimeout(() => {
+      console.error(
+        `[pi-web] attach timeout: flight ${flightKey} pending >${attachTimeoutMs}ms (create=${create}) — serving the disk view\ncallstack:\n${__callSite}`,
+      );
+      resolve(undefined);
+    }, attachTimeoutMs)),
+  ]);
+  bounded.finally(() => {
     // Only clear while this flight is still the registered one (a newer flight
     // must not be dropped by a late settler).
     if (attachInflight().get(flightKey) === flight) attachInflight().delete(flightKey);
-  }
+  }).catch(() => {});
+  return bounded;
 }
 
 declare global {

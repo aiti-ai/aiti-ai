@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getLocalePlugin, getSupportedLocales, resolveBrowserLocale } from "@/lib/i18n/registry";
 import { translateMessage } from "@/lib/i18n/format";
-import type { Locale, LocalePlugin, TranslationParams } from "@/lib/i18n/types";
+import type { Locale, LocalePlugin, Translate, TranslationParams } from "@/lib/i18n/types";
 
 const LOCALE_STORAGE_KEY = "pi-locale";
 const LOCALE_COOKIE_KEY = "pi-locale";
@@ -15,7 +15,7 @@ const globalWithLocale = globalThis as typeof globalThis & { __PI_LOCALE__?: Loc
 interface I18nContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  t: (key: string, params?: TranslationParams) => string;
+  t: Translate;
   supportedLocales: LocalePlugin[];
 }
 

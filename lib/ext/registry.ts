@@ -1826,7 +1826,7 @@ export class ExtRegistryImpl {
   async middleware(req: Request): Promise<ExtMiddlewareResult> {
     for (const ext of this.extensions.values()) {
       if (!ext.ext.server?.middleware) continue;
-      const result = await ext.ext.server.middleware(req);
+      const result = await withMiddlewareTimeout(ext.id, req, ext.ext.server.middleware(req));
       if (result && result.handled) return result;
     }
     return { handled: false };
@@ -1851,6 +1851,37 @@ export class ExtRegistryImpl {
    *  module-level function (hot-reload safe, see below). */
   isPublicApiPath(extId: string, apiPath: string): boolean {
     return isPublicApiPath(extId, apiPath);
+  }
+}
+
+/** Upper bound for one extension's middleware hook. A hook that hangs longer
+ *  than this degrades to "not handled" (with the call site logged) instead of
+ *  wedging every request behind the middleware chain: the hooks make local
+ *  vhost/auth/proxy decisions, and a lost-wakeup hang there used to take the
+ *  whole instance down. The still-running hook result is dropped — the request
+ *  proceeds through the remaining chain; anything the hook did before its
+ *  deadline still applies. */
+const MIDDLEWARE_HOOK_TIMEOUT_MS = 10_000;
+
+async function withMiddlewareTimeout(
+  extId: string,
+  req: Request,
+  pending: ExtMiddlewareResult | Promise<ExtMiddlewareResult>,
+): Promise<ExtMiddlewareResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ExtMiddlewareResult>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(
+        `[pi-web] extension middleware timeout: ${extId} hook pending >${MIDDLEWARE_HOOK_TIMEOUT_MS}ms on ${req.url ?? "?"} — continuing without it`,
+        new Error("hook-call-site").stack,
+      );
+      resolve({ handled: false });
+    }, MIDDLEWARE_HOOK_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([Promise.resolve(pending), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

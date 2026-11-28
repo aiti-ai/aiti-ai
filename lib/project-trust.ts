@@ -1,7 +1,8 @@
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync } from "node:fs";
 import { stat } from "fs/promises";
+import { resolve } from "path";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import {
   hasTrustRequiringProjectResources,
   ProjectTrustStore,
@@ -11,17 +12,8 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access.ts
 import type { FreshFolderTrustBreadth, ProjectTrustStatus } from "./api-types.ts";
 import { serializeByKey } from "./key-serializer.ts";
 import { isPathWithinRoots } from "./path-security.ts";
-import { samePath } from "./paths.ts";
-
-/** The folder as `trust.json` keys it: resolved, then its real path when it exists. */
-function trustKeyPath(cwd: string): string {
-  const resolved = resolve(cwd);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
+import { realPathOrResolved, samePath } from "./paths.ts";
+import { errorMessage } from "./errors.ts";
 
 function describeDecision(
   cwd: string,
@@ -31,7 +23,7 @@ function describeDecision(
   return {
     decision: entry.decision,
     decisionPath: entry.path,
-    inherited: !samePath(entry.path, trustKeyPath(cwd)),
+    inherited: !samePath(entry.path, realPathOrResolved(cwd)),
   };
 }
 
@@ -84,7 +76,7 @@ export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTru
         trusted: true,
         decision: null,
         inherited: false,
-        decisionError: error instanceof Error ? error.message : String(error),
+        decisionError: errorMessage(error),
       };
     }
   }
@@ -130,7 +122,7 @@ export function mayReadProjectConfigNow(cwd: string, agentDir: string): boolean 
     return new ProjectTrustStore(agentDir).get(cwd) === true;
   } catch (error) {
     const trustPath = join(agentDir, "trust.json");
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     const store = globalThis as Record<symbol, Set<string> | undefined>;
     const warned = (store[TRUST_READ_WARNINGS_KEY] ??= new Set());
     const key = `${trustPath}\0${message}`;
@@ -153,7 +145,7 @@ export function trustProject(cwd: string, agentDir: string): ProjectTrustStatus 
   // Built from what was just written, not read back: a second read can fail
   // (the lock held past the store's wait), and the route would then report a
   // decision already on disk as a failure and skip rebuilding the cwd's wrappers.
-  return { requiresTrust: true, trusted: true, decision: true, decisionPath: trustKeyPath(cwd), inherited: false };
+  return { requiresTrust: true, trusted: true, decision: true, decisionPath: realPathOrResolved(cwd), inherited: false };
 }
 
 /**
@@ -207,15 +199,6 @@ export const TRUST_REQUIRING_PROJECT_ENTRIES = [
   "APPEND_SYSTEM.md",
 ] as const;
 
-function realPathOr(path: string): string {
-  const resolved = resolve(path);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
 /** Something is at `path`, read with `lstat`: a dangling link or a FIFO counts, though `existsSync` would say no. */
 function somethingAt(path: string): boolean {
   try {
@@ -236,9 +219,9 @@ function somethingAt(path: string): boolean {
  * appears, after the folder was trusted as one with nothing in it.
  */
 export function hasTrustRelevantEntries(cwd: string, home: string = process.env.HOME || homedir()): boolean {
-  const folder = realPathOr(cwd);
+  const folder = realPathOrResolved(cwd);
   if (hasOwnTrustEntries(folder)) return true;
-  const userSkills = join(realPathOr(home), ".agents", "skills");
+  const userSkills = join(realPathOrResolved(home), ".agents", "skills");
   for (let current = folder; ; current = dirname(current)) {
     const skills = join(current, ".agents", "skills");
     if (!samePath(skills, userSkills) && somethingAt(skills)) return true;
@@ -250,7 +233,7 @@ export function hasTrustRelevantEntries(cwd: string, home: string = process.env.
 function hasOwnTrustEntries(folder: string): boolean {
   const configDir = join(folder, ".pi");
   try {
-    if (lstatSync(configDir).isSymbolicLink() && realPathOr(configDir) === configDir) return true;
+    if (lstatSync(configDir).isSymbolicLink() && realPathOrResolved(configDir) === configDir) return true;
   } catch {
     // No `.pi`.
   }
@@ -282,7 +265,7 @@ const NESTED_PROJECT_SCAN_SKIP = new Set(["node_modules", ".git", ".pi", ".agent
  * no decision. Folders deeper than the scan are not looked at.
  */
 export function findInheritingTrustProject(cwd: string, agentDir: string): FreshFolderTrustBreadth | undefined {
-  const folder = realPathOr(cwd);
+  const folder = realPathOrResolved(cwd);
   let store: ProjectTrustStore | undefined;
   const hasDecision = (path: string): boolean => {
     try {
@@ -344,15 +327,15 @@ export function freshFolderTrustBreadth(
   cwd: string,
   options: { agentDir: string; knownFolders: Iterable<string>; home?: string },
 ): FreshFolderTrustBreadth | undefined {
-  const folder = realPathOr(cwd);
+  const folder = realPathOrResolved(cwd);
   if (dirname(folder) === folder) return { kind: "root", path: folder };
-  const home = realPathOr(options.home ?? (process.env.HOME || homedir()));
+  const home = realPathOrResolved(options.home ?? (process.env.HOME || homedir()));
   if (samePath(folder, home)) return { kind: "home", path: folder };
   if (within(home, folder)) return { kind: "contains-home", path: home };
-  const agentDir = realPathOr(options.agentDir);
+  const agentDir = realPathOrResolved(options.agentDir);
   if (within(agentDir, folder)) return { kind: "contains-agent-dir", path: agentDir };
   for (const known of options.knownFolders) {
-    const knownFolder = realPathOr(known);
+    const knownFolder = realPathOrResolved(known);
     if (!samePath(knownFolder, folder) && within(knownFolder, folder)) return { kind: "contains-folder", path: knownFolder };
   }
   return findInheritingTrustProject(folder, options.agentDir);
@@ -383,7 +366,7 @@ function serializeForFolder<T>(key: string, task: () => Promise<T>): Promise<T> 
 }
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 /**
@@ -425,7 +408,7 @@ export async function trustFreshFolderAndWrite<T>(
   if (breadth) {
     return { ok: false, reason: "trust-too-broad", breadth, error: `Trusting ${cwd} would also trust ${breadth.path}` };
   }
-  const key = trustKeyPath(cwd);
+  const key = realPathOrResolved(cwd);
   return serializeForFolder(key, async (): Promise<FreshFolderTrustResult<T>> => {
     const store = new ProjectTrustStore(agentDir);
     const notFresh = (error: string): FreshFolderTrustResult<T> => {

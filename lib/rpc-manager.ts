@@ -6,8 +6,7 @@ import { randomUUID } from "crypto";
 import type { JournalEntry } from "./running-journal.ts";
 import { recordRunningEntries } from "./running-journal.ts";
 import { deriveRunOutcome, type SessionLastRun } from "./run-outcome.ts";
-import { existsSync, realpathSync, writeFileSync } from "fs";
-import { resolve } from "path";
+import { existsSync, statSync, writeFileSync } from "fs";
 import { isDeepStrictEqual } from "util";
 import { validateAgentImages } from "./image-attachments.ts";
 import { EXTENSION_REPORTED_CODE } from "./agent-client.ts";
@@ -39,9 +38,11 @@ import {
   preferUserPowerShellExtension,
 } from "./project-command-env.ts";
 import { disableConflictingExtensions } from "./ext-conflicts.ts";
-import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, invalidateSessionManagerCache, invalidateSessionPathCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader.ts";
+import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, invalidateSessionManagerCache, invalidateSessionPathCache, openSessionManager, readLatestSessionEntryId, resolveSessionPath } from "./session-reader.ts";
+import { expandSessionReferences, resolveSessionReferenceForSend } from "./session-reference.ts";
 import { computeSessionStats } from "./session-stats.ts";
 import { computeSessionTotalActiveMs, computeLiveSessionTotalActiveMs } from "./session-timing.ts";
+import { realPathOrResolved } from "./paths.ts";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust.ts";
 import { notifySessionComplete } from "./web-push.ts";
 import { notifySessionCreated } from "./session-created-notify.ts";
@@ -74,6 +75,7 @@ import {
   readSubagentRun,
   readSubagentSessionResources,
   settleOrphanedSubagentStatus,
+  configuredPackageRoots,
   subagentExtensionLoaderOptions,
   subagentToolOptions,
   SUBAGENT_CONTROL_TOOL_NAMES,
@@ -97,13 +99,14 @@ import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } fr
 import { createSubagentSkillsBinding } from "./subagent-skills.ts";
 import { isNestedToolExecutionEvent, liveToolExecutionEvent, parallelToolCallIds } from "./agent-event-wire.ts";
 import { collectStartupIssues, extensionErrorMessage, limitStartupNotices, type StartupIssue } from "./startup-issues.ts";
-import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server.ts";
+import { collectLiveAssistantNotices, readNoticeSettings, shownNotices, withSessionPrices } from "./transcript-notices-server.ts";
 import {
   appendClearedSessionToolSelection,
   appendSessionToolSelection,
   readSessionToolSelection,
   validateSessionToolSelection,
 } from "./session-tool-selection.ts";
+import { isThinkingLevel } from "./thinking-levels.ts";
 
 // ============================================================================
 // Types
@@ -352,7 +355,6 @@ export interface RpcSessionStartOptions {
 }
 
 const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
-const THINKING_LEVEL_NAMES = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 // The SDK's DEFAULT_THINKING_LEVEL (dist/core/defaults.js), which it does not export.
 const SDK_DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
 
@@ -463,6 +465,8 @@ export class AgentSessionWrapper {
   private agentRunNeedsCompletion = false;
   // Whether the last run ended because it was stopped (pi 1.1's `agent_settled.aborted`), not finished.
   private lastRunAborted = false;
+  private readonly manualCompactionWork = new Set<Promise<void>>();
+  private readonly compactWithoutContinuation: AgentSessionLike["compact"] | undefined;
   private promptAdmissionTail: Promise<void> = Promise.resolve();
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
@@ -559,6 +563,56 @@ export class AgentSessionWrapper {
     this.builtOnThinkingLevel = inner.agent?.state?.thinkingLevel;
     this.startupNotices = options.startupIssues ? [] : null;
     for (const issue of options.startupIssues ?? []) this.notifyIssue(issue);
+
+    // An extension's ctx.compact() calls the public SDK method, and its onComplete may
+    // start the next turn. Observe the call itself: agent_settled and the interrupted
+    // prompt can finish before compaction_start, so neither can tell us whether the
+    // abort is terminal. The wrapper's own `compact` command has no completion callback
+    // and keeps the untracked method: prompts parked meanwhile report their own prompt_done.
+    const compact = inner.compact?.bind(inner);
+    this.compactWithoutContinuation = compact;
+    if (compact) inner.compact = (...args) => this.trackManualCompactionWork(compact(...args));
+    const prompt = inner.prompt?.bind(inner);
+    if (prompt) inner.prompt = (...args) => {
+      // A completion callback can submit a prompt whose async input/auth preflight
+      // has not set isStreaming yet. Follow that promise as well as active runs.
+      const duringCompaction = this.manualCompactionWork.size > 0 && !inner.isCompacting;
+      const operation = prompt(...args);
+      return duringCompaction ? this.trackManualCompactionWork(operation) : operation;
+    };
+  }
+
+  private trackManualCompactionWork<T>(operation: Promise<T>): Promise<T> {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.manualCompactionWork.add(promise);
+    const finish = () => {
+      this.manualCompactionWork.delete(promise);
+      resolve();
+      this.notifyAgentRunCompleteIfIdle();
+      this.checkExtensionShutdown();
+    };
+    // Attach after the caller: the SDK's await in ctx.compact() must get to run
+    // onComplete (or onError) before we decide whether its session will continue.
+    queueMicrotask(() => { void operation.then(finish, finish); });
+    return operation;
+  }
+
+  waitForCompactionContinuation(): Promise<void> | undefined {
+    if (this.manualCompactionWork.size === 0) return;
+    return this.drainManualCompactionWork();
+  }
+
+  private async drainManualCompactionWork(): Promise<void> {
+    for (;;) {
+      if (this.manualCompactionWork.size > 0) {
+        await Promise.all(this.manualCompactionWork);
+      } else if (this.inner.isStreaming) {
+        // sendCustomMessage({ triggerTurn: true }) starts a run without prompt().
+        await this.inner.waitForIdle();
+      } else {
+        return;
+      }
+    }
   }
 
   get sessionId(): string {
@@ -628,7 +682,7 @@ export class AgentSessionWrapper {
   }
 
   isRunning(): boolean {
-    return this._alive && (this.pendingPromptCount > 0 || this.promptRunning || this.inner.isStreaming || this.inner.isCompacting || this.shellRunning);
+    return this._alive && (this.pendingPromptCount > 0 || this.promptRunning || this.inner.isStreaming || this.inner.isCompacting || this.manualCompactionWork.size > 0 || this.shellRunning);
   }
 
   /** This run's final state (last assistant message, judged in memory) —
@@ -1163,8 +1217,8 @@ export class AgentSessionWrapper {
   }
 
   /**
-   * An assistant `message_end` with the notices pi's TUI shows under
-   * `showCacheMissNotices` (#1265), as `transcriptNotices` beside the message.
+   * An assistant `message_end` with the notices pi's TUI shows under its
+   * `notices.*` settings (#1265), as `transcriptNotices` beside the message.
    * The message itself is left alone: pi writes that object to the file.
    */
   private withTranscriptNotices(event: AgentEvent): AgentEvent {
@@ -1172,14 +1226,16 @@ export class AgentSessionWrapper {
     if (this.listeners.size === 0 || message?.role !== "assistant") return event;
     try {
       const manager = this.inner.sessionManager;
-      if (!readShowCacheMissNotices(manager.getCwd())) return event;
+      const settings = readNoticeSettings(manager.getCwd());
+      // The only two kinds a reply carries.
+      if (!settings.cacheMisses && !settings.reasoningDrops) return event;
       const entries = manager.getEntries() as unknown as SessionEntry[];
-      const notices = collectLiveAssistantNotices(
+      const notices = shownNotices(collectLiveAssistantNotices(
         entries,
         manager.getBranch() as unknown as SessionEntry[],
         message,
         withSessionPrices(entries, this.inner.modelRuntime),
-      );
+      ), settings);
       return notices.length > 0 ? { ...event, transcriptNotices: notices } : event;
     } catch (error) {
       console.warn("[pi-web] transcript notices failed:", error instanceof Error ? error.message : error);
@@ -1349,6 +1405,8 @@ export class AgentSessionWrapper {
           release();
         },
       });
+      const continuation = this.waitForCompactionContinuation();
+      if (continuation) await continuation;
     } catch (error) {
       failure = error;
     }
@@ -2001,6 +2059,31 @@ export class AgentSessionWrapper {
         // this submission starts a run or joins its streaming queue.
         const releaseAdmission = await this.acquirePromptAdmission();
         try {
+          // The composer's # session references (`[title](#session:uuid)`) expand
+          // here, once: the model, a parked prompt and the transcript all see the
+          // same expanded content (lib/session-reference.ts). Protected tokens
+          // (inside code or escaped) stay as text. After admission, so a prompt
+          // whose referenced file is still being read is never overtaken by one
+          // sent after it; inside the try, so a failed read releases admission.
+          const promptMessage = await expandSessionReferences(
+            command.message as string,
+            (id, maxChars) => resolveSessionReferenceForSend(
+              id,
+              {
+                openSessionManager,
+                // A cached path can outlive its file: opening it would quote an
+                // empty new session instead of saying the file is gone.
+                resolveSessionPath: async (id) => {
+                  const filePath = await resolveSessionPath(id);
+                  return filePath && existsSync(filePath) ? filePath : null;
+                },
+                // The block's tooltip reads this, so it matches the sidebar's own
+                // "last changed" for the same session.
+                modifiedAt: async (filePath) => statSync(filePath).mtime.toISOString(),
+              },
+              maxChars,
+            ),
+          );
           // A steer or follow-up joins the run beside a `!` command, as pi's TUI
           // queues it; only a prompt that would start a run waits for the command.
           if (this.shellRunning && !(command.streamingBehavior && this.inner.isStreaming)) {
@@ -2104,7 +2187,7 @@ export class AgentSessionWrapper {
           if (!streamingBehavior) this.lastRunAborted = false;
           let prompt: Promise<void>;
           try {
-            prompt = this.inner.prompt(command.message as string, {
+            prompt = this.inner.prompt(promptMessage, {
               ...(promptImages?.length ? { images: promptImages } : {}),
               ...(streamingBehavior ? { streamingBehavior } : {}),
               source: "rpc",
@@ -2122,10 +2205,12 @@ export class AgentSessionWrapper {
             throw error;
           }
 
-          void prompt.then(() => {
+          void prompt.then(async () => {
             // Compatibility fallback if a future SDK resolves without invoking
             // the internal callback. This waits for the run, but never acks early.
             acceptPreflight();
+            const continuation = this.waitForCompactionContinuation();
+            if (continuation) await continuation;
             finishPrompt();
             if (!streamingBehavior) this.emit(this.promptDoneEvent());
           }, (error) => {
@@ -2137,7 +2222,7 @@ export class AgentSessionWrapper {
             // so the wrapper cannot idle out from under it.
             if (!preflightAccepted && isCompactionInProgressError(error)) {
               this.parkDuringCompaction({
-                message: command.message as string,
+                message: promptMessage,
                 images: promptImages,
                 streamingBehavior,
                 settle: finishPrompt,
@@ -2528,7 +2613,7 @@ export class AgentSessionWrapper {
         this.renewExtensionUiStop();
         try {
           return await this.withFinalIdleReset(() =>
-            this.inner.compact(command.customInstructions as string | undefined)
+            (this.compactWithoutContinuation ?? this.inner.compact.bind(this.inner))(command.customInstructions as string | undefined)
           );
         } finally {
           invalidateSessionListCache();
@@ -4324,15 +4409,6 @@ function closingRpcSessionWait(sessionId: string): Promise<void> | null {
   return wait.done ? null : wait.promise;
 }
 
-function normalizeRpcCwd(cwd: string): string {
-  const resolvedCwd = resolve(cwd);
-  try {
-    return realpathSync(resolvedCwd);
-  } catch {
-    return resolvedCwd;
-  }
-}
-
 function getStartingSessionCwds(): Map<string, number> {
   if (!globalThis.__piStartingSessionCwds) globalThis.__piStartingSessionCwds = new Map();
   return globalThis.__piStartingSessionCwds;
@@ -4354,7 +4430,7 @@ function getStartingSessionIds(): Set<string> {
 
 function trackStartingSession(cwd: string): () => void {
   const startingCwds = getStartingSessionCwds();
-  const key = normalizeRpcCwd(cwd);
+  const key = realPathOrResolved(cwd);
   startingCwds.set(key, (startingCwds.get(key) ?? 0) + 1);
   return () => {
     const remaining = (startingCwds.get(key) ?? 1) - 1;
@@ -4365,6 +4441,36 @@ function trackStartingSession(cwd: string): () => void {
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
   return getRegistry().get(sessionId);
+}
+
+/**
+ * The session's wrapper while it is alive, for reads that should come from its in-memory
+ * `SessionManager` rather than the file. A closing wrapper is left out: its replacement may
+ * already be reading the file.
+ */
+export function getLiveRpcSession(sessionId: string): AgentSessionWrapper | undefined {
+  const rpc = getRpcSession(sessionId);
+  return rpc?.isAlive() ? rpc : undefined;
+}
+
+/**
+ * Settings › General changed pi's global `steeringMode` or `followUpMode`: each open
+ * session takes the values its own settings resolve now (a project's .pi/settings.json
+ * still wins), as pi's TUI applies its /settings choice to the running session at once.
+ * Queued messages stay queued; they go out by the new mode.
+ */
+export async function applyQueueModesToLiveSessions(): Promise<void> {
+  await Promise.all(Array.from(getRegistry().values(), async (wrapper) => {
+    if (!wrapper.isAlive()) return;
+    const { settingsManager, agent } = wrapper.inner;
+    try {
+      await settingsManager.reload();
+      agent.steeringMode = settingsManager.getSteeringMode();
+      agent.followUpMode = settingsManager.getFollowUpMode();
+    } catch {
+      // Unreadable settings keep this session's mode until it reloads.
+    }
+  }));
 }
 
 /**
@@ -4486,8 +4592,8 @@ export async function setRpcSessionTools(
     ...(toolNames !== undefined ? { toolNames } : {}),
     ...(model ? { initialModel: { provider: model.provider, modelId: model.id } } : {}),
     allowInitialModelFallback: true,
-    ...(currentThinkingLevel && THINKING_LEVEL_NAMES.has(currentThinkingLevel as ThinkingLevel)
-      ? { thinkingLevel: currentThinkingLevel as ThinkingLevel }
+    ...(isThinkingLevel(currentThinkingLevel)
+      ? { thinkingLevel: currentThinkingLevel }
       : {}),
   });
   return { session: started.session, sessionId: started.realSessionId, recreated: true };
@@ -4596,17 +4702,17 @@ export function getRpcSessionInfos(options: { includeTransient?: boolean } = {})
 }
 
 export function hasBusyRpcSessionForCwd(cwd: string): boolean {
-  const targetCwd = normalizeRpcCwd(cwd);
+  const targetCwd = realPathOrResolved(cwd);
   if (getStartingSessionCwds().has(targetCwd)) return true;
   return Array.from(getRegistry().values()).some(
-    (session) => normalizeRpcCwd(session.cwd) === targetCwd && typeof session.isRunning === "function" && session.isRunning(),
+    (session) => realPathOrResolved(session.cwd) === targetCwd && typeof session.isRunning === "function" && session.isRunning(),
   );
 }
 
 export async function destroyRpcSessionsForCwd(cwd: string): Promise<number> {
-  const targetCwd = normalizeRpcCwd(cwd);
+  const targetCwd = realPathOrResolved(cwd);
   const sessions = Array.from(getRegistry().values()).filter(
-    (session) => normalizeRpcCwd(session.cwd) === targetCwd,
+    (session) => realPathOrResolved(session.cwd) === targetCwd,
   );
   await Promise.all(sessions.map((session) => session.shutdown()));
   return sessions.length;
@@ -5139,7 +5245,7 @@ async function startReservedRpcSession(
       settingsManager,
       resourceLoaderOptions: subagentResources
         ? {
-            ...subagentExtensionLoaderOptions(subagentResources),
+            ...subagentExtensionLoaderOptions(subagentResources, configuredPackageRoots(sessionCwd, agentDir, settingsManager)),
             ...skillsBinding!.loaderOptions,
             extensionFactories: subagentExtensionFactories,
             noPromptTemplates: true,

@@ -6,6 +6,7 @@ import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
 import { renderExtItemIcon } from "./ExtItemIcon.tsx";
 import type { ExtUiItemIcon } from "@/lib/ext/types";
 import { useI18n } from "@/hooks/useI18n";
+import type { FileLineRange } from "@/lib/file-links";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
 import type { RevisionRef } from "@/lib/file-revision";
 
@@ -175,6 +176,8 @@ export interface Tab {
   initialDisplayMode?: FileViewerDisplayMode;
   /** PDF page requested by the link that opened this tab (`#page=N`). */
   page?: number;
+  /** Lines requested by the link that opened this tab (`:42`, `:10-20`); dropped once its viewer reports. */
+  lines?: FileLineRange;
   viewerState?: FileViewerState;
   viewerRevision?: number;
 }

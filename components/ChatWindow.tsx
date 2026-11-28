@@ -22,9 +22,11 @@ import { cacheMissSummaryText } from "./TranscriptNotices.tsx";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
+import type { FileLinkTarget } from "@/lib/file-links";
+import type { SessionReferenceTarget } from "@/lib/session-reference-target";
 import { MessageView, estimateTokens } from "./MessageView.tsx";
 import { UpdateGuideDialog } from "./UpdateGuideDialog.tsx";
-import { getExtClientService } from "./ExtSlots";
+import { getExtClientService } from "./ExtSlots.tsx";
 import { SessionRequestCardHost } from "./SessionRequestSlot.tsx";
 import { MarkdownBody } from "./MarkdownBody.tsx";
 import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput.tsx";
@@ -64,6 +66,7 @@ import {
   restoreScrollTop,
   VISIBLE_PAGE_SIZE,
 } from "@/lib/chat-lazy-load";
+import { errorMessage } from "@/lib/errors";
 
 // Initial render window: mount a full page at once. The mainstream approach is
 // virtualization + overscan (2-3x the visible viewport); a narrow viewport fits
@@ -129,7 +132,7 @@ interface Props {
   onBackendUsageChange?: (info: { sessionId: string; usage: BackendUsageSnapshot; backendSource?: string } | null) => void;
   /** Current display model changed (AppShell's session-info "remaining quota" section pins the current provider by this). */
   onDisplayModelChange?: (model: { provider: string; modelId: string } | null) => void;
-  onOpenFile?: (filePath: string, page?: number) => void;
+  onOpenFile?: (filePath: string, target?: FileLinkTarget) => void;
   /** Files dropped onto the chat were written into the working directory. */
   onFilesUploaded?: () => void;
   onOpenSubagent?: (sessionId: string, label: string) => void;
@@ -859,7 +862,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     try {
       refusal = await startSideChat(message);
     } catch (error) {
-      refusal = error instanceof Error ? error.message : String(error);
+      refusal = errorMessage(error);
     }
     if (!refusal) return;
     chatInputRef?.current?.restoreSubmission(message);
@@ -1414,7 +1417,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         addNotice({ type: "error", message: t("chat.dropFailed", { message: `${failure.name}: ${failure.error}` }) });
       }
     } catch (uploadError) {
-      addNotice({ type: "error", message: t("chat.dropFailed", { message: uploadError instanceof Error ? uploadError.message : String(uploadError) }) });
+      addNotice({ type: "error", message: t("chat.dropFailed", { message: errorMessage(uploadError) }) });
     }
   }, [addNotice, chatInputRef, newSessionCwd, onFilesUploaded, session?.cwd, t]);
 
@@ -2198,7 +2201,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                        {t("chat.loadEarlier")}
                     </div>
                   )}
-                  <div ref={attachTranscriptRows}>{rendered.slice(startIndex)}</div>
+                  <div ref={attachTranscriptRows} className="transcript-rows">{rendered.slice(startIndex)}</div>
                 </>
               );
             })()}
@@ -2670,7 +2673,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 function SideChatDivider() {
   const { t } = useI18n();
   return (
-    <div role="separator" className="my-4 flex items-center gap-3 text-xs" style={{ color: "var(--text-dim)" }}>
+    // Bottom margin only: the row above keeps its own gap (useSkipOffscreenRows).
+    <div role="separator" className="mb-4 flex items-center gap-3 text-xs" style={{ color: "var(--text-dim)" }}>
       <span className="h-px flex-1" style={{ background: "var(--border)" }} />
       <span>{t("sideChat.divider")}</span>
       <span className="h-px flex-1" style={{ background: "var(--border)" }} />
@@ -2967,14 +2971,26 @@ function NoticeShelf({ notices, floating = false, align = "left", onPauseChange,
         flexDirection: "column",
         alignItems: align === "right" ? "flex-end" : "stretch",
         marginBottom: floating ? 0 : 10,
+        // Never taller than the box it floats in, the transcript's above the
+        // composer: a stack that does not fit scrolls there (#1780). The scroll
+        // box clips, so its padding keeps the cards' shadows inside it.
+        ...(floating ? {
+          maxHeight: "100%",
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          scrollbarWidth: "thin",
+          padding: "4px 12px 24px",
+          marginTop: -4,
+          marginLeft: -12,
+          marginRight: -12,
+        } as const : {}),
       }}
     >
       {notices.map((notice, index) => (
         <div key={notice.id} style={{ marginBottom: index === notices.length - 1 ? 0 : 6 }}>
           <NoticeToastCard notice={notice} floating={floating} onPauseChange={onPauseChange} onAskAi={onAskAi} onDismiss={onDismiss} />
         </div>
-      ))}
-    </div>
+      ))}    </div>
   );
 }
 

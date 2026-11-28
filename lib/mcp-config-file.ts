@@ -13,6 +13,8 @@ import {
   projectMcpConfigCreatePath,
   readResolvedConfigFile,
 } from "./mcp-config-read.ts";
+import { errorCode, errorMessage } from "./errors.ts";
+import { isRecord } from "./is-record.ts";
 
 // Pi Web's `mcp.json` writer (ADR 0006, "Writes"). The SDK's editors
 // (`dist/extensions/mcp/config.js` add/update/removeMcpServerConfig, which the
@@ -88,18 +90,6 @@ export class McpConfigWriteError extends Error {
 /** Tells a refused write by its brand, so a second copy of this module (hot reload, a test loader) still counts. */
 export function isMcpConfigWriteError(error: unknown): error is McpConfigWriteError {
   return typeof error === "object" && error !== null && (error as Record<symbol, unknown>)[WRITE_ERROR_BRAND] === true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function errorCode(error: unknown): string | undefined {
-  return (error as NodeJS.ErrnoException | undefined)?.code;
 }
 
 // ---------------------------------------------------------------------------

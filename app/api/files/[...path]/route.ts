@@ -51,6 +51,8 @@ import { isIgnored } from "@/lib/file-ignore";
 import { FILE_WATCH_HEARTBEAT_MS } from "@/lib/file-version";
 import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
 import { contentDisposition } from "@/lib/content-disposition";
+import { frameAncestorsDirective } from "@/lib/frame-ancestors";
+import { errorMessage } from "@/lib/errors";
 
 // 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
 // 不再有硬编码忽略集合；无 ignore 文件时全部显示（所见即磁盘）。
@@ -443,7 +445,7 @@ export async function POST(
         try {
           bytes = Buffer.from(await file.arrayBuffer());
         } catch (error) {
-          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+          errors.push({ name: file.name, error: errorMessage(error) });
           continue;
         }
 
@@ -459,7 +461,7 @@ export async function POST(
           }
           uploaded.push(file.name);
         } catch (error) {
-          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+          errors.push({ name: file.name, error: errorMessage(error) });
         }
       }
 
@@ -471,7 +473,7 @@ export async function POST(
 
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
 }
 
@@ -521,32 +523,19 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
   });
 }
 
-function encodeHeaderValue(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (ch) =>
-    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`
-  );
-}
-
-function getContentDisposition(filePath: string, asDownload = false): string {
-  const disposition = asDownload ? "attachment" : "inline";
-  const fileName = path.basename(filePath);
-  const fallback = fileName.replace(/[^\x20-\x7E]|["\\;\r\n]/g, "_") || "download";
-  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
-}
-
 /** Blob response for revision reads/downloads — same header policy as streamFile (incl. the SVG CSP). */
 function revisionBlobResponse(filePath: string, blob: Buffer, contentType: string, asDownload = false): Response {
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     "Cache-Control": "no-cache",
-    "Content-Disposition": getContentDisposition(filePath, asDownload),
+    "Content-Disposition": contentDisposition(asDownload ? "attachment" : "inline", path.basename(filePath), "download"),
     "X-Content-Type-Options": "nosniff",
   };
   // Same document-rendering hardening as streamFile: a repo-controlled SVG opened
   // directly must not run script in the Pi Web origin (<img> embedding ignores these).
   if (contentType === "image/svg+xml") {
     headers["Content-Security-Policy"] =
-      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+      `default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; ${frameAncestorsDirective()}`;
     headers["Referrer-Policy"] = "no-referrer";
   }
   return new Response(new Uint8Array(blob), { headers: { ...headers, "Content-Length": String(blob.length) } });
@@ -655,7 +644,7 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
   // <img> preview embedding ignores them.
   if (contentType === "image/svg+xml") {
     headers["Content-Security-Policy"] =
-      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+      `default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; ${frameAncestorsDirective()}`;
     headers["Referrer-Policy"] = "no-referrer";
   }
 
@@ -970,7 +959,7 @@ async function handleFileRequest(
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
-          "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+          "Content-Security-Policy": `default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; ${frameAncestorsDirective()}`,
           "Referrer-Policy": "no-referrer",
           "X-Content-Type-Options": "nosniff",
         },

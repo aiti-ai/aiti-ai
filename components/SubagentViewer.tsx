@@ -1,6 +1,7 @@
 "use client";
 
 import { apiUrl } from "@/lib/base-path";
+import type { FileLinkTarget } from "@/lib/file-links";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "./MessageView.tsx";
 import { StatusIcon, statusColor } from "./AgentSessionPanel.tsx";
@@ -13,7 +14,7 @@ interface Props {
   /** Label from the subagent tool call (`description || profile`), used until the session info loads. */
   fallbackLabel: string;
   running: boolean;
-  onOpenFile: (filePath: string, page?: number) => void;
+  onOpenFile: (filePath: string, target?: FileLinkTarget) => void;
 }
 
 const POLL_MS = 2000;
