@@ -12,7 +12,7 @@ import {
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 const TITLE_TIMEOUT_MS = 90_000;
-const TITLE_MAX_TOKENS = 256;
+export const TITLE_MAX_TOKENS = 256;
 const MAX_TITLE_LENGTH = 80;
 
 // Per-message caps. A title needs what the user asked for (every user turn,
@@ -277,6 +277,38 @@ function titleFromAssistant(message: AssistantMessage): GeneratedSessionTitle {
         total: message.usage.totalTokens,
       },
     } : {}),
+  };
+}
+
+/**
+ * Title invocation injected by callers without an AgentSession — e.g. the core's
+ * provider-owned auto-name path (spawn sessions) via lib/ai-invoke's invokeAI.
+ * The invocation is a one-shot request: system prompt plus one user turn.
+ */
+export interface TitleInvocator {
+  (system: string, userText: string): Promise<{ text: string; usage?: GeneratedSessionTitle["usage"] }>;
+}
+
+/**
+ * Generate a session title from a plain transcript, independent of AgentSession.
+ * The caller supplies the model call; this function owns the prompt assembly,
+ * the empty-transcript guard and the answer parsing. The AgentSession-based
+ * generateSessionTitle stays the path for local in-process sessions.
+ */
+export async function generateSessionTitleFromTranscript(
+  transcript: string,
+  invoke: TitleInvocator,
+): Promise<GeneratedSessionTitle> {
+  if (!transcript.trim()) {
+    throw new Error("The session has no usable text to name");
+  }
+  const { text, usage } = await invoke(TITLE_SYSTEM_PROMPT, `${transcript}\n\n${TITLE_PROMPT}`);
+  if (!text?.trim()) {
+    throw new Error("The model did not return a usable session title");
+  }
+  return {
+    title: parseGeneratedSessionTitle(text),
+    ...(usage ? { usage } : {}),
   };
 }
 

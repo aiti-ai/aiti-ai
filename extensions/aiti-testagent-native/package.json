@@ -1,0 +1,31 @@
+{
+  "name": "@aiti-ai/aiti-testagent-native",
+  "version": "0.1.14",
+  "type": "module",
+  "description": "Visual panel for testagent-native (live Windows-native process control) — broker processes/sessions/hooks/event stream; formerly aiti-wintrace (renamed 2026-11-07)",
+  "displayNameI18n": {
+    "en": "testagent-native (Windows API/COM trace panel)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "testagent-native（Windows 原生进程活体操控）可视面 —— broker 进程/会话/挂钩/事件流；原 aiti-wintrace（2026-11-07 改名）"
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "watch": "node tools/build-client.mjs --watch"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "71d33b06690f17bd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-testagent-native"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

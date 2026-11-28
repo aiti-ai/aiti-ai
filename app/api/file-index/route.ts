@@ -11,9 +11,14 @@ import {
 } from "@/lib/file-access";
 import { projectGitEnvironment } from "@/lib/git-environment";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
-import { isHiddenOutsideGit } from "@/lib/file-tree-visibility";
+import { isIgnored, isAitIgnored } from "@/lib/file-ignore";
 
 const execFileAsync = promisify(execFile);
+
+// 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
+// 不再有硬编码忽略集合；git 仓库内 .gitignore 由 git ls-files --exclude-standard 承担，
+// .aitignore 由 lib/file-ignore 叠加（git 不认识 .aitignore）；非 git 目录 walk 走同一引擎。
+
 
 /** Cap on the plain (no-query) response used as the client-side index */
 const MAX_FILES = 5000;
@@ -61,10 +66,12 @@ async function listWithGit(cwd: string): Promise<FileListing | null> {
     // --cached lists a path once per index stage, so a file in a merge conflict
     // would show two or three times.
     const all = [...new Set(stdout.split("\0").filter(Boolean))];
-    if (all.length > GIT_HARD_CAP) {
-      return { files: all.slice(0, GIT_HARD_CAP), hardTruncated: true };
+    // .gitignore 层由 --exclude-standard 承担；此处叠加 .aitignore（git 不认识它）
+    const filtered = all.filter((f) => !isAitIgnored(cwd, f));
+    if (filtered.length > GIT_HARD_CAP) {
+      return { files: filtered.slice(0, GIT_HARD_CAP), hardTruncated: true };
     }
-    return { files: all, hardTruncated: false };
+    return { files: filtered, hardTruncated: false };
   } catch {
     // Not a git repo (or git unavailable) — caller falls back to readdir walk.
     return null;
@@ -84,9 +91,7 @@ function listWithWalk(cwd: string): FileListing {
       continue;
     }
     for (const d of dirents) {
-      // The file tree's name list, only for this non-git fallback. Git repos
-      // rely on .gitignore instead (matches the TUI's fd behavior).
-      if (isHiddenOutsideGit(d.name)) continue;
+      if (isIgnored(abs, d.name, d.isDirectory())) continue;
       const childRel = rel ? `${rel}/${d.name}` : d.name;
       if (d.isDirectory()) {
         if (depth + 1 <= MAX_WALK_DEPTH) {
@@ -103,20 +108,11 @@ function listWithWalk(cwd: string): FileListing {
   return { files, hardTruncated: false };
 }
 
-// GET /api/file-index?cwd=/abs/path[&q=query]
-// Without q: { files: string[] (relative to cwd, capped at MAX_FILES),
-// truncated: boolean } — the client-side index for local filtering.
-// With q: { matches: { path, isDir }[] } — ranked against the FULL listing so
-// repos larger than MAX_FILES still find deep files (cap applied after
-// matching, like the TUI passing the query to fd).
-// Guarded by the same allow-list as /api/files.
-export async function GET(req: NextRequest) {
+async function handleFileIndex(cwd: string, query: string): Promise<NextResponse> {
   try {
-    const cwd = req.nextUrl.searchParams.get("cwd") ?? "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }
-    const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
 
     const allowedRoots = await getAllowedFileRoots();
     if (!isFilePathAllowed(cwd, allowedRoots)) {
@@ -162,4 +158,26 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
+}
+
+// GET /api/file-index?cwd=/abs/path[&q=query] — the query-string form is kept for existing
+// callers; cwd/q are also accepted via a POST JSON body (same path, same semantics). Absolute
+// paths never land in URLs (access logs/proxy logs), so new code must use POST.
+export async function GET(req: NextRequest) {
+  const cwd = req.nextUrl.searchParams.get("cwd") ?? "";
+  const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
+  return handleFileIndex(cwd, query);
+}
+
+export async function POST(req: NextRequest) {
+  let cwd = "";
+  let query = "";
+  try {
+    const body = (await req.json()) as { cwd?: unknown; q?: unknown };
+    cwd = typeof body.cwd === "string" ? body.cwd : "";
+    query = typeof body.q === "string" ? body.q.slice(0, MAX_QUERY_LENGTH) : "";
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  return handleFileIndex(cwd, query);
 }

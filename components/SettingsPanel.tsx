@@ -5,6 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
+import { ThemeIcon } from "./ThemeIcon.tsx";
 import {
   CHAT_CONTENT_WIDTH_DEFAULT,
   CHAT_CONTENT_WIDTH_MAX,
@@ -15,33 +16,40 @@ import {
   useChatAppearance,
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
-import { useFilesPlacement, setFilesPlacement } from "@/hooks/useFilesPlacement";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { clearStoredDrafts } from "@/lib/draft-store";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import { SETTINGS_BUILTIN_TOOLS } from "@/lib/tool-presets";
-import { NOTICE_SETTING_KEYS, type NoticeSettingKey, type NoticeSettings } from "@/lib/transcript-notices";
 import {
   setLastSettingsSection,
   settingsSectionRequiresProject,
   type SettingsSection,
 } from "@/lib/settings-navigation";
+import { SettingsSectionIcon } from "./SettingsSectionIcon.tsx";
 import { focusModalPanel, listenForPanelEscape } from "@/lib/stacked-dialog";
 import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
 } from "@/lib/thinking-expansion-preference";
-import { ModelsConfig } from "./ModelsConfig";
+import { ModelsConfig } from "./ModelsConfig.tsx";
 import { setupPushSubscription } from "@/lib/push-client";
-import { SkillsConfig } from "./SkillsConfig";
-import { AgentsConfig } from "./AgentsConfig";
-import { PluginsConfig } from "./PluginsConfig";
-import { McpConfig } from "./McpConfig";
-import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi";
-import { FontSettings } from "./FontSettings";
-import { HttpProxyForm } from "./HttpProxyForm";
+import { SkillsConfig } from "./SkillsConfig.tsx";
+import { AgentsConfig } from "./AgentsConfig.tsx";
+import { PluginsConfig } from "./PluginsConfig.tsx";
+import { McpConfig } from "./McpConfig.tsx";
+import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi.tsx";
+import { FontSettings } from "./FontSettings.tsx";
+import {
+  PANEL_UI_SCALE_DEFAULT,
+  PANEL_UI_SCALE_MAX,
+  PANEL_UI_SCALE_MIN,
+  PANEL_UI_SCALE_STEP,
+  usePanelScale,
+} from "@/hooks/usePanelScale";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots.tsx";
+import { hasExtRender } from "@/lib/ext-ui-store";
 import { readJsonOrThrow } from "@/lib/fetch-json";
-import { errorMessage } from "@/lib/errors";
 
 interface Props {
   cwd: string | null;
@@ -61,57 +69,21 @@ interface Props {
   onProjectTrustChanged?: (cwd: string, status: ProjectTrustStatus) => void;
 }
 
-export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: { section: SettingsSection; size?: number; strokeWidth?: number }) {
-  const common = {
-    width: size,
-    height: size,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-    className: "settings-section-icon",
-  };
-
-  if (section === "general") return <svg {...common}><path d="M20 7h-9M14 17H5" /><circle cx="7" cy="7" r="3" /><circle cx="17" cy="17" r="3" /></svg>;
-  if (section === "models") return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" /></svg>;
-  if (section === "skills") return <svg {...common}><path d="m12 2-10 5 10 5 10-5-10-5Z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></svg>;
-  if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
-  if (section === "mcp") return <svg {...common}><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" /></svg>;
-  return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
-}
-
-type QueueMode = "one-at-a-time" | "all";
-type QueueModes = { steeringMode: QueueMode; followUpMode: QueueMode };
-const QUEUE_MODE_SETTINGS = [
-  ["steeringMode", "settings.steeringMode"],
-  ["followUpMode", "settings.followUpMode"],
-] as const;
-const QUEUE_MODES = [
-  ["one-at-a-time", "settings.queueModeOneAtATime"],
-  ["all", "settings.queueModeAll"],
-] as const;
+// SettingsSectionIcon lives in ./SettingsSectionIcon.tsx (shared with AppShell's
+// synchronous bottom bar); the lazy panel imports it from there.
 
 function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, onQuoteSelectionChange }: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange">) {
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference } = useTheme();
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
+  const { panelUiScale, setPanelUiScale } = usePanelScale();
   const enterSendMode = useEnterSendMode();
-  const filesPlacement = useFilesPlacement();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [builtinToolsSaving, setBuiltinToolsSaving] = useState(false);
   const [builtinToolsError, setBuiltinToolsError] = useState<string | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
-  const [notices, setNotices] = useState<NoticeSettings | null>(null);
-  const [noticeSaving, setNoticeSaving] = useState<NoticeSettingKey | null>(null);
-  const [noticesError, setNoticesError] = useState<string | null>(null);
-  const [queueModes, setQueueModes] = useState<QueueModes | null>(null);
-  const [queueModesSaving, setQueueModesSaving] = useState(false);
-  const [queueModesError, setQueueModesError] = useState<string | null>(null);
   const [pushRegistering, setPushRegistering] = useState(false);
   const [pushStatus, setPushStatus] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const [webAuthEnabled, setWebAuthEnabled] = useState(false);
@@ -120,7 +92,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     setThinkingExpanded(isThinkingExpandedByDefault());
-    void fetch("/api/web-auth")
+    void fetch(apiUrl("/api/web-auth"))
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
       .catch(() => {});
@@ -130,11 +102,11 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     setLoggingOut(true);
     setLogoutError("");
     try {
-      const response = await fetch("/api/web-auth", { method: "DELETE" });
+      const response = await fetch(apiUrl("/api/web-auth"), { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      // Unsent text stays in this browser's storage otherwise.
+      // Unsent text stays in this browser storage otherwise.
       clearStoredDrafts();
-      window.location.replace("/login");
+      window.location.replace(withBasePath("/login"));
     } catch {
       setLogoutError(t("auth.logoutFailed"));
     } finally {
@@ -144,86 +116,22 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/tools/settings")
+    void fetch(apiUrl("/api/tools/settings"))
       .then(async (response) => {
         const data = await readJsonOrThrow<ToolSettingsResponse>(response);
         if (!cancelled) setShellSettings(data);
       })
       .catch((cause) => {
-        if (!cancelled) setShellError(errorMessage(cause));
+        if (!cancelled) setShellError(cause instanceof Error ? cause.message : String(cause));
       });
     return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/notices")
-      .then(async (response) => {
-        const data = await readJsonOrThrow<{ notices: NoticeSettings }>(response);
-        if (!cancelled) setNotices(data.notices);
-      })
-      .catch((cause) => {
-        if (!cancelled) setNoticesError(errorMessage(cause));
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/queue-modes")
-      .then(async (response) => {
-        const data = await readJsonOrThrow<QueueModes>(response);
-        if (!cancelled) setQueueModes(data);
-      })
-      .catch((cause) => {
-        if (!cancelled) setQueueModesError(errorMessage(cause));
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  // pi's steeringMode (#1771) and followUpMode; the server applies them to the open sessions too.
-  const chooseQueueMode = async (key: keyof QueueModes, mode: QueueMode) => {
-    setQueueModesSaving(true);
-    setQueueModesError(null);
-    try {
-      const response = await fetch("/api/queue-modes", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [key]: mode }),
-      });
-      setQueueModes(await readJsonOrThrow<QueueModes>(response));
-    } catch (cause) {
-      setQueueModesError(errorMessage(cause));
-    } finally {
-      setQueueModesSaving(false);
-    }
-  };
-
-  // pi's notices.* (#1265); the open chat is read again to show or drop them.
-  const toggleNotice = async (key: NoticeSettingKey, shown: boolean) => {
-    setNoticeSaving(key);
-    setNoticesError(null);
-    try {
-      const response = await fetch("/api/notices", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, shown }),
-      });
-      const data = await readJsonOrThrow<{ notices: NoticeSettings }>(response);
-      setNotices(data.notices);
-      if (sessionId) onSessionReloaded();
-    } catch (cause) {
-      setNoticesError(errorMessage(cause));
-    } finally {
-      setNoticeSaving(null);
-    }
-  };
 
   const togglePowerShell = async (enabled: boolean) => {
     setShellSaving(true);
     setShellError(null);
     try {
-      const response = await fetch("/api/tools/settings", {
+      const response = await fetch(apiUrl("/api/tools/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -235,7 +143,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         onSessionReloaded();
       }
     } catch (cause) {
-      setShellError(errorMessage(cause));
+      setShellError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setShellSaving(false);
     }
@@ -248,7 +156,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     setBuiltinToolsError(null);
     try {
       const builtinTools = enabled ? [...shellSettings.builtinTools, name] : shellSettings.builtinTools.filter((tool) => tool !== name);
-      const response = await fetch("/api/tools/settings", {
+      const response = await fetch(apiUrl("/api/tools/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ builtinTools }),
@@ -256,7 +164,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
       const data = await readJsonOrThrow<ToolSettingsResponse>(response);
       setShellSettings(data);
     } catch (cause) {
-      setBuiltinToolsError(errorMessage(cause));
+      setBuiltinToolsError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBuiltinToolsSaving(false);
     }
@@ -278,7 +186,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
       if (!ok) throw new Error("unsupported or not permitted");
       setPushStatus({ kind: "ok", message: t("settings.pushRegistered") });
     } catch (cause) {
-      setPushStatus({ kind: "error", message: `${t("settings.pushRegisterFailed")} ${errorMessage(cause)}` });
+      setPushStatus({ kind: "error", message: `${t("settings.pushRegisterFailed")} ${cause instanceof Error ? cause.message : String(cause)}` });
     } finally {
       setPushRegistering(false);
     }
@@ -295,8 +203,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               <label
                 key={option.id}
                 className="settings-theme-option"
-                data-system={option.id === "auto" || undefined}
-                data-wide={option.id === "contrast-light" || option.id === "contrast-dark" || option.id === "zenburn" || undefined}
               >
                 <input
                   type="radio"
@@ -306,22 +212,8 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
                   onChange={() => setThemePreference(option.id)}
                   className="sr-only"
                 />
-                {/* A data-theme span paints with that theme's own variables. System is a switch, not a
-                    palette: a neutral tile with a light and a dark chip beside its name. */}
-                {option.id === "auto" ? (
-                  <span className="settings-theme-swatch settings-theme-system" aria-hidden="true">
-                    <span data-theme="light" className="settings-theme-chip" />
-                    <span data-theme="dark" className="settings-theme-chip" />
-                    <span className="settings-theme-system-name">{t(option.label)}</span>
-                  </span>
-                ) : (
-                  <span className="settings-theme-swatch" aria-hidden="true">
-                    <span data-theme={option.id} className="settings-theme-fill">
-                      <span className="settings-theme-name">{t(option.label)}</span>
-                    </span>
-                  </span>
-                )}
-                <span className="sr-only">{t(option.label)}</span>
+                <ThemeIcon preference={option.id} />
+                <span className="settings-theme-option-label">{t(option.label)}</span>
               </label>
             );
           })}
@@ -333,6 +225,34 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         <p id="settings-typography-description" className="settings-general-description">{t("settings.fontDescription")}</p>
         <div className="settings-chat-options">
           <FontSettings />
+          <div className="settings-chat-option settings-chat-range-option">
+            <div className="settings-chat-range-header">
+              <label htmlFor="settings-panel-ui-scale">{t("settings.panelUiScale")}</label>
+              <output htmlFor="settings-panel-ui-scale">{panelUiScale}%</output>
+              <ConfigButton
+                variant="ghost"
+                size="small"
+                className="settings-chat-reset"
+                title={t("settings.resetPanelUiScale")}
+                aria-label={t("settings.resetPanelUiScale")}
+                disabled={panelUiScale === PANEL_UI_SCALE_DEFAULT}
+                onClick={() => setPanelUiScale(PANEL_UI_SCALE_DEFAULT)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5" />
+                </svg>
+              </ConfigButton>
+            </div>
+            <input
+              id="settings-panel-ui-scale"
+              type="range"
+              min={PANEL_UI_SCALE_MIN}
+              max={PANEL_UI_SCALE_MAX}
+              step={PANEL_UI_SCALE_STEP}
+              value={panelUiScale}
+              onChange={(event) => setPanelUiScale(Number(event.target.value))}
+            />
+          </div>
           <div className="settings-chat-option settings-chat-range-option">
             <div className="settings-chat-range-header">
               <label htmlFor="settings-chat-content-font-size">{t("settings.chatContentFontSize")}</label>
@@ -441,89 +361,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             </div>
           </div>
-          {QUEUE_MODE_SETTINGS.map(([key, heading]) => (
-            <div key={key} className="settings-chat-option settings-chat-switch-option" role="radiogroup" aria-label={t(heading)}>
-              <span>{t(heading)}</span>
-              <div className="settings-send-mode-options">
-                {QUEUE_MODES.map(([mode, label]) => (
-                  <label key={mode} className="settings-send-mode-option">
-                    <input
-                      type="radio"
-                      name={key}
-                      value={mode}
-                      checked={queueModes?.[key] === mode}
-                      disabled={queueModes === null || queueModesSaving}
-                      onChange={() => void chooseQueueMode(key, mode)}
-                      className="sr-only"
-                    />
-                    <span className="settings-send-mode-label">{t(label)}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
-        {queueModesError && <p role="alert" className="settings-general-error">{queueModesError}</p>}
-      </section>
-
-      <section className="settings-general-section">
-        <h3 className="settings-general-heading">{t("settings.notices")}</h3>
-        <div className="settings-chat-options">
-          {NOTICE_SETTING_KEYS.map((key) => (
-            <div key={key} className="settings-chat-option settings-chat-switch-option">
-              <span>{t(`settings.notice.${key}`)}</span>
-              <ConfigSwitch
-                checked={notices?.[key] === true}
-                loading={(notices === null && !noticesError) || noticeSaving === key}
-                disabled={noticeSaving !== null}
-                label={t(`settings.notice.${key}`)}
-                describedBy="settings-notices-description"
-                onChange={(shown) => void toggleNotice(key, shown)}
-              />
-            </div>
-          ))}
-        </div>
-        <p id="settings-notices-description" className="settings-general-description">{t("settings.noticesDescription")}</p>
-        {noticesError && <p role="alert" className="settings-general-error">{noticesError}</p>}
-      </section>
-
-      <section className="settings-general-section">
-        <h3 className="settings-general-heading">{t("settings.sidebar")}</h3>
-        <div className="settings-chat-options">
-          <div
-            className="settings-chat-option settings-chat-switch-option"
-            role="radiogroup"
-            aria-label={t("settings.filesPlacement")}
-            aria-describedby="settings-files-placement-description"
-          >
-            <span>{t("settings.filesPlacement")}</span>
-            <div className="settings-send-mode-options">
-              <label className="settings-send-mode-option">
-                <input
-                  type="radio"
-                  name="files-placement"
-                  value="below"
-                  checked={filesPlacement === "below"}
-                  onChange={() => setFilesPlacement("below")}
-                  className="sr-only"
-                />
-                <span className="settings-send-mode-label">{t("settings.filesPlacementBelow")}</span>
-              </label>
-              <label className="settings-send-mode-option">
-                <input
-                  type="radio"
-                  name="files-placement"
-                  value="tab"
-                  checked={filesPlacement === "tab"}
-                  onChange={() => setFilesPlacement("tab")}
-                  className="sr-only"
-                />
-                <span className="settings-send-mode-label">{t("settings.filesPlacementTab")}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <p id="settings-files-placement-description" className="settings-general-description">{t("settings.filesPlacementDescription")}</p>
       </section>
 
       {shellSettings && (
@@ -564,10 +402,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
           {shellError && <p role="alert" className="settings-general-error">{shellError}</p>}
         </section>
       )}
-
-      <section className="settings-general-section">
-        <HttpProxyForm label={t("settings.httpProxy")} />
-      </section>
 
       <section className="settings-general-section">
         <h3 className="settings-general-heading">{t("settings.pushPermission")}</h3>
@@ -734,6 +568,17 @@ export function SettingsPanel({
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
     () => new Set([section]),
   );
+  // "Models" tab takeover (model-wizard extension): when the settingsModels slot
+  // has an item with render, render the extension component in place of the
+  // native ModelsConfig (clicks open the wizard overlay from the extension side);
+  // when unregistered, the native two-pane view is the fallback with zero regression.
+  const settingsModelsTakeover = useExtSlotItems("settingsModels").find(hasExtRender);
+  // "Agents" (subagents) tab full takeover (subagents extension): same springboard
+  // pattern via the settingsAgents slot — once the extension registers, its agent
+  // management UI replaces the native AgentsConfig (under fork semantics native
+  // profiles never take effect); when unregistered, the native AgentsConfig is
+  // the fallback (its internal settingsAgentsFeature banner mechanism is kept).
+  const settingsAgentsTakeover = useExtSlotItems("settingsAgents").find(hasExtRender);
   // Which sections need a project is decided once, in lib/settings-navigation.ts.
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = ([
     { id: "general", label: t("settings.general") },
@@ -920,11 +765,23 @@ export function SettingsPanel({
           )}
           <ConfigDetailNavigationContext.Provider value={detailNavigation}>
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} quoteSelectionEnabled={quoteSelectionEnabled} onQuoteSelectionChange={onQuoteSelectionChange} />)}
-          {sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
+          {sectionHost("models", settingsModelsTakeover ? (
+            <ExtItemBoundary extId={settingsModelsTakeover.extId} slot="settingsModels" itemId={settingsModelsTakeover.id}>
+              <settingsModelsTakeover.render currentSession={null} cwd={cwd} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <ModelsConfig embedded cwd={cwd} onClose={onClose} />
+          ))}
           {/* Visited sections stay mounted, so the ones whose answer depends on trust take the page's
               status and load again in place when trusting from Settings › MCP changes it. */}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} onClose={onClose} />)}
-          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
+          {cwd && sectionHost("agents", settingsAgentsTakeover ? (
+            <ExtItemBoundary extId={settingsAgentsTakeover.extId} slot="settingsAgents" itemId={settingsAgentsTakeover.id}>
+              <settingsAgentsTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />
+          ))}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}

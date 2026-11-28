@@ -1,0 +1,147 @@
+# aiti/aiti:full — all-in-one image (aiti-docker-image-plan §3.2)
+# core + GUI (Xvfb/openbox/x11vnc/noVNC/dbus/at-spi/xdotool) + Chromium + ASR (faster-whisper/FunASR)
+# + edge-tts + tunnel binaries (cloudflared/ngrok/frpc) + ttyd. Build args shared with core.
+ARG CORE_IMAGE=aiti/aiti:core
+FROM ${CORE_IMAGE}
+
+# Official mirrors by default (GitHub-direct); CN local builds inject via build.sh --cn (shared with core)
+ARG APT_MIRROR=""
+ARG HF_ENDPOINT=https://huggingface.co
+ARG PIP_MIRROR=https://pypi.org/simple
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── ① GUI system components (same list as aiti-ui-env setup-linux.sh, design §2.2.1) ──────────
+# ⚠ R4 truth (2026-09-10 second-review correction): ubuntu 26.04's chromium-browser/chromium are both
+# snap transition packages (2:1snap1-*); apt-installing them is a false success and unusable in-container
+# (no snap) — the first-run "R4 resolved" was a misjudgment (first fallback link false-success + silent start).
+# Browser: amd64 installs Google's official deb directly (not via the apt repo — the dl.google.com repo index
+# Hit Hash Sum mismatch in practice; a direct deb has no index, deps resolve from the apt mirror). arm64 has no
+# official Chrome deb and falls back to apt chromium (usable if the mirror carries a real deb, else WARN — arm64 browser support is a known gap).
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://archive.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi; \
+    apt-get update; \
+    if [ "$arch" = "amd64" ]; then \
+      # aria2c multi-connection download for the Chrome deb: dl.google.com throttles per connection
+      # (CN link 2026-11-22: ~60 KB/s single-connection wget kept the ~145MB deb crawling for 25-50 min;
+      # ranged parallel connections land in single-digit minutes even with per-IP decay). aria2 comes
+      # from the apt mirror; wget single-connection stays as the fallback downloader.
+      apt-get install -y --no-install-recommends aria2; \
+      aria2c -x8 -s8 -k1M --file-allocation=none --console-log-level=warn --summary-interval=0 \
+        --show-console-readout=false --max-tries=5 --retry-wait=2 -d /tmp -o chrome.deb \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+        || wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; \
+      CHROME_DEB="/tmp/chrome.deb"; \
+    fi; \
+    apt-get install -y --no-install-recommends \
+      xvfb openbox \
+      x11vnc novnc tigervnc-common \
+      dbus-x11 at-spi2-core \
+      xauth x11-utils xdotool wmctrl \
+      xterm \
+      ${CHROME_DEB:-}; \
+    rm -f /tmp/chrome.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    if [ "$arch" != "amd64" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends chromium \
+        || echo "[full] WARN: no official Chrome deb for arm64 and apt chromium unavailable (snap transition pkg) — CDP missing"; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi; \
+    # Build-time hard check: the real browser binary must be executable (so snap-transition false successes never slip through silently again)
+    google-chrome-stable --version || chromium --version
+
+# ── ② ASR venv + model pre-download (design §2.2.2; HF via the CN mirror) ──────────────────────
+# Layer order: setup (venv+models ~2.7GB, slow) first, app COPY later — changing ASR app code does not re-download models
+COPY docker/scripts/40-asr-setup.sh /tmp/40-asr-setup.sh
+RUN HF_ENDPOINT="${HF_ENDPOINT}" PIP_MIRROR="${PIP_MIRROR}" /tmp/40-asr-setup.sh && rm /tmp/40-asr-setup.sh
+COPY pi-web-ext/aiti-ai-input/server /opt/aiti-asr/app
+
+# ── ③ edge-tts (design §2.2.3: tts.edge feature off by default; tool pre-installed + cache dir pre-created) ──
+RUN pip3 install --break-system-packages -i "${PIP_MIRROR}" edge-tts \
+    && mkdir -p /home/aiti/.local/bin /opt/aiti/data/aiti-ai-speek/tts-cache \
+    && chown -R aiti:aiti /home/aiti/.local /opt/aiti/data/aiti-ai-speek
+# After the A12 fix speek locates edge-tts via PATH; in-container pip installs to /usr/local/bin (on PATH)
+
+# ── ④ tunnel binaries + ttyd (design §2.2.4/§2.2.5) ─────────────────────────────────────────
+# All versions pinned (latest redirects / asset drift caused silent absences).
+# Sources are *raced* by justget (already bundled in the core image) instead of being walked one by one: the old curl
+# loop counted a slow github.com as success and only fell back on a hard failure, so one throttled asset could pin the
+# build for tens of minutes (measured on a CN link: direct ≈13 KB/s vs a live accelerator ≈2.8 MB/s). justget starts
+# the mirrors as soon as the primary drops below --min-speed and skips them entirely when the primary is fast
+# (--fast-primary-threshold), so a fast CI network keeps the plain direct path.
+# Thresholds are passed explicitly instead of relying on justget's defaults: the core image may carry an older
+# justget build (its historical default only started mirrors for ≥50 MB files), and every asset here is smaller.
+#   GH_ACCEL_MIRRORS: comma-separated GitHub prefix accelerators ("" = single-source download, mirrors off)
+#   GITEE_BIN_BASE:   optional gitee-hosted copies of the same assets — a mirror that does not depend on any
+#                     third-party accelerator (populated by scripts/sync-tunnel-binaries.mjs); "" = unused.
+#                     The <gitee-name> argument of dl is the asset name there; an empty name = no gitee copy
+#                     (frp is not mirrored: gitee's upload scanner rejects it).
+# cloudflared/ttyd are hard requirements (fail-fast); ngrok/frpc are optional (WARN, non-blocking).
+ARG GH_ACCEL_MIRRORS="https://ghfast.top/https://github.com,https://gh-proxy.com/https://github.com"
+ARG GITEE_BIN_BASE="https://gitee.com/aiti-ai/tunnel-binaries/releases/download/vendor-v1"
+
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) garch="amd64"; garch_f="amd64";; arm64) garch="aarch64"; garch_f="arm64";; esac; \
+    ACCEL="$(printf '%s' "$GH_ACCEL_MIRRORS" | tr ',' ' ')"; \
+    dl() { out="$1"; url="$2"; ge="$3"; tmo="${4:-900000}"; \
+      if command -v justget >/dev/null 2>&1; then \
+        set -- justget "$url" -o "$out" --min-size 1048576 --warmup 3000 --timeout "$tmo" --no-progress; \
+        case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do set -- "$@" -m "$m/$rel"; done;; esac; \
+        if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then set -- "$@" -m "$GITEE_BIN_BASE/$ge"; fi; \
+        if "$@"; then return 0; fi; \
+        echo "[full] WARN justget failed for $url — falling back to the sequential curl walk" >&2; \
+      fi; \
+      if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$url"; then return 0; fi; \
+      case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$m/$rel"; then return 0; fi; done;; esac; \
+      if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$GITEE_BIN_BASE/$ge"; then return 0; fi; fi; \
+      return 1; }; \
+    gh() { dl "$1" "https://github.com/$2" "$3"; }; \
+    # cloudflared (default tunnel, required) pinned 2026.8.3
+    gh /usr/local/bin/cloudflared "cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" "cloudflared-linux-${garch}"; \
+    chmod +x /usr/local/bin/cloudflared; \
+    # ttyd ([term] phase) pinned 1.7.7 (release assets are bare binaries; naming is kernel-style x86_64/aarch64,
+    # not dpkg's amd64/arm64 — building URLs with amd64 once 404'd on every source)
+    case "$arch" in amd64) tarch="x86_64";; arm64) tarch="aarch64";; esac; \
+    gh /usr/local/bin/ttyd "tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" "ttyd.${tarch}"; \
+    chmod +x /usr/local/bin/ttyd && ttyd --version; \
+    # ngrok (stable direct link, no GitHub release behind it, no accelerator and no gitee copy — so it gets a
+    # short budget instead of the 15-minute default: it is optional and a hanging equinox CDN would otherwise eat
+    # the whole step; users configure their own authtoken)
+    dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" "" 120000 \
+      || echo "[full] WARN ngrok download failed (optional)"; \
+    (tar -xzf /tmp/ngrok.tgz -C /usr/local/bin ngrok && chmod +x /usr/local/bin/ngrok) || true; rm -f /tmp/ngrok.tgz; \
+    # frpc pinned 0.61.1 (frpc is a single binary inside the tar; failure non-blocking; no gitee mirror = "" — the
+    # gitee upload scanner rejects it, so it races github.com + the accelerators only)
+    dl /tmp/frpc.tar.gz "https://github.com/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" "" 300000 \
+      || echo "[full] WARN frpc download failed (optional)"; \
+    (tar -xzf /tmp/frpc.tar.gz -C /tmp "frp_0.61.1_linux_${garch_f}/frpc" \
+      && mv "/tmp/frp_0.61.1_linux_${garch_f}/frpc" /usr/local/bin/frpc && chmod +x /usr/local/bin/frpc) || true; \
+    rm -rf /tmp/frpc.tar.gz "/tmp/frp_0.61.1_linux_${garch_f}"; \
+    rm -f /usr/local/bin/.justget-* /tmp/.justget-* 2>/dev/null || true; \
+    cloudflared --version; ttyd --version
+
+# ── ⑤ GUI autostart orchestration script (no systemd in containers → entrypoint phases, design §3.3 full branch) ──
+COPY docker/scripts/50-gui-start.sh /usr/local/bin/aiti-gui-start
+RUN chmod +x /usr/local/bin/aiti-gui-start
+
+# chromium needs --no-sandbox for the unprivileged in-container user (design §2.1.4); CDP defaults to loopback.
+# --no-first-run: a headful fresh profile blocks on the EULA dialog waiting for a human — nobody clicks inside a
+# container, so browser startup never completes and the CDP port never opens (smoke-verified); headless skips
+# first-run so it is unaffected.
+# --user-data-dir: Chrome 136+ security change — remote-debugging-port is silently ignored on the default
+# profile and must be paired with a non-default data dir (smoke-verified: window/process alive but 9222 never opens).
+# The profile lands in the data volume and persists with the container.
+# MODELSCOPE_CACHE matches the 40-asr-setup.sh pre-download dir — runtime (user aiti) reads the same models with zero re-download
+ENV AITI_PHASES=piweb,bridge \
+    AITI_CHROMIUM_FLAGS="--no-sandbox --no-first-run --no-default-browser-check --user-data-dir=/opt/aiti/data/chrome-profile --remote-debugging-port=9222 --remote-allow-origins=*" \
+    AITI_ASR_STREAM_BASE=ws://127.0.0.1:8767 \
+    MODELSCOPE_CACHE=/opt/aiti-asr/models
+
+# full layer marker (entrypoint MODE=auto probe)
+RUN touch /opt/aiti/.aiti-full
+
+EXPOSE 30142 8777 5900 6080 9222 7681 3389
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

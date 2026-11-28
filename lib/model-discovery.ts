@@ -1,4 +1,4 @@
-import { isRecord } from "./is-record";
+import { isRecord } from "./is-record.ts";
 const EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type EffortLevel = typeof EFFORT_LEVELS[number];
 
@@ -35,6 +35,10 @@ function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function optionalPositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function firstPositiveInteger(value: Record<string, unknown>, fields: readonly string[]): number | undefined {
   for (const field of fields) {
     const raw = value[field];
@@ -42,6 +46,49 @@ function firstPositiveInteger(value: Record<string, unknown>, fields: readonly s
     if (typeof number === "number" && Number.isSafeInteger(number) && number > 0) return number;
   }
   return undefined;
+}
+
+const SUPPORTED_INPUT_MODALITIES = new Set(["text", "image"]);
+
+/**
+ * Read model capability metadata from a provider's /models response so the
+ * wizard can seed limits (context window / max output tokens / modalities)
+ * from the provider's own data instead of guessing. Handles common shapes:
+ * - Ark / Volcano Engine: token_limits.{context_window,max_output_token_length}
+ * - OpenAI: max_context_window_tokens / max_output_tokens (+ input_modalities)
+ * - Google: inputTokenLimit / outputTokenLimit
+ * - generic: context_window / context_length / max_tokens
+ */
+function readModelLimits(value: Record<string, unknown>): Pick<DiscoveredModel, "contextWindow" | "maxTokens" | "input"> {
+  const tokenLimits = isRecord(value.token_limits) ? value.token_limits : {};
+  const contextWindow = optionalPositiveNumber(value.max_context_window_tokens)
+    ?? optionalPositiveNumber(tokenLimits.context_window)
+    ?? optionalPositiveNumber(value.context_window)
+    ?? optionalPositiveNumber(value.inputTokenLimit)
+    ?? optionalPositiveNumber(value.context_length);
+  const maxTokens = optionalPositiveNumber(value.max_output_tokens)
+    ?? optionalPositiveNumber(tokenLimits.max_output_token_length)
+    ?? optionalPositiveNumber(value.max_output_token_length)
+    ?? optionalPositiveNumber(value.outputTokenLimit);
+  // `value.max_tokens` is deliberately NOT a fallback (upstream #856): gateways
+  // fill it with either the input or the output limit — ambiguous, dropped.
+
+  const modalities = isRecord(value.modalities) ? value.modalities : undefined;
+  const rawModalities = Array.isArray(modalities?.input_modalities)
+    ? modalities!.input_modalities
+    : Array.isArray(value.input_modalities)
+      ? value.input_modalities
+      : undefined;
+  let input: string[] | undefined;
+  if (rawModalities) {
+    const modalitiesList = Array.from(new Set(rawModalities
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim().toLocaleLowerCase())
+      .filter((entry) => SUPPORTED_INPUT_MODALITIES.has(entry))));
+    if (modalitiesList.length) input = modalitiesList;
+  }
+
+  return { contextWindow, maxTokens, input };
 }
 
 /**
@@ -126,7 +173,20 @@ function modelFromValue(value: unknown): DiscoveredModel | null {
   const name = cleanString(value.display_name)
     ?? cleanString(value.displayName)
     ?? (cleanString(value.id) || cleanString(value.model) ? cleanString(value.name) : undefined);
-  return { id, ...(name && name !== id ? { name } : {}), ...capabilitiesFromValue(value) };
+  const model: DiscoveredModel = name && name !== id ? { id, name } : { id };
+  // 本地：从 Ark token_limits / OpenAI / Google 形状读限额与输入模态（wizard 种子）。
+  const limits = readModelLimits(value);
+  if (limits.contextWindow !== undefined) model.contextWindow = limits.contextWindow;
+  if (limits.maxTokens !== undefined) model.maxTokens = limits.maxTokens;
+  if (limits.input) model.input = limits.input;
+  // 上游 #856：保留 reasoning/thinkingLevelMap 能力元数据；扁平字段作本地未命中时的兑底。
+  const capabilities = capabilitiesFromValue(value);
+  if (capabilities.reasoning) model.reasoning = capabilities.reasoning;
+  if (capabilities.thinkingLevelMap) model.thinkingLevelMap = capabilities.thinkingLevelMap;
+  if (model.contextWindow === undefined && capabilities.contextWindow !== undefined) model.contextWindow = capabilities.contextWindow;
+  if (model.maxTokens === undefined && capabilities.maxTokens !== undefined) model.maxTokens = capabilities.maxTokens;
+  if (model.input === undefined && capabilities.input !== undefined) model.input = capabilities.input;
+  return model;
 }
 
 function listFromResponse(value: unknown): unknown[] {

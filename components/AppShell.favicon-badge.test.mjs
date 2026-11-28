@@ -16,7 +16,7 @@ function callbackBody(name, endAnchor) {
   return source.slice(start, end);
 }
 
-function runHandleAgentEnd({ end, selectedSession, attention }) {
+async function runHandleAgentEnd({ end, selectedSession, attention }) {
   const notifications = [];
   const context = vm.createContext({
     useCallback: (callback) => callback,
@@ -27,6 +27,15 @@ function runHandleAgentEnd({ end, selectedSession, attention }) {
     shouldShowBrowserNotification: () => attention,
     deliverSessionNotification: (notice) => notifications.push(notice),
     translate: (key) => key,
+    // Merged handleAgentEnd also hydrates the client-built transient session and
+    // reads the run's final status from /meta before notifying.
+    hydrateSelectedSession: () => {},
+    notificationProjectLabel: () => null,
+    notificationSessionTitle: (session, fallback) => fallback,
+    apiUrl: (path) => path,
+    runOutcomeNotifies: () => true,
+    truncateRunError: (error) => error,
+    fetch: async () => ({ ok: false }),
     hiddenFinishedSessionIds: new Set(),
     setHiddenFinishedSessionIds: (updater) => {
       context.hiddenFinishedSessionIds = updater(context.hiddenFinishedSessionIds);
@@ -37,12 +46,15 @@ function runHandleAgentEnd({ end, selectedSession, attention }) {
     context,
   );
   context.handleAgentEnd(end);
+  // Merge note: the fork's outcome-triage defers the completion notification behind
+  // an async /meta read — flush the microtask queue before asserting.
+  await new Promise((resolve) => setImmediate(resolve));
   return { notifications, hiddenFinishedSessionIds: context.hiddenFinishedSessionIds };
 }
 
-test("a selected session that finishes while the tab is hidden badges the favicon (#1484)", () => {
+test("a selected session that finishes while the tab is hidden badges the favicon (#1484)", async () => {
   const selectedSession = { id: "open", name: "open" };
-  const { notifications, hiddenFinishedSessionIds } = runHandleAgentEnd({
+  const { notifications, hiddenFinishedSessionIds } = await runHandleAgentEnd({
     end: { aborted: false },
     selectedSession,
     attention: true,
@@ -51,12 +63,12 @@ test("a selected session that finishes while the tab is hidden badges the favico
   assert.deepEqual([...hiddenFinishedSessionIds], ["open"], "kept for the favicon until the tab opens");
 
   // The same finish while looking leaves no badge behind.
-  const seen = runHandleAgentEnd({ end: { aborted: false }, selectedSession, attention: false });
+  const seen = await runHandleAgentEnd({ end: { aborted: false }, selectedSession, attention: false });
   assert.equal(seen.notifications.length, 0);
   assert.deepEqual([...seen.hiddenFinishedSessionIds], []);
 });
 
-test("a stopped run, an unfinished task, a subagent or a side chat never badges (#1484)", () => {
+test("a stopped run, an unfinished task, a subagent or a side chat never badges (#1484)", async () => {
   const selectedSession = { id: "open", name: "open" };
   for (const [label, end, session] of [
     ["aborted", { aborted: true }, selectedSession],
@@ -64,7 +76,7 @@ test("a stopped run, an unfinished task, a subagent or a side chat never badges 
     ["subagent session", { aborted: false }, { ...selectedSession, relation: { kind: "subagent" } }],
     ["side chat", { aborted: false }, { ...selectedSession, relation: { kind: "side", parentSessionId: "parent" } }],
   ]) {
-    const { hiddenFinishedSessionIds } = runHandleAgentEnd({ end, selectedSession: session, attention: true });
+    const { hiddenFinishedSessionIds } = await runHandleAgentEnd({ end, selectedSession: session, attention: true });
     assert.deepEqual([...hiddenFinishedSessionIds], [], label);
   }
 });

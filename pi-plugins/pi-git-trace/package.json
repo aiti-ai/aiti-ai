@@ -1,0 +1,44 @@
+{
+  "name": "@aiti-ai/pi-git-trace",
+  "version": "0.1.14",
+  "description": "Out-of-band AI change tracking — repo-root .aiti-trace standalone trace repo (autoInit even without git) + op-numbered before/after dual commits + full file⇄message⇄op lineage + rollback + shadow repo slimming compact",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "git-trace"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "src",
+    "lib",
+    "!lib/*.test.mjs"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "contentHash": "5a689299e9949df7",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "pi-plugins/pi-git-trace"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

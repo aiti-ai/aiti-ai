@@ -1,14 +1,33 @@
-# Pi Web
+# AITI Web
 
-[English](../README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
+[English](https://github.com/aiti-ai/aiti-ai/blob/main/README.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
 
-[pi 编程智能体](https://github.com/earendil-works/pi)的本地浏览器界面。Pi Web 与 pi 共用本机配置和会话文件，可在浏览器中查找和继续对话、运行智能体、配置模型与资源，并查看项目文件。
+**AITI Web**（`@aiti-ai/pi-web`）是 [pi 编程智能体](https://github.com/earendil-works/pi)的浏览器工作台，也是 [aiti](https://aiti.pw/) 工具生态的基座：页面注入式 AI 调试工具、面向 AI agent 的 MCP 桥，以及持续增长的内置扩展库。
 
-**[在线体验演示 →](https://agegr.github.io/pi-web/)**：真实的 Pi Web 界面直接在浏览器里运行，带有示例会话、文件和模型。无需安装；回复都是预设内容，不会调用任何模型。
+### 为什么要 fork？
 
-中文微信群：请查看 [GitHub Discussions 帖子](https://github.com/agegr/pi-web/discussions/271)。
+上游 [pi-web](https://github.com/agegr/pi-web) 是很优秀的 pi 本地界面——但做一个完整的 AI 开发工作台，光有界面不够：还需要扩展运行时、围绕 git 与队列的会话工具、把本地端口分享出去的服务隧道、页面级调试注入，以及 AI ↔ 页面 ↔ IDE 的深度协作。上游架构留不出这些层的空间，所以本 fork 把它们做成 **63+ 个内置扩展随包分发**——`npm i -g @aiti-ai/pi-web`，整个工作台开箱即用，无需逐个装扩展。
 
-![Pi Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+引擎仍是 pi（共享 JSONL 会话与本机配置），上游文档描述的一切照常适用。
+
+项目缘起值得一读：两个十几年的老项目——[TestAgent](https://aiti.pw/extensions/aiti-testagent.html)（Java 运行时调试工具）与 [JustDB](https://justdb.ai)（数据库 IDE）——遇上 AI 时代，日常开发搬上了 pi-web，功能一个一个加着加着就与上游越走越远，aiti 便以自己的发行版开始了。一切源于真实日常使用：通勤路上写代码、spare 设备接着干、把每一个闲散 token 都用在刀刃上。完整故事见 [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html)。文档、产品矩阵与 fork 背后的故事见 [aiti.pw](https://aiti.pw/)（[源码](https://github.com/aiti-ai/aiti-docs)）。
+
+![AITI Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/aiti-ai/aiti-ai/main/docs/assets/screenshot.png)
+
+### 内置扩展（精选）
+
+上游界面全部保留；以下功能以 bundled 扩展形式随包开箱即用。
+
+- **会话与队列**——`session-manager`（跨项目 All Sessions 管理器：看板/标签/归档/全文搜索/fork 工具）、`queue-keeper`（排队消息编辑/导出/导入/插队）、`aiti-recovery`（中断会话重启恢复向导）、`aiti-draft-keeper`、`aiti-session-cards`（审批/授权卡）
+- **Git 工具链**——`aiti-git-ops`（提交图谱、AI 分组提交计划+断点回滚、worktree、分支面板）、`aiti-git-review`（Monaco diff 工作区+行标注+AI 预审）、`aiti-git-trace`（AI 变更追踪时间线）
+- **页面注入调试（aiti-devtools）**——在任意本地 Web 应用内进行 AI 调试：FAB/HUD、8 域 42 命令类 CDP 命令集、Inspector、以及让 AI agent 与页面对话的 MCP 桥
+- **多 Agent 后端**——Claude Code、Codex、Cursor、CodeBuddy、Qoder、ZCode、OpenCode、Kimi、Gemini、Copilot、iFlow 等（CLI+ACP 双驱动），统一登录管理、子代理舰队、自定义 Agent 注册
+- **模型与用量**——模型向导（目录搜索/多 key 轮转/聚合）、可用性探测+429 限流识别、余额配额与用量报表
+- **运维基础设施**——`service-tunnels`（本地端口 DNS/隧道分享+认证）、扩展管理器（在线注册表）、配置版本化+崩溃自检、备份、事件总线、VNC UI 环境、邮件、IM 渠道、文档中心
+- **阅读与交互**——消息智能（点击引用/滚动导航/锚点）、语音输入输出、弹窗浮动、上下文比例条、Prompt 收藏库、方案先行、文档查看器（docx/xlsx/pdf/pptx），以及约 40 个更多
+
+工作台之外，[aiti 生态](https://aiti.pw/)还提供 Vite/Vue/Next/React/Svelte 页面注入 SDK、Chrome 与 IDE 扩展、MCP 桥/server（任意 AI agent 直达 IDE 窗口），以及一键 Docker 镜像（core/full）。
+
 
 ## 功能
 
@@ -24,7 +43,7 @@
 Pi Web 要求 Node.js 22.19.0 或更高版本。先用 `node --version` 检查版本，然后运行：
 
 ```bash
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 服务就绪后，命令行会尝试自动打开浏览器。如果没有打开，请访问 [http://127.0.0.1:30141](http://127.0.0.1:30141)。Pi Web 默认仅监听 `127.0.0.1`。
@@ -34,13 +53,14 @@ npx @agegr/pi-web@latest
 如需全局安装 `pi-web` 命令：
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web
 pi-web
 ```
 
 命令：
 
 ```bash
+pi-web start [选项]     # 启动服务（等价于直接运行 pi-web）
 pi-web version          # 打印已安装的版本
 pi-web status           # 列出正在运行的服务
 pi-web stop [--port N]  # 停止正在运行的服务
@@ -48,7 +68,7 @@ pi-web open [--port N]  # 在浏览器中打开正在运行的服务
 pi-web update [--check] # 更新全局 npm 安装
 ```
 
-更新时先运行 `pi-web stop`，再运行 `pi-web update`（也可以再次执行同一条安装命令）。卸载时运行 `npm uninstall -g @agegr/pi-web`。
+更新时先运行 `pi-web stop`，再运行 `pi-web update`，最后运行 `pi-web start`（也可以再次执行同一条安装命令）。卸载时运行 `npm uninstall -g @aiti-ai/pi-web`。
 
 ## 配置
 
@@ -92,7 +112,7 @@ PI_WEB_PASSWORD='足够长的随机密码' pi-web --hostname 0.0.0.0
 
 ### Docker
 
-每个版本都会向 `ghcr.io/agegr/pi-web` 发布镜像。镜像用法、Compose 示例以及需要保留哪些卷，见 [Running Pi Web in Docker](./docker.md)。
+每个版本都会向 `ghcr.io/aiti-ai/aiti-ai` 发布镜像。镜像用法、Compose 示例以及需要保留哪些卷，见 [Running Pi Web in Docker](./docker.md)。
 
 ### HTTP 代理
 
@@ -104,7 +124,7 @@ macOS 或 Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 Windows PowerShell：
@@ -113,7 +133,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 ## 注意事项
@@ -122,7 +142,7 @@ npx @agegr/pi-web@latest
 - **文件系统访问**：Pi Web 必须能读取智能体数据目录及会话记录中的工作目录。与现有 pi 会话共用数据时，请让 Pi Web 运行在与 pi 相同的文件系统环境中。
 - **共享配置**：模型面板使用 pi 的模型、设置和凭据存储，因此两种界面都能看到相关更改。已打开的会话要再次选择该模型，才会应用保存后的模型修改。
 - **文件访问边界**：文件浏览器仅能访问在 Pi Web 中选择过的工作目录，以及它已识别的项目或会话根目录；它不是通用的文件系统浏览器。
-- **Git worktree**：切换器何时显示、如何创建 worktree，以及删除会产生什么影响，见 [Pi Web 里的 Worktree](./worktrees.zh-CN.md)。
+- **Git worktree**：切换器何时显示、如何创建 worktree，以及删除会产生什么影响，见 [Pi Web 里的 Worktree](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.zh-CN.md)。
 - **集成接口**：嵌入 Pi Web 的应用可以替换会话行的右键菜单，服务端的 pi 扩展可以让会话不因空闲被关闭；见 [Integration Hooks](./integrations.md)。
 
 ## 开发
@@ -142,9 +162,9 @@ npm run lint
 
 日常开发时不要运行 `next build` 或 `npm run build`。它们会写入 `.next/`，可能干扰开发服务器；仅在发布流程中执行构建。
 
-开始做新功能之前，请先阅读[参与贡献](./CONTRIBUTING.zh-CN.md)，了解哪些改动在范围内以及提交 PR 前的检查项。
+开始做新功能之前，请先阅读[参与贡献](https://github.com/aiti-ai/aiti-ai/blob/main/docs/CONTRIBUTING.zh-CN.md)，了解哪些改动在范围内以及提交 PR 前的检查项。
 
-贡献者文档：[国际化](./i18n.md)和[发布流程](./release.md)。
+贡献者文档：[国际化](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md)和[发布流程](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md)。
 
 ## 仓库结构
 
@@ -156,11 +176,11 @@ lib/             会话、智能体、模型、文件、Git 和安全逻辑
 public/          静态资源和 PWA 文件
 bin/             npm CLI 入口及启动参数解析
 docs/            面向用户和贡献者的专题文档
-demo/            发布到 GitHub Pages 的静态演示站（见 demo/README.md）
+demo/            仓内历史演示目录；在线演示已独立成仓 → https://github.com/aiti-ai/aiti-demos （部署在 https://demo.aiti.pw）
 ```
 
-架构说明、API 路由和专题笔记见 [AGENTS.md](../AGENTS.md)。
+架构说明和详细文件地图见 [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md)。
 
 ## 许可证
 
-[MIT](../LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)

@@ -1,6 +1,6 @@
 import type { McpExposure, ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
-import type { McpImportNote } from "./mcp-import-core";
-import type { SubagentProfile } from "./subagents";
+import type { McpImportNote } from "./mcp-import-core.ts";
+import type { SubagentProfile } from "./subagents.ts";
 
 export interface SubagentProfilesResponse {
   profiles: SubagentProfile[];
@@ -256,6 +256,8 @@ export interface McpServerInfo {
    */
   configKey: string;
   enabled: boolean;
+  /** Per-tool model-visibility filter (pi-mcp-adapter excludeTools); empty = all visible. */
+  excludedTools?: string[];
   /** False when the SDK's validator was unavailable; nothing below was checked. */
   validated: boolean;
   /** The SDK's reason for refusing the entry; it never connects. */
@@ -819,11 +821,19 @@ export interface ProjectTrustUnreadableResponse extends ProjectMcpListing {
   reason: "trust-unreadable";
 }
 
+export type AppInstallMode = "archive" | "docker" | "git" | "npm-global" | "npx" | "other";
+
+export interface AppInstallInfo {
+  supported: boolean; // true when `pi-web update` can upgrade this install in place
+  mode: AppInstallMode;
+}
+
 export interface AppUpdateResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+  install?: AppInstallInfo;
 }
 
 export interface PushConfigResponse {

@@ -1,0 +1,36 @@
+{
+  "name": "@aiti-ai/aiti-app-center",
+  "version": "0.2.15",
+  "type": "module",
+  "description": "The app drawer (start menu) shown in the blank state after every left-column dock block is collapsed — a single-row switch between the Apps view (action/panel/manage entry cards, hover quick-pin + info page) and the Toggles view (feature toggles grouped by extension), tag-style categories (8 fixed internal categories with i18n + custom categories + default other), search scoped per view, and edit-mode reorder/hide/restore",
+  "displayNameI18n": {
+    "en": "App Center"
+  },
+  "descriptionI18n": {
+    "zh-CN": "左栏区块栈全部折叠后空白态的应用抽屉（开始菜单）——应用视图（动作/面板/管理入口卡，hover 快捷钉 + 信息页）与开关视图（feature 开关按扩展分组）双视图单行切换，tag 式分类（内部固定分类多语 + 自定义分类 + 默认 other）、按视图搜索、编辑模式排序/隐藏/恢复"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "所有插件入口的家——折叠即开始菜单。",
+  "soulI18n": {
+    "en": "Home for every plugin entry — collapsed, it becomes the start menu."
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "847fa9f18f760a74",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-app-center"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

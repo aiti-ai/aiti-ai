@@ -36,6 +36,8 @@ function setup(messages) {
     sessionIdRef: { current: "s" },
     optimisticUserMessageKeyRef: { current: null },
     optimisticUserMessageRef: { current: null },
+    // [fork] identity guard for the optimistic bubble (a repeated text is a new message).
+    optimisticBubblePendingRef: { current: true },
     deliveredUserMessageRef: { current: null },
     isSystemMessageEvent: () => false,
     normalizeToolCalls: (message) => ({ ...message }),
@@ -45,6 +47,8 @@ function setup(messages) {
     setMessages(update) { state.messages = update(state.messages); },
     setLiveUserEntryIds(update) { state.ids = update(state.ids); },
     dispatch() {},
+    // [fork] stream deltas dispatch through the fork reducer entry point.
+    dispatchStream() {},
     setAgentPhase() {},
   };
   const script = cases("user_message_entry", "message_end");

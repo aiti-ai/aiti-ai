@@ -1,6 +1,6 @@
 import type { BranchPreview } from "@/lib/types";
-import { withoutMessageSignatures } from "./message-signatures";
-import { isRecord } from "./is-record";
+import { withoutMessageSignatures } from "./message-signatures.ts";
+import { isRecord } from "./is-record.ts";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 export const MAX_PROJECTED_TREE_DEPTH = 200;

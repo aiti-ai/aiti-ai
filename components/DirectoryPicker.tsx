@@ -5,6 +5,10 @@ import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 import { errorMessage } from "@/lib/errors";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
+import { apiUrl } from "@/lib/base-path";
+
 
 interface DirectoryEntry {
   name: string;
@@ -67,14 +71,19 @@ const secondaryActionStyle: CSSProperties = {
 };
 
 async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  const query = directory ? `?path=${encodeURIComponent(directory)}` : "";
-  const response = await fetch(`/api/cwd/browse${query}`);
-  const data = await readJsonOrThrow<BrowseResponse>(response);
+  // path goes in the request body, not the URL (keeps it out of tunnel/proxy access logs)
+  const response = await fetch(apiUrl("/api/cwd/browse"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: directory ?? undefined }),
+  });
+  const data = await response.json() as BrowseResponse;
+  if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
 }
 
 async function createDirectory(parentPath: string, name: string): Promise<string> {
-  const response = await fetch("/api/cwd/browse", {
+  const response = await fetch(apiUrl("/api/cwd/browse"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path: parentPath, name }),
@@ -214,6 +223,10 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const canSelect = Boolean(typedPath) && !busy && !loading;
   const canCreate = Boolean(currentPath) && !hasUncommittedPath && !busy && !loading;
   const canNavigateUp = Boolean(parentDirectory) || isWindowsDriveRoot(currentPath);
+  const isMobile = useIsMobile();
+  // Mobile system back = cancel selection (ignored while busy; when this layer sits above the
+  // sidebar/settings, LIFO order closes this layer first)
+  useOverlayBack(isMobile, () => { if (!busy) onCancel(); });
 
   const handleSelect = async () => {
     const path = hasUncommittedPath ? await navigateTo(typedPath) : currentPath;

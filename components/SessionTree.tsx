@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   type FocusEvent as ReactFocusEvent,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -20,28 +19,27 @@ import { splitForkSuffix } from "@/lib/session-fork-name";
 import { MAX_PROJECT_NAME_LENGTH, type ProjectMovePosition } from "@/lib/session-ui-state-shared";
 import {
   PINNED_MORE_KEY,
+  SIDEBAR_ROW_HEIGHTS,
   getRowOffsets,
   getVisibleRowIndices,
   revealScrollTop,
   revealStep,
-  type RecentSection,
   type RevealMisses,
   type SidebarLayout,
   type SidebarProject,
   type SidebarRow,
 } from "@/lib/session-tree";
 import type { SessionInfo } from "@/lib/types";
-import { isPlainActivation, sessionDeepLink } from "@/lib/session-links";
-import { SESSION_DRAG_MIME, sessionDragData } from "@/lib/session-drag";
 import { formatRelativeTime, formatShortRelativeTime } from "@/lib/i18n/format";
 import { skillExpansionToCommand } from "@/lib/slash-display";
+import { truncateRunError } from "@/lib/run-outcome";
+import { ExtSlot } from "./ExtSlots.tsx";
 import { useGroupDrag, type GroupDragHandlers } from "@/hooks/useGroupDrag";
 import { useI18n } from "@/hooks/useI18n";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
-import type { SidebarMenuAnchor } from "./SidebarMenu";
+import type { SidebarMenuAnchor } from "./SidebarMenu.tsx";
 import {
   ArchiveIcon,
-  BranchIcon,
   ChevronIcon,
   FolderPlusIcon,
   MoreIcon,
@@ -50,12 +48,11 @@ import {
   RestoreIcon,
   SpinnerIcon,
   TrashIcon,
-} from "./SidebarIcons";
+} from "./SidebarIcons.tsx";
 
 /**
  * The sessions tab's tree: the pinned section, every project as a group of
- * session families (or the recent list's date sections), and the footer
- * links, or the archive view's rows. It
+ * session families, and the footer links, or the archive view's rows. It
  * renders the flat rows of lib/session-tree.ts in one virtualized scroll and
  * owns nothing but scroll position, viewport size, which row has focus and a
  * group being dragged (hooks/useGroupDrag.ts); every decision (what is shown,
@@ -92,7 +89,7 @@ export interface SessionTreeReveal {
    */
   block?: "start" | "nearest";
   /**
-   * Also focus the row's first control once it is on the page: when focus has
+   * Also focus the row's first button once it is on the page: when focus has
    * fallen to <body>, or when this says the element that has it may give it
    * up (it is still where the request came from). Omitted: focus stays put.
    */
@@ -121,8 +118,6 @@ export interface SessionTreeProps {
   /** Back to the base limit; key is a projectKey or PINNED_MORE_KEY. */
   onShowLess(key: string): void;
   onTogglePinned(): void;
-  /** A recent list's date section header. */
-  onToggleRecentSection?(section: RecentSection): void;
   onArchiveFamily(family: SessionFamily): void;
   onRestoreFamily(family: SessionFamily): void;
   onOpenRowMenu(row: SessionRow, anchor: SidebarMenuAnchor, opener: HTMLElement | null): void;
@@ -175,6 +170,45 @@ function isImeKey(event: ReactKeyboardEvent): boolean {
   return event.nativeEvent.isComposing || event.keyCode === 229;
 }
 
+/**
+ * Session run-outcome marker (aiti fork; shown only for anomalies, completed takes no slot —
+ * same semantics as the session-manager dock):
+ * failed = red circle exclamation (title carries the error summary) / aborted = gray square /
+ * interrupted = orange pause. The caller renders it only when the family is not running.
+ */
+function RunOutcomeIndicator({ lastRun }: { lastRun: NonNullable<SessionInfo["lastRun"]> }) {
+  const { t } = useI18n();
+  const failed = lastRun.status === "failed";
+  const aborted = lastRun.status === "aborted";
+  const label = failed
+    ? (lastRun.error ? t("i18n.taskFailedWithError", { error: truncateRunError(lastRun.error, 80) }) : t("i18n.sessionFailed"))
+    : aborted
+      ? t("i18n.sessionAborted")
+      : t("i18n.sessionInterrupted");
+  const color = failed ? "#ef4444" : aborted ? "var(--text-dim)" : "#f59e0b";
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{ width: 12, height: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}
+    >
+      {failed ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" style={{ display: "block" }}>
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+      ) : aborted ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+          <rect x="5" y="5" width="14" height="14" rx="2" />
+        </svg>
+      ) : (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" style={{ display: "block" }}>
+          <circle cx="12" cy="12" r="10" /><line x1="8" y1="12" x2="16" y2="12" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 function anchorOf(button: HTMLElement): SidebarMenuAnchor {
   const rect = button.getBoundingClientRect();
   return { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align: "end" };
@@ -223,14 +257,9 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     const element = scrollRef.current;
     if (!element) return;
     // A classic scrollbar takes width on the right only; the rows read its
-    // width so they end 6px in or on its gutter. The files below the
-    // sessions read it from the sidebar's root, to end their keys and boxes
-    // where the session times end; a tree with no box (under the archive
-    // view, in a hidden tab) measures nothing and leaves it.
+    // width so their inset box keeps equal margins on both sides.
     const syncScrollbarWidth = () => {
-      const width = `${Math.max(0, element.offsetWidth - element.clientWidth)}px`;
-      element.style.setProperty("--session-tree-scrollbar", width);
-      if (element.offsetWidth > 0) element.closest<HTMLElement>(".session-sidebar")?.style.setProperty("--session-tree-scrollbar", width);
+      element.style.setProperty("--session-tree-scrollbar", `${Math.max(0, element.offsetWidth - element.clientWidth)}px`);
     };
     syncScrollbarWidth();
     setViewportHeight(element.clientHeight);
@@ -368,7 +397,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
       const element = scrollRef.current;
       // A tree in a hidden tab has no box to scroll: it gets its saved position back when shown.
       if (element && element.getClientRects().length > 0) {
-        const next = revealScrollTop(offsets, index, element.scrollTop, element.clientHeight, pendingReveal.block);
+        const next = revealScrollTop(offsets, index, element.scrollTop, element.clientHeight);
         if (next !== null) element.scrollTop = next;
         setScrollTop(element.scrollTop);
       }
@@ -392,10 +421,9 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     const root = scrollRef.current;
     const rowElement = (key: string) => root?.querySelector(`[data-row-key="${CSS.escape(key)}"]`) ?? null;
     const row = rowElement(target.rowKey);
-    // A saved session row's first control is its link, the others' a button.
     const button = row?.querySelector<HTMLElement>("[data-more-action=\"more\"]")
-      ?? row?.querySelector<HTMLElement>("a[href], button")
-      ?? rowElement(target.fallbackKey)?.querySelector<HTMLElement>("a[href], button");
+      ?? row?.querySelector<HTMLElement>("button")
+      ?? rowElement(target.fallbackKey)?.querySelector<HTMLElement>("button");
     if (button) {
       button.focus({ preventScroll: true });
       pendingFocusRef.current = null;
@@ -482,7 +510,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
               <div
                 className="session-tree-drag-source"
                 aria-hidden="true"
-                style={{ top: dragSource.top, height: dragSource.bottom - dragSource.top }}
+                style={{ top: dragSource.top, height: dragSource.bottom - dragSource.top - SIDEBAR_ROW_HEIGHTS[layout].spacer }}
               />
             )}
             {dropLineY !== null && <div className="session-tree-drop-line" aria-hidden="true" style={{ top: dropLineY }} />}
@@ -502,24 +530,6 @@ type Handlers = RefObject<SessionTreeProps>;
 
 function rowStyle(top: number, height: number) {
   return { top, height };
-}
-
-/** A session row dragged into the composer quotes that session (#1716). The row
- *  writes it under our own type, so the drop tells it apart from a file, and a
- *  link dragged in from another app never looks like one. */
-function startSessionDrag(event: ReactDragEvent<HTMLElement>, root: SessionInfo) {
-  const dataTransfer = event.dataTransfer;
-  if (!dataTransfer) return;
-  const title = root.name || root.firstMessage || root.id;
-  dataTransfer.effectAllowed = "copy";
-  dataTransfer.setData(SESSION_DRAG_MIME, sessionDragData({
-    id: root.id,
-    title,
-    cwd: root.cwd,
-    modified: root.modified,
-  }));
-  // A plain-text copy for any other drop target (an editor, a terminal).
-  dataTransfer.setData("text/plain", title);
 }
 
 const SessionRowView = memo(function SessionRowView({
@@ -607,14 +617,10 @@ const SessionRowView = memo(function SessionRowView({
   // the suffix that tells it from its source, never the suffix.
   const forkTitle = root.name && root.relation?.kind === "fork" ? splitForkSuffix(root.name) : null;
   const details = root.detailsPending ? "…" : t("sidebar.messagesCount", { count: root.messageCount });
-  // Rows outside their project's group name it: the status dots take the
-  // place of the name in the right column, so the tooltip says it too.
-  const projectPart = context === "pinned" || context === "recent" ? `${row.project.name} · ` : "";
-  const tooltip = `${title}\n${projectPart}${details} · ${formatRelativeTime(root.modified, locale, nowDate)}${branch ? ` · ⑂ ${branch}` : ""}`;
+  const tooltip = `${title}\n${details} · ${formatRelativeTime(root.modified, locale, nowDate)}${branch ? ` · ⑂ ${branch}` : ""}`;
 
   // The right column says the one thing worth knowing: awaiting input, else
-  // running, else unread, else when (a pinned or recent row names its project
-  // instead).
+  // running, else unread, else when (a pinned row names its project instead).
   // An archived row shows its family's time like every row, never the archive
   // time: an old session archived today read as "just now" (#1351).
   // Nothing sits before the title, so it gets the room.
@@ -636,7 +642,7 @@ const SessionRowView = memo(function SessionRowView({
     meta = <span className="session-tree-unread" role="img" aria-label={t("sidebar.newSessionActivity")} />;
     metaState = " is-unread";
     metaTitle = t("sidebar.newActivity");
-  } else if (context === "pinned" || context === "recent") {
+  } else if (context === "pinned") {
     meta = <span className="session-tree-project">{row.project.name}</span>;
   } else {
     meta = formatShortRelativeTime(family.latestModified, locale, nowDate);
@@ -646,62 +652,40 @@ const SessionRowView = memo(function SessionRowView({
   // family, which would come straight back.
   const quickAction = layout === "desktop" && (context === "archive" || !status.running);
 
-  const mainContent = (
-    <>
-      {forkTitle ? (
-        <span className="session-tree-title has-fork-suffix">
-          <span className="session-tree-title-base">{forkTitle.base}</span>
-          <span className="session-tree-title-suffix">{forkTitle.suffix}</span>
-        </span>
-      ) : (
-        <span className="session-tree-title">{title}</span>
-      )}
-      {branch && (
-        <span className="session-tree-branch">
-          <BranchIcon size={10} className="session-tree-branch-icon" />
-          {branch}
-        </span>
-      )}
-      <span className={`session-tree-meta${metaState}`} title={metaTitle}>{meta}</span>
-    </>
-  );
-
   return (
     <div
       className={className}
       style={rowStyle(top, height)}
       data-row-key={row.key}
-      draggable={!status.transient}
-      onDragStart={(event) => startSessionDrag(event, root)}
       onClick={() => handlers.current.onSelectFamily(family)}
       onContextMenu={(event) => handlers.current.onRowContextMenu(row, event)}
     >
-      {status.transient ? (
-        // No file yet: a link would open a session no other tab can load.
-        <button type="button" className="session-tree-main" title={tooltip} aria-current={status.selected ? "true" : undefined}>
-          {mainContent}
-        </button>
-      ) : (
-        // A real link, so middle-click, Ctrl/Cmd-click and the browser's own
-        // gestures open the session in another tab. A plain click (or Enter)
-        // stays here and selects it as before; never `target`, which would
-        // send plain clicks away too.
-        <a
-          className="session-tree-main"
-          href={sessionDeepLink(root.id)}
-          title={tooltip}
-          aria-current={status.selected ? "true" : undefined}
-          onClick={(event) => {
-            // The row's handler must not select it again, nor on a modified click.
-            event.stopPropagation();
-            if (!isPlainActivation(event)) return;
-            event.preventDefault();
-            handlers.current.onSelectFamily(family);
-          }}
-        >
-          {mainContent}
-        </a>
-      )}
+      <button type="button" className="session-tree-main" title={tooltip} aria-current={status.selected ? "true" : undefined}>
+        {/* aiti fork: extension adornment before the title (sessionRowLeading). */}
+        <ExtSlot name="sessionRowLeading" currentSession={root} />
+        {forkTitle ? (
+          <span className="session-tree-title has-fork-suffix">
+            <span className="session-tree-title-base">{forkTitle.base}</span>
+            <span className="session-tree-title-suffix">{forkTitle.suffix}</span>
+          </span>
+        ) : (
+          <span className="session-tree-title">{title}</span>
+        )}
+        {branch && <span className="session-tree-branch">⑂ {branch}</span>}
+        {!status.running && root.lastRun && root.lastRun.status !== "completed" && (
+          <RunOutcomeIndicator lastRun={root.lastRun} />
+        )}
+        <span className={`session-tree-meta${metaState}`} title={metaTitle}>{meta}</span>
+      </button>
+      {/* aiti fork: second meta line — the relative time and message count stay
+          visible on the row (upstream moves them into the tooltip), and the
+          sessionRowMeta extension point lives at its end (plan-first badge,
+          front-matter tags). */}
+      <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
+        <span title={root.modified}>{formatRelativeTime(root.modified, locale)}</span>
+        <span>{t("sidebar.messagesCount", { count: root.messageCount })}</span>
+        <ExtSlot name="sessionRowMeta" currentSession={root} />
+      </div>
       {!status.transient && (
         <span className="session-tree-actions">
           {quickAction && (context === "archive" ? (
@@ -746,6 +730,8 @@ const SessionRowView = memo(function SessionRowView({
           >
             <MoreIcon size={14} />
           </button>
+          {/* aiti fork: extension actions after the built-in row actions (sessionRowActions). */}
+          <ExtSlot name="sessionRowActions" currentSession={root} />
         </span>
       )}
     </div>
@@ -972,12 +958,9 @@ const GroupRowView = memo(function GroupRowView({
         title={project.root}
         onClick={(event) => handlers.current.onToggleGroup(project.key, event.altKey)}
       >
-        {/* A section header, not one more row: the chevron leads in a
-            column of its own, so the name starts where the session titles
-            below it do and every header's chevron lines up. */}
-        <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
         <span className="session-tree-group-name">{project.name}</span>
         {project.pinned && <PinIcon size={10} className="session-tree-group-pin" label={t("sidebar.pinnedProject")} />}
+        <ChevronIcon size={10} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
         {!expanded && <ActivitySummary running={row.running} awaiting={row.awaiting} unread={row.unread} t={t} />}
       </button>
       <span className="session-tree-group-actions">
@@ -1012,13 +995,6 @@ const GroupRowView = memo(function GroupRowView({
   );
 });
 
-const RECENT_SECTION_LABELS = {
-  today: "sidebar.recentToday",
-  yesterday: "sidebar.recentYesterday",
-  week: "sidebar.recentWeek",
-  earlier: "sidebar.recentEarlier",
-} as const satisfies Record<RecentSection, string>;
-
 /** The rows with at most one control: section headers, "show more", footer links. */
 const PlainRowView = memo(function PlainRowView({
   row,
@@ -1027,7 +1003,7 @@ const PlainRowView = memo(function PlainRowView({
   handlers,
   onMoreAction,
 }: {
-  row: Exclude<SidebarRow, { kind: "session" | "group" | "archive-group" | "spacer" }>;
+  row: Exclude<SidebarRow, { kind: "session" | "group" | "spacer" }>;
   top: number;
   height: number;
   handlers: Handlers;
@@ -1038,23 +1014,17 @@ const PlainRowView = memo(function PlainRowView({
 
   switch (row.kind) {
     case "pinned-header":
-    case "recent-header": {
-      // A date section is a section label like the pinned one, in its look.
-      const label = row.kind === "pinned-header" ? t("sidebar.pinned") : t(RECENT_SECTION_LABELS[row.section]);
       return (
         <div className="session-tree-row session-tree-pinned-header" style={style} data-row-key={row.key}>
           <button
             type="button"
             className="session-tree-pinned-toggle"
             aria-expanded={!row.collapsed}
-            onClick={() => {
-              if (row.kind === "pinned-header") handlers.current.onTogglePinned();
-              else handlers.current.onToggleRecentSection?.(row.section);
-            }}
+            onClick={() => handlers.current.onTogglePinned()}
           >
-            <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
-            <span className="session-tree-pinned-label">{label}</span>
+            <span className="session-tree-pinned-label">{t("sidebar.pinned")}</span>
             <span className="session-tree-pinned-count">· {row.count}</span>
+            <ChevronIcon size={9} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
             {row.collapsed && row.running > 0 && (
               <span
                 className="session-tree-pinned-dot is-running"
@@ -1082,7 +1052,6 @@ const PlainRowView = memo(function PlainRowView({
           </button>
         </div>
       );
-    }
     case "pinned-more":
     case "group-more": {
       const moreKey = row.kind === "pinned-more" ? PINNED_MORE_KEY : row.projectKey;
@@ -1153,9 +1122,9 @@ const PlainRowView = memo(function PlainRowView({
 });
 
 /**
- * An archive view's project header: a main group's header (chevron, name;
- * the current project in `--text`) with its count, and ⋯ for the project's
- * archived sessions. No "+", no pin, no drag: the archive keeps no order.
+ * An archive view's project header: folds its family rows (upstream #1351
+ * follow-up). The chevron toggles the fold (Alt: every group follows); the ⋯
+ * offers Restore all / Delete….
  */
 const ArchiveGroupRowView = memo(function ArchiveGroupRowView({
   row,

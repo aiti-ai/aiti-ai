@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -7,6 +8,8 @@ import type { ProjectTrustStatus, SubagentProfilesResponse, SubagentSettingsResp
 import { sendAgentCommand } from "@/lib/agent-client";
 import { displayPathWithin, shortenPath } from "@/lib/display-path";
 import type { ModelsData } from "@/lib/models-cache";
+import { ExtItemBoundary, useExtSlotItems } from "./ExtSlots.tsx";
+import { hasExtRender } from "@/lib/ext-ui-store";
 import { isSubagentProfileOverridden } from "@/lib/subagent-profile-precedence";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
 import {
@@ -35,11 +38,10 @@ import {
   ConfigSplitView,
   ConfigStatusDot,
   ConfigSwitch,
-} from "./SettingsUi";
-import { ModelSelector } from "./ModelSelector";
-import { projectTrustReloadKey } from "./settings-ui-helpers";
+} from "./SettingsUi.tsx";
+import { ModelSelector } from "./ModelSelector.tsx";
+import { projectTrustReloadKey } from "./settings-ui-helpers.ts";
 import { readJsonOrThrow } from "@/lib/fetch-json";
-import { errorMessage } from "@/lib/errors";
 
 const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -149,6 +151,10 @@ function displayProfilePath(profile: SubagentProfile, cwd: string): string | nul
     : shortenPath(profile.filePath);
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <ConfigField label={label}>{children}</ConfigField>;
+}
+
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (checked: boolean) => void }) {
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 7, color: disabled ? "var(--text-dim)" : "var(--text-muted)", fontSize: 12, cursor: disabled ? "default" : "pointer" }}>
@@ -196,6 +202,8 @@ export function AgentsConfig({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [reloadNeeded, setReloadNeeded] = useState(false);
   const [reloading, setReloading] = useState(false);
+  // settingsAgentsFeature takeover item (replaces the native toggle section once the subagents extension registers)
+  const agentsFeatureTakeover = useExtSlotItems("settingsAgentsFeature").find(hasExtRender);
 
   const selected = useMemo(
     () => profiles.find((profile) => profileKey(profile) === selectedKey) ?? null,
@@ -212,8 +220,14 @@ export function AgentsConfig({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/subagents/profiles?cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
-      const data = await readJsonOrThrow<Partial<SubagentProfilesResponse>>(response);
+      const response = await fetch(apiUrl(`/api/subagents/profiles`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+        cache: "no-store",
+      });
+      const data = await response.json() as Partial<SubagentProfilesResponse> & { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       const next = data.profiles ?? [];
       setProfiles(next);
       const rememberedKey = preferredKey ?? getLastSettingsSelection("agents", cwd);
@@ -229,7 +243,7 @@ export function AgentsConfig({
         if (isWritableScope(chosen.scope)) setTargetScope(chosen.scope);
       }
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
@@ -245,7 +259,7 @@ export function AgentsConfig({
     setSettingsError(null);
     void (async () => {
       try {
-        const response = await fetch("/api/subagents/settings", {
+        const response = await fetch(apiUrl("/api/subagents/settings"), {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -255,7 +269,7 @@ export function AgentsConfig({
         if (typeof data.maxConcurrent === "number") setMaxConcurrent(data.maxConcurrent);
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setSettingsError(errorMessage(cause));
+        setSettingsError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         if (!controller.signal.aborted) setSettingsLoading(false);
       }
@@ -279,13 +293,19 @@ export function AgentsConfig({
     setModelsError(null);
     void (async () => {
       try {
-        const response = await fetch(`/api/models?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal });
-        const data = await readJsonOrThrow<Partial<ModelsData>>(response);
+        const response = await fetch(apiUrl(`/api/models`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd }),
+          signal: controller.signal,
+        });
+        const data = await response.json() as Partial<ModelsData> & { error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
         setModelOptions(data.modelList ?? []);
         setModelsError(data.modelError ?? null);
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setModelsError(errorMessage(cause));
+        setModelsError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         if (!controller.signal.aborted) setModelsLoading(false);
       }
@@ -331,7 +351,7 @@ export function AgentsConfig({
     setError(null);
     setSavedOk(false);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: targetScope, profile: draft }),
@@ -342,7 +362,7 @@ export function AgentsConfig({
       setSavedOk(true);
       setTimeout(() => setSavedOk(false), 2000);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSaving(false);
     }
@@ -354,7 +374,7 @@ export function AgentsConfig({
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name }),
@@ -362,7 +382,7 @@ export function AgentsConfig({
       await readJsonOrThrow(response);
       await loadProfiles();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSaving(false);
     }
@@ -409,7 +429,7 @@ export function AgentsConfig({
     setToggling(true);
     setError(null);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name, enabled }),
@@ -420,7 +440,7 @@ export function AgentsConfig({
       setProfiles((current) => current.map((profile) => profileKey(profile) === profileKey(saved) ? saved : profile));
       setDraft((current) => ({ ...current, enabled: saved.enabled }));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setToggling(false);
     }
@@ -430,7 +450,7 @@ export function AgentsConfig({
     setSettingsSaving(true);
     setSettingsError(null);
     try {
-      const response = await fetch("/api/subagents/settings", {
+      const response = await fetch(apiUrl("/api/subagents/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -440,7 +460,7 @@ export function AgentsConfig({
       setBuiltInEnabled(data.enabled);
       setReloadNeeded(Boolean(sessionId));
     } catch (cause) {
-      setSettingsError(errorMessage(cause));
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSettingsSaving(false);
     }
@@ -450,7 +470,7 @@ export function AgentsConfig({
     setMaxConcurrent(value);
     setSettingsError(null);
     try {
-      const response = await fetch("/api/subagents/settings", {
+      const response = await fetch(apiUrl("/api/subagents/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maxConcurrent: value }),
@@ -459,7 +479,7 @@ export function AgentsConfig({
       if (typeof data.maxConcurrent !== "number") throw new Error(`HTTP ${response.status}`);
       setMaxConcurrent(data.maxConcurrent);
     } catch (cause) {
-      setSettingsError(errorMessage(cause));
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
@@ -472,7 +492,7 @@ export function AgentsConfig({
       setReloadNeeded(false);
       onReloaded?.();
     } catch (cause) {
-      setSettingsError(errorMessage(cause));
+      setSettingsError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setReloading(false);
     }
@@ -480,39 +500,52 @@ export function AgentsConfig({
 
   return (
     <ConfigPanelShell embedded={embedded} title={t("common.agents")} subtitle={shortenPath(cwd)} closeLabel={t("agents.close")} onClose={onClose}>
+      {/* Top feature-block takeover (settingsAgentsFeature slot, following the settingsModels springboard pattern):
+          once an extension (e.g. the subagents extension) registers, it replaces the native "built-in
+          subagents" toggle section; the original renders as fallback when nothing is registered.
+          Fork semantics: the engine gate isBuiltInSubagentsEnabled is always false (guarded by tests);
+          the toggle only persists to files. */}
       <div className="agents-feature-setting">
-        <div className="agents-feature-copy">
-          <strong>{t("agents.builtInTitle")}</strong>
-          <span>{t("agents.builtInDescription")}</span>
-          {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
-        </div>
-        <div className="agents-feature-actions">
-          {reloadNeeded && sessionId && (
-            <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
-              {reloading ? t("agents.reloading") : t("agents.reloadSession")}
-            </ConfigButton>
-          )}
-          <label className="agents-concurrency-control" title={t("agents.maxConcurrentDescription")}>
-            <span>{t("agents.maxConcurrent")}</span>
-            <input
-              aria-label={t("agents.maxConcurrent")}
-              type="number"
-              min={1}
-              max={32}
-              value={maxConcurrent}
-              disabled={settingsLoading || settingsSaving}
-              onChange={(event) => setMaxConcurrent(Number(event.target.value))}
-              onBlur={() => void updateMaxConcurrent(maxConcurrent)}
-            />
-          </label>
-          <ConfigSwitch
-            checked={builtInEnabled}
-            disabled={settingsLoading || reloading}
-            loading={settingsSaving}
-            label={t("agents.builtInTitle")}
-            onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
-          />
-        </div>
+        {agentsFeatureTakeover ? (
+          <ExtItemBoundary extId={agentsFeatureTakeover.extId} slot="settingsAgentsFeature" itemId={agentsFeatureTakeover.id}>
+            <agentsFeatureTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId ?? null} />
+          </ExtItemBoundary>
+        ) : (
+          <>
+            <div className="agents-feature-copy">
+              <strong>{t("agents.builtInTitle")}</strong>
+              <span>{t("agents.builtInDescription")}</span>
+              {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
+            </div>
+            <div className="agents-feature-actions">
+              {reloadNeeded && sessionId && (
+                <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
+                  {reloading ? t("agents.reloading") : t("agents.reloadSession")}
+                </ConfigButton>
+              )}
+              <label className="agents-concurrency-control" title={t("agents.maxConcurrentDescription")}>
+                <span>{t("agents.maxConcurrent")}</span>
+                <input
+                  aria-label={t("agents.maxConcurrent")}
+                  type="number"
+                  min={1}
+                  max={32}
+                  value={maxConcurrent}
+                  disabled={settingsLoading || settingsSaving}
+                  onChange={(event) => setMaxConcurrent(Number(event.target.value))}
+                  onBlur={() => void updateMaxConcurrent(maxConcurrent)}
+                />
+              </label>
+              <ConfigSwitch
+                checked={builtInEnabled}
+                disabled={settingsLoading || reloading}
+                loading={settingsSaving}
+                label={t("agents.builtInTitle")}
+                onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
+              />
+            </div>
+          </>
+        )}
       </div>
       <ConfigSplitView>
         <ConfigSidebar>
@@ -591,7 +624,7 @@ export function AgentsConfig({
                   </ConfigDetailHeader>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
-                    <ConfigField label={t("agents.name")}>
+                    <Field label={t("agents.name")}>
                       {creating ? (
                         <input aria-label={t("agents.name")} value={draft.name} disabled={disabled} onChange={(event) => update("name", event.target.value)} style={inputStyle} />
                       ) : (
@@ -599,28 +632,28 @@ export function AgentsConfig({
                           {draft.name}
                         </code>
                       )}
-                    </ConfigField>
-                    <ConfigField label={t("agents.displayName")}>
+                    </Field>
+                    <Field label={t("agents.displayName")}>
                       <input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={controlStyle} />
-                    </ConfigField>
+                    </Field>
                   </div>
-                  <ConfigField label={t("agents.description")}>
+                  <Field label={t("agents.description")}>
                     <input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={controlStyle} />
-                  </ConfigField>
-                  <ConfigField label={t("agents.prompt")}>
+                  </Field>
+                  <Field label={t("agents.prompt")}>
                     <textarea className="agents-system-prompt" aria-label={t("agents.prompt")} value={draft.systemPrompt} disabled={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...controlStyle, height: 195, minHeight: 195, maxHeight: "60vh", padding: 9, overflow: "auto", resize: disabled ? "none" : "vertical", lineHeight: 1.5 }} />
-                  </ConfigField>
+                  </Field>
 
-                  <ConfigField label={t("agents.tools")}>
+                  <Field label={t("agents.tools")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
                       {/* `powershell` gets a switch only when the profile names it, so it can be turned off. */}
                       {[...TOOL_OPTIONS, ...draft.tools.filter((tool) => tool === "powershell")].map((tool) => (
                         <Toggle key={tool} label={tool} disabled={disabled} checked={draft.tools.includes(tool)} onChange={(checked) => update("tools", checked ? [...draft.tools, tool] : draft.tools.filter((item) => item !== tool))} />
                       ))}
                     </div>
-                  </ConfigField>
+                  </Field>
 
-                  <ConfigField label={t("agents.resources")}>
+                  <Field label={t("agents.resources")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px" }}>
                       <Toggle label={t("agents.loadSkills")} disabled={disabled} checked={draft.loadSkills} onChange={(checked) => update("loadSkills", checked)} />
                       <Toggle label={t("agents.loadExtensions")} disabled={disabled} checked={draft.loadExtensions} onChange={(checked) => update("loadExtensions", checked)} />
@@ -651,9 +684,9 @@ export function AgentsConfig({
                         {t("agents.mcpHint")}
                       </span>
                     )}
-                  </ConfigField>
+                  </Field>
 
-                  <ConfigField label={t("agents.codemode")}>
+                  <Field label={t("agents.codemode")}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       <select
                         aria-label={t("agents.codemode")}
@@ -670,10 +703,10 @@ export function AgentsConfig({
                         {t("agents.codemodeHint")}
                       </span>
                     </div>
-                  </ConfigField>
+                  </Field>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.5fr) minmax(120px, 0.75fr) minmax(100px, 0.5fr)", gap: 12 }}>
-                    <ConfigField label={t("agents.model")}>
+                    <Field label={t("agents.model")}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <ModelSelector
                           options={modelSelectorOptions}
@@ -691,15 +724,15 @@ export function AgentsConfig({
                         />
                         {modelsError && <span style={{ color: "#ef4444", fontSize: 10 }}>{modelsError}</span>}
                       </div>
-                    </ConfigField>
-                    <ConfigField label={t("agents.thinking")}>
+                    </Field>
+                    <Field label={t("agents.thinking")}>
                       <select aria-label={t("agents.thinking")} value={draft.thinking ?? ""} disabled={disabled} onChange={(event) => update("thinking", (event.target.value || undefined) as EditableProfile["thinking"])} style={controlStyle}>
                         {THINKING_OPTIONS.map((value) => <option key={value || "default"} value={value}>{value || t("agents.inherit")}</option>)}
                       </select>
-                    </ConfigField>
-                    <ConfigField label={t("agents.maxTurns")}>
+                    </Field>
+                    <Field label={t("agents.maxTurns")}>
                       <input aria-label={t("agents.maxTurns")} type="number" min={1} value={draft.maxTurns ?? ""} disabled={disabled} onChange={(event) => update("maxTurns", event.target.value ? Number(event.target.value) : undefined)} style={controlStyle} />
-                    </ConfigField>
+                    </Field>
                   </div>
 
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 20px" }}>

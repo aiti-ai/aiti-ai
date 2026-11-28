@@ -49,12 +49,30 @@ function runHandleSessionDeleted(capturedSelectedSession, active) {
     setSystemInfoLoading() {},
     setActiveTopPanel() {},
     useCallback: (callback) => callback,
+    // 合并：handleSessionDeleted 融入移动端分流/文件页签恢复
+    isMobile: false, revealFileTabOnOpen: () => {}, inAppPathname: (p) => p, apiUrl: (p) => p,
+    getDraftApi: () => null, apiRekeyDraft() {}, apiHasDraft: () => false,
+    sessionSourceRef: { current: null }, urlRestoredSessionRef: { current: null }, setNewSessionWorkspace() {},
+    // 合并：路由写入走 basePath 安全包装 replaceLocationIfChanged —— 记录到同一观测点
+    replaceLocationIfChanged: (router, url) => { state.routerReplaced = url; },
   });
   vm.runInContext(stripTypeScriptTypes(`${handleSessionDeletedBody()}
     handleSessionDeleted("gone-session");
   `), context);
   return state;
 }
+
+test("the delete callback guards on the render-synced ref, not captured state", () => {
+  const body = handleSessionDeletedBody();
+  assert.match(body, /const active = selectedSessionRef\.current;/);
+  assert.match(body, /if \(active\?\.id === sessionId\)/);
+  assert.doesNotMatch(body, /selectedSession\?\.id === sessionId/);
+  assert.match(body, /\}, \[invalidateWorkspaceRestore, router\]\);/);
+  assert.match(
+    source,
+    /const selectedSessionRef = useRef\(selectedSession\);\n  selectedSessionRef\.current = selectedSession;/,
+  );
+});
 
 test("an extension's session end leaves the session and closes only its panel", () => {
   assert.match(source, /onSessionEnded=\{handleSessionEnded\}/);
@@ -93,7 +111,7 @@ test("a delete completing while the user is still on it falls back to the empty 
   assert.deepEqual(state.setNewSessionCwd, ["/project-a"]);
   assert.ok(state.newSessionDraftId);
   assert.equal(state.sessionKey, 1, "chat remounts as a fresh composer");
-  assert.equal(state.routerReplaced, `?cwd=${encodeURIComponent("/project-a")}`);
+  assert.equal(state.routerReplaced, "/"); // [URL 规范] cwd 不进 URL：落裸应用路径，cwd 走 tab-session
 });
 
 test("a side chat's stored draft goes only once its delete succeeded", async () => {
@@ -105,7 +123,8 @@ test("a side chat's stored draft goes only once its delete succeeded", async () 
     const context = vm.createContext({
       useCallback: (callback) => callback,
       deleteSideChat: async () => refusal,
-      clearDraft: (id) => cleared.push(id),
+      // [fork] drafts go through the draft-keeper API, not lib/draft-store directly.
+      getDraftApi: () => ({ clearAllDrafts: (id) => cleared.push(id) }),
       handleCloseFileTab() {},
       selectedSessionRef: { current: null },
       handleSelectSession() {},

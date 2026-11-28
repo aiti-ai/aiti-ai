@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { SelectorRow } from "./SelectorRow";
+import { ExtSlot } from "./ExtSlots.tsx";
+import type { SelectorRowStar } from "./SelectorRow.tsx";
 
 export interface ModelSelectorOption {
   provider: string;
@@ -11,6 +12,14 @@ export interface ModelSelectorOption {
   providerName?: string;
   modelId: string;
   name: string;
+  /** Current availability (probed by the model-check extension / observed at runtime): ok/rl(429)/err/unprobed, plus "disabled" from ext catalogs (server marked it unavailable — quota/plan state). Display-only, except disabled which blocks selection. */
+  status?: "ok" | "rl" | "err" | "unprobed" | "disabled";
+  /** This provider is rate-limited as a whole (all its models currently 429) — group-header hint, no auto-disable */
+  providerRL?: boolean;
+  /** Right-aligned dim row text override (ext-agent catalogs, e.g. qoder billing "0.5x"); absent → provider id. */
+  hint?: string;
+  /** Locale-keyed pill tag from ext catalog metadata ("New" / "Free" / off-peak promo); rendered by the active locale. */
+  badge?: { en: string; zh: string };
 }
 
 export interface ModelSelectorGroup {
@@ -30,10 +39,20 @@ interface ModelSelectorProps {
   selectedLabel?: string;
   disabled?: boolean;
   busy?: boolean;
+  /** Model switched mid-run but not yet in effect (takes effect next round) — shows the "next round" badge, does not lock the selector */
+  pending?: boolean;
   isAutoSelection?: boolean;
   ariaLabel?: string;
   variant?: "toolbar" | "field";
   placement?: "up" | "auto";
+  /** Hide the trigger button's leading icon (v4 16th review: save width in the narrow small-screen
+      input bar / ⓘ sheet — the model name still truncates with
+      ellipsis; the spinner still shows while busy switching, so in-progress feedback isn't lost). */
+  hideIcon?: boolean;
+  /** Manually refresh the model catalog (the "refresh model list" row in the dropdown header; not rendered when omitted — zero intrusion). */
+  onRefresh?: () => void;
+  /** Refresh in progress: the refresh row spins and is disabled, and the other options are disabled too to avoid mis-clicks. */
+  refreshing?: boolean;
   /** The model new sessions start with; its row gets a filled star. */
   defaultValue?: { provider: string; modelId: string } | null;
   /** Shows a star on every row that saves it as the default. */
@@ -42,19 +61,210 @@ interface ModelSelectorProps {
   allOptions?: ModelSelectorOption[] | null;
   /** Set only while `enabledModels` narrows `options`: shows pi's `/model` "scoped | all" row and loads `allOptions`. */
   onShowAll?: () => void;
+  /** Open-state mirror (fires on every open/close). Mobile hosts pin the composer's expanded state while the fullscreen panel is up — see ChatInput mobileExpanded. */
+  onOpenChange?: (open: boolean) => void;
+  /** Programmatic-open signal (monotonically increasing counter; absent = never triggered).
+   *  Extensions ask the host ("pi-web.composer".get("openModelSelector")) to open this dropdown
+   *  without a pointer press — e.g. the composer's command hints (type "model" → run the
+   *  "select model" command). Opening keeps the pre-open focus target, so picking a model
+   *  hands focus back to the composer through the existing restoreFocusAfterClose path. */
+  openRequest?: number;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
+export const RECENT_MODELS_KEY = "pi-web:recent-models";
+
+// ── Panel geometry (fixed positioning baseline = layout viewport; key to coexisting with the
+// mobile keyboard)──
+// The mobile keyboard popping up/collapsing changes visualViewport and triggers the root height
+// reflow of useViewportHeight (the composer moves with it); if the panel computed its geometry
+// only once at open, it would be misplaced and resize erratically on later re-renders. So: while
+// open, listen to viewport events to trigger re-renders; on every render re-measure the anchor
+// and clamp the panel to the "visible area" (anchor hidden behind the keyboard → bottom edge
+// pushed above the keyboard; space/caps computed from the visible height).
+export interface PanelViewport {
+  /** layout viewport height (the position:fixed baseline) */
+  layoutHeight: number;
+  /** Visible-area top/bottom edges (layout coordinates): compressed when the keyboard is up */
+  visibleTop: number;
+  visibleBottom: number;
+}
+
+/** Reads the current viewport snapshot (called during render) */
+export function measurePanelViewport(): PanelViewport {
+  const layoutHeight = window.innerHeight;
+  const viewport = window.visualViewport;
+  if (!viewport) return { layoutHeight, visibleTop: 0, visibleBottom: layoutHeight };
+  return { layoutHeight, visibleTop: viewport.offsetTop, visibleBottom: viewport.offsetTop + viewport.height };
+}
+
+export interface PanelGeometry {
+  openAbove: boolean;
+  maxHeight: number;
+  /** layout coordinates (either top or bottom) */
+  top?: number;
+  bottom?: number;
+}
+
+const PANEL_GAP = 6;
+const PANEL_MIN_HEIGHT = 120;
+const PANEL_MAX_HEIGHT_RATIO = 0.6;
+
+/**
+ * Computes panel geometry from the anchor rect + viewport snapshot (pure function; inputs/outputs
+ * are all layout coordinates). Without the keyboard (visibleTop=0/visibleBottom=layoutHeight) it
+ * matches the historical behavior of expanding above a fixed anchor; with the keyboard up, the
+ * panel compresses into the visible area as a whole — no longer hidden behind the keyboard or
+ * jumping across reflows.
+ */
+export function computePanelGeometry(
+  anchor: { top: number; bottom: number },
+  viewport: PanelViewport,
+  placement: "up" | "auto",
+): PanelGeometry {
+  const visibleHeight = viewport.visibleBottom - viewport.visibleTop;
+  const spaceAbove = anchor.top - viewport.visibleTop - PANEL_GAP;
+  const spaceBelow = viewport.visibleBottom - anchor.bottom - PANEL_GAP;
+  const openAbove = placement === "up" || spaceAbove > spaceBelow;
+  if (openAbove) {
+    // Desired bottom edge = a gap above the anchor; anchor hidden behind the keyboard (below the
+    // visible bottom) → clamp to just above the visible bottom;
+    // anchor scrolled out of the visible top (desired ≤ visibleTop) → the panel expands flush
+    // with the bottom of the visible area.
+    const desired = anchor.top - PANEL_GAP;
+    const bottomEdge = desired <= viewport.visibleTop
+      ? viewport.visibleBottom - PANEL_GAP
+      : Math.min(desired, viewport.visibleBottom - PANEL_GAP);
+    const maxHeight = Math.max(
+      PANEL_MIN_HEIGHT,
+      Math.min(bottomEdge - viewport.visibleTop - PANEL_GAP, visibleHeight * PANEL_MAX_HEIGHT_RATIO),
+    );
+    return { openAbove, maxHeight, bottom: viewport.layoutHeight - bottomEdge };
+  }
+  const desired = anchor.bottom + PANEL_GAP;
+  const topEdge = desired >= viewport.visibleBottom
+    ? viewport.visibleTop + PANEL_GAP
+    : Math.max(desired, viewport.visibleTop + PANEL_GAP);
+  const maxHeight = Math.max(
+    PANEL_MIN_HEIGHT,
+    Math.min(viewport.visibleBottom - PANEL_GAP - topEdge, visibleHeight * PANEL_MAX_HEIGHT_RATIO),
+  );
+  return { openAbove, maxHeight, top: topEdge };
+}
+export const RECENT_MODELS_LIMIT = 8;
+
+export interface RecentModelEntry {
+  provider: string;
+  modelId: string;
+  at: number;
+}
+
+/** Reads recently used models (persisted in localStorage; corrupt/invalid entries silently ignored) */
+export function readRecentModels(): RecentModelEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(RECENT_MODELS_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is RecentModelEntry =>
+      !!entry && typeof entry === "object"
+      && typeof (entry as RecentModelEntry).provider === "string"
+      && typeof (entry as RecentModelEntry).modelId === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Records one model use: move-to-front + dedupe + truncate (LRU) */
+export function rememberRecentModel(provider: string, modelId: string) {
+  try {
+    const rest = readRecentModels().filter((entry) => entry.provider !== provider || entry.modelId !== modelId);
+    window.localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(
+      [{ provider, modelId, at: Date.now() }, ...rest].slice(0, RECENT_MODELS_LIMIT),
+    ));
+  } catch {
+    /* localStorage unavailable (private mode etc.) → silently degrade to no recents */
+  }
+}
+
+/**
+ * Recents → panel section entries: only when the panel is open and not filtering; ordered by
+ * recorded time desc; only models still available are kept (deleted/removed ones disappear
+ * automatically); deduped; truncated to RECENT_MODELS_LIMIT.
+ * provider/modelId are joined field-wise as the Map key, never split — model ids containing "/"
+ * are safe.
+ */
+export function pickRecentOptions(
+  recentList: RecentModelEntry[],
+  sortedOptions: ModelSelectorOption[],
+  opts: { open: boolean; filter: string },
+): ModelSelectorOption[] {
+  if (!opts.open || opts.filter.trim()) return [];
+  const byKey = new Map(sortedOptions.map((option) => [`${option.provider}/${option.modelId}`, option] as const));
+  const picked: ModelSelectorOption[] = [];
+  for (const entry of recentList) {
+    if (picked.length >= RECENT_MODELS_LIMIT) break;
+    const option = byKey.get(`${entry.provider}/${entry.modelId}`);
+    if (option && !picked.includes(option)) picked.push(option);
+  }
+  return picked;
+}
+
 
 export function filterModelOptions(options: ModelSelectorOption[], query: string): ModelSelectorOption[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return options;
 
+  // provider participates in matching: the provider suffix is shown inline, so searching a provider name should hit its models
   return options.filter((option) => (
     `${option.name} ${option.providerName ?? ""} ${option.modelId} ${option.provider}/${option.modelId}`
       .toLocaleLowerCase()
       .includes(normalizedQuery)
   ));
+}
+
+/**
+ * A keyboard-navigable row of the selector panel, in visual order: the "default/clear" row first,
+ * then the recents section, then the grouped list. Group headers and the refresh row are not
+ * navigable (not selectable); refreshing rows stay listed but activation is guarded in the caller.
+ */
+export type SelectorNavRow =
+  | { kind: "clear" }
+  | { kind: "option"; section: "recent" | "main"; option: ModelSelectorOption };
+
+/** Stable identity of a nav row across renders (provider/modelId joined field-wise, never split). */
+export function selectorRowKey(row: SelectorNavRow): string {
+  return row.kind === "clear"
+    ? "clear"
+    : `${row.section}:${row.option.provider}:${row.option.modelId}`;
+}
+
+/**
+ * Flattens the panel's selectable rows for keyboard navigation (ArrowUp/ArrowDown + Enter on the
+ * filter input). Order matches the rendered panel: clear row, recents, grouped options.
+ */
+export function buildSelectorNavRows(opts: {
+  hasClear: boolean;
+  recentOptions: ModelSelectorOption[];
+  mainOptions: ModelSelectorOption[];
+}): SelectorNavRow[] {
+  const rows: SelectorNavRow[] = [];
+  if (opts.hasClear) rows.push({ kind: "clear" });
+  for (const option of opts.recentOptions) rows.push({ kind: "option", section: "recent", option });
+  for (const option of opts.mainOptions) rows.push({ kind: "option", section: "main", option });
+  return rows;
+}
+
+/**
+ * Dim suffix text for a recents-section row. The recents section has no provider group header,
+ * so when a catalog/price hint is present ("$0.6/$2.2 per M", ext-agent billing "0.5x") the
+ * provider display name must ride along after it — a price-only suffix hides which provider the
+ * model came from and same-named models become indistinguishable. No hint → provider, the same
+ * fallback the grouped rows use (whose group header already names the provider, so their hint
+ * stays bare).
+ */
+export function recentRowHint(option: ModelSelectorOption): string {
+  const provider = option.providerName?.trim() || option.provider;
+  return option.hint ? `${option.hint} · ${provider}` : provider;
 }
 
 /** Groups in first-appearance order; never re-sorts, so a models.json provider keeps its file's order (#783). */
@@ -88,38 +298,199 @@ export function ModelSelector({
   selectedLabel,
   disabled = false,
   busy = false,
+  pending = false,
   isAutoSelection = false,
   ariaLabel,
   variant = "toolbar",
   placement = "up",
+  hideIcon = false,
+  onRefresh,
+  refreshing = false,
   defaultValue,
   onSetDefault,
   allOptions,
   onShowAll,
+  onOpenChange,
+  openRequest,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number; bottom: number; left: number; width: number } | null>(null);
+  // Viewport change counter while the panel is open: only triggers re-renders; geometry is recomputed from live values at render time (see the effect below)
+  const [viewportTick, setViewportTick] = useState(0);
   const [filter, setFilter] = useState("");
-  // pi's /model starts on the scope; Tab on the filter or a tap switches.
+  // Keyboard navigation highlight index over navRows (-1 = none). Set on open (pre-highlight the
+  // active model), reset while filtering (first hit), moved with ArrowUp/ArrowDown on the filter input.
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const panelId = useId();
+  const [recentList, setRecentList] = useState<RecentModelEntry[]>([]);
+  // pi's /model starts on the scope; Tab on the filter or a tap switches (upstream #1503).
   const [showAll, setShowAll] = useState(false);
   const locked = disabled || busy;
   const listed = showAll ? allOptions : options;
-  // Options arrive in pi's /model order (orderSelectorModels()); never re-sort
-  // them, or a models.json provider loses the order its file gives (#783).
+  // Options arrive in pi's /model order (orderSelectorModels() upstream, lib/model-scope.ts);
+  // never re-sort them here (#783) — a models.json provider loses the order its file gives.
   const filteredOptions = filterModelOptions(listed ?? [], filter);
   const showFilter = Boolean(onShowAll) || options.length > MODEL_FILTER_THRESHOLD;
   const isListed = (list: ModelSelectorOption[] | null | undefined, ref: { provider: string; modelId: string }) => (
     list?.find((option) => option.modelId === ref.modelId && option.provider === ref.provider)
   );
+
+  // Focus hand-back on close. The panel holds focus while open (filter input / an option row), and
+  // React unmounts that focused node on close → focus falls to <body>, so after picking a model
+  // the composer needs an extra click before typing. Record the element that had focus *before*
+  // the trigger was pressed (pointerdown arrives ahead of the browser's focus move) and hand
+  // focus back on deliberate closes (pick / save default / clear / Esc). Outside clicks are
+  // excluded: there the user is already reaching for another element and must not be yanked back.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const rememberFocusBeforeOpen = () => {
+    const active = document.activeElement;
+    // Focus already inside the selector (repeat click on the trigger, focus on the panel) → no
+    // record: closing then falls back to the trigger button, the nearest sensible target.
+    returnFocusRef.current = active instanceof HTMLElement
+      && active !== document.body
+      && !rootRef.current?.contains(active)
+      ? active
+      : null;
+  };
+  const restoreFocusAfterClose = () => {
+    const recorded = returnFocusRef.current;
+    returnFocusRef.current = null;
+    const target = recorded?.isConnected ? recorded : buttonRef.current;
+    if (!target || target.isConnected === false) return;
+    // After the panel's DOM unmounts (the focused filter row is gone by then). preventScroll: a
+    // hand-back must never scroll the page out from under the user.
+    requestAnimationFrame(() => {
+      if (target.isConnected) target.focus({ preventScroll: true });
+    });
+  };
+
   const switchScope = () => {
     if (!showAll) onShowAll?.();
     setShowAll(!showAll);
+    setHighlightIndex(-1);
   };
+
+  // Programmatic open (openRequest signal): the composer's command hints (type "model" → run the
+  // "select model" command) ask the host to open this dropdown without a pointer press. The ref
+  // starts undefined so an instance mounted *after* the request (mobile expanded state renders it
+  // on demand) still consumes the current value; later increments are consumed once each. `locked`
+  // (disabled/busy) and an already-open panel are honored: a hint must not bypass the trigger's own
+  // refusal to open, and a repeat click must not re-record the focus target from inside the panel.
+  const lastOpenRequestRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (openRequest === undefined || openRequest <= 0) return;
+    if (lastOpenRequestRef.current === openRequest) return;
+    lastOpenRequestRef.current = openRequest;
+    if (open || locked) return;
+    rememberFocusBeforeOpen();
+    setOpen(true);
+  }, [openRequest, locked, open]);
+
+  // Re-read recents each time the panel opens (other windows / other ModelSelector instances may have updated them)
+  useEffect(() => {
+    if (open) setRecentList(readRecentModels());
+  }, [open]);
+
+  // Open-state mirror. Ref-wrapped: hosts may pass inline closures; the effect must
+  // only fire on real open/close transitions, not on callback identity changes.
+  // The cleanup releases the pin if the component unmounts while the panel is up
+  // (host-side conditional rendering) — otherwise the host state would stay stuck at open.
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+  useEffect(() => {
+    onOpenChangeRef.current?.(open);
+    return () => { onOpenChangeRef.current?.(false); };
+  }, [open]);
+
+  // Track the visible viewport while the panel is open: the mobile keyboard popping up/collapsing
+  // (visualViewport resize/scroll + focus changes) compresses the visible area and triggers the
+  // root height reflow; re-renders merged via rAF → the panel re-anchors in real time.
+  useEffect(() => {
+    if (!open) return;
+    let frameId: number | null = null;
+    const schedule = () => {
+      if (frameId !== null) return;
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        setViewportTick((tick) => tick + 1);
+      });
+    };
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("focusin", schedule);
+    window.addEventListener("focusout", schedule);
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("focusin", schedule);
+      window.removeEventListener("focusout", schedule);
+    };
+  }, [open]);
+
+  // Recents → ordered by use time desc, keeping only models still available (deleted/removed ones disappear automatically)
+  const recentOptions = useMemo(
+    () => pickRecentOptions(recentList, options, { open, filter }),
+    [open, filter, options, recentList],
+  );
+  // The recents section is an accelerator, not a removal: every model also stays listed under
+  // its provider group (2026-11-21 user request, reversing the 2026-09-14 dedup — users browse
+  // by provider and must always find the model there). While filtering recentOptions=[] anyway.
   const modelsByProvider = groupModelOptions(filteredOptions);
+
+  // Keyboard navigation rows: selectable rows in visual order (clear / recents / grouped list).
+  // Group headers and the refresh row are not navigable; activation is guarded in activateNavRow.
+  const hasClearRow = Boolean(onClear) && !filter.trim();
+  const navRows = useMemo(
+    () => buildSelectorNavRows({ hasClear: hasClearRow, recentOptions, mainOptions: filteredOptions }),
+    [hasClearRow, recentOptions, filteredOptions],
+  );
+  const navIndexByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    navRows.forEach((row, index) => map.set(selectorRowKey(row), index));
+    return map;
+  }, [navRows]);
+  const activeHighlight = highlightIndex >= 0 && navRows.length > 0
+    ? Math.min(highlightIndex, navRows.length - 1)
+    : -1;
+  const rowDomId = (key: string) => {
+    const index = navIndexByKey.get(key);
+    return index === undefined ? undefined : `${panelId}-row-${index}`;
+  };
+  const moveHighlight = (delta: number) => {
+    setHighlightIndex((current) => {
+      const max = navRows.length - 1;
+      if (max < 0) return -1;
+      // Disabled rows stay visible but are not activatable — arrow navigation walks past them
+      // (no wrap; the array bounds are the stops). All-disabled list → highlight stays put.
+      const eligible = (idx: number) => {
+        const row = navRows[idx];
+        return row.kind === "clear" || row.option.status !== "disabled";
+      };
+      let next = current < 0 ? (delta > 0 ? 0 : max) : current + delta;
+      next = Math.max(0, Math.min(max, next));
+      while (next >= 0 && next <= max && !eligible(next)) next += delta > 0 ? 1 : -1;
+      return next >= 0 && next <= max ? next : current;
+    });
+  };
+
+  // Keyboard nav: on open, pre-highlight the active model's row (native select behavior); on close,
+  // clear. Depends on [open, recentList] only, on purpose: the recents reload above also fires on
+  // open, so the second pass sees the final rows; filtering/scope switches reset the highlight at
+  // their own call sites (onChange / switchScope).
+  useEffect(() => {
+    if (!open || !value) { setHighlightIndex(-1); return; }
+    const index = navRows.findIndex((row) => row.kind === "option"
+      && row.option.provider === value.provider && row.option.modelId === value.modelId);
+    setHighlightIndex(index >= 0 ? index : -1);
+  }, [open, recentList]);
 
   const currentName = selectedLabel ?? (value
     ? (isListed(options, value) ?? isListed(allOptions, value))?.name ?? value.modelId
@@ -133,36 +504,17 @@ export function ModelSelector({
       ) {
         setOpen(false);
         setFilter("");
+        // Deliberate outside click → no focus hand-back (the user is already aiming elsewhere).
+        returnFocusRef.current = null;
       }
     };
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  // While the picker is open, a phone keyboard shrinks the app height
-  // (useViewportHeight writes the root's style, sometimes with no viewport
-  // event) and moves the trigger; follow it instead of the rect from the tap.
-  useEffect(() => {
-    if (!open) return;
-    const remeasure = () => {
-      const rect = rootRef.current?.querySelector("button")?.getBoundingClientRect();
-      // A new object even for an unmoved trigger: the panel also reads the
-      // visual viewport, which may have changed alone.
-      if (rect?.height) setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
-    };
-    const viewport = window.visualViewport;
-    const rootObserver = new MutationObserver(remeasure);
-    rootObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-keyboard-open"] });
-    window.addEventListener("resize", remeasure);
-    viewport?.addEventListener("resize", remeasure);
-    viewport?.addEventListener("scroll", remeasure);
-    return () => {
-      rootObserver.disconnect();
-      window.removeEventListener("resize", remeasure);
-      viewport?.removeEventListener("resize", remeasure);
-      viewport?.removeEventListener("scroll", remeasure);
-    };
-  }, [open]);
+  // [fork] upstream's keyboard-follow remeasure (setAnchorRect effect) is not ported:
+  // the fullscreen panel re-measures via viewportTick + computePanelGeometry on every
+  // render and does not anchor to the trigger rect.
 
   useEffect(() => {
     if (!locked) return;
@@ -210,9 +562,13 @@ export function ModelSelector({
       };
 
   const choose = (option: ModelSelectorOption) => {
+    if (refreshing) return; // no selection while refreshing (the button layer is also disabled; this guards keyboard/double-click)
+    if (option.status === "disabled") return; // server-disabled ext model: greyed row, Enter/keyboard/aria-disabled button all land here — selection would be rejected by the backend
     const active = option.modelId === value?.modelId && option.provider === value?.provider;
+    rememberRecentModel(option.provider, option.modelId);
     setOpen(false);
     setFilter("");
+    restoreFocusAfterClose();
     if (!active || isAutoSelection) onChange(option.provider, option.modelId);
     else onReselect?.(option.provider, option.modelId);
   };
@@ -220,8 +576,33 @@ export function ModelSelector({
   const saveDefault = (option: ModelSelectorOption) => {
     setOpen(false);
     setFilter("");
+    restoreFocusAfterClose();
     onSetDefault?.(option.provider, option.modelId);
   };
+
+  // Enter on the filter input activates the highlighted nav row (clear row or a model option).
+  const activateNavRow = (row: SelectorNavRow) => {
+    if (row.kind === "clear") {
+      if (refreshing) return; // same guard as the clear row's click handler
+      setOpen(false);
+      setFilter("");
+      restoreFocusAfterClose();
+      onClear?.(); // clear rows only exist when onClear is set (hasClearRow), ? is for the type checker
+      return;
+    }
+    choose(row.option);
+  };
+
+  // Upstream (#930/#1125): the default model's row carries a static star, other rows offer a
+  // hover-revealed "save as default" star (rendered by ModelOptionButton, SelectorRow's contract).
+  const starFor = (option: ModelSelectorOption): SelectorRowStar | undefined => onSetDefault
+    ? {
+        isDefault: option.modelId === defaultValue?.modelId && option.provider === defaultValue?.provider,
+        saveLabel: t("chat.saveDefaultModel"),
+        defaultLabel: t("chat.defaultModel"),
+        onSave: () => saveDefault(option),
+      }
+    : undefined;
 
   return (
     <div
@@ -234,9 +615,11 @@ export function ModelSelector({
         event.stopPropagation();
         setFilter("");
         setOpen(false);
+        restoreFocusAfterClose();
       }}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -245,9 +628,10 @@ export function ModelSelector({
         disabled={locked}
         title={busy ? t("chat.switchingModel") : locked ? currentName : options.length > 0 || onClear ? t("chat.changeModel") : t("chat.noAvailableModels")}
         style={buttonStyle}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
+        // Recorded ahead of the browser's focus move (pointerdown → mousedown → focus), so the
+        // element the user was in before opening is what we hand focus back to on close.
+        onPointerDown={rememberFocusBeforeOpen}
+        onClick={() => {
           setOpen((current) => {
             if (current) setFilter("");
             else setShowAll(false);
@@ -273,7 +657,7 @@ export function ModelSelector({
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
           </svg>
-        ) : (
+        ) : hideIcon ? null : (
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
             <rect x="4" y="4" width="16" height="16" rx="2" />
             <rect x="9" y="9" width="6" height="6" />
@@ -284,6 +668,12 @@ export function ModelSelector({
           </svg>
         )}
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentName}</span>
+        {pending && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0, marginLeft: 4, fontSize: 10, color: "#d97706", whiteSpace: "nowrap", fontWeight: 600 }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+            {t("chat.modelSwitchPendingBadge")}
+          </span>
+        )}
         {variant === "field" && (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, color: "var(--text-dim)" }}>
             <polyline points="6 9 12 15 18 9" />
@@ -291,47 +681,61 @@ export function ModelSelector({
         )}
       </button>
 
-      {open && anchorRect && (() => {
-        // Fixed coordinates belong to the layout viewport, which a phone
-        // keyboard does not shrink: measure from the visible part's top and
-        // hang an upward panel from `top` rather than from `bottom`.
-        const viewportTop = window.visualViewport?.offsetTop ?? 0;
-        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-        const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-        // A trigger the keyboard covers (a Settings field) still gets a
-        // panel ending above the keyboard.
-        const aboveEnd = Math.min(anchorRect.top - 6, viewportTop + viewportHeight - 8);
-        const spaceAbove = aboveEnd - viewportTop - 8;
-        const spaceBelow = viewportTop + viewportHeight - anchorRect.bottom - 6 - 8;
-        const openAbove = placement === "up" || spaceAbove > spaceBelow;
-        const maxHeight = Math.max(120, Math.min(openAbove ? spaceAbove : spaceBelow, viewportHeight * 0.6));
-        const verticalPosition: CSSProperties = openAbove
-          ? { top: aboveEnd, transform: "translateY(-100%)" }
-          : { top: anchorRect.bottom + 6 };
-        const horizontalPosition: CSSProperties = isMobile
-          ? { left: 8, right: 8, maxWidth: "calc(100vw - 16px)" }
-          : { left: anchorRect.left, width: "max-content", minWidth: anchorRect.width, maxWidth: Math.max(anchorRect.width, viewportWidth - anchorRect.left - 8) };
+      {open && (() => {
+        void viewportTick; // viewport changes → the effect above triggers the re-render; re-measure anchor/viewport here on every render
+        const anchor = buttonRef.current?.getBoundingClientRect();
+        if (!anchor) return null;
+        // v4 7th review (user decision): the small-screen model panel goes fullscreen full-height —
+        // an anchored popup squashed by maxHeight is unusable on small screens;
+        // desktop (!isMobile) keeps the original anchored geometry unchanged.
+        // (Upstream #1294's keyboard-avoidance geometry not ported: it targets the anchored
+        // popup; the fullscreen panel does not anchor to the trigger.)
+        const geometry = computePanelGeometry(anchor, measurePanelViewport(), placement);
+        const horizontalPosition: CSSProperties = { left: anchor.left, width: "max-content", minWidth: anchor.width, maxWidth: Math.max(anchor.width, (window.visualViewport?.width ?? window.innerWidth) - anchor.left - 8) };
 
         return (
           <div
             ref={panelRef}
+            id={panelId}
             role="listbox"
             aria-label={ariaLabel}
-            style={{
+            data-input-overlay="1"
+            style={isMobile ? {
               position: "fixed",
-              ...verticalPosition,
+              inset: 0,
+              zIndex: 500,
+              display: "flex",
+              flexDirection: "column",
+              background: "var(--bg)",
+              overflow: "hidden",
+            } : {
+              position: "fixed",
+              ...(geometry.top !== undefined ? { top: geometry.top } : { bottom: geometry.bottom }),
               ...horizontalPosition,
               zIndex: 500,
               display: "flex",
               flexDirection: "column",
-              maxHeight,
+              maxHeight: geometry.maxHeight,
               overflow: "hidden",
               border: "1px solid var(--border)",
               borderRadius: 8,
               background: "var(--bg)",
-              boxShadow: openAbove ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+              boxShadow: geometry.openAbove ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
             }}
           >
+            {isMobile && (
+              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{ariaLabel ?? t("chat.sheetModel")}</span>
+                <button
+                  type="button"
+                  aria-label={t("chat.collapseControls")}
+                  onClick={() => setOpen(false)}
+                  style={{ marginLeft: "auto", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 8, color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1 }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {onShowAll && (
               <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 8px 0", fontSize: 11 }}>
                 {[false, true].map((all) => (
@@ -361,17 +765,46 @@ export function ModelSelector({
               <div style={{ flexShrink: 0, padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
                 <input
                   value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
+                  onChange={(event) => {
+                    setFilter(event.target.value);
+                    // Filtering → pre-highlight the first hit so Enter picks it directly; clearing → none.
+                    setHighlightIndex(event.target.value.trim() ? 0 : -1);
+                  }}
                   onKeyDown={(event) => {
-                    if (!onShowAll || event.key !== "Tab") return;
-                    event.preventDefault();
-                    switchScope();
+                    // Tab stays reserved for the scoped/all scope switch (upstream #1503).
+                    if (onShowAll && event.key === "Tab") {
+                      event.preventDefault();
+                      switchScope();
+                      return;
+                    }
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+                      return;
+                    }
+                    if (event.key === "Home" || event.key === "End") {
+                      if (navRows.length === 0) return;
+                      event.preventDefault();
+                      setHighlightIndex(event.key === "Home" ? 0 : navRows.length - 1);
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      if (navRows.length === 0) return;
+                      event.preventDefault();
+                      activateNavRow(navRows[activeHighlight >= 0 ? activeHighlight : 0]);
+                    }
                   }}
                   placeholder={t("chat.filterModels")}
                   aria-label={t("chat.filterModels")}
-                  // On phones, focusing the filter opens the on-screen keyboard,
-                  // which shrinks the viewport and pushes the list off-screen
-                  // before the user has decided to filter. Tap to filter instead.
+                  role="combobox"
+                  aria-expanded="true"
+                  aria-controls={panelId}
+                  aria-autocomplete="list"
+                  aria-activedescendant={activeHighlight >= 0 ? `${panelId}-row-${activeHighlight}` : undefined}
+                  // No auto-focus on mobile: auto-focus immediately pops the keyboard, compressing
+                  // the visible area and squeezing the just-opened list into a sliver; let the user
+                  // browse first — the keyboard pops when they tap the filter box (the geometry
+                  // tracking catches it)
                   autoFocus={!isMobile}
                   autoComplete="off"
                   spellCheck={false}
@@ -391,17 +824,58 @@ export function ModelSelector({
                 />
               </div>
             )}
-            <div style={{ minHeight: 0, overflowY: "auto" }}>
+            <div style={{ minHeight: 0, overflowY: "auto", ...(isMobile ? { flex: 1 } : null) }}>
+              {onRefresh && (
+                <ModelRefreshRow
+                  refreshing={refreshing}
+                  label={t("chat.refreshModels")}
+                  refreshingLabel={t("chat.refreshingModels")}
+                  onClick={onRefresh}
+                />
+              )}
               {onClear && !filter.trim() && (
-                <SelectorRow active={!value} gutter={Boolean(onSetDefault)} onSelect={() => {
+                <ModelOptionButton
+                  id={rowDomId("clear")}
+                  highlighted={navIndexByKey.get("clear") === activeHighlight}
+                  active={!value}
+                  label={emptyLabel ?? "Default"}
+                  disabled={refreshing}
+                  gutter={Boolean(onSetDefault)}
+                  onClick={() => {
+                  if (refreshing) return;
                   setOpen(false);
                   setFilter("");
+                  restoreFocusAfterClose();
                   onClear();
-                }}>
-                  <OptionLabel label={emptyLabel ?? t("i18n.default")} />
-                </SelectorRow>
+                }} />
               )}
-              {modelsByProvider.length === 0 ? (
+              {recentOptions.length > 0 && (
+                <div key="recent">
+                  <div style={{ padding: "6px 12px 4px", borderTop: onClear ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 5 }}>
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                    {t("chat.recentModels")}
+                  </div>
+                  {recentOptions.map((option) => (
+                    <ModelOptionButton
+                      key={`recent:${option.provider}:${option.modelId}`}
+                      id={rowDomId(`recent:${option.provider}:${option.modelId}`)}
+                      highlighted={navIndexByKey.get(`recent:${option.provider}:${option.modelId}`) === activeHighlight}
+                      active={option.modelId === value?.modelId && option.provider === value?.provider}
+                      label={option.name}
+                      // Catalog/price hint composed with the provider (no group header here);
+                      // provider-only fallback keeps cross-provider same-named recents identifiable.
+                      hint={recentRowHint(option)}
+                      status={option.status}
+                      badge={option.badge}
+                      disabled={refreshing}
+                      gutter={Boolean(onSetDefault)}
+                      star={starFor(option)}
+                      onClick={() => choose(option)}
+                    />
+                  ))}
+                </div>
+              )}
+              {filteredOptions.length === 0 ? (
                 <div style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
                   {!listed ? t("agents.modelsLoading") : filter.trim() ? t("chat.noMatchingModels") : t("chat.noAvailableModels")}
                 </div>
@@ -410,32 +884,44 @@ export function ModelSelector({
                   {modelsByProvider.length > 1 && (
                     <div
                       title={group.providerName === group.provider ? undefined : group.provider}
-                      style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: group.providerName === group.provider ? "uppercase" : "none" }}
+                      style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear || recentOptions.length > 0 ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: group.providerName === group.provider ? "uppercase" : "none", display: "flex", alignItems: "center", gap: 6 }}
                     >
                       {group.providerName}
+                      {group.options.some((o) => o.providerRL) && (
+                        <span style={{ color: "#d97706", fontSize: 9, fontWeight: 700, textTransform: "none", letterSpacing: 0, padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.12)", whiteSpace: "nowrap" }} title={t("modelSel.providerRLTitle")}>{t("modelSel.providerRLBadge")}</span>
+                      )}
                     </div>
                   )}
-                  {group.options.map((option) => {
-                    return (
-                      <SelectorRow
-                        key={`${option.provider}:${option.modelId}`}
-                        active={option.modelId === value?.modelId && option.provider === value?.provider}
-                        onSelect={() => choose(option)}
-                        // The default is saved only from the scope: PUT /api/models/default refuses others.
-                        star={onSetDefault && (!showAll || isListed(options, option)) ? {
-                          isDefault: option.modelId === defaultValue?.modelId && option.provider === defaultValue?.provider,
-                          saveLabel: t("chat.saveDefaultModel"),
-                          defaultLabel: t("chat.defaultModel"),
-                          onSave: () => saveDefault(option),
-                        } : undefined}
-                      >
-                        <OptionLabel label={option.name} />
-                      </SelectorRow>
-                    );
-                  })}
+                  {group.options.map((option) => (
+                    <ModelOptionButton
+                      key={`${option.provider}:${option.modelId}`}
+                      id={rowDomId(`main:${option.provider}:${option.modelId}`)}
+                      highlighted={navIndexByKey.get(`main:${option.provider}:${option.modelId}`) === activeHighlight}
+                      active={option.modelId === value?.modelId && option.provider === value?.provider}
+                      label={option.name}
+                      hint={option.hint ?? option.provider}
+                      status={option.status}
+                      badge={option.badge}
+                      disabled={refreshing}
+                      gutter={Boolean(onSetDefault)}
+                      // The default is saved only from the scope: PUT /api/models/default refuses others.
+                      star={onSetDefault && (!showAll || isListed(options, option)) ? starFor(option) : undefined}
+                      onClick={() => choose(option)}
+                    />
+                  ))}
                 </div>
               ))}
             </div>
+            {/* Dropdown footer action area (the model-wizard extension's "manage models" entry):
+                the management UI lives entirely on the extension side — zero render, zero regression
+                when unregistered; the core only hands over the collapse callback (collapse the
+                dropdown before opening the wizard float).
+                Positioned after the scroll list closes = a panel-level fixed bottom row that does
+                not scroll with the list. */}
+            <ExtSlot
+              name="modelSelectorFooter"
+              extra={{ onClose: () => { setOpen(false); setFilter(""); } }}
+            />
           </div>
         );
       })()}
@@ -443,6 +929,124 @@ export function ModelSelector({
   );
 }
 
-function OptionLabel({ label }: { label: string }) {
-  return <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>;
+/** Option row (exported solely for unit-test render assertions): name + provider suffix + availability status; the same information on desktop and small screens. */
+export function ModelOptionButton({ active, label, hint, status, disabled = false, badge, star, gutter = Boolean(star), highlighted = false, id, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Locale-keyed pill tag from ext catalog metadata ("New"/"Free"/off-peak promo); rendered in the active locale. */ badge?: ModelSelectorOption["badge"]; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; /** Keyboard-navigation highlight from the filter input (ArrowUp/ArrowDown); visually the same as hover. */ highlighted?: boolean; /** DOM id of the option button (combobox aria-activedescendant target). */ id?: string; onClick: () => void }) {
+  const { t, locale } = useI18n();
+  const isMobile = useIsMobile();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  // Keep the highlighted row visible while navigating with the keyboard (long filtered lists).
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
+  const canSave = Boolean(star && !star.isDefault);
+  const showSave = canSave && (hovered || focused || isMobile);
+  // Server-disabled ext model (quota/plan state): greyed, not activatable (choose() guards too), pill explains why it is shown.
+  const isDisabledModel = status === "disabled";
+  const badgeText = badge ? (locale.toLowerCase().startsWith("zh") ? badge.zh : badge.en) : "";
+  const statusMark = isDisabledModel
+    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.disabledTitle")}>{t("modelSel.disabledBadge")}</span>
+    : status === "rl"
+    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.rlTitle")}>429</span>
+    : status === "err"
+      ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#dc2626", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.1)" }} title={t("modelSel.errTitle")}>{t("modelSel.errBadge")}</span>
+      : status === "unprobed"
+        ? <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", padding: "0 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-subtle,#f5f5f5)" }} title={t("modelSel.unprobedTitle")}>{t("modelSel.unprobedBadge")}</span>
+        : null;
+  return (
+    <div
+      ref={rowRef}
+      style={{ position: "relative" }}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
+    <button
+      type="button"
+      id={id}
+      role="option"
+      aria-selected={active}
+      disabled={disabled || isDisabledModel || undefined}
+      title={isDisabledModel ? t("modelSel.disabledTitle") : undefined}
+      onClick={onClick}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : hovered || highlighted ? "var(--bg-hover)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled || isDisabledModel ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: (disabled || isDisabledModel) && !active ? 0.55 : undefined }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {active
+        ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
+        : <span style={{ width: 10, flexShrink: 0 }} />}
+      <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {badgeText ? (
+        // Catalog metadata pill ("New"/"Free"/off-peak promo) — green tint like the official CLI's badges.
+        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#15803d", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(34,197,94,.5)", background: "rgba(34,197,94,.12)" }}>{badgeText}</span>
+      ) : null}
+      {statusMark}
+      {hint && hint !== label ? (
+        // Small screens no longer hide the provider suffix (2026-09-13): the same information on
+        // desktop and small screens — the small-screen panel is already fullscreen full-height
+        // (plenty of width), and the "recents" section has no group headers, so with the suffix
+        // hidden, same-named models across providers would be indistinguishable. maxWidth is a
+        // backstop against an over-long provider squeezing out the model name (consistent on both).
+        <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
+      ) : null}
+    </button>
+    {star?.isDefault && (
+      <span
+        role="img"
+        aria-label={star.defaultLabel}
+        title={star.defaultLabel}
+        style={{ position: "absolute", top: "50%", right: 6, transform: "translateY(-50%)", display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, color: "var(--text-dim)" }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><polygon points="12 2.5 14.9 8.6 21.5 9.4 16.6 13.9 17.9 20.5 12 17.2 6.1 20.5 7.4 13.9 2.5 9.4 9.1 8.6" /></svg>
+      </span>
+    )}
+    {star && canSave && (
+      <button
+        type="button"
+        title={star.saveLabel}
+        aria-label={star.saveLabel}
+        tabIndex={showSave ? 0 : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          star.onSave();
+        }}
+        style={{ position: "absolute", top: "50%", right: 6, transform: "translateY(-50%)", display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, padding: 0, background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", opacity: showSave ? 1 : 0, pointerEvents: showSave ? "auto" : "none", transition: "opacity 0.1s, background 0.12s, color 0.12s, border-color 0.12s" }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = "var(--bg-selected)";
+          event.currentTarget.style.color = "var(--accent)";
+          event.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = "var(--bg-hover)";
+          event.currentTarget.style.color = "var(--text-muted)";
+          event.currentTarget.style.borderColor = "var(--border)";
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><polygon points="12 2.5 14.9 8.6 21.5 9.4 16.6 13.9 17.9 20.5 12 17.2 6.1 20.5 7.4 13.9 2.5 9.4 9.1 8.6" /></svg>
+      </button>
+    )}
+    </div>
+  );
+}
+
+/** The dropdown-header "refresh model list" row (exported solely for unit-test render assertions). Spins + disabled while refreshing; clicking keeps the panel open. */
+export function ModelRefreshRow({ refreshing, label, refreshingLabel, onClick }: { refreshing: boolean; label: string; refreshingLabel: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-model-refresh={refreshing ? "busy" : "idle"}
+      disabled={refreshing || undefined}
+      onClick={() => { if (!refreshing) onClick(); }}
+      style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "8px 12px", background: "none", border: "none", borderBottom: "1px solid var(--border)", color: refreshing ? "var(--text-dim)" : "var(--text-muted)", cursor: refreshing ? "default" : "pointer", fontSize: 12, textAlign: "left" }}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, ...(refreshing ? { animation: "pi-refresh-spin 1s linear infinite" } : {}) }}>
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+      </svg>
+      {refreshing ? refreshingLabel : label}
+      {refreshing && <style>{"@keyframes pi-refresh-spin{to{transform:rotate(360deg)}}"}</style>}
+    </button>
+  );
 }

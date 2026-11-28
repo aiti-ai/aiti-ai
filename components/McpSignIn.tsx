@@ -5,9 +5,9 @@ import type { McpServerInfo, McpSignInFlowInfo } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
 import { revealHiddenCharacters } from "@/lib/mcp-server-display";
 import { focusIfLost } from "@/lib/stacked-dialog";
-import { OAuthPastePanel } from "./OAuthPastePanel";
-import { ConfigButton, ConfigDetailGridRow } from "./SettingsUi";
-import type { McpActionFailure, McpTestBlock } from "./mcp-config-helpers";
+import { OAuthPastePanel } from "./OAuthPastePanel.tsx";
+import { ConfigButton, ConfigDetailGridRow } from "./SettingsUi.tsx";
+import type { McpActionFailure, McpTestBlock } from "./mcp-config-helpers.ts";
 import {
   MCP_SIGN_IN_BLOCK_KEYS,
   MCP_SIGN_IN_PHASE_KEYS,
@@ -18,7 +18,7 @@ import {
   mcpSignInOutcomeTone,
   mcpSignInShared,
   type McpSignInRun,
-} from "./mcp-sign-in-helpers";
+} from "./mcp-sign-in-helpers.ts";
 import type { Translate } from "@/lib/i18n/types";
 
 /**

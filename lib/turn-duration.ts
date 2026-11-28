@@ -1,4 +1,4 @@
-import type { AgentMessage } from "./types";
+import type { AgentMessage } from "./types.ts";
 
 /** A time pi recorded, or undefined when it is missing, negative or not a finite number. */
 export function recordedMs(value: unknown): number | undefined {

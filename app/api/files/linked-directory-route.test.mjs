@@ -10,6 +10,7 @@ import { createJiti } from "jiti";
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-linked-route-")));
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = path.join(base, "agent");
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 fs.mkdirSync(process.env.PI_CODING_AGENT_DIR);
 
 test.after(() => {
@@ -31,13 +32,19 @@ const { NextRequest } = await jiti.import("next/server");
 
 function request(method, filePath, type, body, contentType = "application/json") {
   const encoded = encodeFilePathForApi(filePath);
+  // 合并契约：读走 POST /api/files/get（路径在 body）；allow-link 仍走段式 POST
+  if (method === "GET") {
+    return POST(new NextRequest("http://localhost/api/files/get", {
+      method: "POST", headers: { host: "localhost", "content-type": "application/json" },
+      body: JSON.stringify({ path: filePath, type }),
+    }), { params: Promise.resolve({ path: ["get"] }) });
+  }
   const url = `http://localhost/api/files/${encoded}?type=${type}`;
   const context = { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) };
-  const handler = method === "GET" ? GET : POST;
   const init = body === undefined
     ? { method, headers: { host: "localhost" } }
     : { method, headers: { host: "localhost", "content-type": contentType }, body: JSON.stringify(body) };
-  return handler(new NextRequest(url, init), context);
+  return POST(new NextRequest(url, init), context);
 }
 
 function allowLink(linkPath, target) {
@@ -166,11 +173,13 @@ test("a `..` carried inside an encoded segment cannot climb out through a link",
   fs.writeFileSync(path.join(hub, "beside.txt"), "inside");
   t.after(() => fs.rmSync(beside, { force: true }));
 
-  // `%2F` survives URL parsing, so the catch-all receives one decoded segment.
-  const segments = [...encodeFilePathForApi(hub).split("/").map(decodeURIComponent), "linked/../beside.txt"];
-  const response = await GET(
-    new NextRequest(`http://localhost/api/files/x?type=read`, { headers: { host: "localhost" } }),
-    { params: Promise.resolve({ path: segments }) },
+  // 合并契约：路径走 POST /api/files/get 的 body（`..` 防爬升断言不变）
+  const response = await POST(
+    new NextRequest("http://localhost/api/files/get", {
+      method: "POST", headers: { host: "localhost", "content-type": "application/json" },
+      body: JSON.stringify({ path: `${hub}/linked/../beside.txt`, type: "read" }),
+    }),
+    { params: Promise.resolve({ path: ["get"] }) },
   );
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: "Access denied" });

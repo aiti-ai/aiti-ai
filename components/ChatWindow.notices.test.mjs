@@ -3,7 +3,27 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+const hookSource = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
 const globals = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+
+test("renders temporary notices once at the top right of the chat column", () => {
+  // The fork additionally renders a right-aligned NoticeShelf on the empty
+  // new-session page — count the floating chat-column shelf specifically.
+  const floatingChatShelves = source.match(/<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} onDismiss=\{dismissNotice\}/g) ?? [];
+
+  assert.equal(floatingChatShelves.length, 1);
+  assert.match(
+    source,
+    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} onDismiss=\{dismissNotice\} \/>/,
+  );
+});
+
+test("pauses only for a visible notice", () => {
+  assert.match(
+    hookSource,
+    /noticeState\.visible\.some\(\(notice\) => notice\.id === pausedNoticeId\)\) return/,
+  );
+});
 
 test("centres a one-line notice in the card the entrance animation pins", () => {
   const minHeight = Number(source.match(/const NOTICE_MIN_HEIGHT_PX = (\d+);/)[1]);
@@ -23,26 +43,66 @@ test("centres a one-line notice in the card the entrance animation pins", () => 
   assert.equal(2 * padding + lineBox + 2, animatedHeight);
 });
 
+test("keeps the type dot on the first text line, however many it has", () => {
+  // The text carries the padding the dot's offset is measured from: the dot
+  // stays on the first line of a wrapped notice and on the only line of a short
+  // one, which is centred by that same padding.
+  assert.match(source, /minHeight: NOTICE_MIN_HEIGHT_PX,/);
+  assert.match(source, /padding: `\$\{NOTICE_TEXT_PADDING_Y_PX\}px 0`/);
+  assert.match(source, /marginTop: NOTICE_TEXT_PADDING_Y_PX \+ 7,/);
+  // Every box is border-box (app/globals.css), so the text's max-height already
+  // holds its own padding: only the card's two borders come off the card's cap.
+  assert.match(globals, /\* \{\s*box-sizing: border-box;/);
+  assert.match(source, /const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;/);
+});
+
 test("measures the notice line box from the card's own font size and line height", () => {
   const lineBox = Number(source.match(/const NOTICE_LINE_BOX_PX = (\d+);/)[1]);
   const card = source.match(/className="notice-shelf-item"[\s\S]*?fontSize: (\d+),\s*lineHeight: ([\d.]+),/);
   assert.equal(Number(card[1]) * Number(card[2]), lineBox);
 });
 
-test("keeps the floating notices above the composer, scrolling when they do not fit (#1780)", () => {
-  // The shelf floats inside the transcript's box, which ends where the composer
-  // starts. Anchored to the whole chat column, a stack of tall notices ran over
-  // the composer on a phone and took its taps.
-  const transcriptBox = source.indexOf('<div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">');
-  const shelf = source.indexOf("<NoticeShelf notices={notices} floating");
-  const composer = source.indexOf("{chatInputElement}");
-  assert.ok(transcriptBox !== -1 && shelf > transcriptBox && shelf < composer);
-  const wrapper = source.slice(source.lastIndexOf("<div", shelf), shelf);
-  assert.match(wrapper, /position: "absolute",\s*top: 12,\s*bottom: 12,/);
+test("lets keyboard users pause and scroll long notices", () => {
+  assert.match(source, /onFocus=\{\(\) => onPauseChange\?\.\(notice\.id\)\}/);
+  assert.match(source, /onBlur=\{\(event\) => \{\s*if \(!event\.currentTarget\.matches\(":hover"\)\) onPauseChange\?\.\(null\)/);
+  assert.match(source, /onMouseLeave=\{\(event\) => \{\s*if \(!event\.currentTarget\.contains\(document\.activeElement\)\) onPauseChange\?\.\(null\)/);
+  // The text's padding is interpolated, so the pattern skips the style's braces
+  assert.match(source, /<span\s+tabIndex=\{0\}\s+style=\{\{[\s\S]*?overflowY: "auto"/);
+});
 
-  // The floating shelf is capped to that box and scrolls; its cards keep their
-  // own height instead of being squeezed to the minimum.
-  const shelfBody = source.slice(source.indexOf("function NoticeShelf("));
-  assert.match(shelfBody, /\.\.\.\(floating \? \{\s*maxHeight: "100%",\s*overflowY: "auto",/);
-  assert.match(shelfBody, /className="notice-shelf-item"[\s\S]*?flexShrink: 0,/);
+test("offers an Ask AI button on error and warning notices only", () => {
+  assert.match(source, /onAskAi\?: \(message: string\) => void/);
+  assert.match(source, /\{\(notice\.type === "error" \|\| notice\.type === "warning"\) && onAskAi && \(/);
+  assert.match(source, /onClick=\{\(\) => onAskAi\(notice\.message\)\}/);
+});
+
+test("a notice can be dismissed manually instead of waiting out its timer", () => {
+  // The hook exposes a dismiss that exits exactly the touched notice
+  assert.match(hookSource, /\| \{ type: "dismiss"; id: string \}/);
+  assert.match(hookSource, /const dismissNotice = useCallback\(\(id: string\) => \{\s*dispatchNotice\(\{ type: "dismiss", id \}\);\s*\}, \[\]\);/);
+  assert.match(hookSource, /addNotice,\s*dismissNotice,/);
+  // The card wires tap-to-dismiss, the ✕ button and the swipe-up gesture
+  assert.match(source, /function NoticeToastCard\(\{ notice, floating = false, onPauseChange, onAskAi, onDismiss \}/);
+  assert.match(source, /onDismiss=\{dismissNotice\}/);
+  assert.match(source, /onClick=\{onDismiss \? handleClick : undefined\}/);
+  assert.match(source, /if \(currentSelectionText\(\)\) return;/);
+  assert.match(source, /el\.addEventListener\("touchmove", onTouchMove, \{ passive: false \}\)/);
+  assert.match(source, /if \(-current >= NOTICE_SWIPE_DISMISS_PX\) onDismiss\?\.\(notice\.id\);/);
+  assert.match(source, /aria-label=\{t\("common\.close"\)\}/);
+  // Flicks only start outside the scrollable text area, which keeps reading long notices scrollable
+  assert.match(source, /data-notice-scroll="1"/);
+  assert.match(source, /gesture\.insideText = !\!\(event\.target instanceof Element && event\.target\.closest\("\[data-notice-scroll\]"\)\)/);
+});
+
+test("Ask AI prefills the composer without sending, quoting the notice verbatim", async () => {
+  // UI-only notices (extension_ui_request notify) never reach the model, so the
+  // prompt must quote the notice text; the click only fills the composer.
+  assert.match(source, /const prefill = t\("chat\.noticeAskAiPrompt", \{ message \}\)/);
+  assert.match(source, /if \(input\.hasInput\(\)\) \{\s*input\.appendText\(prefill\);\s*\} else \{\s*input\.setText\(prefill\);\s*\}/);
+  assert.match(source, /input\.focus\(\)/);
+  // The prompt template interpolates the notice text in every locale.
+  for (const lang of ["en", "zh-CN", "zh-TW"]) {
+    const locale = await readFile(new URL(`../lib/i18n/messages/${lang}.ts`, import.meta.url), "utf8");
+    assert.match(locale, /"chat\.noticeAskAiPrompt":[\s\S]*?\{message\}/);
+  }
 });

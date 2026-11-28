@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type { HttpProxySettingsResponse } from "@/lib/api-types";
+import { apiUrl } from "@/lib/base-path";
 import { readJsonOrThrow } from "@/lib/fetch-json";
-import { ConfigButton, ConfigDetailActions, ConfigSwitch } from "./SettingsUi";
+import { ConfigButton, ConfigDetailActions, ConfigSwitch } from "./SettingsUi.tsx";
 
 const ERROR_KEYS = {
   load: "settings.httpProxyLoadFailed",
@@ -31,7 +32,7 @@ export function HttpProxyForm({ label }: { label: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/http-proxy")
+    void fetch(apiUrl("/api/http-proxy"))
       .then(async (response) => {
         const data = await readJsonOrThrow<HttpProxySettingsResponse>(response);
         if (!cancelled) setSettings(data);
@@ -51,7 +52,7 @@ export function HttpProxyForm({ label }: { label: string }) {
     setError(null);
     setSaving(true);
     try {
-      const response = await fetch("/api/http-proxy", {
+      const response = await fetch(apiUrl("/api/http-proxy"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(update),

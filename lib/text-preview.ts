@@ -1,5 +1,5 @@
 import fs from "fs";
-import { TEXT_PREVIEW_MAX_BYTES } from "./file-types";
+import { TEXT_PREVIEW_MAX_BYTES } from "./file-types.ts";
 
 export interface TextPreviewChunk {
   content: string;
@@ -20,7 +20,7 @@ function utf8SequenceLength(byte: number): number {
   return 1;
 }
 
-function looksBinary(buffer: Buffer, length: number): boolean {
+export function looksBinary(buffer: Buffer, length: number): boolean {
   // UTF-16 text is full of NULs; a byte order mark keeps it the text view it had.
   if (length >= 2 && ((buffer[0] === 0xff && buffer[1] === 0xfe) || (buffer[0] === 0xfe && buffer[1] === 0xff))) {
     return false;

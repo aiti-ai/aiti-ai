@@ -1,0 +1,53 @@
+{
+  "name": "@aiti-ai/aiti-service-tunnels",
+  "version": "0.3.91",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [],
+      "note": "隧道二进制（cloudflared/ngrok/frpc）由运行时 justget 多源下载，不走 apt"
+    }
+  },
+  "description": "One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution / network health doctor",
+  "displayNameI18n": {
+    "en": "Service Tunnels"
+  },
+  "descriptionI18n": {
+    "zh-CN": "本机服务一键公网可达 —— 端口发现（服务识别/自定义名）/ 五种暴露模式（隧道·vhost·混合·路由器映射·IPv6 直连）/ 认证网关（portal·TOTP·人脸声纹）/ DDNS 自动解析 / 网络体检 doctor"
+  },
+  "homepage": "https://aiti.pw/extensions/service-tunnels.html",
+  "license": "MIT",
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "deploy": "node tools/deploy.mjs",
+    "test": "node --test server/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "qrcode": "^1.5.4"
+  },
+  "soul": "本地服务不该被防火墙关起来——在哪都应该可以安全访问。",
+  "soulI18n": {
+    "en": "Local services should not be locked behind a firewall — they should be safely reachable from anywhere."
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "expose-inject.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "contentHash": "5f4be787e8ea437a",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/service-tunnels"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "service-tunnels": "^0.3.82"
+  }
+}

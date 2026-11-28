@@ -1,0 +1,30 @@
+# @aiti-ai/aiti-extman
+
+> Extension manager — search / enable-disable / install / online registry
+
+English · [简体中文](./README.zh-CN.md)
+
+## About aiti
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/aiti-ai)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+- Workbench & monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
+
+Category: System tools · Tags: `extension` · `manager` · `registry`
+
+## Install
+
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
+
+Manual install: place this package at `~/.pi/web/extensions/aiti-extman/` and reload pi-web.
+
+## Documentation
+
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-extman.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-extman.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## License
+
+MIT

@@ -30,6 +30,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      # GitHub Pages is not enabled on this repository today, so configure-pages
+      # answers 404 (RealHttpError "Not Found — /repos/.../pages"). The build job
+      # still type-checks and builds the demo; only the upload/deploy half is
+      # skipped, so the workflow stops failing red on every push while staying
+      # ready to deploy the moment Pages is turned on.
+      pages_ready: ${{ steps.pages.outcome == 'success' }}
     defaults:
       run:
         working-directory: demo
@@ -42,6 +49,7 @@ jobs:
           cache-dependency-path: demo/package-lock.json
       - id: pages
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         uses: actions/configure-pages@v5
       - run: npm ci
       - run: npm run lint
@@ -49,13 +57,13 @@ jobs:
         env:
           # "/<repo>" for a project site, empty for a custom domain.
           PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: demo/out
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.build.outputs.pages_ready == 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:

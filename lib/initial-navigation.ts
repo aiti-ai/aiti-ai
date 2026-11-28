@@ -1,9 +1,9 @@
-import type { TabOpen } from "./tab-session";
+import type { TabOpen } from "./tab-session.ts";
 
 export interface InitialNavigation {
   requestedCwd: string | null;
   sessionId: string | null;
-  /** `sessionId` is this tab's memory (`withTabOpen`), not the URL's `?session=`. */
+  /** The id came from a remembered tab, not the URL: the sidebar treats it as absent (#1168). */
   sessionFromTab?: boolean;
   sidebarCollapsed: boolean;
 }
@@ -25,9 +25,8 @@ export function getInitialNavigation(
  * alone. Returns the same object when the URL already chose a cwd or session,
  * or when this tab has nothing stored.
  *
- * A remembered session fills `sessionId` and sets `sessionFromTab`. A
- * remembered new-session composer fills `requestedCwd` so reload shows that
- * UI instead of the previous chat.
+ * A remembered session fills `sessionId`. A remembered new-session composer
+ * fills `requestedCwd` so reload shows that UI instead of the previous chat.
  *
  * Call this after mount. Reading sessionStorage during the first client render
  * (including a `useState` initializer) makes SSR HTML diverge from the client
@@ -42,18 +41,12 @@ export function withTabOpen(
     return navigation;
   }
   if (tabOpen.kind === "session") {
-    return { ...navigation, sessionId: tabOpen.sessionId, sessionFromTab: true };
+    return { ...navigation, sessionId: tabOpen.sessionId };
   }
   return { ...navigation, requestedCwd: tabOpen.cwd };
 }
 
-/**
- * The session the URL's `?session=` asked for, or null (none, or one this tab
- * remembered). When that session is gone, nothing takes its place: the
- * project the sidebar then adopts does not restore its last open session, as
- * a project switch does, nor put that session in the URL (#1168). A gone
- * session that only this tab remembered falls back as a fresh tab does.
- */
+/** The ?session= id the URL asked for, unless it named a tab session (#1168). */
 export function linkedSessionId(navigation: InitialNavigation): string | null {
   return navigation.sessionFromTab ? null : navigation.sessionId;
 }

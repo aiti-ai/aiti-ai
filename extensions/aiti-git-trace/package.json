@@ -1,0 +1,41 @@
+{
+  "name": "@aiti-ai/aiti-git-trace",
+  "version": "0.2.17",
+  "type": "module",
+  "description": "Out-of-band AI change tracking — repo-root .aiti-trace standalone trace repo (autoInit even without git) + op-numbered before/after dual commits + full file⇄message⇄op lineage + rollback + shadow repo slimming compact",
+  "displayNameI18n": {
+    "en": "AI Change Trace"
+  },
+  "descriptionI18n": {
+    "zh-CN": "编外 AI 变更追踪——仓根 .aiti-trace 独立追踪仓（无 git 也可 autoInit）+ op 编号 before/after 双 commit + 文件⇄消息⇄操作全链路 + 回撤 + 影子仓瘦身 compact"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs",
+    "test": "node --test trace-core.test.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12"
+  },
+  "license": "MIT",
+  "contentHash": "35eebccb36152645",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-git-trace"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

@@ -1,4 +1,6 @@
 import { lstatSync, readdirSync } from "node:fs";
+import { stat } from "fs/promises";
+import { resolve } from "path";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -6,11 +8,12 @@ import {
   ProjectTrustStore,
   type ProjectTrustStoreEntry,
 } from "@earendil-works/pi-coding-agent";
-import type { FreshFolderTrustBreadth, ProjectTrustStatus } from "./api-types";
-import { serializeByKey } from "./key-serializer";
-import { isPathWithinRoots } from "./path-security";
-import { realPathOrResolved, samePath } from "./paths";
-import { errorMessage } from "./errors";
+import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access.ts";
+import type { FreshFolderTrustBreadth, ProjectTrustStatus } from "./api-types.ts";
+import { serializeByKey } from "./key-serializer.ts";
+import { isPathWithinRoots } from "./path-security.ts";
+import { realPathOrResolved, samePath } from "./paths.ts";
+import { errorMessage } from "./errors.ts";
 
 function describeDecision(
   cwd: string,
@@ -37,6 +40,28 @@ function describeDecision(
  * before, and callers that only need `trusted` still must not, so that failure
  * is reported in `decisionError` instead, with `trusted: true`.
  */
+
+/** Validates the cwd parameter for /api/project-trust (and its /status subpath): non-empty string, an existing
+ *  directory, within the allowed roots. HTTP-agnostic (the route layer turns error/status into responses). */
+export async function checkTrustCwd(value: unknown): Promise<{ cwd: string } | { error: string; status: number }> {
+  if (typeof value !== "string" || !value.trim()) {
+    return { error: "cwd required", status: 400 };
+  }
+  const cwd = resolve(value);
+  try {
+    if (!(await stat(cwd)).isDirectory()) {
+      return { error: "cwd must be a directory", status: 400 };
+    }
+  } catch {
+    return { error: "Directory does not exist", status: 400 };
+  }
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
+    return { error: "Access denied", status: 403 };
+  }
+  return { cwd };
+}
+
 export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTrustStatus {
   const requiresTrust = Boolean(cwd) && hasTrustRequiringProjectResources(cwd);
   const trustStore = new ProjectTrustStore(agentDir);

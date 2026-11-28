@@ -1,6 +1,6 @@
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { buildApiKeyProviderList, buildOAuthProviderList } from "@/lib/provider-listing";
 import { collectProviderListingInputs } from "@/lib/provider-listing-runtime";
-import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 
 export const dynamic = "force-dynamic";
 

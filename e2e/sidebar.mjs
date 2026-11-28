@@ -23,10 +23,22 @@ export async function showSidebarFiles(page) {
 
 /** Shows the session rows: the Sessions tab, or nothing to do below the files. */
 export async function showSidebarSessions(page) {
-  const tab = page.getByRole("tab", { name: "Sessions", exact: true });
-  await tab.or(page.locator(".sidebar-brand")).first().waitFor();
-  if (await tab.count() && await tab.getAttribute("aria-selected") !== "true") await tab.click();
-  await page.locator("#session-sidebar-panel-sessions").waitFor({ state: "visible" });
+  // [fork] the sessions region is rendered by the session-manager dock inside
+  // #session-sidebar — the upstream tab/panel ids do not exist there. Wait for
+  // the sidebar itself, then for at least one session row (by visible title).
+  await page.locator("#session-sidebar").waitFor({ state: "visible" });
+  await page.locator("#session-sidebar [data-session-row], #session-sidebar button").first().waitFor({ state: "visible" });
+}
+
+/**
+ * [fork] Finds a session row by exact visible title inside #session-sidebar.
+ * The dock renders plain buttons (no upstream .session-tree-* classes), so the
+ * row is located by its title text and clicked directly.
+ */
+export function sessionRowLocator(page, title) {
+  // The dock renders rows as plain divs (no button/role) — match by text and
+  // take the deepest match, then fall back to the whole sidebar text scan.
+  return page.locator(`#session-sidebar :text("${title}")`).last();
 }
 
 /**

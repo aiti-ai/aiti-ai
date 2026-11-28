@@ -1,0 +1,52 @@
+{
+  "name": "@aiti-ai/pi-secret-vault",
+  "version": "0.3.2",
+  "description": "Encrypted secret vault for pi: store credentials once (/vault add, masked input), let the model query aliases (vault_list / vault_get → opaque rsec_ tokens) and pass those tokens into any tool argument, where the runtime substitutes the real value. AI is read-only; values never enter the chat, the session file, or the wire payload. Superset of @aiti-ai/pi-secret-mask (same engine; same-session coexistence resolves to the vault).",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "secrets",
+    "vault",
+    "credentials",
+    "security"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "src",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@aiti-ai/secret-mask-core": "^0.4.0",
+    "@aiti-ai/secret-vault-core": "^0.3.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "pi-plugins/pi-secret-vault"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "79ad7eaeea31ff53"
+}

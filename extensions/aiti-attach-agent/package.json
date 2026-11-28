@@ -1,0 +1,30 @@
+{
+  "name": "@aiti-ai/aiti-attach-agent",
+  "version": "0.1.11",
+  "description": "; supports full automation via environment variables (PI_WEB_BRIDGE_AUTO=1 auto-bridges any CLI session); followUp queue echo + image attachment passthrough + idle time",
+  "displayNameI18n": {
+    "en": "Attach Session Backend"
+  },
+  "descriptionI18n": {
+    "zh-CN": "Socket 附着已运行 agent 进程 —— 连接 pi TUI bridge；支持环境变量全自动（PI_WEB_BRIDGE_AUTO=1 任何 CLI 会话自动上桥）；followUp 排队回显 + 图片附件透传 + 空闲超时退出"
+  },
+  "soul": "不抢方向盘——agent 已经在跑，附着上去看就好。",
+  "soulI18n": {
+    "en": "Don't grab the steering wheel — the agent is already running; attach to it and watch."
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.17"
+  },
+  "license": "MIT",
+  "contentHash": "0f0f6492cce809ff",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-attach-agent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

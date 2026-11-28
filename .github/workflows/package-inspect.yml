@@ -1,0 +1,47 @@
+# One-shot diagnostic: report the GHCR container package's real visibility
+# (via GITHUB_TOKEN packages:read) and test anonymous pullability from the
+# runner (clean network, no mirrors). Dispatch-only; harmless read-only.
+name: Package Inspect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Package metadata (authenticated)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for scope in "user/packages/container/aiti-ai" "orgs/${{ github.repository_owner }}/packages/container/aiti-ai"; do
+            echo "--- $scope ---"
+            gh api "$scope" 2>&1 | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);console.log('name:',j.name,'| visibility:',j.visibility,'| version_count:',j.version_count)}catch(e){console.log(d.slice(0,120))}})"
+          done
+
+      - name: Promote to public (repo-linked package admin)
+        run: |
+          # 首推的 GITHUB_TOKEN 是包创建者（repo-linked admin）——可直接 PATCH visibility
+          CODE=$(curl -s -o /tmp/promote-resp.txt -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H 'Content-Type: application/json' \
+            "https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/aiti-ai" \
+            -d '{"visibility":"public"}')
+          echo "PATCH visibility → $CODE $(head -c 200 /tmp/promote-resp.txt)"
+
+      - name: Anonymous pull test (clean runner network)
+        run: |
+          echo "--- anonymous docker pull of ghcr.io/${{ github.repository }}:0.15.15-aiti.10 ---"
+          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -2 || true
+
+      - name: Authenticated pull test (GITHUB_TOKEN packages:read)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "--- authenticated docker pull (login with github.token) ---"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -3

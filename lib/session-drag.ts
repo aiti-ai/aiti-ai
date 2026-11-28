@@ -3,8 +3,8 @@
 // file, and one dragged from another app (a link, a text selection) is never
 // mistaken for one of ours.
 
-import { isRecord } from "./is-record";
-import type { SessionReferenceTarget } from "./session-reference-target";
+import { isRecord } from "./is-record.ts";
+import type { SessionReferenceTarget } from "./session-reference-target.ts";
 
 export const SESSION_DRAG_MIME = "application/x-pi-web-session";
 

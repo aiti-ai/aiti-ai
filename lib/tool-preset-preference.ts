@@ -1,5 +1,5 @@
-import { CONFIGURED_TOOL_PRESET, isToolPreset, type ToolPreset } from "./tool-presets";
-import { getBrowserStorage } from "./browser-storage";
+import { CONFIGURED_TOOL_PRESET, isToolPreset, type ToolPreset } from "./tool-presets.ts";
+import { getBrowserStorage } from "./browser-storage.ts";
 
 const STORAGE_KEY = "pi-tool-preset";
 

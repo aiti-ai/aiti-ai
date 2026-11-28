@@ -1,0 +1,45 @@
+/**
+ * aiti-extman client 构建配置（Vite lib mode）——JSX 模板实例。
+ *
+ * client/src/entry.tsx (JSX + TS) → a single ESM bundle: dist/aiti-extman-client.mjs
+ * (index.ts points its client field at dist/; deploy.mjs also copies it into the deployed
+ *  client/ compatibility slot, so the repo no longer keeps a hand-written bundle)。
+ *
+ * 模板与原理：pi-web-ext/templates/ext-jsx-client/ + docs/aiti-ext-jsx-vite-plan.md
+ */
+import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+
+export default defineConfig({
+  esbuild: {
+    jsx: "automatic",
+    jsxImportSource: "react",
+    // Production lib bundle: never let the JSX runtime follow the build shell's NODE_ENV.
+    // Vite infers jsxDev from NODE_ENV; a build from a dev-instance shell inherits
+    // NODE_ENV=development -> jsxDEV(), but jsx-runtime.ts only exports jsx/jsxs/Fragment.
+    jsxDev: false,
+  },
+  resolve: {
+    alias: [
+      // 正则精确匹配（字符串 alias 是前缀匹配，find 'react' 会吞掉 'react/jsx-runtime'）
+      { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL("client/src/jsx-runtime.ts", import.meta.url)) },
+      { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL("client/src/jsx-runtime.ts", import.meta.url)) },
+      { find: /^react$/, replacement: fileURLToPath(new URL("client/src/host-shim.ts", import.meta.url)) },
+    ],
+  },
+  build: {
+    lib: {
+      entry: fileURLToPath(new URL("client/src/entry.tsx", import.meta.url)),
+      formats: ["es"],
+      fileName: () => "aiti-extman-client.mjs",
+    },
+    outDir: "dist",
+    emptyOutDir: true,
+    target: "es2020",
+    minify: false,
+    sourcemap: false,
+    rollupOptions: {
+      external: [], // npm 包全部内联进单个 .mjs
+    },
+  },
+});

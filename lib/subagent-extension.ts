@@ -10,10 +10,10 @@ import {
   SUBAGENT_CONTROL_TOOL_NAMES,
   type SubagentProfile,
   type SubagentRunInfo,
-} from "./subagents";
-import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
-import { worktreeHasUncommittedFiles } from "./worktree";
-import { errorMessage } from "./errors";
+} from "./subagents.ts";
+import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input.ts";
+import { worktreeHasUncommittedFiles } from "./worktree.ts";
+import { errorMessage } from "./errors.ts";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;

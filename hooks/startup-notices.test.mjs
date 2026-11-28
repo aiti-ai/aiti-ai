@@ -14,7 +14,7 @@ const nodes = [];
 (function visit(node) { nodes.push(node); ts.forEachChild(node, visit); })(hookFile);
 
 const transpile = (code) => ts.transpileModule(code, {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, alwaysStrict: false },
 }).outputText.trim().replace(/;$/, "");
 
 const handleExtensionUiRequest = nodes.find((node) => ts.isVariableDeclaration(node)

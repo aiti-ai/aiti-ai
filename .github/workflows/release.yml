@@ -1,0 +1,391 @@
+# release.yml — GitHub Releases pipeline (manual dispatch on a v* tag ref; the
+# auto-run on tag push is suspended — publishing pipelines start deliberately only).
+#
+# Trigger: node scripts/release-tag.mjs   （守卫：package.json 必须 X.Y.Z-aiti.N，tag 固定 v<version>）
+#          → git tag v0.16.0-aiti.1 && git push origin v0.16.0-aiti.1
+# Artifacts: aiti-web-v<ver>-universal.tar.gz + aiti-web-v<ver>-universal.zip（单包双格式，
+#        内容逐字节相同；zip 给 windows/Expand-Archive，tgz 给 linux/darwin）
+#        + per-asset .sha256（release job 合并为 checksums.txt）
+# Layout: prepare (linux, platform-agnostic build: .next + 49 extension dists → npm tgz)
+#       → archive (single ubuntu runner: npm tgz + production closure → universal archive;
+#         platform differences flattened by postProcessUniversal in scripts/build-release-archive.mjs)
+#       → release (collect uploads + gh release create --generate-notes)
+#
+# Note: the npm channel (publish-all) is independent of this pipeline — GitHub Releases is handled here.
+#
+# RELEASE ORDER (enforced by the deps-on-registry guard below):
+#   1. "NPM Publish" (publish-npm.yml) — extensions/ + pi-plugins/ + packages/ → staging,
+#      verify, promote to npmjs.
+#   2. THIS workflow — the bundled extension dists are built against the shared deps
+#      (@aiti-ai/ext-shared, aiti-bridge, aiti-devtools-core, justget, service-tunnels)
+#      resolved from the npm registry, i.e. the versions published in step 1. Run it
+#      AFTER the main npm publish (publish.yml) so the archives carry a released version.
+
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release create / upload
+
+jobs:
+  # Gate: the bundled extension dists are built against the shared deps resolved
+  # from the npm registry (the versions "NPM Publish" published) — not local tgzs.
+  # Fail fast with an actionable message when step 1 of the release order was skipped.
+  deps-on-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify the bundled-extension dep union resolves from the npm registry
+        run: |
+          # The same union the build root installs, resolved against npmjs — catches
+          # missing packages AND unsatisfied version ranges (^0.3.0 vs published
+          # 0.2.0) here, in seconds, instead of minutes into the prepare/archive jobs.
+          # Only @aiti-ti/ddns is vendored (never on npmjs); everything else —
+          # including the secret-* cores — must resolve from the registry.
+          BUILD=/tmp/aiti-guard-root
+          mkdir -p "$BUILD"
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          npm install --prefix "$BUILD" --dry-run --legacy-peer-deps --no-audit --no-fund --loglevel=error
+  prepare:
+    # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，archive job 直接复用）。
+    # 依赖策略（2026-11-13 vendor 层退役）：扩展共享依赖（@aiti-ai/ext-shared、aiti-bridge、
+    # aiti-devtools-core、justget、service-tunnels）全部从 npm registry 解析——即 "NPM Publish"
+    # 工作流发布的版本；装机 reconcile 拉到的与构建用的同源。唯一例外 @aiti-ti/ddns（npmjs 无）
+    # 仍走 vendor tgz。deps-on-registry 守卫在依赖未发布时快速失败。
+    needs: deps-on-registry
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches package.json version (fork build suffix required)
+        id: ver
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-aiti\.[0-9]+$ ]]; then
+            echo "::error::package.json version ${VERSION} must be X.Y.Z-aiti.N — bare versions collide with upstream tags (scripts/release-tag.mjs enforces this locally too)"
+            exit 1
+          fi
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != package.json version ${VERSION} — bump the version before tagging"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps (main package — all public on npmjs)
+        # --include=dev：与 build-release-archive.mjs 同源防御 —— next 需要 typescript
+        # 把 tsconfig paths 变成 webpack alias；runner 环境一旦带 NODE_ENV=production
+        # 就会静默 omit dev。npm pack 的 files 白名单不收 devDeps，无泄漏。
+        run: npm install --include=dev --no-audit --no-fund --loglevel=error
+
+      - name: Build .next
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      - name: Build shared build root (outside extensions/ — must not enter the package)
+        run: |
+          set -e
+          # 脚手架全部放 /tmp：.build-root 的 package.json 含 CI 绝对路径 file: 依赖，
+          # 若落在 extensions/ 下会被打进主包、且用户机 reconcile 会把它当扩展读 deps → ENOENT
+          BUILD=/tmp/aiti-build-root
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$BUILD" "$PKGS"
+          # secret-* cores are vendored from this same tree (same release train as the
+          # aiti-secret-vault extension — their official publish may trail this workflow;
+          # same mechanism as publish-npm.yml). ext-shared/bridge/devtools-core stay on
+          # registry resolution.
+          (cd packages/secret-mask-core && npm pack --pack-destination "$PKGS")
+          (cd packages/secret-vault-core && npm pack --pack-destination "$PKGS")
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz" \
+            --file "@aiti-ai/secret-mask-core=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)" \
+            --file "@aiti-ai/secret-vault-core=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)"
+          # @aiti-ai/ext-shared / aiti-bridge / aiti-devtools-core / justget / service-tunnels
+          # 走 registry 解析（NPM Publish 发布的版本；service-tunnels@0.3.76 exports 含
+          # ./i18n ./ui-shared，子路径 import 正常——旧私仓 0.3.9 的问题不再适用）
+          npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          ln -s "$BUILD/node_modules" extensions/node_modules
+
+      - name: Build extension dists (platform-agnostic JS, walk-up resolve)
+        run: |
+          failed=""
+          for ext in extensions/*/; do
+            pj="$ext/package.json"
+            [ -f "$pj" ] || continue
+            bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
+            bs=$(node -p "try{require('./$pj').scripts?.['build:server']||''}catch{}" 2>/dev/null || echo "")
+            [ -n "$bc" ] && [ "$bc" != "true" ] || [ -n "$bs" ] || continue
+            echo "::group::build ${ext}"
+            # 每扩展 node_modules → 共享根（/tmp 构建根）：build-client.mjs 的
+            # node_modules/vite/bin/vite.js 探测直接命中，require 解析同点命中
+            ln -sfn /tmp/aiti-build-root/node_modules "${ext}node_modules"
+            ok=1
+            if [ -n "$bc" ] && [ "$bc" != "true" ]; then (cd "$ext" && npm run build:client) || ok=0; fi
+            # server worker bundles（esbuild）：node_modules 下 Node 拒绝 strip-types，
+            # 必须预构建（aiti-ai-usage dist/ingest-worker.mjs）
+            if [ -n "$bs" ] && [ $ok -eq 1 ]; then (cd "$ext" && npm run build:server) || ok=0; fi
+            echo "::endgroup::"
+            [ $ok -eq 1 ] || failed="$failed ${ext}"
+          done
+          if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
+
+      - name: Materialize _shared sibling copies (deploy.mjs parity — npm pack excludes _shared)
+        run: node scripts/materialize-shared.mjs
+
+      - name: npm pack (authoritative files filter)
+        run: |
+          rm -f extensions/node_modules   # 构建 symlink，勿入包（files 排除为双保险）
+          mkdir -p dist-tgz               # --pack-destination 目录必须预存在
+          npm pack --pack-destination dist-tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tgz
+          path: dist-tgz/*.tgz
+          retention-days: 1
+
+      # npm pack 硬排除 package-lock.json——闭包 npm ci 需要它，单独随 artifact 传给平台 job
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
+          retention-days: 1
+
+  archive:
+    needs: prepare
+    # universal 单包：平台差异由 postProcessUniversal 抹平（swc 删除 / sharp→wasm32 /
+    # esbuild 全平台补齐），单一 ubuntu runner 出全平台资产（macos/windows runner 退役）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tgz
+          path: dist-tgz
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-lock
+          path: lock
+
+      - name: Build universal release archive
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          TGZ=$(ls dist-tgz/*.tgz | head -1)
+          node scripts/build-release-archive.mjs \
+            --from-tgz "$TGZ" \
+            --lock lock/package-lock.json
+
+      - name: Native binary glibc compatibility gate (max GLIBC_2.31)
+        shell: bash
+        run: |
+          # GLIBC is an ELF-only concern — Mach-O (darwin) / PE (windows) binaries
+          # cannot require it by definition, so the gate runs on Linux runners only
+          # (this also sidesteps tar/unzip format differences per platform).
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            echo "skip: non-Linux platform — GLIBC gate is ELF-only"
+            exit 0
+          fi
+          mkdir -p /tmp/aiti-gate && tar xzf aiti-web-v*.tar.gz -C /tmp/aiti-gate
+          # 守门：tarball 内所有 ELF 的最高 GLIBC 符号需求不得超过 2.31（Ubuntu 20.04/Debian 11 级）。
+          # 全依赖均为上游 prebuilt 时自动通过；未来引入 node-gyp 现场编译/高版本工具链构建的包
+          # 会在此 fail（否则静默打包出仅在最新发行版可跑的二进制）。
+          BAD=0
+          for f in $(find /tmp/aiti-gate -type f \( -name "*.node" -o -name "*.so" -o -name "*.so.*" \) 2>/dev/null); do
+            # || true: pipefail + set -e — an ELF with NO GLIBC symbols (musl builds)
+            # makes grep exit 1, which must not kill the step
+            MAX=$(objdump -T "$f" 2>/dev/null | grep -oE "GLIBC_2\.[0-9]+" | sort -V | tail -1 || true)
+            [ -z "$MAX" ] && continue
+            NEED=$(echo "$MAX" | sed "s/GLIBC_2\.//")
+            echo "$f → $MAX"
+            if (( $(echo "$NEED > 31" | bc -l) )); then echo "::error::GLIBC 需求超限: $f = $MAX"; BAD=1; fi
+          done
+          exit $BAD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-universal
+          path: |
+            aiti-web-v*
+            *.sha256
+          retention-days: 1
+
+  release:
+    needs: archive
+    runs-on: ubuntu-latest
+    steps:
+      # shallow checkout — only to read releases/<tag>.md (notes body); no git history needed
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Merge checksums
+        run: |
+          cd release-assets
+          # sha256sum 上游产物带 CI 绝对路径 —— 重写为纯文件名，用户可直接 sha256sum -c checksums.txt
+          awk '{ n = split($2, p, "/"); print $1 "  " p[n] }' *.sha256 > checksums.txt
+          rm -f *.sha256
+          cat checksums.txt
+
+      # Body = human-written releases/<tag>.md + fixed install/verify section +
+      # compare line. Falls back to GitHub auto-generated notes when the file
+      # is missing (tagged before the notes-file convention, or hotfix with
+      # --skip-notes) so the release never blocks on a missing draft.
+      - name: Assemble release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(gh release list --repo "${{ github.repository }}" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
+          if node scripts/assemble-release-notes.mjs \
+              --tag "${{ github.ref_name }}" \
+              --prev "$PREV" \
+              --out /tmp/notes-final.md; then
+            echo "mode=notes-file" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::releases/${{ github.ref_name }}.md missing — falling back to auto-generated notes (draft one with scripts/draft-release-notes.mjs before tagging)"
+            echo "mode=generate" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}   # checkout has no origin auth context; gh needs the explicit repo
+        run: |
+          ARGS=()
+          if [ "${{ steps.notes.outputs.mode }}" = "notes-file" ]; then
+            ARGS+=(--notes-file /tmp/notes-final.md)
+          else
+            ARGS+=(--generate-notes)
+          fi
+          # idempotent re-runs: edit the existing release instead of failing
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release edit "${{ github.ref_name }}" "${ARGS[@]}"
+          else
+            gh release create "${{ github.ref_name }}" \
+              --title "aiti-web ${{ github.ref_name }}" \
+              "${ARGS[@]}" \
+              release-assets/*
+          fi
+
+  # Phase 2 consumer: aiti-docs sync-changelogs workflow pulls release bodies
+  # into the aiti.pw/changelogs page. Best-effort by design: continue-on-error
+  # keeps docs sync from blocking a release, but a failing dispatch (missing or
+  # broken token) must mark this job red instead of passing silently.
+  changelog-sync:
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Notify aiti-docs (changelog-sync)
+        env:
+          AITI_DOCS_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
+        run: |
+          if [ -z "$AITI_DOCS_TOKEN" ]; then
+            echo "::warning::AITI_DOCS_TOKEN not set — skipping aiti-docs changelog sync (set it to a PAT with contents:write on ${{ github.repository_owner }}/aiti-docs)"
+            exit 0
+          fi
+          # curl -f: a non-2xx dispatch (expired/under-scoped token, renamed repo)
+          # fails the step so the job goes red — silent success hid a 401 here.
+          curl -fsS -o /dev/null -w "%{http_code}\n" -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $AITI_DOCS_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository_owner }}/aiti-docs/dispatches" \
+            -d '{"event_type":"changelog-sync","client_payload":{"tag":"${{ github.ref_name }}"}}'
+
+  # Mirror the release into the Gitee repo — the fallback download channel the
+  # installers and `pi-web update` use when GitHub is unreachable (CN networks).
+  # Best-effort by design: a failed mirror marks this job red but never fails
+  # the release itself; catch up by re-running just this job, or locally with
+  # `node scripts/publish-gitee-mirror.mjs --tag <tag>` (needs AITI_GITEE_TOKEN).
+  gitee-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      # Same artifacts the release job uploaded — strictly identical assets,
+      # zero re-download from GitHub (~230 MB: tgz + zip + checksums).
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Merge checksums
+        run: |
+          cd release-assets
+          cat *.sha256 > checksums.txt
+          rm -f *.sha256
+
+      - name: Publish Gitee mirror
+        env:
+          AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
+        run: node scripts/publish-gitee-mirror.mjs --tag "${{ github.ref_name }}" --assets-dir release-assets
+
+      # Release creation on Gitee auto-tags its main with the release tag
+      # (pointing at whatever main has there); overwrite it with the real
+      # annotated tag from GitHub so tag && code stay meaningful on the mirror.
+      - name: Sync release tag to Gitee
+        env:
+          AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
+        run: |
+          # The leading "+" is required: on a tag dispatch actions/checkout already
+          # wrote refs/tags/<tag> as a lightweight ref pointing at the commit, and a
+          # plain refspec fetch of the annotated tag (different object) is rejected
+          # with "would clobber existing tag" before the comparison below can run.
+          git fetch --no-tags --depth=1 origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          LOCAL=$(git rev-parse "refs/tags/${{ github.ref_name }}")
+          REMOTE=$(git ls-remote "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
+            "refs/tags/${{ github.ref_name }}" | cut -f1)
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "Gitee tag already points at $LOCAL — nothing to sync"
+            exit 0
+          fi
+          # An existing-but-different tag needs an explicit force: a bare (or even '+')
+          # update can be refused with "(would clobber existing tag)" on the mirror,
+          # which failed this step on v0.18.0-aiti.1 even though the tag was correct.
+          git push --force "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
+            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+
+      - name: Failure note
+        if: failure()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Gitee mirror failed
+          The Gitee mirror release was not fully updated (missing secret
+          `AITI_GITEE_TOKEN`, upload rejection, or API outage). Catch up with:
+          `node scripts/publish-gitee-mirror.mjs --tag <tag>` (env AITI_GITEE_TOKEN),
+          or re-run this job from the Actions UI.
+          EOF

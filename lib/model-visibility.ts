@@ -1,0 +1,208 @@
+/**
+ * Model visibility pure logic (used by pi-web /api/models): temporary-disable filtering +
+ * availability annotation from the model-check extension.
+ *
+ * Same semantics as the model-combo extension engine's isVisibleModel (provider/model-level
+ * enabled:false hides), but the engine's patch does not necessarily reach /api/models'
+ * ModelRuntime through the Next.js multi-module graph, so this explicit filter acts as a
+ * fallback. Pure functions, zero host dependencies, easy to unit test.
+ */
+import type { ModelsData } from "./models-cache.ts";
+
+/** Normalized probe/runtime state from the model-check extension: ok=available / rl=rate-limited (429) / err=other errors / unprobed=not probed. */
+export type AvailKind = "ok" | "rl" | "err" | "unprobed";
+
+/**
+ * model-check extension state.json raw content → provider/model availability Map (pure function).
+ * Tolerates missing fields/corrupt entries (silently skipped); an empty Map = no state to show.
+ * Field semantics match the stateFile of the model-check extension's core.cjs:
+ *   lastProbedAt missing → unprobed; lastOk → ok; rateLimited → rl; otherwise → err.
+ */
+export function parseModelCheckState(raw: unknown): Map<string, AvailKind> {
+  const out = new Map<string, AvailKind>();
+  const models = (raw as { models?: Record<string, { lastProbedAt?: number; lastOk?: boolean; rateLimited?: boolean }> } | null)?.models;
+  if (!models || typeof models !== "object") return out;
+  for (const [key, m] of Object.entries(models)) {
+    if (!m || typeof m !== "object") continue;
+    if (!m.lastProbedAt) out.set(key, "unprobed");
+    else if (m.lastOk) out.set(key, "ok");
+    else if (m.rateLimited) out.set(key, "rl");
+    else out.set(key, "err");
+  }
+  return out;
+}
+
+export interface AnnotatedModelEntry {
+  id: string;
+  name: string;
+  provider: string;
+  /** Display name of the owning provider (upstream #1514); passthrough from the route */
+  providerName?: string;
+  input?: string[];
+  /** Current availability — display hint only, never auto-disable based on it */
+  avail?: AvailKind;
+  /** Whether this provider is rate-limited as a whole (all models currently 429) — group-header hint, no auto-disable */
+  providerRL?: boolean;
+  /** Catalog cost rates as the picker row's dim hint ("$0.6/$2.2 per M", in/out) */
+  hint?: string;
+}
+
+/** Parse models.json temporary-disable markers: provider-level enabled:false + model-level enabled:false. */
+export function parseDisabledModels(providers: Record<string, unknown>): {
+  disabledProviders: Set<string>;
+  disabledModelIds: Map<string, Set<string>>;
+} {
+  const disabledProviders = new Set<string>();
+  const disabledModelIds = new Map<string, Set<string>>();
+  for (const [pid, pcfgRaw] of Object.entries(providers ?? {})) {
+    const pcfg = pcfgRaw as Record<string, unknown> | null;
+    if (!pcfg || typeof pcfg !== "object") continue;
+    if (pcfg.enabled === false) disabledProviders.add(pid);
+    if (!Array.isArray(pcfg.models)) continue;
+    for (const mRaw of pcfg.models) {
+      const m = mRaw as Record<string, unknown> | null;
+      if (!m || typeof m !== "object" || m.enabled !== false) continue;
+      const mid = String(m.id ?? m.model ?? "");
+      if (!mid) continue;
+      if (!disabledModelIds.has(pid)) disabledModelIds.set(pid, new Set());
+      disabledModelIds.get(pid)!.add(mid);
+    }
+  }
+  return { disabledProviders, disabledModelIds };
+}
+
+/**
+ * Virtual models of models.json combo providers (`combo: true`).
+ *
+ * The combo engine (pi-models-combo) registers these providers into a *session* runtime, so a
+ * session sees them — but `/api/models` lists a plugin-less runtime (`createModelRuntimeWithExtensions`
+ * only runs the extensions loaded at the agent dir, not the built-in pi-plugins), and a combo
+ * provider has no apiKey of its own. Without this the picker never offers a combo model even
+ * though the engine routes it at runtime. Entries carry the computed metadata written by the
+ * wizard (contextWindow/maxTokens/input/cost) and go through the same disable/availability pass.
+ */
+export function comboModelEntries(
+  providersCfg: Record<string, unknown> | undefined | null,
+): AnnotatedModelEntry[] {
+  const out: AnnotatedModelEntry[] = [];
+  for (const [pid, raw] of Object.entries(providersCfg ?? {})) {
+    const pcfg = raw as Record<string, unknown> | null;
+    if (!pcfg || typeof pcfg !== "object" || pcfg.combo !== true) continue;
+    if (pcfg.enabled === false) continue;
+    if (!Array.isArray(pcfg.models)) continue;
+    for (const mRaw of pcfg.models) {
+      const m = mRaw as Record<string, unknown> | null;
+      if (!m || typeof m !== "object" || m.enabled === false) continue;
+      const id = String(m.id ?? "");
+      if (!id) continue;
+      out.push({
+        id,
+        name: String(m.name || id),
+        provider: pid,
+        providerName: String(pcfg.name || pid),
+        ...(Array.isArray(m.input) ? { input: m.input.map(String) } : {}),
+        ...(formatModelCostHint(m.cost as { input?: number; output?: number } | null) ? { hint: formatModelCostHint(m.cost as { input?: number; output?: number } | null) } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Merge combo virtual models into a selector list that may already carry them.
+ *
+ * Once a session has run the combo engine, its registration lands in the process-wide
+ * deferred-provider catalog and `/api/models` starts seeing the combo models through the
+ * runtime too; blindly appending `comboModelEntries()` would then list the same model twice.
+ * Keep one entry per `provider:model`, preferring models.json metadata (display name, input,
+ * cost hint) which the catalog copy does not always have.
+ */
+export function mergeComboModels(
+  selectorModels: readonly AnnotatedModelEntry[],
+  comboModels: readonly AnnotatedModelEntry[],
+): AnnotatedModelEntry[] {
+  const comboByKey = new Map(comboModels.map((m) => [`${m.provider}:${m.id}`, m]));
+  const out: AnnotatedModelEntry[] = [];
+  const seen = new Set<string>();
+  // The runtime list itself can repeat a model: once a combo provider is registered by a
+  // session, the process-wide deferred catalog may hold it twice (the engine re-registers on
+  // models.json changes). Keep the first occurrence and never emit a key twice.
+  for (const m of selectorModels) {
+    const key = `${m.provider}:${m.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const combo = comboByKey.get(key);
+    if (!combo) {
+      out.push(m);
+      continue;
+    }
+    comboByKey.delete(key);
+    out.push({
+      ...m,
+      providerName: combo.providerName || m.providerName,
+      input: combo.input ?? m.input,
+      hint: combo.hint ?? m.hint,
+    });
+  }
+  for (const combo of comboByKey.values()) {
+    const key = `${combo.provider}:${combo.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(combo);
+  }
+  return out;
+}
+
+/**
+ * Filter disabled models out of the given list and attach availability annotations
+ * (avail + provider-wide rate-limit flag).
+ * The returned modelList is compatible with ModelsData.modelList (including the optional
+ * avail / providerRL fields).
+ * @param visible   Model list from the engine's resolveVisibleModels
+ * @param modelsCfg models.json (consumed by parseDisabledModels)
+ * @param avail     provider/model → availability (model-check extension state.json; empty Map = no state)
+ */
+/**
+ * Model catalog cost → the model picker's right-aligned dim hint, e.g. "$0.6/$2.2 per M"
+ * (input/output USD per million tokens — pi's ModelCost rates). Cache rates are omitted
+ * (narrow slot); tiered pricing shows base rates only. Absent or all-zero cost → no hint
+ * (credits-style models with no dollar pricing simply keep the provider fallback).
+ */
+export function formatModelCostHint(
+  cost?: { input?: number; output?: number } | null,
+): string | undefined {
+  const inRate = typeof cost?.input === "number" && Number.isFinite(cost.input) ? cost.input : null;
+  const outRate = typeof cost?.output === "number" && Number.isFinite(cost.output) ? cost.output : null;
+  if (inRate === null && outRate === null) return undefined;
+  if ((inRate ?? 0) === 0 && (outRate ?? 0) === 0) return undefined;
+  // Trim trailing zeros after the decimal point only ("10.000"→"10", "0.435"→"0.435").
+  const trim = (n: number) => n.toFixed(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `$${trim(inRate ?? 0)}/$${trim(outRate ?? 0)} per M`;
+}
+
+export function annotateVisibleModels<T extends { id: string; name: string; provider: string; input?: string[] }>(
+  visible: readonly T[],
+  modelsCfg: Record<string, unknown> | undefined | null,
+  avail: Map<string, AvailKind>,
+): AnnotatedModelEntry[] {
+  const { disabledProviders, disabledModelIds } = parseDisabledModels((modelsCfg ?? {}) as Record<string, unknown>);
+  const visibleModels = visible.filter(
+    (m) => !disabledProviders.has(m.provider) && !disabledModelIds.get(m.provider)?.has(m.id),
+  );
+  // Provider-wide rate limiting: all (enabled) models of the provider are currently 429
+  const providerAvailCount: Record<string, { rl: number; total: number }> = {};
+  for (const m of visibleModels) {
+    const c = (providerAvailCount[m.provider] ??= { rl: 0, total: 0 });
+    c.total++;
+    if (avail.get(`${m.provider}/${m.id}`) === "rl") c.rl++;
+  }
+  const providerRL = new Set<string>();
+  for (const [pid, c] of Object.entries(providerAvailCount)) {
+    if (c.total > 0 && c.rl === c.total) providerRL.add(pid);
+  }
+  return visibleModels.map((m) => ({
+    ...m,
+    avail: avail.get(`${m.provider}/${m.id}`),
+    ...(providerRL.has(m.provider) ? { providerRL: true } : {}),
+  }));
+}

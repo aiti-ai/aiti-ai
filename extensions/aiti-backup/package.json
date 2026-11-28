@@ -1,0 +1,27 @@
+{
+  "name": "@aiti-ai/aiti-backup",
+  "version": "0.1.12",
+  "description": "Snapshot backup for large pi-web state data — hard-link incremental snapshots, out-of-process execution, crash-safe temp files, keepCount rotation. Complements aiti-configs, which versions small configs in git.",
+  "displayNameI18n": {
+    "en": "Data Backup (snapshots)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 数据备份扩展（state 层快照：硬链接增量 + 保留轮转 + 源严格只读；与 aiti-configs 互补）"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "node tools/deploy.mjs"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "bcbd7b7b4d421b2f",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-backup"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

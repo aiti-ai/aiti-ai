@@ -4,8 +4,8 @@ import { useContext } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { formatShortRelativeTime } from "@/lib/i18n/format";
 import { isPlainActivation, sessionDeepLink } from "@/lib/session-links";
-import { OpenSessionContext } from "./open-session-context";
-import { EXPANDABLE_DETAILS_STYLE, EXPANDABLE_TITLE_STYLE, ExpandableBlock } from "./ExpandableBlock";
+import { OpenSessionContext } from "./open-session-context.ts";
+import { EXPANDABLE_DETAILS_STYLE, EXPANDABLE_TITLE_STYLE, ExpandableBlock } from "./ExpandableBlock.tsx";
 import type { SessionReferenceView } from "@/lib/session-reference-block";
 
 /** One quoted session inside a sent message (the `#` reference the server

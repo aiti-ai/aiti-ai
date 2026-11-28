@@ -14,7 +14,7 @@ Pi Web is a light web front end for the [pi coding agent](https://github.com/ear
 These are declined however well they are implemented:
 
 - **Changes to what pi itself does.** This covers the system prompt, tool behavior, prompt template expansion, retries, compaction, and what gets written to session files. Propose these upstream in pi.
-- **Features that could be a pi extension.** Examples are scheduled messages, custom commands and new providers. An extension works in pi and in Pi Web; see [#666](https://github.com/agegr/pi-web/issues/666) for scheduled sending done as an extension.
+- **Features that could be a pi extension.** Examples are scheduled messages, custom commands and new providers. An extension works in pi and in Pi Web; see upstream [#666](https://github.com/agegr/pi-web/issues/666) for scheduled sending done as an extension.
 - **Pi Web-only configuration or extension API.** This means new config files only Pi Web reads, new `ctx.ui.*` options or `extension_ui_request` fields, and new meanings for existing fields. The web client decides how to display what pi's protocol already expresses.
 - **IDE or Git client features.** This covers editing files, file management (create, rename, delete), commit history and a second diff view. The file viewer is read-only. Editing is left to the agent or to your own editor.
 - **New subsystems or operating modes.** Examples are schedulers, long-running background agents, a plugin or UI-slot system, a second "lite" mode, and multi-pane layouts.

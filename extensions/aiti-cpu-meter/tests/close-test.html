@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>关闭性能对照测试（自动弹出）</title>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 32px 20px; background: #f4f6f8; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; max-width: 620px; margin: 0 auto; }
+  h1 { font-size: 20px; }
+  button { border: 0; border-radius: 8px; padding: 10px 16px; font-size: 14px; cursor: pointer; margin: 4px 6px 4px 0; }
+  .b-close { background: #e53e3e; color: #fff; }
+  #popup { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 99999;
+    background: #111; color: #7CFF7C; font: 13px/1.6 Menlo, monospace; border: 1px solid #1a3;
+    border-radius: 10px; padding: 16px 20px; box-shadow: 0 8px 30px rgba(0,0,0,.5); min-width: 260px; }
+  #popup .h { font-weight: bold; margin-bottom: 8px; font-size: 15px; }
+  .log { background: #0f172a; color: #7CFF7C; font: 12px/1.6 Menlo, monospace; padding: 12px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⏱ 关闭性能对照测试（自动弹出）</h1>
+  <p>页面加载后<b>自动弹出一个静态窗口</b>（无弹出按钮）。关闭 = <b>直接 removeChild 删除 DOM</b>。反复开关测试延迟。</p>
+  <p>静态窗口与 aiti-cpu-meter 完全无关：固定黑底绿字 div，含一个「关闭」按钮（关闭=删除节点），页面右下角自动记录每次点击→消失耗时。</p>
+  <div class="log" id="log">点击延迟记录：\n</div>
+</div>
+<script>
+const log = document.getElementById('log');
+let popup = null, n = 0;
+
+function appendLine(s) { log.textContent += s + '\n'; }
+
+function spawn() {
+  if (popup) popup.remove();
+  popup = document.createElement('div');
+  popup.id = 'popup';
+  popup.innerHTML = '<div class="h">🪟 独立静态窗口（默认弹出）</div>'
+    + '与 aiti-cpu-meter 无关。<br>'
+    + '关闭 = removeChild 删除。<br><br>'
+    + '点「关闭」感受延迟：';
+  const btn = document.createElement('button');
+  btn.className = 'b-close';
+  btn.textContent = '关闭';
+  btn.onclick = () => {
+    const t = performance.now();
+    popup.remove();
+    popup = null;
+    appendLine('#' + (++n) + ' 关闭耗时 ' + (performance.now() - t).toFixed(1) + 'ms');
+    setTimeout(spawn, 600); // 1 秒后自动再弹，方便反复测
+  };
+  popup.appendChild(btn);
+  document.body.appendChild(popup);
+}
+
+// 默认自动弹出
+spawn();
+</script>
+</body>
+</html>

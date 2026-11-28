@@ -10,14 +10,37 @@ import { createJiti } from "jiti";
 // which goes with a session read started after the run's end; a second command
 // waits, with pi's TUI notice.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+// jsx option forces jiti to transpile (useAgentSession transitively imports useI18n.tsx);
+// alias set follows the agent-phase.test.mjs convention (no tsconfigPaths: the paths
+// plugin would resolve "@/hooks/useI18n" to the real file before the alias applies).
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } });
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
-const { clearDraft, getDraft } = await jiti.import("@/lib/draft-store");
+const { clearDraft, getDraft, setDraft } = await jiti.import("@/lib/draft-store");
 const { deleteSessionViewSnapshot } = await jiti.import("@/lib/session-view-cache");
+const { registerDraftApi } = await jiti.import("@/lib/composer/draft-api");
+
+// Minimal draft-keeper stub (send-recovery.test.mjs convention): the hook only
+// declares a "rejected" intent via applyDraftIntent; writing the slot is the
+// keeper extension's job, absent in tests. Same merge semantics as production.
+registerDraftApi({
+  getDraft: (key) => getDraft(key),
+  clearAllDrafts: () => {},
+  flushAll: () => {},
+  restoreSubmission: (key, text, images) => {
+    const existing = getDraft(key);
+    const merged = existing?.value ? `${text}\n\n${existing.value}` : text;
+    const snapshot = { value: merged, images: images?.length ? images : existing?.images ?? [] };
+    setDraft(key, snapshot);
+    return snapshot;
+  },
+});
 
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });
 globalThis.window ??= new EventTarget();
+globalThis.requestAnimationFrame ??= (cb) => setTimeout(() => cb(0), 0);
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const settle = async () => { for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve)); };

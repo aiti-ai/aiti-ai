@@ -1,0 +1,37 @@
+{
+  "name": "@aiti-ai/aiti-sysmon",
+  "version": "0.2.2",
+  "description": "Server status viewer — sidebar dock panel for the pi-web host machine: CPU / memory / disk / network / temperature (systeminformation based)",
+  "displayNameI18n": {
+    "en": "Server Status Viewer"
+  },
+  "descriptionI18n": {
+    "zh-CN": "服务器状态查看器——左栏停靠面板实时查看 pi-web 所在主机的 CPU / 内存 / 磁盘 / 网络 / 温度 / 传感器，面板打开才采样、折叠即停，服务端零常驻开销"
+  },
+  "soul": "服务器忙不忙，开左栏看一眼就知道。",
+  "soulI18n": {
+    "en": "How busy is the server? One glance at the left sidebar tells you."
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-sysmon"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "systeminformation": "^5.33.23"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "contentHash": "eb4e33e82c158f4f"
+}

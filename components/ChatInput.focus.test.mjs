@@ -18,9 +18,12 @@ function visit(node) {
 }
 visit(source);
 function compile(node) {
+  // TS 6 prepends a "use strict" directive prologue (TS 5 did not); strip it or
+  // the with-scope return hands back the string, not the compiled function
+  // (same fix as hooks/mcp-slash-command.test.mjs).
   const js = ts.transpileModule(`(${node.getText(source)})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
-  }).outputText;
+  }).outputText.replace(/^"use strict";\s*/, "");
   return new Function("scope", `with (scope) { return ${js} }`);
 }
 const makeCommand = compile(command);

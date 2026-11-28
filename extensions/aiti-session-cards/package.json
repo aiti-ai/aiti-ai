@@ -1,0 +1,35 @@
+{
+  "name": "@aiti-ai/aiti-session-cards",
+  "version": "0.1.15",
+  "description": "Session request card extension — full UI for interaction-primitive cards (zcode plan approval / AskUser / omp OAuth / generic fallback) and tool authorization cards",
+  "displayNameI18n": {
+    "en": "Session Request Cards (approval/Q&A/authorization)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "会话请求卡扩展——交互元语卡（zcode 方案审批 / AskUser / omp OAuth / generic 兜底）与工具授权卡完整 UI，自 pi-web core 外迁（agent 能力 UI 去核化 P1）"
+  },
+  "soul": "agent 求你作答的卡片，长什么样由扩展说了算。",
+  "soulI18n": {
+    "en": "The cards where an agent begs you for an answer — what they look like is the extension's call."
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "897103a16b2dda88",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-session-cards"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

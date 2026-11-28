@@ -28,36 +28,61 @@ const { openWhenServing } = require("./browser-opener");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createRunRecordTracker, getOpenUrl, getRunDir } = require("./run-records");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { provisionPiPlugins } = require("./pi-plugins-provision.js");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getPackageVersion, runCommand } = require("./pi-web-commands");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { findActiveUpdateLock } = require("./pi-web-update");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatReachableAddresses } = require("./network-addresses");
 
-let launchOptions;
-try {
-  launchOptions = parseCommandLine();
-} catch (error) {
-  fs.writeSync(
-    process.stderr.fd,
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exit(1);
-}
-
-if (launchOptions.help) {
-  fs.writeSync(process.stdout.fd, getHelpText());
-  process.exit(0);
-}
-
-if (launchOptions.command === "start") {
-  startServer(launchOptions);
+// `pi-web wrapper --config <launch.json>`: run the detachable agent host.
+//
+// The wrapper is a subcommand of this installation's own CLI, so dev, prod and
+// every npm/archive install run the version shipped WITH their build. It used to
+// be materialized into `~/.pi/agent/agent-starter/wrapper.mjs`, which two builds
+// sharing $HOME overwrote with their own embedded copy — one build could silently
+// downgrade the other's wrapper. Server/Next modules must not load on this path.
+if (process.argv[2] === "wrapper") {
+  import("./agent-wrapper.mjs").catch((error) => {
+    console.error(error && error.stack ? error.stack : error);
+    process.exitCode = 1;
+  });
 } else {
-  runCommand(launchOptions).then(
-    exitWhenIdle,
-    (error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      exitWhenIdle(1);
-    },
-  );
+  main();
+}
+
+function main() {
+  let launchOptions;
+  try {
+    launchOptions = parseCommandLine();
+  } catch (error) {
+    fs.writeSync(
+      process.stderr.fd,
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exit(1);
+  }
+
+  if (launchOptions.help) {
+    fs.writeSync(process.stdout.fd, getHelpText());
+    process.exit(0);
+  }
+
+  if (launchOptions.command === "start") {
+    startServer(launchOptions).catch((error) => {
+      console.error(error && error.stack ? error.stack : error);
+      process.exitCode = 1;
+    });
+  } else {
+    runCommand(launchOptions).then(
+      exitWhenIdle,
+      (error) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        exitWhenIdle(1);
+      },
+    );
+  }
 }
 
 // Leave once the event loop drains instead of calling process.exit() right
@@ -70,10 +95,67 @@ function exitWhenIdle(code) {
   setTimeout(() => process.exit(code), 2_000).unref();
 }
 
-function startServer({ port, hostname, openBrowser }) {
+async function startServer({ port, hostname, openBrowser }) {
 
   const pkgDir = path.join(__dirname, "..");
   const nextDir = path.join(pkgDir, ".next");
+
+  // An update that is halfway through replacing this directory must finish
+  // first: a server booting now would hold files in the package (Windows makes
+  // npm fail) or read a half-swapped tree (Linux replaces it underneath).
+  const activeUpdate = findActiveUpdateLock(pkgDir);
+  if (activeUpdate) {
+    console.error(
+      `A pi-web update is running (pid ${activeUpdate.pid}, started ${activeUpdate.startedAt ?? "unknown"}).\n`
+        + "Wait for it to finish, then start the server again."
+        + ` If it crashed, delete ${activeUpdate.lockPath}.`,
+    );
+    process.exit(1);
+  }
+
+  // v3 bundled 扩展依赖 reconcile：主包随包分发 extensions/，但其各自声明的运行时
+  // 依赖 npm 不随主包安装——首启动（及依赖集变化后）一次性装进共享根
+  // <webRoot>/node_modules（jiti walk-up 解析），与 docker 部署的 webRoot reconcile
+  // 同语义。指纹匹配时零开销直通；失败不阻塞启动（扩展各自降级，下次启动重试）。
+  // AITI_SKIP_BUNDLED_RECONCILE=1 可跳过（CI/离线场景）。
+  if (process.env.AITI_SKIP_BUNDLED_RECONCILE !== "1") {
+    // Fire-and-forget: the npm install (and its ETARGET / network failures) runs
+    // in the background so server boot never waits on it — a failed install is
+    // retried after its cool-down on a later start, extensions degrade meanwhile.
+    Promise.resolve()
+      .then(() => {
+        const { reconcileBundledExtensions } = require("./bundled-extensions-reconcile");
+        return reconcileBundledExtensions(pkgDir);
+      })
+      .then((res) => {
+        if (res && res.installed) {
+          console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，后台完成）`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`[pi-web] bundled 扩展依赖 reconcile 失败（不影响启动；缺失依赖的扩展将降级）: ${error.message}`);
+      });
+  }
+
+  // Bundled pi plugins provision (v4): register the first-party
+  // pi plugins in the user's pi settings via the official package manager so the
+  // same install is shared by the pi TUI, pi-web RPC sessions and spawned pi CLI
+  // sessions. npm runs only on first startup or when the manifest pins change;
+  // every other startup is a fingerprint no-op. Failures never block startup.
+  if (process.env.AITI_SKIP_PI_PLUGINS !== "1") {
+    // Fire-and-forget: a slow or failing npm install (offline, ETARGET, registry
+    // flake) must never delay server boot — declarations persist inside the
+    // provisioner and pi's own startup reconcile self-heals leftover installs.
+    provisionPiPlugins({ pkgDir })
+      .then((res) => {
+        if (res && res.changed) {
+          console.log(`[pi-web] pi plugins provisioned in background: ${(res.provisioned || []).join(", ")}`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`[pi-web] pi plugins provision failed (non-blocking; declarations and installs self-heal on the next start): ${error.message}`);
+      });
+  }
 
   // Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
   // may not exist when installed via npx).
@@ -123,10 +205,17 @@ function startServer({ port, hostname, openBrowser }) {
 
   // Always run next's JS entry with node directly — avoids .bin symlink issues
   // and path-with-spaces problems on Windows when shell: true is used.
+  // PI_WEB_HOSTNAME is the LISTEN address only (next start -H); deployment
+  // domains are configured separately via PI_WEB_BASE_DOMAIN so overriding it
+  // here is safe (IP literals are never treated as virtual-host suffixes).
   const child = spawn(process.execPath, getNextNodeArgs(nextBin, nextArgs), {
     cwd: pkgDir,
     stdio: ["inherit", "pipe", "inherit"],
-    env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+    // PI_WEB_PKG_DIR: root for the bundled extensions (<pkgDir>/extensions) when
+    // resolving dependencies — the next process cwd can be changed by systemd or
+    // other launch methods, so injecting it explicitly is safer than relying on
+    // cwd semantics.
+    env: { ...process.env, PI_WEB_HOSTNAME: hostname, PI_WEB_PKG_DIR: pkgDir },
   });
   wireChildProcessLifecycle(child);
 

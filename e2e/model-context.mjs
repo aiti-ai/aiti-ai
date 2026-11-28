@@ -56,6 +56,10 @@ export async function checkModelContext(page) {
     assert.equal(writes, 0, "Editing must wait for the shared Save button");
     await save();
     assert.equal(saved.providers["openai-codex"].modelOverrides["gpt-6-astra"].contextWindow, 500000);
+    if (JSON.stringify(saved.providers.relay) !== JSON.stringify({ models: [{ id: "keep-me" }] })) {
+      console.error("[diag] relay:", JSON.stringify(saved.providers.relay));
+      console.error("[diag] providers:", JSON.stringify(Object.keys(saved.providers)));
+    }
     assert.deepEqual(saved.providers.relay, { models: [{ id: "keep-me" }] });
     await settings.getByRole("button", { name: "Close", exact: true }).click();
     await open();

@@ -1,0 +1,32 @@
+{
+  "name": "@aiti-ai/aiti-ai-schedule",
+  "version": "0.4.13",
+  "type": "module",
+  "description": "pi-web resident scheduler — extension declarative scheduled tasks + AI plans (cron/interval/one-shot) + three-mode execution engine + AI self-service plan tool + management page",
+  "displayNameI18n": {
+    "en": "AI Schedule"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 常驻调度器 —— 扩展声明式定时任务 + AI 计划（cron/间隔/一次性）+ 三模式执行引擎 + AI 自建计划工具 + 管理页"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "a3cbe77b12aa5642",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-schedule"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai-schedule#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

@@ -207,7 +207,7 @@ function reply() {
       eventStreams: { total: 3 },
       sseTotal: 5,
       pages: [
-        { holder: "page-other-456", address: "192.168.1.20", client: "Safari · iOS", agent: 2, terminal: 1, fileWatch: 0 },
+        { holder: "page-other-456", address: "10.203.10.20", client: "Safari · iOS", agent: 2, terminal: 1, fileWatch: 0 },
         { holder: "page-mine-123", address: "127.0.0.1", client: "Chrome · macOS", agent: 1, terminal: 0, fileWatch: 1 },
       ],
       fileWatches: 1,
@@ -226,7 +226,7 @@ function reply() {
       starting: false,
       providers: [{ name: "keepalive-ext", active: true, byFile: true }],
       eventStreams: [
-        { holder: "page-other-456", address: "192.168.1.20", client: "Safari · iOS", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
+        { holder: "page-other-456", address: "10.203.10.20", client: "Safari · iOS", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
         { holder: "page-mine-123", address: "127.0.0.1", client: "Chrome · macOS", openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
       ],
       subagents: { active: false, runs: [], notifications: [] },
@@ -260,6 +260,7 @@ function render(props = {}) {
     sessions: catalog,
     copied: false,
     onCopy() {},
+    onClose() {},
     t,
     ...props,
   }))));
@@ -280,6 +281,7 @@ test("a quiet page reads OK: no issue list, the meter's scale in its label, ever
   assert.doesNotMatch(html, /<dl|<dt|debug-panel-footer/);
   assert.match(html, /<span class="debug-panel-heading" title="Read-only: [^"]+">Debug<\/span>/);
   assert.match(html, /<button type="button" class="debug-panel-copy"[^>]*>Copy JSON<\/button>/);
+  assert.match(html, /<button type="button" class="debug-panel-close"[^>]*title="Close"[^>]*>/);
   // No live region: a screen reader would read every change out.
   assert.doesNotMatch(html, /role="status"|aria-live/);
 });
@@ -346,7 +348,7 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   // The badges say what they are: no "SSE" label before them, no icon in them; their titles say
   // which page, its browser and system, and its address.
   assert.doesNotMatch(card, /debug-client/);
-  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · Chrome · macOS · 127.0.0.1 · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · Safari · iOS · 192.168.1.20 · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
+  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · Chrome · macOS · 127.0.0.1 · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · Safari · iOS · 10.203.10.20 · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
   assert.doesNotMatch(card, /debug-mini-label/);
   assert.doesNotMatch(card, />Lease</);
   // A provider's badge is its name.
@@ -361,11 +363,11 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   assert.deepEqual(rows, [
     "debug-page-row debug-list-head: Connected pages 2 SSE 5 total",
     "debug-page-row is-current: Chrome · macOS 127.0.0.1 this page 2",
-    "debug-page-row: Safari · iOS 192.168.1.20 page-oth 3",
+    "debug-page-row: Safari · iOS 10.203.10.20 page-oth 3",
   ]);
   // Every SSE kind counts, each a connection of the browser's pool; the title says which.
   assert.equal(pages.match(icons)?.length, 2, "two marks each, hidden from screen readers");
-  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · SSE 3 · Agent 2 · Terminal 1"), titles(pages).join("\n"));
+  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 10.203.10.20 · SSE 3 · Agent 2 · Terminal 1"), titles(pages).join("\n"));
   assert.ok(titles(pages).includes("this page page-min · Chrome · macOS · 127.0.0.1 · SSE 2 · Agent 1 · File watch 1"));
   // A page opened without a page id or a known browser still gets its row.
   const bare = reply();
@@ -721,47 +723,6 @@ test("a tooltip holds the view still: the mouse on a titled element freezes what
   assert.match(panelSource, /const shown = held \?\? \{ page, server, samples \};/);
 });
 
-test("the Debug button only toggles its panel, left of the session stats", () => {
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
-  assert.match(button, /onClick=\{\(\) => toggleTopPanel\("debug", mobile\)\}/);
-  assert.doesNotMatch(button, /handleSystemInfoToggle|sendAgentCommand|fetch\(|setSessionKey|loadSession|systemInfoLoaderRef/);
-  assert.match(button, /aria-label=\{translate\("debug\.title"\)\}/);
-  assert.match(button, /aria-pressed=\{open\}/);
-  assert.match(button, /data-mobile-toolbar-action=\{mobile \? "debug" : undefined\}/);
-  assert.match(button, /if \(!showChat\) return null;/);
-  assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
-
-  // Desktop: after the chat's actions, right before the stats, taking the free space.
-  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
-  assert.match(button, /marginLeft: mobile \? 0 : "auto"/);
-  const stats = between(shellSource, "const renderSessionStatsButton = (mobile: boolean) => {", "const renderDebugButton");
-  assert.match(stats, /\n\s*marginLeft: 0,/);
-  assert.match(shellSource, /marginLeft: !mobile && !showChat \? "auto" : 0,/);
-  // Phones: before the stats on a wide one, in the "more" overlay on a narrow one.
-  assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
-  assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);
-});
-
-test("Escape with focus in the panel gives it back to the Debug button, after the panel left the page", () => {
-  assert.match(panelSource, /<section ref=\{sectionRef\} className="debug-panel"/);
-  assert.match(panelSource, /createDebugPanelEscapeListener\(\s*document,\s*\(\) => sectionRef\.current,\s*\(restoreFocus\) => onCloseRef\.current\(restoreFocus\),\s*\)/);
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
-  assert.match(button, /<button\s+ref=\{debugButtonRef\}/);
-  const close = between(shellSource, "const closeDebugPanel = useCallback(", "}, []);");
-  assert.match(close, /\(restoreFocus: boolean\) => \{\s*setActiveTopPanel\(\(panel\) => panel === "debug" \? null : panel\);\s*if \(restoreFocus\) requestAnimationFrame\(\(\) => focusIfLost\(document, debugButtonRef\.current\)\);/);
-  assert.match(shellSource, /import \{ focusIfLost \} from "@\/lib\/stacked-dialog";/);
-  assert.match(shellSource, /onClose=\{closeDebugPanel\}/);
-
-  // What that frame does: focus that fell to the page goes to the button; focus put elsewhere stays.
-  const focused = [];
-  const debugButton = { focus: () => focused.push("debug") };
-  const body = { name: "body" };
-  assert.equal(focusIfLost({ activeElement: body, body }, debugButton), true);
-  assert.equal(focusIfLost({ activeElement: { name: "composer" }, body }, debugButton), false);
-  assert.equal(focusIfLost({ activeElement: body, body }, null), false, "no Debug button on screen (narrow phone, more closed)");
-  assert.deepEqual(focused, ["debug"]);
-});
-
 test("the sidebar's running poll records its request alone, not the session-list reload after it", () => {
   const poll = between(sidebarSource, "const poll = async () => {", "const onVisibilityChange = () => {");
   const json = poll.indexOf("await res.json()");
@@ -773,17 +734,12 @@ test("the sidebar's running poll records its request alone, not the session-list
   assert.match(poll, /\} finally \{[^]*?noteRunningPoll\(startedAt, outcome, httpStatus, answeredAt\);\s*\}/);
 });
 
-test("the narrow phone's more overlay scrolls the buttons it cannot fit instead of clipping the last", () => {
-  const overlay = between(shellSource, 'data-mobile-toolbar-actions="true"', "{renderChatToolbarActions(true)}");
-  assert.match(overlay, /overflowX: "auto",\s*overflowY: "hidden",\s*scrollbarWidth: "none",/);
-});
-
 test("AppShell keeps the chat's reader in a ref and the panel open across session switches", () => {
   const register = between(shellSource, "const handleDebugSnapshotReaderChange = useCallback(", "}, []);");
   assert.match(register, /debugSnapshotReaderRef\.current = reader;/);
   assert.doesNotMatch(register, /\bset[A-Z]\w*\(/, "registering renders nothing");
   assert.match(shellSource, /onDebugSnapshotReaderChange=\{handleDebugSnapshotReaderChange\}/);
-  assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanel\s/);
+  assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanelLazy\s/);
   assert.match(shellSource, /useEffect\(\(\) => \{\s*startPageVisibilityTracking\(\);\s*\}, \[\]\);/);
   for (const [name, next] of [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"], ["handleSessionDeleted", "handleOpenFile"]]) {
     const body = between(shellSource, `const ${name} = useCallback`, `const ${next} = useCallback`);

@@ -1,0 +1,36 @@
+{
+  "name": "@aiti-ai/aiti-queue-keeper",
+  "version": "0.1.13",
+  "type": "module",
+  "description": "Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.",
+  "displayNameI18n": {
+    "en": "Queue Keeper"
+  },
+  "descriptionI18n": {
+    "zh-CN": "队列面板接管 —— 完整队列 UI（横幅/行操作/拖拽排序/回收站/撤销条/导入导出），core 回到上游同形兜底"
+  },
+  "soul": "排队不可怕，可怕的是排完队忘了自己要说什么。",
+  "soulI18n": {
+    "en": "Queuing isn't scary; what's scary is forgetting what you wanted to say after queuing."
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "dce2b55d3fab0596",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-queue-keeper"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

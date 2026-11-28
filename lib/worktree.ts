@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, readFileSync, realpath, realpathSync } from "fs"
 import { access } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
-import { allowFileRoot } from "./allowed-roots";
-import { projectGitEnvironment } from "./git-environment";
-import { samePath, toNativePath } from "./paths";
-import { errorMessage } from "./errors";
+import { allowFileRoot } from "./allowed-roots.ts";
+import { projectGitEnvironment } from "./git-environment.ts";
+import { samePath, toNativePath } from "./paths.ts";
+import { errorMessage } from "./errors.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,7 +44,7 @@ declare global {
   var __piProjectCacheGeneration: number | undefined;
 }
 
-const PROJECT_CACHE_TTL_MS = 60_000;
+const PROJECT_CACHE_TTL_MS = 300_000; // stale-while-revalidate: serve the old value past expiry + refresh in the background; the TTL bounds maximum staleness
 
 function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }> {
   if (!globalThis.__piProjectCache) globalThis.__piProjectCache = new Map();
@@ -375,10 +375,16 @@ function sanitizeBranchForDir(branch: string): string {
  * `git worktree prune` clears the entry (never run here).
  */
 export class WorktreeBranchInUseError extends Error {
-  constructor(readonly branch: string, readonly worktreePath: string, readonly missing: boolean) {
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly missing: boolean;
+  constructor(branch: string, worktreePath: string, missing: boolean) {
     super(missing
       ? `Branch '${branch}' belongs to a worktree whose folder is gone: ${worktreePath}; git worktree prune clears it`
       : `Branch '${branch}' is already checked out at ${worktreePath}`);
+    this.branch = branch;
+    this.worktreePath = worktreePath;
+    this.missing = missing;
   }
 }
 

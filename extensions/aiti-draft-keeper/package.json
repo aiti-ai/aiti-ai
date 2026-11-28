@@ -1,0 +1,30 @@
+{
+  "name": "@aiti-ai/aiti-draft-keeper",
+  "version": "0.1.11",
+  "description": "Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.",
+  "displayNameI18n": {
+    "en": "Draft Keeper"
+  },
+  "descriptionI18n": {
+    "zh-CN": "草稿持久化 + 恢复接管 —— composer 契约 v2 唯一所有者（applyIntent 唯一写入口）、多标签共享槽位、无贡献不回写防震荡、pruneStale 7 天清理、水合后恢复"
+  },
+  "soul": "崩溃可以带走页面，带不走你打到一半的话。",
+  "soulI18n": {
+    "en": "A crash can take the page away, but not the words you were halfway through typing."
+  },
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "79878a7a785c72a4",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-draft-keeper"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

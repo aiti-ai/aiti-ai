@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import type {
   SkillContentResponse,
@@ -44,9 +46,9 @@ import {
   ConfigStatusDot,
   ConfigSwitch,
   ConfigTrustNotice,
-} from "./SettingsUi";
-import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers";
-import { MarkdownBody } from "./MarkdownBody";
+} from "./SettingsUi.tsx";
+import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers.ts";
+import { MarkdownBody } from "./MarkdownBody.tsx";
 import type { Translate } from "@/lib/i18n/types";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 import { errorMessage } from "@/lib/errors";
@@ -200,9 +202,11 @@ function SkillDetail({
       try {
         const params = new URLSearchParams({ cwd, filePath: skill.filePath });
         if (documentPath !== rootDocument) params.set("document", documentPath);
-        const response = await fetch(`/api/skills/content?${params}`, { signal: controller.signal });
-        const data = await readJsonOrThrow<Partial<SkillContentResponse>>(response);
-        if (typeof data.content !== "string") throw new Error(`HTTP ${response.status}`);
+        const response = await fetch(apiUrl(`/api/skills/content?${params}`), { signal: controller.signal });
+        const data = (await response.json()) as Partial<SkillContentResponse> & { error?: string };
+        if (!response.ok || data.error || typeof data.content !== "string") {
+          throw new Error(data.error ?? `HTTP ${response.status}`);
+        }
         setInstructions(skillInstructionsBody(data.content, documentPath === rootDocument ? skill.name : undefined));
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -394,7 +398,7 @@ function AddSkillPanel({
     setSearchError(null);
     setResults([]);
     try {
-      const res = await fetch("/api/skills/search", {
+      const res = await fetch(apiUrl("/api/skills/search"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: q.trim() }),
@@ -421,7 +425,7 @@ function AddSkillPanel({
       setInstalling(pkg);
       setInstallError(null);
       try {
-        const res = await fetch("/api/skills/install", {
+        const res = await fetch(apiUrl("/api/skills/install"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ package: pkg, scope, cwd }),
@@ -665,8 +669,13 @@ export function SkillsConfig({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`);
-      const d = await readJsonOrThrow<Partial<SkillsResponse>>(res);
+      const res = await fetch(apiUrl("/api/skills"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      });
+      const d = (await res.json()) as Partial<SkillsResponse> & { error?: string };
+      if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
       const list = d.skills ?? [];
       setSkills(list);
       setProjectResourcesLoaded(d.projectResourcesLoaded ?? true);
@@ -719,7 +728,7 @@ export function SkillsConfig({
     setCheckingUpdates((current) => new Set([...current, ...keys]));
     if (!skill) setCheckingAll(true);
     try {
-      const res = await fetch("/api/skills/check", {
+      const res = await fetch(apiUrl("/api/skills/check"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -754,7 +763,7 @@ export function SkillsConfig({
     setUpdatingSkill(key);
     setUpdateError(null);
     try {
-      const res = await fetch("/api/skills/update", {
+      const res = await fetch(apiUrl("/api/skills/update"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -796,7 +805,7 @@ export function SkillsConfig({
     setSaveError(null);
     setGroupStatus(null);
     try {
-      const res = await fetch("/api/skills", {
+      const res = await fetch(apiUrl("/api/skills"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -840,7 +849,7 @@ export function SkillsConfig({
     setSaveError(null);
     setGroupStatus(null);
     try {
-      const res = await fetch("/api/skills", {
+      const res = await fetch(apiUrl("/api/skills"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filePaths, disableModelInvocation }),

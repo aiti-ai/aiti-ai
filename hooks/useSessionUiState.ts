@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applySessionUiStateRequest,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/session-ui-state-shared";
 import { errorMessage } from "@/lib/errors";
 
-const SESSION_UI_STATE_URL = "/api/sessions/ui-state";
+const SESSION_UI_STATE_URL = apiUrl("/api/sessions/ui-state");
 
 export interface SessionUiStateApi {
   state: SessionUiState;

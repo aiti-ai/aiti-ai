@@ -1,0 +1,40 @@
+{
+  "name": "@aiti-ai/aiti-msg-share",
+  "version": "0.1.12",
+  "type": "module",
+  "description": "Share sessions, messages, selections, files and images through pluggable targets with secret redaction and QR codes",
+  "displayNameI18n": {
+    "en": "Message Share"
+  },
+  "descriptionI18n": {
+    "zh-CN": "把会话、单条消息、划选内容、文件与图片分享出去——工作台跑在自己机器上、外网访问不到，所以经可配置的分享目标（Gitee / 图床 / 对象存储 / 笔记库，内置 161 个）上传换回公网 URL，上传前自动脱敏，结果附二维码"
+  },
+  "license": "MIT",
+  "aitiExtProtocol": "1.0",
+  "soul": "分享出去，是为了让对话继续。",
+  "soulI18n": {
+    "en": "Sharing it out is how the conversation continues."
+  },
+  "dependencies": {
+    "@aiti-ai/content-share": "^0.1.16",
+    "@aiti-ai/secret-mask-core": "^0.1.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-msg-share"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "d930a101f13c3986"
+}

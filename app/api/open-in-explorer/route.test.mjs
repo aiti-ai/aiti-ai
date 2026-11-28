@@ -7,6 +7,7 @@ import { createJiti } from "jiti";
 
 const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-open-in-explorer-agent-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
@@ -38,7 +39,7 @@ test("rejects a path outside the allowed roots before looking at it", async (t) 
 });
 
 test("refuses requests that are not addressed to this machine", async () => {
-  const response = await open(os.tmpdir(), "192.168.1.20:30141");
+  const response = await open(os.tmpdir(), "10.203.10.20:30141");
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: "remote" });
 });

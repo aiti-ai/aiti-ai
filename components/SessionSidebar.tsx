@@ -1,63 +1,51 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type RefObject, type UIEvent as ReactUIEvent } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useState, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type RefObject, type UIEvent as ReactUIEvent } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies, type SessionFamily, isHiddenRelation } from "@/lib/session-family";
-import { clearDraft } from "@/lib/draft-store";
+import { subscribeRunningEvents, reconnectRunningEvents } from "@/lib/agent-running-events";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
-import { newSessionDeepLink, sessionDeepLink } from "@/lib/session-links";
 import { getProjectActivity, getRecentProjects } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
+import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
+import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots.tsx";
+import { EXT_PROVIDES, type WorkspacePickerActionsProps } from "@/lib/ext/types";
+import { apiUrl } from "@/lib/base-path";
+import { getDraftApi } from "@/lib/composer/draft-api";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
+import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
 import {
   adjacentProjectMove,
   archivedFamilyIds,
   buildArchiveRows,
   buildSessionTree,
-  effectiveGroupExpansion,
   familiesToArchive,
-  familiesToDelete,
   familyIds,
-  forgetKeptOpenGroups,
-  forgetShownMoreOfFolded,
   isFamilyArchived,
   isGroupExpanded,
   keepOutgoingGroupOpen,
   locateSessionRow,
   nextProjectKeysToRecord,
-  PINNED_MORE_KEY,
   showLessFamilies,
   showMoreFamilies,
-  startOfLocalDay,
-  type RecentListInput,
-  type RecentSection,
-  type SidebarListMode,
   type SidebarProject,
   type SidebarRow,
 } from "@/lib/session-tree";
 import {
   forgetRetiredSidebarKeys,
   loadArchiveCollapsed,
-  loadFilesCollapsed,
   loadGroupExpansion,
-  loadListMode,
-  loadNonGitCwds,
   loadPinnedCollapsed,
-  loadRecentCollapsed,
   loadShowIgnoredFiles,
   loadSidebarTab,
-  rememberCwdGitStatus,
   saveArchiveCollapsed,
-  saveFilesCollapsed,
   saveGroupExpansion,
-  saveListMode,
   savePinnedCollapsed,
-  saveRecentCollapsed,
   saveShowIgnoredFiles,
   saveSidebarTab,
   type SidebarTab,
 } from "@/lib/sidebar-prefs";
 import {
-  deleteProjectSessions,
   forkFailureMessage,
   projectNameMenuEntries,
   projectRenameRequest,
@@ -104,33 +92,27 @@ import { isPageAttended, subscribePageAttention } from "@/lib/user-attention";
 import { useFilesPlacement } from "@/hooks/useFilesPlacement";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useSessionUiState } from "@/hooks/useSessionUiState";
-import { archiveViewState, filesFoldState, useSidebarMotion } from "@/hooks/useSidebarMotion";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { DismissButton } from "./DismissButton";
-import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
-import { PiWebTitle } from "./PiWebTitle";
-import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker";
-import { SessionSearch } from "./SessionSearch";
-import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree";
-import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
-import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { DismissButton } from "./DismissButton.tsx";
+import { FileExplorer, type FileExplorerHandle } from "./FileExplorer.tsx";
+import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker.tsx";
+import { SessionSearch } from "./SessionSearch.tsx";
+import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree.tsx";
+import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu.tsx";
+import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast.tsx";
 import {
   ArchiveIcon,
   ChangesIcon,
   CheckIcon,
   ChevronIcon,
-  ClockIcon,
   DotIcon,
   DotOutlineIcon,
   EyeIcon,
   FolderIcon,
   MessageIcon,
-  MoreIcon,
   ForkIcon,
-  OpenInNewTabIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
@@ -141,8 +123,7 @@ import {
   TerminalIcon,
   TrashIcon,
   UploadIcon,
-} from "./SidebarIcons";
-import { errorMessage } from "@/lib/errors";
+} from "./SidebarIcons.tsx";
 
 interface FileManagerAvailability {
   supported: boolean;
@@ -164,32 +145,21 @@ declare global {
   }
 }
 
-/**
- * A key of the files' actions: in the files section's header row below the
- * sessions, or in the files tab's row under the project and worktree.
- */
+/** An icon button of the files tab's action row, under the project and worktree. */
 function ToolbarIconButton({
-  ref,
   onClick,
   title,
   disabled,
   pressed,
-  expanded,
-  controls,
   done,
   className,
   children,
 }: {
-  ref?: Ref<HTMLButtonElement>;
   onClick: () => void;
   title: string;
   disabled?: boolean;
   /** A toggle's state: shown pressed (accent) and exposed as aria-pressed. */
   pressed?: boolean;
-  /** What it opens is open (the file search): shown as pressed, exposed as aria-expanded. */
-  expanded?: boolean;
-  /** The id of what it opens. */
-  controls?: string;
   /** Brief confirmation after an action (refresh). */
   done?: boolean;
   className?: string;
@@ -197,16 +167,13 @@ function ToolbarIconButton({
 }) {
   return (
     <button
-      ref={ref}
       type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}
       aria-label={title}
       aria-pressed={pressed}
-      aria-expanded={expanded}
-      aria-controls={controls}
-      className={`sidebar-tool-button${pressed || expanded ? " is-active" : ""}${done ? " is-done" : ""}${className ? ` ${className}` : ""}`}
+      className={`sidebar-tool-button${pressed ? " is-active" : ""}${done ? " is-done" : ""}${className ? ` ${className}` : ""}`}
     >
       {children}
     </button>
@@ -214,9 +181,9 @@ function ToolbarIconButton({
 }
 
 function sessionListUrl(summary: boolean, force: boolean): string {
-  if (summary) return "/api/sessions?summary=1";
-  if (force) return "/api/sessions?force=1";
-  return "/api/sessions";
+  if (summary) return apiUrl("/api/sessions?summary=1");
+  if (force) return apiUrl("/api/sessions?force=1");
+  return apiUrl("/api/sessions");
 }
 
 /** How a pick in the sidebar opens a session. */
@@ -225,11 +192,55 @@ export interface SelectSessionOptions {
   keepSidebarOpen?: boolean;
 }
 
+/** Full-list response shape (loadSessions network layer). */
+interface SessionsListPayload {
+  sessions: SessionInfo[];
+  sessionListVersion: number;
+  runningSessionIds?: string[];
+  awaitingInputSessionIds?: string[];
+  completionNotificationSuppressedSessionIds?: string[];
+}
+// Module-level coalescing + short TTL + ETag/304 (aiti fork): loadSessions trigger points are
+// scattered (running snapshot rehydration, SSE change frames, fallback-mode callbacks), and the
+// first load can concurrently fire multiple full /api/sessions within the same second.
+// Concurrent triggers at the same moment share one fetch; repeated triggers within 3s reuse the
+// last result (the server also has a 5s scan cache, so data barely changes within the window);
+// non-forced full requests send If-None-Match, and an unchanged list → 304 empty transfer.
+const SESSIONS_LIST_TTL_MS = 3000;
+const slInFlight = new Map<string, Promise<SessionsListPayload>>();
+const slLastAt = new Map<string, number>();
+const slEtag = new Map<string, string>();
+const slLastData = new Map<string, SessionsListPayload>();
+async function fetchSessionsList(url: string, forceRefresh = false): Promise<SessionsListPayload> {
+  const inflight = slInFlight.get(url);
+  if (inflight) return inflight;
+  const canReuse = !forceRefresh
+    && !url.includes("summary=1") // the summary first-paint payload lacks the details fields; never serve it as a full-list cache
+    && !url.includes("force=1");
+  const lastAt = slLastAt.get(url) ?? 0;
+  const lastData = slLastData.get(url);
+  if (canReuse && lastData && Date.now() - lastAt < SESSIONS_LIST_TTL_MS) return lastData;
+  const etag = slEtag.get(url) ?? "";
+  const req = (async (): Promise<SessionsListPayload> => {
+    const res = await fetch(apiUrl(url), {
+      headers: etag && canReuse ? { "if-none-match": etag } : undefined,
+      cache: "no-store",
+    });
+    if (res.status === 304 && lastData) { slLastAt.set(url, Date.now()); return lastData; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as SessionsListPayload;
+    slEtag.set(url, res.headers.get("etag") ?? "");
+    slLastData.set(url, data);
+    slLastAt.set(url, Date.now());
+    return data;
+  })();
+  slInFlight.set(url, req);
+  try { return await req; } finally { slInFlight.delete(url); }
+}
+
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => void;
-  /** The row menu's "Insert into chat": the session joins the open composer as a chip. */
-  onInsertSessionReference?: (session: SessionInfo) => void;
   /** A side chat's search hit: its parent opens, then the side chat's tab. */
   onSelectSideChat: (session: SessionInfo) => void;
   /** projectKey: the target's project identity when it is known (a group's "+", the composer's bar). */
@@ -239,7 +250,7 @@ interface Props {
   /** The sidebar's cwd as the bar above a fresh composer shows it; reported when that changes. */
   onNewSessionContextChange?: (context: NewSessionContext | null) => void;
   initialSessionId?: string | null;
-  /** `initialSessionId` is the URL's `?session=`: a toast says so when it is gone. */
+  /** The initial ?session= id came from a side chat link: its tab, not the main chat, is pre-selected. */
   initialSessionLinked?: boolean;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
@@ -257,6 +268,23 @@ interface Props {
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
+  /** Full selected session object — used to render a client-side draft row when
+   *  its id isn't on disk yet (aiti fork). pi only persists the .jsonl on the first assistant
+   *  reply (SessionManager._persist returns early without an assistant message),
+   *  so /api/sessions can't list it during that window. */
+  selectedSession?: SessionInfo | null;
+  /** Fallback when the URL ?session= id is not found in the local list (e.g. an empty session /
+   *  an unindexed attach session): the host opens it by id (socket-first, in the background).
+   *  options.initialRestore: the call originates from initial URL restore — on a host 404 it is
+   *  used to clear the stale last-open record + immediately clear the URL; returning false means
+   *  not found/failed (older hosts may return void; the caller then takes no failure action). */
+  onOpenById?: (sessionId: string, options?: { initialRestore?: boolean }) => Promise<boolean> | void;
+  /** Folder picked in the file explorer opens a folder tab (aiti fork folder tabs). */
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
+  /** AppShell-owned ref bound to the FileExplorer (reveal folders); forwarded alongside the
+   *  internal ref so both callers keep working. */
+  fileExplorerRef?: Ref<FileExplorerHandle>;
+  /** Fired when a session that is not currently selected finishes running.
   /** Fired when sessions that are not currently selected finish running.
    *  Lets the app play a cross-workspace completion tone. `since`: no earlier
    *  than the poll that last saw them running (a chime claim's bound, #1688). */
@@ -291,9 +319,6 @@ export interface SessionSidebarControl {
   refreshWorktrees(): void;
   /** Creates a worktree of `project` and lists it at once; the caller starts the session in it. */
   createWorktree(project: ProjectChoice, branch: string): Promise<{ path: string } | { error: string }>;
-  /** Opens a listed session as picking it from the list does (a side chat as
-   *  its parent's tab, as a search hit opens it); false when it is not listed. */
-  openSession(sessionId: string): boolean;
 }
 
 type WorktreeEntry = WorktreeChoice;
@@ -326,50 +351,27 @@ interface ValidatedProject {
 
 type SessionRow = Extract<SidebarRow, { kind: "session" }>;
 
-/**
- * The one popup menu of the sidebar; kept here, above the virtualized rows.
- * `askDelete`: a menu turned into its delete question (a group's "Delete all
- * sessions", an archive header's "Delete all", the archive bar's two).
- */
+/** The one popup menu of the sidebar; kept here, above the virtualized rows. */
 type SidebarMenuState =
   | { kind: "row"; row: SessionRow; anchor: SidebarMenuAnchor; opener: HTMLElement | null }
-  | { kind: "group"; project: SidebarProject; olderCount: number; anchor: SidebarMenuAnchor; opener: HTMLElement; askDelete?: boolean }
-  | { kind: "archive-group"; project: SidebarProject; anchor: SidebarMenuAnchor; opener: HTMLElement; askDelete?: boolean }
-  | { kind: "archive"; anchor: SidebarMenuAnchor; opener: HTMLElement; askDelete?: ArchiveDeleteScope };
-
-/** The archive bar's deletes: every archived session, or those archived over 30 days ago. */
-type ArchiveDeleteScope = "all" | "old";
+  | { kind: "group"; project: SidebarProject; olderCount: number; anchor: SidebarMenuAnchor; opener: HTMLElement }
+  | { kind: "archive-group"; project: SidebarProject; anchor: SidebarMenuAnchor; opener: HTMLElement };
 
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
-const RUNNING_SESSIONS_POLL_MS = 2500;
+const RUNNING_SESSIONS_POLL_MS = 15000; // aiti fork: slow fallback polling — the SSE main channel (agent-running-events) carries running-state changes; this only actually requests when the SSE heartbeat goes silent
+const RUNNING_SSE_FRESH_MS = 45_000; // heartbeat is 30s; any frame seen within 45s = SSE healthy, skip the fallback poll
+// While the SSE is healthy the full poll (awaiting-input badges, ui revisions) still runs, just
+// slowly: the SSE running frames carry no awaiting/ui-state fields, so upstream's parked-dialog
+// badge reconciles at this cadence instead of the fallback interval.
+const RUNNING_RECONCILE_POLL_MS = 60_000;
 const SESSION_DETAILS_HYDRATION_DELAY_MS = 750;
 // How long the running poll leaves an unknown list version to the first summary (a cold disk).
 const INITIAL_SUMMARY_WAIT_MS = 15_000;
 /** "Archive sessions older than 7 days" in a project's menu. */
 const ARCHIVE_OLDER_THAN_MS = 7 * 24 * 60 * 60 * 1000;
-/** The archive bar's "Delete archived over 30 days ago", by archive time. */
-const ARCHIVED_DELETE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 const TOAST_TITLE_MAX = 28;
 
-/**
- * The files section below the sessions (the desktop's default layout). Its
- * height is the separator's, kept per browser: at least its header row (the
- * keys in it), the picker's row and about six tree rows; at
- * most what leaves the sessions SESSIONS_SECTION_MIN_HEIGHT (a few rows, the
- * CSS min-height of their panel). By default 45% of the sidebar under its
- * toolbar row; the 320px stands in until that is measured. A sidebar shorter
- * than both minimums shrinks the files section in CSS (app/sidebar.css).
- */
-const FILES_SECTION_MIN_HEIGHT = 220;
-const FILES_SECTION_MAX_HEIGHT = 2000;
-const FILES_SECTION_DEFAULT_HEIGHT = 320;
-const FILES_SECTION_DEFAULT_SHARE = 0.45;
-const SESSIONS_SECTION_MIN_HEIGHT = 120;
-const SIDEBAR_HEADER_HEIGHT = 36;
-
 const SESSION_ACTION_LABEL_KEYS: Record<SessionMenuActionId, string> = {
-  "open-new-tab": "sidebar.openInNewTab",
-  "insert-into-chat": "sidebar.insertIntoChat",
   pin: "sidebar.pin",
   unpin: "sidebar.unpin",
   rename: "sidebar.rename",
@@ -383,8 +385,6 @@ const SESSION_ACTION_LABEL_KEYS: Record<SessionMenuActionId, string> = {
 
 function sessionActionIcon(id: SessionMenuActionId): ReactNode {
   switch (id) {
-    case "open-new-tab": return <OpenInNewTabIcon />;
-    case "insert-into-chat": return <MessageIcon />;
     case "pin": return <PinIcon />;
     case "unpin": return <PinOffIcon />;
     case "rename": return <PencilIcon />;
@@ -463,108 +463,48 @@ function shortTitle(title: string, max: number): string {
 
 /**
  * focusIfLost, also when focus is still on an element that is no longer
- * rendered (in a view just hidden) or inert (in a view sliding away, or
- * covered by one sliding in): browsers move it to <body> only at their next
- * rendering update, so it does not count as lost yet.
+ * rendered (in a view just hidden): browsers move it to <body> only at their
+ * next rendering update, so it does not count as lost yet.
  */
 function focusIfHidden(target: HTMLElement | null): void {
   const active = document.activeElement;
-  if (target && active instanceof HTMLElement && active !== document.body && (active.getClientRects().length === 0 || active.closest("[inert]") !== null)) {
+  if (target && active instanceof HTMLElement && active !== document.body && active.getClientRects().length === 0) {
     target.focus({ preventScroll: true });
     return;
   }
   focusIfLost(document, target);
 }
 
-/** The key nearest `key` in its group that is still enabled, the next one first. */
-export function nearestEnabledKey(key: Element): HTMLButtonElement | null {
-  const enabled = (element: Element | null): element is HTMLButtonElement => element?.tagName === "BUTTON" && !(element as HTMLButtonElement).disabled;
-  for (let next = key.nextElementSibling; next; next = next.nextElementSibling) if (enabled(next)) return next;
-  for (let previous = key.previousElementSibling; previous; previous = previous.previousElementSibling) if (enabled(previous)) return previous;
-  return null;
-}
-
-/**
- * Hands the focus of a key just disabled to the nearest key still enabled
- * (else `fallback`). Focus still on the key counts as lost: current Chromium
- * (154) keeps a just-disabled element focused until its next rendering
- * update, after the layout effect that calls this, and only then blurs it to
- * the page (relatedTarget null; older builds blur it at once, which
- * focusIfLost covers). Focus the user put elsewhere stays. Returns whether
- * it moved focus.
- */
-export function handOffDisabledKeyFocus(doc: FocusDocument, key: Element, fallback: HTMLElement | null): boolean {
-  const target = nearestEnabledKey(key) ?? fallback;
-  if (!target || doc.activeElement !== key) return focusIfLost(doc, target);
-  target.focus({ preventScroll: true });
-  return true;
-}
-
+/** A menu placed below (or above) a button, lined up with one of its edges. */
 /**
  * How much of the toolbar row's labels fit (`data-fit`, app/sidebar.css):
- * all (0), New's + alone (1), then the tabs' icons alone, or below the
- * sessions the brand's versions in a smaller type (2): the brand itself is
- * never cut. Measured, not a fixed width, since the labels' widths change
- * with the language; on the row itself, before paint, again whenever it
- * resizes or `labels` change. The returned fit is for what the row's size
- * does not show: the brand's text changing its width.
+ * all (0), New's + alone (1), the tabs' icons too (2). Measured, not a fixed
+ * width, since the labels' widths change with the language; on the row
+ * itself, before paint, again whenever it resizes or `labels` change.
  */
-function useHeaderFit(ref: RefObject<HTMLElement | null>, labels: string): () => void {
-  const fit = useCallback(() => {
-    const header = ref.current;
-    if (!header) return;
-    for (const level of ["0", "1", "2"]) {
-      header.dataset.fit = level;
-      if (header.scrollWidth <= header.clientWidth) return;
-    }
-  }, [ref]);
+function useHeaderFit(ref: RefObject<HTMLElement | null>, labels: string): void {
   useLayoutEffect(() => {
     const header = ref.current;
     if (!header) return;
+    const fit = () => {
+      for (const level of ["0", "1", "2"]) {
+        header.dataset.fit = level;
+        if (header.scrollWidth <= header.clientWidth) return;
+      }
+    };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(header);
     return () => observer.disconnect();
-  }, [ref, fit, labels]);
-  return fit;
+  }, [ref, labels]);
 }
 
-/**
- * The start of the viewer's local day (lib/session-tree.ts
- * startOfLocalDay()), moved on just after local midnight, and again when the
- * page is shown: a sleeping laptop's timer may fire late or not at all.
- */
-function useLocalDayStart(): number {
-  const [day, setDay] = useState(() => startOfLocalDay(Date.now()));
-  useEffect(() => {
-    let timer: number | undefined;
-    const update = () => {
-      const now = Date.now();
-      const start = startOfLocalDay(now);
-      setDay(start);
-      const tomorrow = new Date(start);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      window.clearTimeout(timer);
-      timer = window.setTimeout(update, tomorrow.getTime() - now + 1000);
-    };
-    update();
-    const onVisible = () => { if (document.visibilityState === "visible") update(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
-  return day;
-}
-
-/** A menu placed below (or above) a button, lined up with one of its edges. */
 function buttonAnchor(element: HTMLElement, align: "start" | "end"): SidebarMenuAnchor {
   const rect = element.getBoundingClientRect();
   return { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align };
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSideChat, onNewSession, controlRef, onNewSessionContextChange, initialSessionId, initialSessionLinked, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onInsertSessionReference, onBackgroundTaskDone, hiddenFinishedSessionIds, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onSelectSideChat, onNewSession, controlRef, onNewSessionContextChange, initialSessionId, initialSessionLinked, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, hiddenFinishedSessionIds, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
@@ -594,13 +534,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const filesPickerRef = useRef<ProjectWorktreePickerHandle>(null);
   const [worktreeState, setWorktreeState] = useState<WorktreeState | null>(null);
   const [worktreeLoadingCwd, setWorktreeLoadingCwd] = useState<string | null>(null);
-  // Folders the listing last found outside any git repository, loaded from
-  // the browser's memory of them (after a reload too: the default dated
-  // folder is one) on the first client render: while one is listed, no
-  // "checking" box shows only to go and widen the project box. The server's
-  // render reads none; the box shows only once a listing starts, client-side.
-  const nonGitCwdsRef = useRef<Set<string> | null>(null);
-  nonGitCwdsRef.current ??= new Set(loadNonGitCwds());
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -640,60 +573,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const detailsHydrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  // aiti fork: forward the internal handle to the AppShell-owned ref (reveal folders), so both
+  // the internal callers and the host ref see the same FileExplorer instance.
+  useImperativeHandle(fileExplorerRefProp, () => fileExplorerRef.current as FileExplorerHandle);
 
-  // The files below the sessions (desktop, by default: both in view, a
-  // separator between them, the files section foldable to its header row),
-  // or Sessions | Files tabs (the setting, and always on phones), each panel
-  // shown alone. Both layouts render the same elements in the same order,
-  // only attributes and a few rows of their own differ, so a switch (the
-  // setting, the phone breakpoint) never remounts the explorer, the tree or
-  // the picker. The tab, the folded section, the group choices and the
-  // pinned section start as the server renders them and are restored from
-  // browser storage after hydration; the layout's choice is read the same
-  // way (useFilesPlacement's server snapshot).
-  const filesPlacement = useFilesPlacement();
-  const stacked = !isMobile && filesPlacement === "below";
+  // Sessions | Files. Both panels stay mounted; only the active one is shown.
+  // The tab, the group choices and the pinned section start as the server
+  // renders them and are restored from browser storage after hydration.
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("sessions");
-  const [filesCollapsed, setFilesCollapsed] = useState(false);
   const sessionsTabRef = useRef<HTMLButtonElement>(null);
   const filesTabRef = useRef<HTMLButtonElement>(null);
   const sessionsPanelRef = useRef<HTMLDivElement>(null);
   const filesPanelRef = useRef<HTMLDivElement>(null);
   const panelScrollTopsRef = useRef(new WeakMap<Element, number>());
-  // Project groups: explicit expand/collapse choices (saved), the groups kept
-  // open for the page after they stopped being current (keepOutgoingGroupOpen;
-  // never saved), how many families "show more" has revealed per group
-  // (SHOW_MORE_STEP a click), the pinned section, the archive view.
+  // Project groups: explicit expand/collapse choices, how many families "show
+  // more" has revealed per group (SHOW_MORE_STEP a click), the pinned section,
+  // the archive view.
   const [groupExpansion, setGroupExpansion] = useState<Readonly<Record<string, boolean>>>({});
-  const [keptOpenGroups, setKeptOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
   const [moreShown, setMoreShown] = useState<Readonly<Record<string, number>>>({});
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false);
-  // The list by project (groups) or by date across projects, and the date
-  // sections folded there; both per browser.
-  const [listMode, setListMode] = useState<SidebarListMode>("projects");
-  const [recentCollapsed, setRecentCollapsed] = useState<readonly RecentSection[]>([]);
+  const [archiveView, setArchiveView] = useState(false);
   // True once the mount effect below has put the browser's folds back: set
   // in the same batch, so a render that has it has them too.
   const [sidebarPrefsRestored, setSidebarPrefsRestored] = useState(false);
-  // The archive view's folded projects, per browser (lib/sidebar-prefs.ts).
+  /** Project keys whose archive view groups start folded (upstream #1351 follow-up). */
   const [archiveCollapsed, setArchiveCollapsed] = useState<readonly string[]>([]);
-  const [archiveView, setArchiveViewState] = useState(false);
-  // The fold and the archive view move (hooks/useSidebarMotion.ts): only
-  // when the user folds or goes in or out, never on a restore, a drag, keys,
-  // a resize or a layout switch, and not at all under reduced motion. The
-  // current values tell a change from a repeat, which starts nothing.
-  const { phase: filesFoldPhase, start: startFilesFold, end: endFilesFold } = useSidebarMotion();
-  const { phase: archivePhase, start: startArchiveMotion, end: endArchiveMotion } = useSidebarMotion();
-  const filesCollapsedRef = useRef(filesCollapsed);
-  filesCollapsedRef.current = filesCollapsed;
-  const archiveViewRef = useRef(archiveView);
-  archiveViewRef.current = archiveView;
-  const setArchiveView = useCallback((open: boolean) => {
-    if (open !== archiveViewRef.current) startArchiveMotion(open ? "in" : "out");
-    setArchiveViewState(open);
-  }, [startArchiveMotion]);
-  const filesFold = filesFoldState(filesCollapsed, filesFoldPhase);
-  const archiveMotion = archiveViewState(archiveView, archivePhase);
   // Row states that must survive virtualization live here, not in the rows.
   const [renamingRootId, setRenamingRootId] = useState<string | null>(null);
   const [renamingProjectKey, setRenamingProjectKey] = useState<string | null>(null);
@@ -706,27 +610,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const handleRevealHandled = useCallback((id: number) => {
     setTreeReveal((current) => (current?.id === id ? null : current));
   }, []);
-  // The archive view's own: a project's "View archived" puts its header on top.
-  const [archiveReveal, setArchiveReveal] = useState<SessionTreeReveal | null>(null);
-  const handleArchiveRevealHandled = useCallback((id: number) => {
-    setArchiveReveal((current) => (current?.id === id ? null : current));
-  }, []);
   const selectedSessionIdRef = useRef(selectedSessionId);
   selectedSessionIdRef.current = selectedSessionId;
   const [toast, setToast] = useState<SidebarToastData | null>(null);
   const toastIdRef = useRef(0);
-  const showToast = useCallback((message: string, actions: SidebarToastAction[] = [], tail?: string) => {
-    toastIdRef.current += 1;
-    setToast({ id: toastIdRef.current, message, ...(tail ? { tail } : {}), actions });
-  }, []);
   const [uiWriteFailures, setUiWriteFailures] = useState(0);
   const shownUiWriteFailuresRef = useRef(0);
-  // Focus to hand to the files once they show (revealFiles): the control
-  // that asked was in the sessions tab, which hides with its focus, or the
-  // files section was folded. A request also counts when the files already
-  // show (below the sessions), hence the counter.
-  const filesFocusRef = useRef<"project-button" | "project-list" | "file-search" | null>(null);
-  const [filesFocusRequest, setFilesFocusRequest] = useState(0);
+  // Focus to hand to the files tab once it shows (the control that moved
+  // there was in the sessions tab, which hides with its focus).
+  const filesTabFocusRef = useRef<"project-button" | "project-list" | null>(null);
   const contextMenuFocusRef = useRef<HTMLElement | null>(null);
   // The composer's "Open another project…": where the validated folder goes,
   // and the control focus returns to when the composer does not move.
@@ -825,102 +717,38 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const headerRef = useRef<HTMLDivElement>(null);
   const explorerScrollRef = useRef<HTMLDivElement>(null);
   useScrollbarVisibility(explorerScrollRef);
-  // The toolbar row's search button: always there and enabled, so focus has
-  // somewhere to go when there are no tabs (selectedTabButton).
-  const searchButtonRef = useRef<HTMLButtonElement>(null);
-
-  // The files section's height below the sessions, on the sidebar's root
-  // (--sidebar-files-height: the files panel's height, and what the toast
-  // stays above). The separator's size is the user's; a sidebar too short
-  // for it shows less without saving that (persistClamp: false). The hook
-  // runs in both layouts; only the separator and the CSS use it.
-  const sidebarRef = useRef<HTMLDivElement | null>(null);
-  const filesHeightRef = useRef(FILES_SECTION_DEFAULT_HEIGHT);
-  // What the two sections share: the sidebar under its toolbar row (the
-  // window's height before it is laid out).
-  const sidebarBodyHeight = useCallback(() => {
-    const root = sidebarRef.current;
-    const header = headerRef.current;
-    if (!root || !header || root.clientHeight === 0) return window.innerHeight - SIDEBAR_HEADER_HEIGHT;
-    return root.clientHeight - header.offsetHeight;
-  }, []);
-  const getDefaultFilesHeight = useCallback(() => Math.round(sidebarBodyHeight() * FILES_SECTION_DEFAULT_SHARE), [sidebarBodyHeight]);
-  const getMaxFilesHeight = useCallback(() => sidebarBodyHeight() - SESSIONS_SECTION_MIN_HEIGHT, [sidebarBodyHeight]);
-  const filesSizer = useResizablePanel({
-    ariaLabel: t("sidebar.resizeFiles"),
-    axis: "vertical",
-    cssVariable: "--sidebar-files-height",
-    defaultWidth: FILES_SECTION_DEFAULT_HEIGHT,
-    getDefaultWidth: getDefaultFilesHeight,
-    getMaxWidth: getMaxFilesHeight,
-    growthDirection: "up",
-    maxWidth: FILES_SECTION_MAX_HEIGHT,
-    minWidth: FILES_SECTION_MIN_HEIGHT,
-    persistClamp: false,
-    storageKey: "pi-web:sidebar-files-height",
-    widthRef: filesHeightRef,
-  });
-  const filesSizerPanelRef = filesSizer.panelRef;
-  const setSidebarRoot = useCallback((element: HTMLDivElement | null) => {
-    sidebarRef.current = element;
-    filesSizerPanelRef.current = element;
-  }, [filesSizerPanelRef]);
-  // The window is not the only thing that changes the sidebar's height (the
-  // layout coming back from tabs, the sidebar's own changes): the files'
-  // height is fitted again whenever the root resizes, so the sessions keep
-  // their minimum, and grows back to the user's size when there is room.
-  const reclampFilesHeight = filesSizer.reclampWidth;
-  useEffect(() => {
-    const root = sidebarRef.current;
-    if (!stacked || !root || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => reclampFilesHeight());
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, [reclampFilesHeight, stacked]);
 
   // Browser storage is unavailable during server rendering. Restore the
   // sidebar preferences after hydration: read in a state initializer, a saved
   // Files tab would make the first client render differ from the server's
-  // HTML (a hydration error, and the server markup thrown away). The group
-  // choices load before the retired keys go: the old ones move to v2 then.
+  // HTML (a hydration error, and the server markup thrown away).
   useEffect(() => {
     const tab = loadSidebarTab();
     if (tab !== "sessions") setSidebarTab(tab);
     const groups = loadGroupExpansion();
     if (Object.keys(groups).length > 0) setGroupExpansion(groups);
     if (loadPinnedCollapsed()) setPinnedCollapsed(true);
-    if (loadListMode() === "recent") setListMode("recent");
-    const recentFolds = loadRecentCollapsed();
-    if (recentFolds.length > 0) setRecentCollapsed(recentFolds);
     const archiveFolds = loadArchiveCollapsed();
     if (archiveFolds.length > 0) setArchiveCollapsed(archiveFolds);
-    if (loadFilesCollapsed()) setFilesCollapsed(true);
     if (loadShowIgnoredFiles()) setShowIgnoredFiles(true);
     setSidebarPrefsRestored(true);
     forgetRetiredSidebarKeys();
   }, []);
 
-  // `alongside` runs in the same render as the new list, when it lands: the
-  // running poll's answer, so the two never show one state each.
-  const loadSessions = useCallback(async (showLoading = false, force = false, summary = false, alongside?: () => void): Promise<boolean> => {
+  // aiti fork: green-flash feedback on a successful manual refresh (button glows briefly).
+  const [manualRefreshDone, setSessionRefreshDone] = useState(false);
+  const manualRefreshDoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadSessions = useCallback(async (showLoading = false, force = false, summary = false) => {
     const loadId = ++sessionLoadIdRef.current;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(sessionListUrl(summary, force), {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as {
-        sessions: SessionInfo[];
-        sessionListVersion: number;
-        runningSessionIds?: string[];
-        awaitingInputSessionIds?: string[];
-        completionNotificationSuppressedSessionIds?: string[];
-      };
+      // aiti fork: the network layer goes through module-level fetchSessionsList — concurrent
+      // triggers from multiple points/timings send only one real request, repeats within the TTL
+      // reuse the last result, and non-forced full requests get ETag/304 empty transfers.
+      const data = await fetchSessionsList(sessionListUrl(summary, force), force);
       if (loadId !== sessionLoadIdRef.current) return false;
       sessionListVersionRef.current = data.sessionListVersion;
       setAllSessions(data.sessions);
-      alongside?.();
       // A summary row whose file changed since the last scan is the only one
       // without its details; the others were checked against their file's stat.
       const needsDetails = data.sessions.some((session) => session.detailsPending === true);
@@ -949,6 +777,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         return next.size === prev.size ? prev : next;
       });
       setError(null);
+      // aiti fork: manual-refresh green flash (success feedback on the button).
+      if (force) {
+        setSessionRefreshDone(true);
+        if (manualRefreshDoneTimer.current) clearTimeout(manualRefreshDoneTimer.current);
+        manualRefreshDoneTimer.current = setTimeout(() => setSessionRefreshDone(false), 1200);
+      }
       return needsDetails;
     } catch (e) {
       if (loadId === sessionLoadIdRef.current) setError(String(e));
@@ -979,11 +813,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         }, SESSION_DETAILS_HYDRATION_DELAY_MS);
       });
     } else {
-      // Every refreshKey bump follows a change the server already invalidated
-      // the list for (a run's agent_end, a fork, a delete, a name, a new
-      // session). Forcing would rescan again and bump the version, so every
-      // other open tab would reload the list once more.
-      void loadSessions();
+      void loadSessions(false, true);
     }
 
     return () => {
@@ -1000,7 +830,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // label (Explorer / Finder / generic) and disable itself when unavailable.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/open-in-explorer")
+    fetch(apiUrl("/api/open-in-explorer"))
       .then((res) => res.ok ? res.json() as Promise<FileManagerAvailability> : null)
       .then((data) => { if (!cancelled && data) setFileManager(data); })
       .catch(() => {});
@@ -1012,26 +842,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     setFileManagerError(null);
   }, [selectedCwd, selectedCwdProp]);
 
-  /** Resolves true when it failed: the message is then in the files' body. */
-  const openInFileManager = useCallback(async (): Promise<boolean> => {
+  const openInFileManager = useCallback(async () => {
     const dir = selectedCwd ?? selectedCwdProp;
-    if (!dir) return false;
+    if (!dir) return;
     try {
-      const res = await fetch("/api/open-in-explorer", {
+      const res = await fetch(apiUrl("/api/open-in-explorer"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: dir }),
       });
       if (res.ok) {
         setFileManagerError(null);
-        return false;
+        return;
       }
       const data = await res.json().catch(() => ({})) as { error?: string };
       setFileManagerError(data.error ?? `HTTP ${res.status}`);
     } catch (error) {
-      setFileManagerError(errorMessage(error));
+      setFileManagerError(error instanceof Error ? error.message : String(error));
     }
-    return true;
   }, [selectedCwd, selectedCwdProp]);
 
   const fileManagerLabel = t(
@@ -1077,12 +905,54 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       timer = null;
     };
 
+    let es: (() => void) | null = null; // aiti fork: broker unsubscribe (page-level singleton connection)
+    let lastSseFrameAt = 0; // time of the last SSE frame (data/heartbeat); 0 = never received
+
     const schedule = () => {
       clearTimer();
       if (stopped || document.visibilityState !== "visible") return;
-      timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
+      // SSE healthy → slow reconcile cadence (awaiting badges / ui revisions); SSE silent →
+      // the fast fallback interval takes over the running set too.
+      const healthy = Date.now() - lastSseFrameAt < RUNNING_SSE_FRESH_MS;
+      timer = setTimeout(() => void poll(), healthy ? RUNNING_RECONCILE_POLL_MS : RUNNING_SESSIONS_POLL_MS);
     };
 
+    // SSE main channel (aiti fork): running/events pushes running-state changes (the server
+    // broadcasts only on change; no more fast polling every 2.5s). Any received event is treated
+    // as an authoritative snapshot.
+    // The connection is a page-level singleton (subscribeRunningEvents) — this component has
+    // multiple instances under desktop/mobile dual rendering, and per-instance connections once
+    // exhausted the HTTP/1.1 per-host pool of 6 (all media requests pended).
+    const connectSSE = () => {
+      if (stopped || es) return;
+      es = subscribeRunningEvents((kind, data) => {
+        if (stopped) return;
+        if (kind === "heartbeat") { lastSseFrameAt = Date.now(); return; }
+        if (kind === "error") {
+          // HTTP non-2xx (4xx/5xx, e.g. a 502 right as the bridge restarts): EventSource enters
+          // CLOSED and stops auto-retrying — an explicit rebuild is needed (3s delay inside the
+          // broker, avoiding a high-frequency 4xx loop).
+          reconnectRunningEvents();
+          return;
+        }
+        // Data frame: any frame is proof of liveness
+        lastSseFrameAt = Date.now();
+        if (data && data.type === "running" && Array.isArray(data.runningSessionIds)) {
+          runningPollAuthoritativeRef.current = true;
+          setRunningSessionIds((previous) => sameIdsOr(previous, data.runningSessionIds ?? []));
+          // Future-proof: if the frame ever carries the upstream fields, take them too.
+          const frame = data as { awaitingInputSessionIds?: string[] };
+          if (Array.isArray(frame.awaitingInputSessionIds)) {
+            setAwaitingInputSessionIds((previous) => sameIdsOr(previous, frame.awaitingInputSessionIds ?? []));
+          }
+        }
+      });
+    };
+
+    // Fallback/reconcile snapshot: with a healthy SSE it only refreshes the fields the running
+    // frames don't carry (awaiting-input badges, ui revisions, list version); when the SSE goes
+    // silent (disconnected/half-open/4xx) it also re-syncs the running set. Always aligns on
+    // return to foreground.
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
       const current = new AbortController();
@@ -1095,7 +965,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       let outcome: "ok" | "error" | "aborted" = "error";
       let httpStatus: number | null = null;
       try {
-        const res = await fetch("/api/agent/running", {
+        // dedupeFetch (aiti fork): desktop/mobile dual instances + fallback snapshots before the
+        // SSE health clock is established coalesce within the same window.
+        const res = await dedupeFetch(apiUrl("/api/agent/running"), {
           cache: "no-store",
           signal: current.signal,
         });
@@ -1120,18 +992,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         currentSuppressedCompletionSessionIdsRef.current = new Set(
           data.completionNotificationSuppressedSessionIds ?? [],
         );
-        // The answer's running sets, applied with the session list of the same
-        // moment: a run's end comes with a new list version (agent_end), and
-        // shown before that list, the session would be idle with the times
-        // of before its run.
-        let applied = false;
-        const applyRunning = () => {
-          if (applied || stopped || controller !== current) return;
-          applied = true;
-          setRunningSessionIds((previous) => sameIdsOr(previous, data.runningSessionIds ?? []));
-          setAwaitingInputSessionIds((previous) => sameIdsOr(previous, data.awaitingInputSessionIds ?? []));
-          setSubagentsActiveSessionIds((previous) => sameIdsOr(previous, data.subagentsActiveSessionIds ?? []));
-        };
+        setRunningSessionIds((previous) => sameIdsOr(previous, data.runningSessionIds ?? []));
+        setAwaitingInputSessionIds((previous) => sameIdsOr(previous, data.awaitingInputSessionIds ?? []));
+        setSubagentsActiveSessionIds((previous) => sameIdsOr(previous, data.subagentsActiveSessionIds ?? []));
         // Pins and archive changed in another window: reload them.
         noteUiRevision(data.sessionUiStateRevision);
         // The first summary may still be in flight (a cold disk): its version is
@@ -1140,10 +1003,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         const summaryInFlight = summaryStartedAt !== null && Date.now() - summaryStartedAt < INITIAL_SUMMARY_WAIT_MS;
         if (!summaryInFlight && data.sessionListVersion !== sessionListVersionRef.current) {
           // Reuse the invalidated cache; forcing a scan would change the version again.
-          await loadSessions(false, false, false, applyRunning);
+          await loadSessions();
         }
-        // No list to wait for, or its load failed or was overtaken.
-        applyRunning();
       } catch {
         // Keep the last known state; the next visible-tab poll retries.
         outcome = current.signal.aborted ? "aborted" : "error";
@@ -1157,20 +1018,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void poll();
+        connectSSE();
+        void poll(); // align once immediately on return to foreground (SSE events may be dropped while backgrounded)
         return;
       }
+      // Background: disconnect SSE (save connections); the slow poll remains but is gated paused by visibility
+      if (es) { es(); es = null; }
       clearTimer();
       controller?.abort();
       controller = null;
     };
 
+    connectSSE();
     void poll();
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
+      if (es) { es(); es = null; }
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadSessions, noteUiRevision]);
@@ -1235,11 +1101,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
-    // Not forced: a run's agent_end has already invalidated the server's list,
-    // and a forced rescan here, in every tab not showing that session, bumped
-    // the version again and made all the others reload once more.
-    if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
-      void loadSessions();
+    // aiti fork: the selected session completing also needs a list refresh — the .jsonl is now
+    // persisted, so /api/sessions includes it as a real (non-transient) row, replacing the
+    // client-side draft row. Independent of the AppShell's refreshKey bump: this works even when
+    // the agent_end / prompt_done event chain has timing gaps.
+    const selectedSessionCompleted =
+      selectedSessionId !== null && previous.has(selectedSessionId) && !runningSessionIds.has(selectedSessionId);
+    if (completedInBackground.length > 0 || hasUnlistedRunningSession || selectedSessionCompleted) {
+      loadSessions(false, true);
     }
     if (completedWithNotifications.length > 0) {
       // They finished after the poll that last saw them running started. Without one
@@ -1279,9 +1148,26 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   }, [explorerRefreshKey]);
 
   useEffect(() => {
-    fetch("/api/home").then((r) => r.json()).then((d: { home?: string }) => {
-      if (d.home) setHomeDir(d.home);
-    }).catch(() => {});
+    // home dir is invariant within a session (aiti fork): lib/home-dir shared singleton — host +
+    // extensions go through one place, one request; remounts/dual instances cost zero requests.
+    const cached = getHomeDir();
+    if (cached) { setHomeDir(cached); return; }
+    void ensureHomeDir().then((dir) => {
+      if (dir) setHomeDir(dir);
+    });
+  }, []);
+
+  // Hidden workspaces (aiti fork, session-manager contract): re-filter the pickers when the
+  // hidden list changes (written by the extension; dispatched on the same window or across tabs).
+  const [hiddenWorkspaces, setHiddenWorkspaces] = useState<ReadonlySet<string>>(() => loadHiddenWorkspaces());
+  useEffect(() => {
+    const syncHidden = () => setHiddenWorkspaces(loadHiddenWorkspaces());
+    window.addEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+    window.addEventListener("storage", syncHidden);
+    return () => {
+      window.removeEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+      window.removeEventListener("storage", syncHidden);
+    };
   }, []);
 
   const restoredRef = useRef(false);
@@ -1340,7 +1226,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
+    fetch(apiUrl(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`))
       .then((r) => r.json())
       .then((d: { projectRoot?: string; projectKey?: string; isGit?: boolean; isTopLevel?: boolean; currentWorktreePath?: string | null; worktrees?: WorktreeEntry[]; error?: string }) => {
         if (cancelled) return;
@@ -1349,9 +1235,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           setWorktreeState(null);
           return;
         }
-        if (d.isGit) nonGitCwdsRef.current?.delete(selectedCwd);
-        else nonGitCwdsRef.current?.add(selectedCwd);
-        rememberCwdGitStatus(selectedCwd, Boolean(d.isGit));
         setWorktreeState({
           forCwd: selectedCwd,
           projectRoot: d.projectRoot,
@@ -1371,9 +1254,35 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     return () => { cancelled = true; };
   }, [selectedCwd, wtRefreshKey, refreshKey]);
 
+  // [restore watchdog] If the sessions list never lands (extension server restarting
+  // during a hot-reload window), settle the URL restore through the host by-id open
+  // after the grace period instead of sitting on the "Opening session…" placeholder
+  // forever. restoredRef latches, so a late list landing is a no-op.
+  const restoreWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (restoreWatchdogRef.current != null) window.clearTimeout(restoreWatchdogRef.current);
+  }, []);
+
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
-    if (allSessions.length === 0 || skipInitialProjectSelection) return;
+    if (skipInitialProjectSelection) return;
+    if (initialSessionId && !restoredRef.current && allSessions.length === 0) {
+      if (restoreWatchdogRef.current == null) {
+        restoreWatchdogRef.current = setTimeout(() => {
+          restoreWatchdogRef.current = null;
+          if (restoredRef.current) return;
+          restoredRef.current = true;
+          void onOpenById?.(initialSessionId, { initialRestore: true });
+          onInitialRestoreDone?.();
+        }, 5000);
+      }
+      return;
+    }
+    if (restoreWatchdogRef.current != null) {
+      window.clearTimeout(restoreWatchdogRef.current);
+      restoreWatchdogRef.current = null;
+    }
+    if (allSessions.length === 0) return;
 
     if (selectedCwd === null) {
       // If restoring a session, set cwd to match that session
@@ -1385,14 +1294,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           onSelectSession(target, true);
           return;
         }
-        // Session not found — notify parent so it can show the placeholder
+        // Session not found — give the host the by-id fallback first (aiti fork: socket-first
+        // open of an empty/unindexed attach session; may return false = not found), then notify
+        // it so it can show the placeholder / clear the stale URL.
+        void onOpenById?.(initialSessionId, { initialRestore: true });
         onInitialRestoreDone?.();
-        if (initialSessionLinked) showToast(t("sidebar.sessionNotFound"));
       }
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
-  }, [allSessions, selectedCwd, initialSessionId, initialSessionLinked, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, showToast, t]);
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, onOpenById]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -1414,7 +1325,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     setCustomPathValidating(true);
     setCustomPathError(null);
     try {
-      const res = await fetch("/api/cwd/validate", {
+      const res = await fetch(apiUrl("/api/cwd/validate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: path }),
@@ -1453,7 +1364,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       });
       setSelectedCwd(data.cwd);
     } catch (e) {
-      setCustomPathError(errorMessage(e));
+      setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
@@ -1465,7 +1376,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   }, []);
   const handleDefaultCwd = useCallback(async (purpose: "files" | "new-session" = "files") => {
     try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const res = await fetch(apiUrl("/api/default-cwd"), { method: "POST" });
       const data = await res.json() as { cwd?: string; error?: string };
       // Select it like any other directory, so validation, project identity and
       // the file allow-list all go through /api/cwd/validate. It is not a path
@@ -1484,7 +1395,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // listed even when nobody moves there. The picker moves there itself.
   const createWorktree = useCallback(async (project: ProjectChoice, branch: string): Promise<{ path: string } | { error: string }> => {
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: project.root, branch }),
@@ -1503,7 +1414,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       setWtRefreshKey((k) => k + 1);
       return { path };
     } catch (e) {
-      return { error: errorMessage(e) };
+      return { error: e instanceof Error ? e.message : String(e) };
     }
   }, [t]);
 
@@ -1511,7 +1422,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // and the picker asks before retrying with force.
   const handleRemoveWorktree = useCallback(async (project: ProjectChoice, path: string, force: boolean): Promise<WorktreeRemoval> => {
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: project.root, path, force }),
@@ -1525,7 +1436,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       setWtRefreshKey((k) => k + 1);
       return "removed";
     } catch (e) {
-      return { error: errorMessage(e) };
+      return { error: e instanceof Error ? e.message : String(e) };
     }
   }, [currentWorktreePath]);
 
@@ -1563,18 +1474,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const startNewSessionInRef = useRef(startNewSessionIn);
   startNewSessionInRef.current = startNewSessionIn;
 
-  const openSessionRef = useRef<(sessionId: string) => boolean>(() => false);
-  openSessionRef.current = (sessionId) => {
-    const session = allSessions.find((item) => item.id === sessionId);
-    if (!session) return false;
-    if (session.relation?.kind === "side" && session.id !== selectedSessionId) onSelectSideChat(session);
-    else handleSelectSessionFromList(session);
-    return true;
-  };
-
   useImperativeHandle(controlRef, () => ({
     startNewSessionIn: (target) => startNewSessionInRef.current(target),
-    openSession: (sessionId) => openSessionRef.current(sessionId),
     openFolderForNewSession: (onPicked, returnFocusTo) => {
       folderPickRef.current = onPicked;
       folderReturnFocusRef.current = returnFocusTo;
@@ -1596,9 +1497,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     startNewSessionIn({ cwd: selectedCwd });
   }, [selectedCwd, startNewSessionIn]);
 
-  const recentProjects = useMemo(() => getRecentProjects(allSessions), [allSessions]);
+  // aiti fork: hidden workspaces (session-manager contract) drop out of the picker lists and
+  // menus; the sessions tree keeps its own grouping (hiding never touches sessions/files).
+  const recentProjects = useMemo(
+    () => getRecentProjects(allSessions).filter((project) => !hiddenWorkspaces.has(project.root)),
+    [allSessions, hiddenWorkspaces],
+  );
 
-  const sessionFamilies = useMemo(() => listSessionFamilies(allSessions), [allSessions]);
+  // aiti fork: client-side draft row — the just-created session isn't on disk yet (pi persists
+  // the .jsonl only on the first assistant reply), so inject the host-provided selectedSession
+  // until a real fetch returns it; then this is a no-op.
+  const listedSessions = useMemo(() => {
+    if (!selectedSession || allSessions.some((session) => session.id === selectedSession.id)) return allSessions;
+    return [selectedSession, ...allSessions];
+  }, [allSessions, selectedSession]);
+
+  const sessionFamilies = useMemo(() => listSessionFamilies(listedSessions), [listedSessions]);
   const familyByRootId = useMemo(
     () => new Map(sessionFamilies.map((family) => [family.root.id, family])),
     [sessionFamilies],
@@ -1636,21 +1550,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     && selectedCwd
     && selectedProject?.key === worktreeState.projectKey
   );
-  // A subdirectory of a git checkout keeps a disabled box saying why it has
-  // no worktrees (its root has them). A folder outside any repository has
-  // no worktree box at all: the project box takes the whole row.
   const worktreeGuide = selectedCwd
-    && worktreeState?.isGit
+    && worktreeState
     && selectedProject?.key === worktreeState.projectKey
     && !showWorktreeSwitcher
-    ? {
-        label: t("sidebar.openRepoRoot"),
-        title: t("sidebar.openRepoRootTitle"),
-      }
+    ? (worktreeState.isGit
+        ? {
+             label: t("sidebar.openRepoRoot"),
+             title: t("sidebar.openRepoRootTitle"),
+          }
+        : {
+             label: t("sidebar.gitRepoRootOnly"),
+             title: t("sidebar.gitRepoRootOnlyTitle"),
+          })
     : null;
   const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
   const inactiveWorktreeSelector = worktreeGuide
-    ?? (worktreeLoading && !showWorktreeSwitcher && !(selectedCwd && nonGitCwdsRef.current?.has(selectedCwd))
+    ?? (worktreeLoading && !showWorktreeSwitcher
       ? {
            label: t("sidebar.worktrees"),
            title: t("sidebar.checkingWorktrees"),
@@ -1665,19 +1581,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     () => (currentProjectKey && currentProjectRoot ? { key: currentProjectKey, root: currentProjectRoot } : null),
     [currentProjectKey, currentProjectRoot],
   );
-  // What the tree shows and every toggle reads: the saved choices over the
-  // groups kept open for the page. Writes go to the saved choices alone
-  // (saveGroupChoices).
-  const shownGroupExpansion = useMemo(
-    () => effectiveGroupExpansion(groupExpansion, keptOpenGroups),
-    [groupExpansion, keptOpenGroups],
-  );
-  // The recent list: the viewer's day and the folded date sections.
-  const today = useLocalDayStart();
-  const recentList = useMemo<RecentListInput>(
-    () => ({ today, collapsed: new Set(recentCollapsed) }),
-    [today, recentCollapsed],
-  );
   const model = useMemo(() => buildSessionTree({
     sessions: allSessions,
     uiState,
@@ -1686,17 +1589,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     unreadIds: unreadSessionIds,
     selectedSessionId,
     currentProject,
-    groupExpansion: shownGroupExpansion,
+    groupExpansion,
     moreShown,
     pinnedCollapsed,
-    listMode,
-    recent: recentList,
-  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed, listMode, recentList]);
-  // Built while the archive view is rendered, its way out included: it
-  // leaves as it was, not empty.
-  const archiveMounted = archiveMotion.archiveMounted;
+  }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, groupExpansion, moreShown, pinnedCollapsed]);
   const archiveCollapsedSet = useMemo(() => new Set(archiveCollapsed), [archiveCollapsed]);
-  const archiveRows = useMemo(() => (archiveMounted ? buildArchiveRows({
+  const archiveRows = useMemo(() => (archiveView ? buildArchiveRows({
     sessions: allSessions,
     uiState,
     runningIds: runningSessionIds,
@@ -1705,8 +1603,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     selectedSessionId,
     currentProject,
     collapsed: archiveCollapsedSet,
-  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet]);
-  // The archive's projects, top to bottom, folded or not.
+  }) : []), [archiveView, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, archiveCollapsedSet]);
   const archiveGroups = useMemo(
     () => archiveRows.flatMap((row) => (row.kind === "archive-group" ? [row] : [])),
     [archiveRows],
@@ -1775,43 +1672,34 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
 
   // Picking a session in another group makes its project current. The group
   // that was current keeps its look instead of folding up under the pointer
-  // (keepOutgoingGroupOpen), before the browser paints the change. For the
-  // page only: saved, every project visited would come back open after a reload.
+  // (keepOutgoingGroupOpen), before the browser paints the change.
   const previousCurrentProjectKeyRef = useRef(currentProjectKey);
   useLayoutEffect(() => {
     const previous = previousCurrentProjectKeyRef.current;
     previousCurrentProjectKeyRef.current = currentProjectKey;
     if (previous === null || previous === currentProjectKey) return;
-    const outgoing = projectByKey.get(previous);
-    setKeptOpenGroups((kept) => keepOutgoingGroupOpen(kept, groupExpansion, outgoing));
-  }, [currentProjectKey, groupExpansion, projectByKey]);
-
-  // An explicit choice for the groups `keys` (null: every group): saved, and
-  // it replaces what the page kept open for them.
-  // A group it folds also drops its "show more" window: opened again, it
-  // shows its first rows only.
-  const saveGroupChoices = useCallback((next: Readonly<Record<string, boolean>>, keys: readonly string[] | null) => {
+    const next = keepOutgoingGroupOpen(groupExpansion, projectByKey.get(previous));
+    if (next === groupExpansion) return;
     setGroupExpansion(next);
     saveGroupExpansion(next);
-    setKeptOpenGroups((kept) => forgetKeptOpenGroups(kept, keys));
-    setMoreShown((shown) => forgetShownMoreOfFolded(shown, next, keys));
+  }, [currentProjectKey, groupExpansion, projectByKey]);
+
+  const showToast = useCallback((message: string, actions: SidebarToastAction[] = [], tail?: string) => {
+    toastIdRef.current += 1;
+    setToast({ id: toastIdRef.current, message, ...(tail ? { tail } : {}), actions });
   }, []);
 
-  /**
-   * The selected tab: focus has somewhere to go when the control it was on is
-   * gone. With the files below the sessions there are no tabs (their refs are
-   * null): the toolbar row's search button, always there and enabled.
-   */
+  /** The selected tab: focus has somewhere to go when the control it was on is gone. */
   const selectedTabButton = useCallback(
-    () => (sessionsPanelRef.current?.hidden ? filesTabRef : sessionsTabRef).current ?? searchButtonRef.current,
+    () => (sessionsPanelRef.current?.hidden ? filesTabRef : sessionsTabRef).current,
     [],
   );
 
-  // A family's row where the tree shows it now (pinned, in its group, in the
-  // recent list, or in the open archive view), else the selected tab.
+  // A family's row where the tree shows it now (pinned, in its group, or in
+  // the open archive view), else the selected tab.
   const familyRowButton = useCallback((rootId: string): HTMLElement | null => {
     const panel = sessionsPanelRef.current;
-    for (const context of ["pinned", "group", "recent", "archive"]) {
+    for (const context of ["pinned", "group", "archive"]) {
       const key = CSS.escape(`session:${context}:${rootId}`);
       const button = panel?.querySelector<HTMLElement>(`[data-row-key="${key}"] .session-tree-main`);
       if (button && button.getClientRects().length > 0) return button;
@@ -1857,42 +1745,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     setTreeReveal({ id: treeRevealIdRef.current, at: Date.now(), rowKey: `group:${projectKey}` });
   }, [applyUiState, model.unorderedKeysByBand, projectByKey]);
 
-  // With the files below the sessions there are no tabs: whatever would pick
-  // one (the archive view, the search's fallback) leaves the saved tab as it
-  // is, for the tabs layout and phones.
   const switchTab = useCallback((tab: SidebarTab) => {
-    if (stacked) return;
     setSidebarTab(tab);
     saveSidebarTab(tab);
-  }, [stacked]);
-
-  // Every fold and unfold goes through here (the toggle, revealFiles, the
-  // file search, changes and upload keys, a file manager error), and moves;
-  // the restore after hydration sets the state directly and does not.
-  const setFilesSectionCollapsed = useCallback((collapsed: boolean) => {
-    if (collapsed !== filesCollapsedRef.current) startFilesFold(collapsed ? "out" : "in");
-    setFilesCollapsed(collapsed);
-    saveFilesCollapsed(collapsed);
-  }, [startFilesFold]);
+  }, []);
 
   // A hidden panel is display: none, and browsers do not reliably keep the
   // scroll position of what it holds. Positions are noted as the user
-  // scrolls and put back when the panel (the tree under the archive view,
-  // the folded files section) shows again, in either layout; SessionTree then
-  // re-reads its window from them. A hidden one is skipped: it has no box.
+  // scrolls and put back when the panel (or the tree under the archive
+  // view) shows again; SessionTree then re-reads its window from them.
   const rememberScroll = useCallback((event: ReactUIEvent<HTMLDivElement>) => {
     const target = event.target;
     if (target instanceof Element) panelScrollTopsRef.current.set(target, target.scrollTop);
   }, []);
   useLayoutEffect(() => {
-    for (const panel of [sessionsPanelRef.current, filesPanelRef.current]) {
-      if (!panel || panel.hidden) continue;
-      for (const element of panel.querySelectorAll<HTMLElement>(".session-tree-scroll, .sidebar-files-scroll")) {
-        const saved = panelScrollTopsRef.current.get(element);
-        if (saved !== undefined && element.scrollTop !== saved) element.scrollTop = saved;
-      }
+    const panel = (sidebarTab === "sessions" ? sessionsPanelRef : filesPanelRef).current;
+    if (!panel) return;
+    for (const element of panel.querySelectorAll<HTMLElement>(".session-tree-scroll, .sidebar-files-scroll")) {
+      const saved = panelScrollTopsRef.current.get(element);
+      if (saved !== undefined && element.scrollTop !== saved) element.scrollTop = saved;
     }
-  }, [sidebarTab, archiveView, stacked, filesCollapsed]);
+  }, [sidebarTab, archiveView]);
 
   // With `projectKey` (a group menu's "View archived") that project's header
   // goes to the top of the archive, unfolded if it was; the other projects
@@ -1909,16 +1782,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       setArchiveCollapsed(next);
       saveArchiveCollapsed(next);
     }
-    treeRevealIdRef.current += 1;
-    setArchiveReveal({ id: treeRevealIdRef.current, at: Date.now(), rowKey: `archive:${projectKey}`, block: "start" });
-  }, [archiveCollapsed, setArchiveView, switchTab]);
+  }, [archiveCollapsed, switchTab]);
 
   // Opening the archive hides the tree that held focus (the footer link, a
   // menu's opener, the toast's View) and Back removes the archive's own
-  // controls; while the view slides in or away, what it covers or what
-  // leaves is inert first (focusIfHidden counts both). Focus that went with
-  // them moves to the archive's Back button, then back to the footer link,
-  // or to the tab when that row is not shown.
+  // controls. Focus that went with them moves to the archive's Back button,
+  // then back to the footer link, or to the tab when that row is not shown.
   const archiveBackRef = useRef<HTMLButtonElement>(null);
   const previousArchiveViewRef = useRef(archiveView);
   // Where closing the archive put focus: a fork opened from the archive
@@ -1936,22 +1805,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     focusIfHidden(target);
     if (target && document.activeElement === target) archiveCloseFocusRef.current = target;
   }, [archiveView, selectedTabButton]);
-
-  // A layout switch (the setting from another window, the phone breakpoint)
-  // removes the controls only one layout has (the tabs; the separator, the
-  // files section's toggle and search) and may hide a panel. Focus that was
-  // on one of them goes to the selected tab or the search button, not to
-  // <body>; focus outside the sidebar (null here) is left alone. The window
-  // losing focus (no relatedTarget, !document.hasFocus()) keeps the note:
-  // the setting from another window arrives just then.
-  const sidebarFocusRef = useRef<Element | null>(null);
-  const previousStackedRef = useRef(stacked);
-  useLayoutEffect(() => {
-    if (previousStackedRef.current === stacked) return;
-    previousStackedRef.current = stacked;
-    const last = sidebarFocusRef.current;
-    if (last && (!last.isConnected || last.getClientRects().length === 0)) focusIfHidden(selectedTabButton());
-  }, [stacked, selectedTabButton]);
 
   const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
@@ -2049,7 +1902,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           focusAfterCommit(() => familyRowButton(archivable[0].root.id));
         },
       },
-      { id: "view", label: t("sidebar.viewArchive"), onClick: () => openArchiveView() },
+      { id: "view", label: t("sidebar.viewArchive"), onClick: openArchiveView },
     ]);
   }, [applyUiState, focusAfterCommit, familyRowButton, openArchiveView, restoreUnread, showToast, snapshotUiState, t, unreadMarks, unreadSessionIds]);
 
@@ -2060,34 +1913,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     archiveFamilies([family]);
   }, [archiveFamilies, runningSessionIds]);
 
-  // Out of the archive: one row's Restore, or an archive menu's Restore all
-  // (in parts, as a bulk archive goes; Undo after them, in order).
-  const restoreFamilies = useCallback((families: readonly SessionFamily[]) => {
-    if (families.length === 0) return;
-    const ids = families.map((family) => family.root.id);
+  const restoreFamily = useCallback((family: SessionFamily) => {
+    const ids = [family.root.id];
     const snapshot = snapshotUiState(ids);
-    for (const part of chunkForSessionUiRequests(ids)) {
-      void applyUiState({ action: "set", ids: part, archived: false });
-    }
-    const message = families.length === 1
-      ? t("sidebar.restoredToast", { title: shortTitle(sessionRowTitle(families[0].root), TOAST_TITLE_MAX) })
-      : t("sidebar.restoredManyToast", { count: families.length });
-    showToast(message, [
+    void applyUiState({ action: "set", ids, archived: false });
+    showToast(t("sidebar.restoredToast", { title: shortTitle(sessionRowTitle(family.root), TOAST_TITLE_MAX) }), [
       {
         id: "undo",
         label: t("sidebar.undo"),
         onClick: () => {
-          for (const entries of chunkForSessionUiRequests(snapshot)) {
-            void applyUiState({ action: "restore", entries });
-          }
+          void applyUiState({ action: "restore", entries: snapshot });
           // Back in the archive view if it is open; else the tab takes focus.
-          focusAfterCommit(() => familyRowButton(families[0].root.id));
+          focusAfterCommit(() => familyRowButton(family.root.id));
         },
       },
     ]);
   }, [applyUiState, familyRowButton, focusAfterCommit, showToast, snapshotUiState, t]);
-
-  const restoreFamily = useCallback((family: SessionFamily) => restoreFamilies([family]), [restoreFamilies]);
 
   const startRename = useCallback((family: SessionFamily) => {
     if (family.root.transient) return;
@@ -2106,7 +1947,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     // skill-invoked session stays a no-op instead of persisting raw XML.)
     if (renameValue === title || name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -2141,9 +1982,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     setConfirmDeleteRootId((current) => (current === session.id ? null : current));
     try {
       // The server deletes the family's subagent sessions with it.
-      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-      // Drafts are kept in this browser's storage: they go with their sessions.
-      if (res.ok) [session, ...family.subagents].forEach((member) => clearDraft(member.id));
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      // Drafts are kept by the draft-keeper: they go with their sessions, once the server deleted them.
+      if (res.ok) [session, ...family.subagents].forEach((member) => getDraftApi()?.clearAllDrafts(member.id));
       onSessionDeleted?.(session.id);
       void loadSessions();
     } catch {
@@ -2178,7 +2019,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // Focus stays put, except where a fork says it may move. Nothing else
   // scrolls the tree: a run, the running poll, a list reload or another
   // tab's change reach the effect only while a selection still waits.
-  const mainTreeShown = (stacked || sidebarTab === "sessions")
+  const mainTreeShown = (sidebarTab === "sessions")
     && !archiveView
     && !(sessionSearchOpen && sessionSearchQuery.trim() !== "");
   // The selection still to reveal, and the last one seen.
@@ -2201,28 +2042,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       sessions: allSessions,
       uiState,
       runningIds: runningSessionIds,
-      groupExpansion: shownGroupExpansion,
+      groupExpansion,
       pinnedCollapsed,
-      listMode,
-      recent: recentList,
     }, sessionId);
     if (!location) return;
     if (location.unfoldPinned) {
       setPinnedCollapsed(false);
       savePinnedCollapsed(false);
     }
-    const unfoldRecent = location.unfoldRecent;
-    if (unfoldRecent) {
-      const next = recentCollapsed.filter((section) => section !== unfoldRecent);
-      setRecentCollapsed(next);
-      saveRecentCollapsed(next);
-    }
     if (location.unfoldGroup) {
       const next = { ...groupExpansion };
       // Re-inserted, so the choice counts as the newest one kept.
       delete next[location.projectKey];
       next[location.projectKey] = true;
-      saveGroupChoices(next, [location.projectKey]);
+      setGroupExpansion(next);
+      saveGroupExpansion(next);
     }
     treeRevealIdRef.current += 1;
     setTreeReveal({
@@ -2232,7 +2066,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       block: "nearest",
       ...(focus?.sessionId === sessionId ? { takeFocusFrom: focus.takeFocusFrom } : {}),
     });
-  }, [selectedSessionId, allSessions, uiState, runningSessionIds, shownGroupExpansion, groupExpansion, pinnedCollapsed, listMode, recentList, recentCollapsed, loading, uiStateLoaded, sidebarPrefsRestored, mainTreeShown, saveGroupChoices]);
+  }, [selectedSessionId, allSessions, uiState, runningSessionIds, groupExpansion, pinnedCollapsed, loading, uiStateLoaded, sidebarPrefsRestored, mainTreeShown, saveGroupExpansion]);
 
   // Fork (the row menu's F): the server copies the family's current branch
   // into a new session beside it (POST /api/sessions/[id]/fork) and leaves
@@ -2255,6 +2089,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       if (main) panelScrollTopsRef.current.delete(main);
       setArchiveView(false);
     }
+    const groupKey = workspaceKeyOf(forked);
+    if (Object.hasOwn(groupExpansion, groupKey) && groupExpansion[groupKey] === false) {
+      const next = { ...groupExpansion };
+      // Re-inserted, so the choice counts as the newest one kept.
+      delete next[groupKey];
+      next[groupKey] = true;
+      setGroupExpansion(next);
+      saveGroupExpansion(next);
+    }
     const fromRow = fromRowKey ? `[data-row-key="${CSS.escape(fromRowKey)}"]` : null;
     openRevealFocusRef.current = {
       sessionId: forked.id,
@@ -2276,7 +2119,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     forkingIdsRef.current.add(source.id);
     const selectedAtClick = selectedSessionIdRef.current;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(source.id)}/fork`, {
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(source.id)}/fork`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
@@ -2310,29 +2153,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       openForkedRef.current(forked, row.key);
       showToast(message, [], tail);
     } catch (error) {
-      showToast(t("sidebar.forkFailed", { error: errorMessage(error) }));
+      showToast(t("sidebar.forkFailed", { error: error instanceof Error ? error.message : String(error) }));
     } finally {
       forkingIdsRef.current.delete(source.id);
     }
   }, [loadSessions, showToast, t]);
 
-  // Open in new tab (the row menu's T): the row's session in a browser tab of
-  // its own, by the same link its title carries. This tab's selection, cwd and
-  // file tabs stay as they are, and nothing is asked of the server here: the
-  // new tab loads the session as a reload would. Synchronous inside the menu's
-  // click or key press, so the browser counts it as the user's and does not
-  // block it as a popup. Its return value says nothing: with noopener the
-  // browser returns null whether the tab opened or not.
-  const openFamilyInNewTab = useCallback((family: SessionFamily) => {
-    if (family.root.transient) return;
-    window.open(sessionDeepLink(family.root.id), "_blank", "noopener,noreferrer");
-  }, []);
-
   const runSessionAction = (id: SessionMenuActionId, row: SessionRow, shiftKey: boolean) => {
+    if (extOwnsDelete && id === "delete") return; // takeover: the extension owns the deletion flow
     const { family } = row;
     switch (id) {
-      case "open-new-tab": openFamilyInNewTab(family); break;
-      case "insert-into-chat": onInsertSessionReference?.(family.root); break;
       case "pin": setFamilyPinned(family, true); break;
       case "unpin": setFamilyPinned(family, false); break;
       case "rename": startRename(family); break;
@@ -2395,109 +2225,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     selectedSessionId,
   }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId]);
 
-  const handleGroupMenu = useCallback((project: SidebarProject, opener: HTMLElement) => {
-    const olderCount = familiesToArchive(treeSelectionInput, project.key, ARCHIVE_OLDER_THAN_MS, Date.now()).length;
-    setMenu({ kind: "group", project, olderCount, anchor: buttonAnchor(opener, "end"), opener });
-  }, [treeSelectionInput]);
-
-  const archiveOlderSessions = useCallback((project: SidebarProject) => {
-    const ids = familiesToArchive(treeSelectionInput, project.key, ARCHIVE_OLDER_THAN_MS, Date.now());
-    archiveFamilies(ids.flatMap((id) => {
-      const family = familyByRootId.get(id);
-      return family ? [family] : [];
-    }));
-  }, [archiveFamilies, familyByRootId, treeSelectionInput]);
-
-  // A project's "Delete all sessions…" (and the archive's deletes): the menu
-  // turns into its question, focus on Cancel (the sheet's on a phone), so
-  // Enter deletes nothing; Cancel goes back to the list. Delete closes the
-  // menu and sends the families the question counts at that moment, running
-  // ones kept (the server also keeps one that started since); toasts say how
-  // it went. One run per project (or archive scope) at a time.
-  const askProjectDelete = useCallback((projectKey: string, askDelete: boolean) => {
-    setMenu((current) => (current?.kind === "group" && current.project.key === projectKey ? { ...current, askDelete } : current));
-  }, []);
-
-  const deletingRunsRef = useRef(new Set<string>());
-  const deleteFamilyIds = useCallback(async (runKey: string, ids: readonly string[], focusTarget: () => HTMLElement | null) => {
-    setMenu(null);
-    if (ids.length === 0 || deletingRunsRef.current.has(runKey)) return;
-    deletingRunsRef.current.add(runKey);
-    showToast(t("sidebar.deletingSessions"));
-    try {
-      const outcome = await deleteProjectSessions(ids, fetch);
-      for (const id of outcome.deleted) {
-        clearDraft(id);
-        onSessionDeleted?.(id);
-      }
-      // A group goes with its last session (in the tree, unless it is
-      // current or pinned): focus that fell to the page with it moves on.
-      void loadSessions().then(() => focusAfterCommit(focusTarget));
-      if (outcome.error !== null) {
-        showToast(t("sidebar.deleteFailed", { error: outcome.error }));
-        return;
-      }
-      const count = outcome.deletedRoots.length;
-      const parts = [count === 1 ? t("sidebar.deletedOneToast") : t("sidebar.deletedManyToast", { count })];
-      if (outcome.running.length > 0) parts.push(t("sidebar.keptRunningToast", { count: outcome.running.length }));
-      showToast(parts.join(" · "));
-    } finally {
-      deletingRunsRef.current.delete(runKey);
-    }
-  }, [focusAfterCommit, loadSessions, onSessionDeleted, showToast, t]);
-
-  const deleteAllProjectSessions = useCallback((project: SidebarProject) => {
-    const { ids } = familiesToDelete(treeSelectionInput, project.key);
-    void deleteFamilyIds(`project:${project.key}`, ids, () => groupHeaderButton(project.key));
-  }, [deleteFamilyIds, groupHeaderButton, treeSelectionInput]);
-
-  // The archive's own menus: a project header's ⋯ (Restore all, Delete
-  // all…) and the bar's (fold every project, Restore all, the two deletes).
-  // Their counts are live; Restore and Delete take what is archived when
-  // chosen. An archived family never runs, so nothing is kept back.
-  // A project's archive header (its toggle), else the archive's Back, else the selected tab.
-  const archiveHeaderButton = useCallback((projectKey: string | null): HTMLElement | null => {
-    const key = projectKey === null ? null : CSS.escape(`archive:${projectKey}`);
-    const button = key === null ? null : sessionsPanelRef.current?.querySelector<HTMLElement>(`[data-row-key="${key}"] .session-tree-group-toggle`);
-    if (button && button.getClientRects().length > 0) return button;
-    const back = archiveBackRef.current;
-    return back && back.getClientRects().length > 0 ? back : selectedTabButton();
-  }, [selectedTabButton]);
-
-  const familiesOf = useCallback((ids: readonly string[]) => ids.flatMap((id) => {
-    const family = familyByRootId.get(id);
-    return family ? [family] : [];
-  }), [familyByRootId]);
-
-  const handleArchiveGroupMenu = useCallback((project: SidebarProject, opener: HTMLElement) => {
-    setMenu({ kind: "archive-group", project, anchor: buttonAnchor(opener, "end"), opener });
-  }, []);
-
-  const openArchiveMenu = useCallback((opener: HTMLElement) => {
-    setMenu((current) => (current?.kind === "archive" ? null : { kind: "archive", anchor: buttonAnchor(opener, "end"), opener }));
-  }, []);
-
-  const askArchiveDelete = useCallback((askDelete: ArchiveDeleteScope | undefined) => {
-    setMenu((current) => {
-      if (current?.kind === "archive") return { ...current, askDelete };
-      if (current?.kind === "archive-group") return { ...current, askDelete: askDelete !== undefined };
-      return current;
-    });
-  }, []);
-
-  const archiveDeleteIds = useCallback((scope: ArchiveDeleteScope | { projectKey: string }) => archivedFamilyIds(
-    treeSelectionInput,
-    scope === "all" ? {} : scope === "old" ? { archivedBefore: Date.now() - ARCHIVED_DELETE_AFTER_MS } : scope,
-  ), [treeSelectionInput]);
-
-  const deleteArchived = useCallback((scope: ArchiveDeleteScope | { projectKey: string }) => {
-    const ids = archiveDeleteIds(scope);
-    const runKey = typeof scope === "string" ? `archive:${scope}` : `archive-project:${scope.projectKey}`;
-    void deleteFamilyIds(runKey, ids, () => (typeof scope === "string" ? archiveHeaderButton(null) : archiveHeaderButton(scope.projectKey)));
-  }, [archiveDeleteIds, archiveHeaderButton, deleteFamilyIds]);
-
-  // Folding the archive's projects: one header, or (Alt+click, the bar's
-  // menu) every one of them. Saved per browser, the newest choice last.
   const saveArchiveFolds = useCallback((next: readonly string[]) => {
     setArchiveCollapsed(next);
     saveArchiveCollapsed(next);
@@ -2513,9 +2240,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       setAllArchiveGroupsExpanded(expanded);
       return;
     }
-    const others = archiveCollapsed.filter((key) => key !== projectKey);
-    saveArchiveFolds(expanded ? others : [...others, projectKey]);
+    saveArchiveFolds(expanded ? archiveCollapsed.filter((key) => key !== projectKey) : [...archiveCollapsed, projectKey]);
   }, [archiveCollapsed, saveArchiveFolds, setAllArchiveGroupsExpanded]);
+
+  const handleArchiveGroupMenu = useCallback((project: SidebarProject, opener: HTMLElement) => {
+    setMenu({ kind: "archive-group", project, anchor: buttonAnchor(opener, "end"), opener });
+  }, []);
+
+  const handleGroupMenu = useCallback((project: SidebarProject, opener: HTMLElement) => {
+    const olderCount = familiesToArchive(treeSelectionInput, project.key, ARCHIVE_OLDER_THAN_MS, Date.now()).length;
+    setMenu({ kind: "group", project, olderCount, anchor: buttonAnchor(opener, "end"), opener });
+  }, [treeSelectionInput]);
+
+  const archiveOlderSessions = useCallback((project: SidebarProject) => {
+    const ids = familiesToArchive(treeSelectionInput, project.key, ARCHIVE_OLDER_THAN_MS, Date.now());
+    archiveFamilies(ids.flatMap((id) => {
+      const family = familyByRootId.get(id);
+      return family ? [family] : [];
+    }));
+  }, [archiveFamilies, familyByRootId, treeSelectionInput]);
 
   // A group's "+": a new session at once. The current project starts in the
   // sidebar's worktree, another one in its root (the main checkout); the bar
@@ -2524,7 +2267,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // pinned project without sessions keeps its server identity.
   const handleGroupNew = useCallback((project: SidebarProject) => {
     setMenu(null);
-    startNewSessionIn(newSessionTargetForProject(project, selectedCwd));
+    startNewSessionIn({
+      cwd: project.current && selectedCwd ? selectedCwd : project.root,
+      projectKey: project.key,
+      projectRoot: project.root,
+    });
   }, [selectedCwd, startNewSessionIn]);
 
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -2544,8 +2291,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   // another window): its menu goes with it.
   const visibleRows = archiveView ? archiveRows : model.rows;
   useEffect(() => {
-    if (menu?.kind === "row" && !visibleRows.some((row) => row.key === menu.row.key)) setMenu(null);
-    if (menu?.kind === "archive-group" && !visibleRows.some((row) => row.key === `archive:${menu.project.key}`)) setMenu(null);
+    if (menu?.kind !== "row") return;
+    if (!visibleRows.some((row) => row.key === menu.row.key)) setMenu(null);
   }, [menu, visibleRows]);
 
   // Rows are rebuilt on every refresh; the menu acts on the current one.
@@ -2565,8 +2312,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       delete next[project.key];
       next[project.key] = expanded(project);
     }
-    saveGroupChoices(next, null);
-  }, [groupExpansion, model.projects, saveGroupChoices]);
+    setGroupExpansion(next);
+    saveGroupExpansion(next);
+  }, [groupExpansion, model.projects]);
 
   // Expanding or collapsing a group only changes the view: it never moves the
   // cwd (picking a project does that, in the files tab). With Alt, every
@@ -2574,7 +2322,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
   const handleToggleGroup = useCallback((projectKey: string, all: boolean) => {
     const project = projectByKey.get(projectKey);
     if (!project) return;
-    const expanded = !isGroupExpanded(project, shownGroupExpansion);
+    const expanded = !isGroupExpanded(project, groupExpansion);
     if (all) {
       setAllGroupsExpanded(() => expanded);
       return;
@@ -2583,98 +2331,69 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     // Re-inserted, so the choice counts as the newest one kept.
     delete next[projectKey];
     next[projectKey] = expanded;
-    saveGroupChoices(next, [projectKey]);
-  }, [groupExpansion, projectByKey, saveGroupChoices, setAllGroupsExpanded, shownGroupExpansion]);
+    setGroupExpansion(next);
+    saveGroupExpansion(next);
+  }, [groupExpansion, projectByKey, setAllGroupsExpanded]);
 
-  // The window a click opens is the one its row offers now (`nextShown`):
-  // decided at the click, by position, so a row that turns selected, unread
-  // or running later never shifts it.
   const handleShowMore = useCallback((key: string) => {
-    const row = model.rows.find((item) => (item.kind === "group-more" && item.projectKey === key)
-      || (item.kind === "pinned-more" && key === PINNED_MORE_KEY));
-    if (row?.kind !== "group-more" && row?.kind !== "pinned-more") return;
-    setMoreShown((prev) => showMoreFamilies(prev, key, row.nextShown));
-  }, [model.rows]);
+    setMoreShown((prev) => showMoreFamilies(prev, key));
+  }, []);
   const handleShowLess = useCallback((key: string) => {
     setMoreShown((prev) => showLessFamilies(prev, key));
   }, []);
-
-  // The toolbar's Sort by date: the list switches between project groups and
-  // the recent list, and the open session's row is brought into view in the
-  // list it switched to, as when it was opened. Its cell is always there, so
-  // the row's widths never change with the view: on the files tab or over
-  // the archive view it shows the session list, as the recent one (as the
-  // search opens the sessions' where the files have none to offer).
-  const handleToggleListMode = () => {
-    const listInView = (stacked || sidebarTab === "sessions") && !archiveView;
-    const next: SidebarListMode = listInView && listMode === "recent" ? "projects" : "recent";
-    if (!listInView) {
-      switchTab("sessions");
-      if (archiveView) setArchiveView(false);
-    }
-    setListMode(next);
-    saveListMode(next);
-    openRevealRef.current = selectedSessionId;
-  };
-  const handleToggleRecentSection = (section: RecentSection) => {
-    const next = recentCollapsed.includes(section)
-      ? recentCollapsed.filter((item) => item !== section)
-      : [...recentCollapsed, section];
-    setRecentCollapsed(next);
-    saveRecentCollapsed(next);
-  };
 
   const handleTogglePinned = () => {
     const next = !pinnedCollapsed;
     setPinnedCollapsed(next);
     savePinnedCollapsed(next);
-    // Folded, the pinned section drops its "show more" window as a group does.
-    if (next) setMoreShown((shown) => showLessFamilies(shown, PINNED_MORE_KEY));
   };
-
-  // Everything that goes to the files goes through here: the files tab, or
-  // the files section below the sessions, opened (and saved so) if folded.
-  // The focus follows once they show.
-  const revealFiles = useCallback((focusTarget: "project-button" | "project-list" | "file-search") => {
-    filesFocusRef.current = focusTarget;
-    setFilesFocusRequest((count) => count + 1);
-    if (stacked) setFilesSectionCollapsed(false);
-    else switchTab("files");
-  }, [setFilesSectionCollapsed, stacked, switchTab]);
 
   // "Open in Files" of another project is a deliberate project switch, the
-  // same as choosing it in the files' project list.
+  // same as choosing it in the files tab's project list.
   const openProjectInFiles = (project: SidebarProject) => {
     if (!project.current) setSelectedCwd(project.root);
-    revealFiles("project-button");
-  };
-
-  const openProjectInNewTab = (project: SidebarProject) => {
-    const { cwd } = newSessionTargetForProject(project, selectedCwd);
-    // Navigation only, synchronous in the menu action so the browser permits it.
-    window.open(newSessionDeepLink(cwd), "_blank", "noopener,noreferrer");
+    filesTabFocusRef.current = "project-button";
+    switchTab("files");
   };
 
   const handleOpenOtherProject = () => {
-    revealFiles("project-list");
+    filesTabFocusRef.current = "project-list";
+    switchTab("files");
   };
-  // Once the files show, the project button takes the focus, or its menu
-  // opens below it (the menu takes the focus: its filter or first project),
-  // or the file search field does. Below the sessions they may show already:
-  // the request counter runs it all the same. An unfolding section is not
-  // shown yet: its button is still below the sidebar's edge, where the
-  // project menu would be placed.
-  const filesShown = stacked ? filesFold.open : sidebarTab === "files";
+  // Once the files tab shows, the project button takes the focus, or its
+  // menu opens below it (the menu takes the focus: its filter or first project).
   useEffect(() => {
-    const target = filesFocusRef.current;
-    if (!target || !filesShown) return;
-    filesFocusRef.current = null;
+    const target = filesTabFocusRef.current;
+    if (!target || sidebarTab !== "files") return;
+    filesTabFocusRef.current = null;
     if (target === "project-list") filesPickerRef.current?.openMenu("project");
-    else if (target === "file-search") document.getElementById("file-search-input")?.focus({ preventScroll: true });
     else filesPickerRef.current?.button("project")?.focus({ preventScroll: true });
-  }, [filesShown, filesFocusRequest]);
+  }, [sidebarTab]);
 
-  const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status).map((entry, index) => {
+  // Capability takeover (aiti fork): when an extension declares session-delete (ui.provides),
+  // the built-in delete flow is owned by that extension (e.g. session-manager's archive-first,
+  // delete-on-the-archived-record) — drop the entry from the row menu and ignore the action.
+  const extOwnsDelete = useExtProvides().has(EXT_PROVIDES.sessionDelete);
+  // aiti fork: workspacePickerActions slot has a provider → the project menu gets the extension's
+  // manage actions at its bottom (gated so an empty slot renders no footer box at all).
+  const workspaceSlotItems = useExtSlotItems("workspacePickerActions");
+  const projectMenuFooter = workspaceSlotItems.length > 0 ? (
+    <ExtSlot
+      name="workspacePickerActions"
+      extra={{
+        projects: recentProjects.map((p) => ({ key: p.key, root: p.root })),
+        allProjects: getRecentProjects(allSessions).map((p) => ({ key: p.key, root: p.root })),
+        selectedCwd: selectedCwd ?? selectedCwdProp ?? null,
+        hiddenWorkspaces,
+        onSelect: (root: string) => { setSelectedCwd(root); },
+        onClose: () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); },
+      } satisfies WorkspacePickerActionsProps}
+    />
+  ) : undefined;
+
+  const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status)
+    .filter((entry) => !(extOwnsDelete && entry.kind === "action" && entry.id === "delete"))
+    .map((entry, index) => {
     if (entry.kind === "separator") return { type: "separator", id: `separator-${index}` };
     const label = t(SESSION_ACTION_LABEL_KEYS[entry.id]);
     return {
@@ -2690,9 +2409,49 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     };
   });
 
+  // An archive header's ⋯ (upstream #1351 fold follow-up): restore every family
+  // of the project, or delete them one by one through the family delete flow.
+  const archiveGroupMenuItems = (project: SidebarProject): SidebarMenuItem[] => {
+    const ids = archivedFamilyIds(treeSelectionInput, { projectKey: project.key });
+    const deleteOne = async (sessionId: string) => {
+      try {
+        await fetch(apiUrl(`/api/sessions/\${encodeURIComponent(sessionId)}`), { method: "DELETE" });
+        onSessionDeleted?.(sessionId);
+      } catch {
+        // 该行保留；下次刷新见真章。
+      }
+    };
+    return [
+      {
+        type: "item",
+        id: "restore-all",
+        label: t("sidebar.restoreAllArchived", { count: ids.length }),
+        icon: <RestoreIcon />,
+        disabled: ids.length === 0,
+        onSelect: () => {
+          const snapshot = snapshotUiState(ids);
+          void applyUiState({ action: "set", ids, archived: false });
+          void loadSessions();
+          showToast(t("sidebar.restoredToast", { count: ids.length }), [
+            { id: "undo", label: t("sidebar.undo"), onClick: () => { void applyUiState({ action: "restore", entries: snapshot }); } },
+          ]);
+        },
+      },
+      { type: "separator", id: "separator-archive-group-delete" },
+      {
+        type: "item",
+        id: "delete-all",
+        label: t("sidebar.deleteAllArchived", { count: ids.length }),
+        icon: <TrashIcon />,
+        danger: true,
+        disabled: ids.length === 0,
+        onSelect: () => { void Promise.all(ids.map((id) => deleteOne(id))); },
+      },
+    ];
+  };
+
   const groupMenuItems = (project: SidebarProject, olderCount: number): SidebarMenuItem[] => {
     const archivedCount = archiveIndex.countByProject.get(project.key) ?? 0;
-    const deletable = familiesToDelete(treeSelectionInput, project.key);
     // Within the project's band; disabled at its edges.
     const up = adjacentProjectMove(model.projects, project.key, "up");
     const down = adjacentProjectMove(model.projects, project.key, "down");
@@ -2709,8 +2468,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       icon: <RestoreIcon />,
       onSelect: () => { void applyUiState({ action: "rename-project", projectKey: project.key, name: null }); },
     }));
-    // Three groups, by what they act on: the project itself, its place in the
-    // list, its sessions (Delete all last, in red).
     return [
       {
         type: "item",
@@ -2720,22 +2477,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         onSelect: () => { void applyUiState({ action: "pin-project", projectKey: project.key, root: project.root, pinned: !project.pinned }); },
       },
       ...nameItems,
-      {
-        type: "item",
-        id: "open-in-files",
-        label: t("sidebar.openInFilesTab"),
-        icon: <FolderIcon />,
-        onSelect: () => openProjectInFiles(project),
-      },
-      {
-        type: "item",
-        id: "open-new-tab",
-        label: t("sidebar.openInNewTab"),
-        icon: <OpenInNewTabIcon />,
-        shortcut: "T",
-        onSelect: () => openProjectInNewTab(project),
-      },
-      { type: "separator", id: "separator-layout" },
       {
         type: "item",
         id: "move-up",
@@ -2753,24 +2494,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         onSelect: () => { if (down) moveProject(project.key, down.anchorKey, down.position); },
       },
       {
-        // This project open, every other one closed.
-        type: "item",
-        id: "collapse-others",
-        label: t("sidebar.collapseOtherGroups"),
-        icon: <ChevronIcon />,
-        disabled: model.projects.every((other) => isGroupExpanded(other, shownGroupExpansion) === (other.key === project.key)),
-        onSelect: () => setAllGroupsExpanded((other) => other.key === project.key),
-      },
-      {
-        type: "item",
-        id: "expand-all",
-        label: t("sidebar.expandAllGroups"),
-        icon: <ChevronIcon className="sidebar-icon-down" />,
-        disabled: model.projects.every((other) => isGroupExpanded(other, shownGroupExpansion)),
-        onSelect: () => setAllGroupsExpanded(() => true),
-      },
-      { type: "separator", id: "separator-sessions" },
-      {
         type: "item",
         id: "archive-older",
         label: t("sidebar.archiveOlderThanWeek", { count: olderCount }),
@@ -2780,194 +2503,63 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       },
       {
         type: "item",
-        id: "view-archived",
-        label: t("sidebar.viewArchived", { count: archivedCount }),
-        icon: <ArchiveIcon />,
-        disabled: archivedCount === 0,
-        onSelect: () => openArchiveView(project.key),
+        id: "open-in-files",
+        label: t("sidebar.openInFilesTab"),
+        icon: <FolderIcon />,
+        onSelect: () => openProjectInFiles(project),
       },
+      { type: "separator", id: "separator-groups" },
       {
+        // This project open, every other one closed.
         type: "item",
-        id: "delete-all",
-        label: t("sidebar.deleteProjectSessions", { count: deletable.ids.length }),
-        icon: <TrashIcon />,
-        danger: true,
-        disabled: deletable.ids.length === 0,
-        onSelect: ({ keepOpen }) => {
-          keepOpen();
-          askProjectDelete(project.key, true);
-        },
-      },
-    ];
-  };
-
-  // A menu's delete question (a project's "Delete all sessions…", the
-  // archive's deletes); its counts are live.
-  const deleteQuestionBody = ({ heading, headingTitle, notes, count, onConfirm, onCancel }: {
-    heading: string;
-    headingTitle?: string;
-    notes: string[];
-    count: number;
-    onConfirm: () => void;
-    onCancel: () => void;
-  }): ReactNode => (
-    <div className="sidebar-menu-question">
-      <div className="sidebar-menu-header" title={headingTitle}>{heading}</div>
-      {notes.map((note) => <p key={note} className="sidebar-menu-question-text">{note}</p>)}
-      <div className="sidebar-menu-question-buttons">
-        <button type="button" className="sidebar-menu-question-confirm" disabled={count === 0} onClick={onConfirm}>
-          {t("sidebar.deleteCount", { count })}
-        </button>
-        {!isMobile && (
-          <button type="button" className="sidebar-menu-question-cancel" data-sidebar-menu-autofocus="" onClick={onCancel}>
-            {t("sidebar.cancel")}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
-  const projectDeleteBody = (project: SidebarProject): ReactNode => {
-    const { ids, running } = familiesToDelete(treeSelectionInput, project.key);
-    return deleteQuestionBody({
-      heading: t("sidebar.deleteProjectSessionsHeading", { name: project.name }),
-      headingTitle: project.root,
-      notes: [
-        t("sidebar.deleteProjectSessionsMessage"),
-        ...(running > 0 ? [t("sidebar.deleteProjectSessionsRunning", { count: running })] : []),
-      ],
-      count: ids.length,
-      onConfirm: () => deleteAllProjectSessions(project),
-      onCancel: () => askProjectDelete(project.key, false),
-    });
-  };
-
-  const archiveGroupMenuItems = (project: SidebarProject): SidebarMenuItem[] => {
-    const ids = archiveDeleteIds({ projectKey: project.key });
-    return [
-      {
-        type: "item",
-        id: "restore-all",
-        label: t("sidebar.restoreAllArchived", { count: ids.length }),
-        icon: <RestoreIcon />,
-        disabled: ids.length === 0,
-        onSelect: () => restoreFamilies(familiesOf(ids)),
-      },
-      { type: "separator", id: "separator-delete" },
-      {
-        type: "item",
-        id: "delete-all",
-        label: t("sidebar.deleteAllArchived", { count: ids.length }),
-        icon: <TrashIcon />,
-        danger: true,
-        disabled: ids.length === 0,
-        onSelect: ({ keepOpen }) => {
-          keepOpen();
-          askArchiveDelete("all");
-        },
-      },
-    ];
-  };
-
-  const archiveMenuItems = (): SidebarMenuItem[] => {
-    const all = archiveDeleteIds("all");
-    const old = archiveDeleteIds("old");
-    const folded = archiveGroups.filter((row) => !row.expanded).length;
-    return [
-      {
-        type: "item",
-        id: "collapse-all",
-        label: t("sidebar.collapseAllGroups"),
+        id: "collapse-others",
+        label: t("sidebar.collapseOtherGroups"),
         icon: <ChevronIcon />,
-        disabled: folded === archiveGroups.length,
-        onSelect: () => setAllArchiveGroupsExpanded(false),
+        disabled: model.projects.every((other) => isGroupExpanded(other, groupExpansion) === (other.key === project.key)),
+        onSelect: () => setAllGroupsExpanded((other) => other.key === project.key),
       },
       {
         type: "item",
         id: "expand-all",
         label: t("sidebar.expandAllGroups"),
         icon: <ChevronIcon className="sidebar-icon-down" />,
-        disabled: folded === 0,
-        onSelect: () => setAllArchiveGroupsExpanded(true),
+        disabled: model.projects.every((other) => isGroupExpanded(other, groupExpansion)),
+        onSelect: () => setAllGroupsExpanded(() => true),
       },
-      { type: "separator", id: "separator-sessions" },
+      { type: "separator", id: "separator" },
       {
         type: "item",
-        id: "restore-all",
-        label: t("sidebar.restoreAllArchived", { count: all.length }),
-        icon: <RestoreIcon />,
-        disabled: all.length === 0,
-        onSelect: () => restoreFamilies(familiesOf(all)),
-      },
-      {
-        type: "item",
-        id: "delete-old",
-        label: t("sidebar.deleteOldArchived", { count: old.length }),
-        icon: <TrashIcon />,
-        danger: true,
-        disabled: old.length === 0,
-        onSelect: ({ keepOpen }) => {
-          keepOpen();
-          askArchiveDelete("old");
-        },
-      },
-      {
-        type: "item",
-        id: "delete-all",
-        label: t("sidebar.deleteAllArchived", { count: all.length }),
-        icon: <TrashIcon />,
-        danger: true,
-        disabled: all.length === 0,
-        onSelect: ({ keepOpen }) => {
-          keepOpen();
-          askArchiveDelete("all");
-        },
+        id: "view-archived",
+        label: t("sidebar.viewArchived", { count: archivedCount }),
+        icon: <ArchiveIcon />,
+        disabled: archivedCount === 0,
+        onSelect: () => openArchiveView(project.key),
       },
     ];
   };
-
-  const archiveDeleteBody = (scope: ArchiveDeleteScope | { projectKey: string }, project: SidebarProject | null): ReactNode => deleteQuestionBody({
-    heading: project
-      ? t("sidebar.deleteArchivedInProjectHeading", { name: project.name })
-      : t(scope === "old" ? "sidebar.deleteOldArchivedHeading" : "sidebar.deleteAllArchivedHeading"),
-    headingTitle: project?.root,
-    notes: [t("sidebar.deleteArchivedMessage")],
-    count: archiveDeleteIds(scope).length,
-    onConfirm: () => deleteArchived(scope),
-    onCancel: () => askArchiveDelete(undefined),
-  });
 
   let menuTitle: string | undefined;
   let menuLabel = "";
   // Room for "Archive sessions older than 7 days · N".
   let menuWidth: number | undefined;
   let menuItems: SidebarMenuItem[] | undefined;
-  let menuBody: ReactNode = null;
   if (menu?.kind === "row" && menuRow) {
     menuTitle = sessionRowTitle(menuRow.family.root);
     menuLabel = t("sidebar.sessionActions");
     menuItems = sessionMenuItems(menuRow);
+  } else if (menu?.kind === "archive-group") {
+    const project = projectByKey.get(menu.project.key) ?? menu.project;
+    menuTitle = project.name;
+    menuLabel = t("sidebar.archivedProjectActions", { name: project.name });
+    menuItems = archiveGroupMenuItems(project);
+    menuWidth = 264;
   } else if (menu?.kind === "group") {
     // The project as the tree has it now: pinned, unpinned, renamed or moved in another window while the menu is open.
     const project = projectByKey.get(menu.project.key) ?? menu.project;
     menuTitle = project.name;
     menuLabel = t("sidebar.projectActions", { name: project.name });
     menuItems = groupMenuItems(project, menu.olderCount);
-    if (menu.askDelete) menuBody = projectDeleteBody(project);
     menuWidth = 264;
-  } else if (menu?.kind === "archive-group") {
-    const project = archiveGroups.find((row) => row.project.key === menu.project.key)?.project ?? menu.project;
-    menuTitle = project.name;
-    menuLabel = t("sidebar.archivedProjectActions", { name: project.name });
-    menuItems = archiveGroupMenuItems(project);
-    if (menu.askDelete) menuBody = archiveDeleteBody({ projectKey: project.key }, project);
-    menuWidth = 248;
-  } else if (menu?.kind === "archive") {
-    menuTitle = t("sidebar.archived");
-    menuLabel = t("sidebar.archiveActions");
-    menuItems = archiveMenuItems();
-    if (menu.askDelete) menuBody = archiveDeleteBody(menu.askDelete, null);
-    menuWidth = 280;
   }
 
   // The tree row (and the button in it) that the open menu belongs to.
@@ -2992,7 +2584,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     onShowMore: handleShowMore,
     onShowLess: handleShowLess,
     onTogglePinned: handleTogglePinned,
-    onToggleRecentSection: handleToggleRecentSection,
     onArchiveFamily: archiveFamily,
     onRestoreFamily: restoreFamily,
     onOpenRowMenu: openRowMenu,
@@ -3018,152 +2609,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
     onToggleArchiveGroup: handleToggleArchiveGroup,
     onArchiveGroupMenu: handleArchiveGroupMenu,
     onOpenOtherProject: handleOpenOtherProject,
-    onOpenArchive: () => openArchiveView(),
+    onOpenArchive: openArchiveView,
     // The archive view has no group rows: only the main tree's can be dragged.
     onMoveGroup: moveProject,
   } as const;
 
   const explorerCwd = selectedCwd ?? selectedCwdProp ?? null;
-  const changedFilesTitle = explorerCwd && changesCount > 0 ? t("sidebar.changedFiles", { count: changesCount }) : undefined;
-  // The changes view's key turns disabled once nothing is changed (a
-  // commit, a revert), under a keyboard user too. The browser blurs it to
-  // the page only at its next rendering update (current Chromium), after
-  // this effect, and that blur clears the root's note, so nothing would try
-  // again: while the note still names the key, its focus goes now to the
-  // nearest key still enabled (the file search after it below the
-  // sessions, the ignored-files switch before it in the tab).
-  const changesKeyRef = useRef<HTMLButtonElement>(null);
-  const changesKeyDisabled = !explorerCwd || changesCount === 0;
-  useLayoutEffect(() => {
-    const key = changesKeyRef.current;
-    if (!changesKeyDisabled || !key || sidebarFocusRef.current !== key) return;
-    handOffDisabledKeyFocus(document, key, selectedTabButton());
-  }, [changesKeyDisabled, selectedTabButton]);
   // The toolbar row's search button searches the files on the files tab:
-  // the head has no search of its own. Below the sessions it is the
-  // sessions' search alone; the files section's header has the files'.
-  const sessionsShown = stacked || sidebarTab === "sessions";
-  const searchesFiles = !stacked && sidebarTab === "files" && explorerCwd !== null;
-  // Sort by date is pressed while the recent list is in view: not on the
-  // files tab, nor under the archive view.
-  const listModePressed = listMode === "recent" && sessionsShown && !archiveView;
-  // What the toolbar row's widths depend on: New's label, and the tabs (the
-  // chosen tab's label is bolder, the files tab carries the count). The
-  // brand's text reports its own changes (fitHeader).
-  const fitHeader = useHeaderFit(headerRef, (stacked
-    ? ["below", t("sidebar.new")]
-    : ["tabs", t("sidebar.tabSessions"), t("sidebar.tabFiles"), t("sidebar.new"), explorerCwd && changesCount > 0 ? changesCount : "", sidebarTab]
-  ).join("\n"));
+  // the head has no search of its own.
+  const searchesFiles = sidebarTab === "files" && explorerCwd !== null;
+  // What the toolbar row's widths depend on (the chosen tab's label is bolder).
+  useHeaderFit(headerRef, [t("sidebar.tabSessions"), t("sidebar.tabFiles"), t("sidebar.new"), explorerCwd && changesCount > 0 ? changesCount : "", sidebarTab].join("\n"));
   const archivedCount = model.archivedCount;
 
-  // The files' keys: below the sessions in the files section's header row,
-  // in the files tab in the row under the picker. Always the same ones in
-  // the same places; without a folder they wait, disabled. Their icons are
-  // 13px in the header row (smaller keys there, beside the label), 14px in the
-  // files tab's row.
-  const keyIconSize = stacked ? 13 : 14;
-  const terminalButton = (
-    <ToolbarIconButton
-      onClick={() => { if (explorerCwd) onOpenTerminal?.(explorerCwd); }}
-      disabled={!explorerCwd || !onOpenTerminal}
-      title={t("terminal.open")}
-    >
-      <TerminalIcon size={keyIconSize} />
-    </ToolbarIconButton>
-  );
-  const fileManagerButton = (
-    <ToolbarIconButton
-      onClick={() => {
-        void openInFileManager().then((failed) => {
-          // Its failure shows in the files' body. Below the sessions this key
-          // is in the header row, there while the section is folded too: a
-          // folded section opens, else the message would wait unseen.
-          if (failed && stacked) setFilesSectionCollapsed(false);
-        });
-      }}
-      disabled={!explorerCwd || fileManagerUnavailable}
-      title={fileManagerUnavailable
-        ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
-        : fileManagerLabel}
-    >
-      <FolderIcon size={keyIconSize} />
-    </ToolbarIconButton>
-  );
-  const uploadButton = (
-    <ToolbarIconButton
-      onClick={() => {
-        // The upload's progress and summary are the tree's: a folded section opens.
-        if (stacked && filesCollapsed) setFilesSectionCollapsed(false);
-        fileExplorerRef.current?.openUploadPicker();
-      }}
-      disabled={!explorerCwd || explorerUploadBusy}
-      title={t("sidebar.uploadFilesTitle")}
-    >
-      <UploadIcon size={keyIconSize} />
-    </ToolbarIconButton>
-  );
-  const refreshButton = (
-    <ToolbarIconButton
-      onClick={() => {
-        if (onExplorerRefresh) onExplorerRefresh();
-        else setExplorerKey((k) => k + 1);
-        setExplorerRefreshDone(true);
-        if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
-        explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
-      }}
-      disabled={!explorerCwd}
-      title={t("sidebar.refreshExplorer")}
-      done={explorerRefreshDone}
-    >
-      {explorerRefreshDone ? <CheckIcon size={keyIconSize} /> : <RefreshIcon size={keyIconSize} />}
-    </ToolbarIconButton>
-  );
-  const ignoredFilesButton = (className?: string) => (
-    <ToolbarIconButton
-      onClick={() => {
-        const next = !showIgnoredFiles;
-        setShowIgnoredFiles(next);
-        saveShowIgnoredFiles(next);
-      }}
-      disabled={!explorerCwd}
-      title={t("sidebar.showIgnoredFiles")}
-      pressed={showIgnoredFiles}
-      className={className}
-    >
-      <EyeIcon size={keyIconSize} />
-    </ToolbarIconButton>
-  );
-  // The tree's second view, its changes: there without changes too,
-  // disabled, so nothing moves as an agent edits files and commits.
-  const changesButton = (
-    <ToolbarIconButton
-      ref={changesKeyRef}
-      onClick={() => {
-        // Below the sessions this key is in the header row, there while the
-        // section is folded too: a folded section opens on the changes.
-        if (stacked && filesCollapsed) {
-          setFilesSectionCollapsed(false);
-          setChangesCollapsed(false);
-          return;
-        }
-        setChangesCollapsed((collapsed) => !collapsed);
-      }}
-      disabled={changesKeyDisabled}
-      title={t("sidebar.changedFiles", { count: changesCount })}
-      pressed={!changesKeyDisabled && !changesCollapsed}
-    >
-      <ChangesIcon size={keyIconSize} />
-    </ToolbarIconButton>
-  );
-
   return (
-    <div
-      ref={setSidebarRoot}
-      className={`session-sidebar${stacked ? " is-files-below" : ""}${stacked && filesCollapsed ? " is-files-collapsed" : ""}${stacked && filesFold.moving ? " is-files-folding" : ""}${toast ? " has-toast" : ""}`}
-      style={{ "--sidebar-files-height": `${filesSizer.width}px` } as CSSProperties}
-      onFocus={(event) => { sidebarFocusRef.current = event.target; }}
-      onBlur={(event) => { if (event.relatedTarget === null && !document.hasFocus()) return; if (!event.currentTarget.contains(event.relatedTarget)) sidebarFocusRef.current = null; }}
-    >
+    <div className={`session-sidebar${toast ? " has-toast" : ""}`}>
       {customPathOpen && (
         <DirectoryPicker
           initialPath={customPathValue}
@@ -3184,48 +2644,42 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
       )}
       {/* One toolbar row, in the cells of the chat's top bar beside it (its
           line continues that bar's): Sessions | Files, then New and the
-          search of the tab in view, then Sort by date, always there. Only the two tabs are the tablist. With the files
-          below the sessions there is nothing to choose: the brand stands
-          there (the panel's anchor, the versions on a click), and the
-          search is the sessions'. */}
+          search of the tab in view. Only the two tabs are the tablist. */}
       <div ref={headerRef} className="sidebar-header">
-        {stacked && <PiWebTitle onWidthChange={fitHeader} />}
-        {!stacked && (
-          <div className="sidebar-tabs-list" role="tablist" aria-label={t("sidebar.tabsLabel")}>
-            <button
-              ref={sessionsTabRef}
-              type="button"
-              role="tab"
-              id="session-sidebar-tab-sessions"
-              aria-selected={sidebarTab === "sessions"}
-              aria-controls="session-sidebar-panel-sessions"
-              tabIndex={sidebarTab === "sessions" ? 0 : -1}
-              className={`sidebar-tab${sidebarTab === "sessions" ? " is-selected" : ""}`}
-              onClick={() => switchTab("sessions")}
-              onKeyDown={handleTabKeyDown}
-            >
-              <MessageIcon size={13} className="sidebar-tab-icon" />
-              <span className="sidebar-tab-label">{t("sidebar.tabSessions")}</span>
-            </button>
-            <button
-              ref={filesTabRef}
-              type="button"
-              role="tab"
-              id="session-sidebar-tab-files"
-              aria-selected={sidebarTab === "files"}
-              aria-controls="session-sidebar-panel-files"
-              tabIndex={sidebarTab === "files" ? 0 : -1}
-              title={changedFilesTitle}
-              className={`sidebar-tab${sidebarTab === "files" ? " is-selected" : ""}`}
-              onClick={() => switchTab("files")}
-              onKeyDown={handleTabKeyDown}
-            >
-              <FolderIcon size={13} className="sidebar-tab-icon" />
-              <span className="sidebar-tab-label">{t("sidebar.tabFiles")}</span>
-              {explorerCwd && changesCount > 0 && <span className="sidebar-tab-count" aria-hidden="true">{changesCount}</span>}
-            </button>
-          </div>
-        )}
+        <div className="sidebar-tabs-list" role="tablist" aria-label={t("sidebar.tabsLabel")}>
+          <button
+            ref={sessionsTabRef}
+            type="button"
+            role="tab"
+            id="session-sidebar-tab-sessions"
+            aria-selected={sidebarTab === "sessions"}
+            aria-controls="session-sidebar-panel-sessions"
+            tabIndex={sidebarTab === "sessions" ? 0 : -1}
+            className={`sidebar-tab${sidebarTab === "sessions" ? " is-selected" : ""}`}
+            onClick={() => switchTab("sessions")}
+            onKeyDown={handleTabKeyDown}
+          >
+            <MessageIcon size={13} className="sidebar-tab-icon" />
+            <span className="sidebar-tab-label">{t("sidebar.tabSessions")}</span>
+          </button>
+          <button
+            ref={filesTabRef}
+            type="button"
+            role="tab"
+            id="session-sidebar-tab-files"
+            aria-selected={sidebarTab === "files"}
+            aria-controls="session-sidebar-panel-files"
+            tabIndex={sidebarTab === "files" ? 0 : -1}
+            title={explorerCwd && changesCount > 0 ? t("sidebar.changedFiles", { count: changesCount }) : undefined}
+            className={`sidebar-tab${sidebarTab === "files" ? " is-selected" : ""}`}
+            onClick={() => switchTab("files")}
+            onKeyDown={handleTabKeyDown}
+          >
+            <FolderIcon size={13} className="sidebar-tab-icon" />
+            <span className="sidebar-tab-label">{t("sidebar.tabFiles")}</span>
+            {explorerCwd && changesCount > 0 && <span className="sidebar-tab-count" aria-hidden="true">{changesCount}</span>}
+          </button>
+        </div>
         <span className="sidebar-header-spacer" />
         <button
           type="button"
@@ -3237,8 +2691,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           <PlusIcon size={12} />
           <span className="sidebar-new-label">{t("sidebar.new")}</span>
         </button>
-        <button
-          ref={searchButtonRef}
+                <button
           type="button"
           onClick={() => {
             // The search of the tab in view: the files tab's searches its
@@ -3247,7 +2700,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
               setFileSearchOpen((open) => !open);
               return;
             }
-            if (!sessionsShown) {
+            if (sidebarTab !== "sessions") {
               switchTab("sessions");
               setSessionSearchOpen(true);
               return;
@@ -3261,29 +2714,28 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           className={`sidebar-search-toggle${(searchesFiles ? fileSearchOpen : sessionSearchOpen) ? " is-active" : ""}`}
         >
           <SearchIcon size={16} />
-        </button>
-        <button
-          type="button"
-          className={`sidebar-search-toggle sidebar-list-mode-toggle${listModePressed ? " is-active" : ""}`}
-          aria-pressed={listModePressed}
-          aria-label={t("sidebar.listRecent")}
-          title={t("sidebar.listRecent")}
-          onClick={handleToggleListMode}
+                </button>
+        {/* aiti fork: 手动刷新（会话页）——绿闪确认走上游 ToolbarIconButton 的 done 模式 */}
+        <ToolbarIconButton
+          onClick={() => { void loadSessions(false, true); }}
+          title={t("sidebar.refreshTitle")}
+          done={manualRefreshDone}
         >
-          <ClockIcon size={15} />
-        </button>
-      </div>
+          <RefreshIcon size={12} />
+        </ToolbarIconButton>      </div>
 
-      {/* Sessions: every project's sessions, or the archive. A tab's panel,
-          or the top section, always shown, filling what the files leave. */}
+      {/* aiti fork: extension content slot under the sidebar toolbar (session-manager's
+          SidebarContentDock etc. render here; nothing without a registered provider). */}
+      <ExtSlot name="sidebar" />
+
+      {/* Sessions tab: every project's sessions, or the archive */}
       <div
         ref={sessionsPanelRef}
         id="session-sidebar-panel-sessions"
-        role={stacked ? "region" : "tabpanel"}
-        aria-label={stacked ? t("sidebar.tabSessions") : undefined}
-        aria-labelledby={stacked ? undefined : "session-sidebar-tab-sessions"}
-        hidden={!stacked && sidebarTab !== "sessions"}
-        className="sidebar-panel sidebar-sessions-panel"
+        role="tabpanel"
+        aria-labelledby="session-sidebar-tab-sessions"
+        hidden={sidebarTab !== "sessions"}
+        className="sidebar-panel"
         onScrollCapture={rememberScroll}
       >
         {sessionSearchOpen && (
@@ -3317,223 +2769,172 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
           archivedSessionIds={archiveIndex.ids}
           projectNames={projectNames}
         >
-          {/* The tree and the archive view share one cell: the archive
-              slides in over the tree and away from it again. */}
-          <div className="sidebar-sessions-views">
-            {/* Kept mounted under the archive view, so going back finds it as
-                it was: inert while the archive slides in, then hidden. */}
-            <div className="sidebar-sessions-view" hidden={archiveMotion.mainHidden} inert={archiveMotion.mainInert}>
-              <SessionTree
-                {...treeProps}
-                rows={model.rows}
-                emptyLabel={t("sidebar.noSessions")}
-                reveal={treeReveal}
-                onRevealHandled={handleRevealHandled}
-              />
-            </div>
-            {/* Mounted while open and on its way out, inert then, so nothing
-                in it is clicked twice; the tree is back under it at once. */}
-            {archiveMotion.archiveMounted && (
-              <div
-                className={`sidebar-sessions-view sidebar-archive-view${archiveMotion.archiveClass ? ` ${archiveMotion.archiveClass}` : ""}`}
-                inert={archiveMotion.archiveInert}
-                onAnimationEnd={(event) => { if (event.target === event.currentTarget) endArchiveMotion(); }}
-              >
-                <div className="sidebar-archive-bar">
-                  <button
-                    ref={archiveBackRef}
-                    type="button"
-                    className="sidebar-archive-back"
-                    title={t("sidebar.backToSessions")}
-                    aria-label={`${t("sidebar.backToSessions")}: ${t("sidebar.archivedCount", { count: archivedCount })}`}
-                    onClick={() => setArchiveView(false)}
-                  >
-                    <ChevronIcon size={13} className="sidebar-icon-back" />
-                    <span>{t("sidebar.archived")}</span>
-                    <span className="sidebar-archive-count">· {archivedCount}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`sidebar-archive-menu-button${menu?.kind === "archive" ? " is-active" : ""}`}
-                    title={t("sidebar.archiveActions")}
-                    aria-label={t("sidebar.archiveActions")}
-                    aria-haspopup="menu"
-                    aria-expanded={menu?.kind === "archive"}
-                    disabled={archiveGroups.length === 0}
-                    onClick={(event) => openArchiveMenu(event.currentTarget)}
-                  >
-                    <MoreIcon size={13} />
-                  </button>
-                </div>
-                <SessionTree
-                  {...treeProps}
-                  rows={archiveRows}
-                  emptyLabel={t("sidebar.noArchived")}
-                  reveal={archiveReveal}
-                  onRevealHandled={handleArchiveRevealHandled}
-                />
-              </div>
-            )}
+          {/* Kept mounted under the archive view, so going back finds it as it was. */}
+          <div className="sidebar-sessions-view" hidden={archiveView}>
+            <SessionTree
+              {...treeProps}
+              rows={model.rows}
+              emptyLabel={t("sidebar.noSessions")}
+              reveal={treeReveal}
+              onRevealHandled={handleRevealHandled}
+            />
           </div>
+          {archiveView && (
+            <div className="sidebar-sessions-view">
+              <div className="sidebar-archive-bar">
+                <button
+                  ref={archiveBackRef}
+                  type="button"
+                  className="sidebar-archive-back"
+                  title={t("sidebar.backToSessions")}
+                  aria-label={`${t("sidebar.backToSessions")}: ${t("sidebar.archivedCount", { count: archivedCount })}`}
+                  onClick={() => setArchiveView(false)}
+                >
+                  <ChevronIcon size={13} className="sidebar-icon-back" />
+                  <span>{t("sidebar.archived")}</span>
+                  <span className="sidebar-archive-count">· {archivedCount}</span>
+                </button>
+              </div>
+              <SessionTree {...treeProps} rows={archiveRows} emptyLabel={t("sidebar.noArchived")} />
+            </div>
+          )}
         </SessionSearch>
       </div>
 
-      {/* Below the sessions, the separator: drag, arrows, Home/End, Enter
-          or a double-click to reset (useResizablePanel). Only while the
-          files section is open and still: a drag never meets the fold's
-          height transition. */}
-      {stacked && filesFold.open && (
-        <div
-          {...filesSizer.separatorProps}
-          aria-controls="session-sidebar-panel-files"
-          className={`panel-resize-handle sidebar-files-resize-handle${filesSizer.isResizing ? " is-resizing" : ""}`}
-          data-resize-handle="sidebar-files"
-          title={`${t("sidebar.resizeFiles")}: ${t("sidebar.resizeFilesHint")}`}
-        />
-      )}
-
-      {/* Files: the project and worktree in use, and its files. A tab's
-          panel, or the section below the sessions, under a header row of its
-          own that folds it (only that row then shows, at the bottom). */}
+      {/* Files tab: the project and worktree in use, and its files */}
       <div
         ref={filesPanelRef}
         id="session-sidebar-panel-files"
-        role={stacked ? "region" : "tabpanel"}
-        aria-label={stacked ? t("sidebar.tabFiles") : undefined}
-        aria-labelledby={stacked ? undefined : "session-sidebar-tab-files"}
-        hidden={!stacked && sidebarTab !== "files"}
-        className="sidebar-panel sidebar-files-panel"
+        role="tabpanel"
+        aria-labelledby="session-sidebar-tab-files"
+        hidden={sidebarTab !== "files"}
+        className="sidebar-panel"
         onScrollCapture={rememberScroll}
-        onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "height") endFilesFold(); }}
       >
-        {/* Below the sessions, one row: the section's toggle (its label,
-            then the count, give way first), then the files' keys at its
-            right end, in the files tab's order with the search last. They
-            stay in this row while the section is folded. */}
-        {stacked && (
-          <div className="sidebar-files-section">
-            <button
-              type="button"
-              className="sidebar-files-section-toggle"
-              aria-expanded={!filesCollapsed}
-              aria-controls="session-sidebar-files-body"
-              title={changedFilesTitle}
-              onClick={() => setFilesSectionCollapsed(!filesCollapsed)}
-            >
-              <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${filesCollapsed ? "" : " is-open"}`} />
-              <span className="sidebar-files-section-label">{t("sidebar.tabFiles")}</span>
-              {/* As the pinned section's count; the changes key says it to a screen reader. */}
-              {changedFilesTitle && <span className="sidebar-files-section-count" aria-hidden="true">· {changesCount}</span>}
-            </button>
-            <div className="sidebar-files-keys" role="group" aria-label={t("sidebar.fileActions")}>
-              {terminalButton}
-              {fileManagerButton}
-              {uploadButton}
-              {refreshButton}
-              {ignoredFilesButton()}
-              {changesButton}
+        {/* One head: the folder in use, then what is done with it. The
+            buttons are the head's, not the picker's: its group names only
+            the project and worktree. */}
+        <div className="sidebar-files-head">
+          {/* The project and worktree in use: the same picker as the bar above a
+              fresh composer, as two boxes. Its worktree box shows only at the
+              top of a git checkout (repo subdirs keep their own project
+              identity, so switching from them would jump projects); a disabled
+              box says why elsewhere. The list comes from the loaded project
+              (not just its forCwd), so switching between worktrees of one
+              project keeps the box instead of flickering while it refetches. */}
+          <ProjectWorktreePicker
+            handleRef={filesPickerRef}
+            layout="stacked"
+            context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
+            mobile={isMobile}
+            label={t("sidebar.projectAndWorktree")}
+            placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
+            homeDir={homeDir}
+            projectActivity={projectActivity}
+            worktreeHint={inactiveWorktreeSelector}
+            newWorktreeTitle={t("sidebar.createWorktreeTitle")}
+            onPick={handleFilesPick}
+            onUseDefaultDirectory={() => { void handleDefaultCwd(); }}
+            onOpenFolder={handleCustomPathClick}
+            onRefreshWorktrees={refreshWorktrees}
+            onCreateWorktree={createWorktree}
+            onRemoveWorktree={handleRemoveWorktree}
+            projectMenuFooter={projectMenuFooter}
+          />
+          {/* Always the same buttons in the same places: the changes view
+              stays (disabled) while there is nothing changed, so nothing
+              moves as an agent edits files and commits. The folder's
+              actions first, the tree's two views last (what it lists, then
+              its changes); its search is the header's search button. */}
+          {explorerCwd && (
+            <div className="sidebar-files-actions" role="group" aria-label={t("sidebar.fileActions")}>
+              {onOpenTerminal && (
+                <ToolbarIconButton
+                  onClick={() => onOpenTerminal(explorerCwd)}
+                  title={t("terminal.open")}
+                >
+                  <TerminalIcon size={14} />
+                </ToolbarIconButton>
+              )}
+              <ToolbarIconButton
+                onClick={() => { void openInFileManager(); }}
+                disabled={fileManagerUnavailable}
+                title={fileManagerUnavailable
+                  ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
+                  : fileManagerLabel}
+              >
+                <FolderIcon size={14} />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                onClick={() => fileExplorerRef.current?.openUploadPicker()}
+                disabled={explorerUploadBusy}
+                title={t("sidebar.uploadFilesTitle")}
+              >
+                <UploadIcon size={14} />
+              </ToolbarIconButton>
               <ToolbarIconButton
                 onClick={() => {
-                  // Folded, the section opens first, with the field open and focused.
-                  if (filesCollapsed) {
-                    setFileSearchOpen(true);
-                    revealFiles("file-search");
-                    return;
-                  }
-                  setFileSearchOpen((open) => !open);
+                  if (onExplorerRefresh) onExplorerRefresh();
+                  else setExplorerKey((k) => k + 1);
+                  setExplorerRefreshDone(true);
+                  if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
+                  explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
                 }}
-                disabled={!explorerCwd}
-                title={t("sidebar.searchFiles")}
-                expanded={fileSearchOpen}
-                controls="file-search-input"
+                title={t("sidebar.refreshExplorer")}
+                done={explorerRefreshDone}
               >
-                <SearchIcon size={13} />
+                {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                onClick={() => {
+                  const next = !showIgnoredFiles;
+                  setShowIgnoredFiles(next);
+                  saveShowIgnoredFiles(next);
+                }}
+                title={t("sidebar.showIgnoredFiles")}
+                pressed={showIgnoredFiles}
+                className="sidebar-files-views-start"
+              >
+                <EyeIcon size={14} />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                onClick={() => setChangesCollapsed((v) => !v)}
+                disabled={changesCount === 0}
+                title={t("sidebar.changedFiles", { count: changesCount })}
+                pressed={changesCount > 0 && !changesCollapsed}
+              >
+                <ChangesIcon size={14} />
               </ToolbarIconButton>
             </div>
+          )}
+        </div>
+
+        {explorerCwd && fileManagerErrorMessage && (
+          <div role="alert" className="sidebar-files-error">
+            <span className="sidebar-files-error-text">{fileManagerErrorMessage}</span>
+            <DismissButton onClick={() => setFileManagerError(null)} title={t("files.dismissError")} />
           </div>
         )}
-        {/* Everything under that header row: hidden while the section is
-            folded, never unmounted. Shown from the start of an unfold, and
-            until the end of a fold, inert then. */}
-        <div id="session-sidebar-files-body" className="sidebar-files-body" hidden={stacked && filesFold.bodyHidden} inert={stacked && filesFold.bodyInert}>
-          {/* One head: the folder in use, then (in the files tab) what is
-              done with it; below the sessions the keys are the header row's.
-              The buttons are the head's, not the picker's: its group names
-              only the project and worktree. */}
-          <div className="sidebar-files-head">
-            {/* The project and worktree in use: the same picker as the bar above a
-                fresh composer, as two boxes, side by side below the sessions,
-                one under the other in the files tab (the same instance: a
-                layout switch never remounts it). Its worktree box shows only at the
-                top of a git checkout (repo subdirs keep their own project
-                identity, so switching from them would jump projects); a disabled
-                box says why in a subdirectory, and a folder outside git has
-                none. The list comes from the loaded project
-                (not just its forCwd), so switching between worktrees of one
-                project keeps the box instead of flickering while it refetches. */}
-            <ProjectWorktreePicker
-              handleRef={filesPickerRef}
-              layout={stacked ? "row" : "stacked"}
-              context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
-              mobile={isMobile}
-              label={t("sidebar.projectAndWorktree")}
-              placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
-              homeDir={homeDir}
-              projectActivity={projectActivity}
-              worktreeHint={inactiveWorktreeSelector}
-              newWorktreeTitle={t("sidebar.createWorktreeTitle")}
-              onPick={handleFilesPick}
-              onUseDefaultDirectory={() => { void handleDefaultCwd(); }}
-              onOpenFolder={handleCustomPathClick}
-              onRefreshWorktrees={refreshWorktrees}
-              onCreateWorktree={createWorktree}
-              onRemoveWorktree={handleRemoveWorktree}
+        {/* Mounted whenever there is a cwd, also while the tab is hidden, so the
+            expanded tree, a search and an upload in progress survive a switch. */}
+        <div ref={explorerScrollRef} className="sidebar-files-scroll scrollbar-subtle">
+          {explorerCwd && (
+            <FileExplorer
+              ref={fileExplorerRef}
+              cwd={explorerCwd}
+              onOpenFile={onOpenFile ?? (() => {})}
+              onOpenFolder={onOpenFolder}
+              refreshKey={explorerKey}
+              onAtMention={onAtMention}
+              onAtMentions={onAtMentions}
+              onUploadBusyChange={setExplorerUploadBusy}
+              changesCollapsed={changesCollapsed}
+              onChangesCountChange={setChangesCount}
+              fileSearchOpen={fileSearchOpen}
+              onFileSearchOpenChange={setFileSearchOpen}
+              showHidden={showIgnoredFiles}
             />
-            {/* The files tab's keys, under the picker. Always the same
-                buttons in the same places: the changes view stays (disabled)
-                while there is nothing changed, so nothing moves as an agent
-                edits files and commits. The folder's actions first, the
-                tree's two views last (what it lists, then its changes); its
-                search is the toolbar row's search button. */}
-            {!stacked && explorerCwd && (
-              <div className="sidebar-files-actions" role="group" aria-label={t("sidebar.fileActions")}>
-                {onOpenTerminal && terminalButton}
-                {fileManagerButton}
-                {uploadButton}
-                {refreshButton}
-                {ignoredFilesButton("sidebar-files-views-start")}
-                {changesButton}
-              </div>
-            )}
-          </div>
-
-          {explorerCwd && fileManagerErrorMessage && (
-            <div role="alert" className="sidebar-files-error">
-              <span className="sidebar-files-error-text">{fileManagerErrorMessage}</span>
-              <DismissButton onClick={() => setFileManagerError(null)} title={t("files.dismissError")} />
-            </div>
           )}
-          {/* Mounted whenever there is a cwd, also while the tab or the folded
-              section hides it, so the expanded tree, a search and an upload in
-              progress survive a switch. */}
-          <div ref={explorerScrollRef} className="sidebar-files-scroll scrollbar-subtle">
-            {explorerCwd && (
-              <FileExplorer
-                ref={fileExplorerRef}
-                cwd={explorerCwd}
-                onOpenFile={onOpenFile ?? (() => {})}
-                refreshKey={explorerKey}
-                onAtMention={onAtMention}
-                onAtMentions={onAtMentions}
-                onUploadBusyChange={setExplorerUploadBusy}
-                changesCollapsed={changesCollapsed}
-                onChangesCountChange={setChangesCount}
-                fileSearchOpen={fileSearchOpen}
-                onFileSearchOpenChange={setFileSearchOpen}
-                showHidden={showIgnoredFiles}
-              />
-            )}
-          </div>
         </div>
       </div>
 
@@ -3545,13 +2946,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onSelectSid
         title={menuTitle}
         items={menuItems}
         cancelLabel={t("sidebar.cancel")}
-        focusCancel={menuBody !== null}
         onClose={closeMenu}
         returnFocusTo={menu?.opener ?? null}
         width={menuWidth}
-      >
-        {menuBody}
-      </SidebarMenu>
+      />
       <SidebarToast toast={toast} onDismiss={() => setToast(null)} dismissLabel={t("sidebar.dismiss")} />
     </div>
   );

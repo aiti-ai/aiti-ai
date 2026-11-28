@@ -4,6 +4,8 @@ import { createJiti } from "jiti";
 import { NextRequest } from "next/server.js";
 
 const originalPassword = process.env.PI_WEB_PASSWORD;
+// A local dev setup may configure API_ALLOW_ORIGINS (e.g. *, so injected pages can connect cross-origin); this file verifies the default cross-origin rejection, so isolate that env var first
+const originalAllowOrigins = process.env.API_ALLOW_ORIGINS;
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
   interopDefault: true,
@@ -12,12 +14,17 @@ const jiti = createJiti(import.meta.url, {
 const { GET, POST, DELETE } = await jiti.import("./route.ts");
 const { recordAuthSuccess } = await import("../../../lib/auth-throttle.ts");
 
-before(() => { process.env.PI_WEB_PASSWORD = "correct horse battery staple"; });
+before(() => {
+  process.env.PI_WEB_PASSWORD = "correct horse battery staple";
+  delete process.env.API_ALLOW_ORIGINS;
+});
 beforeEach(() => { recordAuthSuccess(); });
 after(() => {
   recordAuthSuccess();
   if (originalPassword === undefined) delete process.env.PI_WEB_PASSWORD;
   else process.env.PI_WEB_PASSWORD = originalPassword;
+  if (originalAllowOrigins === undefined) delete process.env.API_ALLOW_ORIGINS;
+  else process.env.API_ALLOW_ORIGINS = originalAllowOrigins;
 });
 
 function request(method, body, headers = {}) {

@@ -1,10 +1,11 @@
+import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import webpush from "web-push";
-import { writePrivateFileAtomicSync } from "./atomic-file";
-import { enLocale } from "./i18n/messages/en";
-import { getLocalePlugin } from "./i18n/registry";
-import { getAgentDir } from "./session-reader";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import { runOutcomeNotifies, truncateRunError, type SessionLastRun } from "./run-outcome.ts";
+import { getLocalePlugin } from "./i18n/registry.ts";
+import { getAgentDir } from "./session-reader.ts";
 
 export interface PushSubscriptionRecord {
   endpoint: string;
@@ -26,13 +27,13 @@ interface WebPushEnvironment {
   loadState: () => PushStateFile | null;
   saveState: (state: PushStateFile) => void;
   generateVapidKeys: () => PushStateFile["vapidKeys"];
+  listSessions: () => Promise<SessionInfo[]>;
 }
 
 export interface WebPushNotifier {
   getVapidPublicKey: () => string;
   addSubscription: (subscription: PushSubscriptionRecord) => void;
-  /** `sessionName` titles the notification; without one it reads "Session complete". */
-  notifySessionComplete: (sessionId: string, sessionName?: string) => Promise<void>;
+  notifySessionComplete: (sessionId: string, outcome?: SessionLastRun) => Promise<void>;
 }
 
 function stateFilePath(): string {
@@ -49,7 +50,7 @@ function stateFilePath(): string {
 export function vapidSubject(): string {
   const configured = process.env.PI_WEB_PUSH_SUBJECT?.trim();
   if (configured) return configured;
-  return "https://github.com/agegr/pi-web";
+  return "https://aiti.pw";
 }
 
 // Ask the push service to deliver immediately. Lower urgencies let idle
@@ -88,6 +89,14 @@ function getDefaultEnvironment(): WebPushEnvironment {
       writePrivateFileAtomicSync(path, JSON.stringify(state));
     },
     generateVapidKeys: () => webpush.generateVAPIDKeys(),
+    async listSessions() {
+      try {
+        return await SessionManager.listAll();
+      } catch {
+        // Session list is best-effort; fall back to the generic title.
+        return [];
+      }
+    },
   };
 }
 
@@ -101,11 +110,50 @@ function pushStatusCode(error: unknown): number | undefined {
  * Locale lookup for push payloads. The browser reports its UI locale when it
  * subscribes; unknown locales fall back to English.
  */
-export function localeText(locale: string, key: "sessionComplete" | "taskFinished"): string {
-  const localized = getLocalePlugin(locale)?.messages[key === "sessionComplete" ? "i18n.sessionComplete" : "i18n.taskFinished"];
-  if (localized) return localized;
-  const message = enLocale.messages[key === "sessionComplete" ? "i18n.sessionComplete" : "i18n.taskFinished"];
-  return message ?? (key === "sessionComplete" ? "Session complete" : "Task finished.");
+const NOTIFICATION_I18N_KEYS = {
+  sessionComplete: "i18n.sessionComplete",
+  taskFinished: "i18n.taskFinished",
+  taskFinishedWithContext: "i18n.taskFinishedWithContext",
+  sessionFailed: "i18n.sessionFailed",
+  taskFailed: "i18n.taskFailed",
+  taskFailedWithContext: "i18n.taskFailedWithContext",
+  taskFailedWithError: "i18n.taskFailedWithError",
+  taskFailedWithContextAndError: "i18n.taskFailedWithContextAndError",
+} as const;
+
+export type NotificationTextKey = keyof typeof NOTIFICATION_I18N_KEYS;
+
+export const NOTIFICATION_FALLBACKS: Record<NotificationTextKey, string> = {
+  sessionComplete: "Session complete",
+  taskFinished: "Task finished.",
+  taskFinishedWithContext: "{project} · Task finished",
+  sessionFailed: "Session failed",
+  taskFailed: "Task failed.",
+  taskFailedWithContext: "{project} · Task failed",
+  taskFailedWithError: "Task failed: {error}",
+  taskFailedWithContextAndError: "{project} · Task failed: {error}",
+};
+
+export function localeText(
+  locale: string,
+  key: NotificationTextKey,
+  params?: { project?: string; error?: string },
+): string {
+  const messageKey = NOTIFICATION_I18N_KEYS[key];
+  const template = getLocalePlugin(locale)?.messages[messageKey]
+    ?? NOTIFICATION_FALLBACKS[key];
+  return params
+    ? template
+      .replace(/\{project\}/g, params.project ?? "")
+      .replace(/\{error\}/g, params.error ?? "")
+    : template;
+}
+
+/** Project name for the session working directory (last path segment), used as the project label in notifications. */
+function projectBasename(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  const base = cwd.split(/[\\/]/).filter(Boolean).pop();
+  return base || null;
 }
 
 export function createWebPushNotifier(environment: WebPushEnvironment): WebPushNotifier {
@@ -130,11 +178,29 @@ export function createWebPushNotifier(environment: WebPushEnvironment): WebPushN
       ];
       saveState();
     },
-    async notifySessionComplete(sessionId, sessionName) {
+    async notifySessionComplete(sessionId, outcome) {
       if (state.subscriptions.length === 0) return;
+      // Terminal-state triage: user-initiated stops (aborted) are never notified; interrupted has no clear
+      // completion moment (nothing to notify about).
+      if (outcome && !runOutcomeNotifies(outcome.status)) return;
+      const session = (await environment.listSessions()).find((s) => s.id === sessionId);
+      const sessionName = session?.name;
+      const projectLabel = projectBasename(session?.cwd);
+      const failed = outcome?.status === "failed";
+      const errorSummary = failed ? truncateRunError(outcome?.error, 120) : "";
       const payloadFor = (locale: string) => ({
-        title: sessionName ?? localeText(locale, "sessionComplete"),
-        body: localeText(locale, "taskFinished"),
+        title: sessionName ?? localeText(locale, failed ? "sessionFailed" : "sessionComplete"),
+        body: failed
+          ? (projectLabel
+              ? errorSummary
+                ? localeText(locale, "taskFailedWithContextAndError", { project: projectLabel, error: errorSummary })
+                : localeText(locale, "taskFailedWithContext", { project: projectLabel })
+              : errorSummary
+                ? localeText(locale, "taskFailedWithError", { error: errorSummary })
+                : localeText(locale, "taskFailed"))
+          : projectLabel
+            ? localeText(locale, "taskFinishedWithContext", { project: projectLabel })
+            : localeText(locale, "taskFinished"),
         url: `/?session=${encodeURIComponent(sessionId)}`,
         tag: `pi-session-complete:${sessionId}`,
       });
@@ -179,7 +245,7 @@ export function addSubscription(subscription: PushSubscriptionRecord): Promise<v
   return getNotifier().then((notifier) => notifier.addSubscription(subscription));
 }
 
-export async function notifySessionComplete(sessionId: string, sessionName?: string): Promise<void> {
+export async function notifySessionComplete(sessionId: string, outcome?: SessionLastRun): Promise<void> {
   const notifier = await getNotifier();
-  await notifier.notifySessionComplete(sessionId, sessionName);
+  await notifier.notifySessionComplete(sessionId, outcome);
 }

@@ -6,6 +6,8 @@ import {
   getAllowedFileRoots,
   isExistingFilePathAllowed,
   isFilePathAllowed,
+  isWindowsAbsolutePath,
+  normalizeSlashes,
 } from "@/lib/file-access";
 import { checkLinkedDirectoryApproval, withOutsideLinkTargets } from "@/lib/linked-directory";
 import {
@@ -22,6 +24,7 @@ import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { getFileTreeHiddenReasons } from "@/lib/file-tree-visibility";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getParentDirectory } from "@/lib/directory-browser";
 import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
@@ -30,19 +33,35 @@ import {
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
-import { hasParentDirectorySegment } from "@/lib/path-security";
+import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
-import { registerFileWatch } from "@/lib/file-watch-registry";
+import {
+  REVISION_DOWNLOAD_MAX_BYTES,
+  REVISION_IMAGE_MAX_BYTES,
+  REVISION_TEXT_READ_MAX_BYTES,
+  isRevisionRef,
+  resolveRevisionGitDir,
+  revisionBlobContent,
+  revisionBlobSize,
+  revisionRelPath,
+  revisionTextChunk,
+} from "@/lib/file-revision";
+import { registerFileWatch, startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
+import { isIgnored } from "@/lib/file-ignore";
 import { FILE_WATCH_HEARTBEAT_MS } from "@/lib/file-version";
 import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
 import { contentDisposition } from "@/lib/content-disposition";
 import { frameAncestorsDirective } from "@/lib/frame-ancestors";
 import { errorMessage } from "@/lib/errors";
 
+// 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
+// 不再有硬编码忽略集合；无 ignore 文件时全部显示（所见即磁盘）。
+
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
 // One limit for a request's files together; a single file may use all of it.
+const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 // Multipart boundaries and headers are not file bytes, but must be bounded too.
 const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
@@ -87,13 +106,57 @@ function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
 }
 
-async function getUploadDirectory(segments: string[]): Promise<
+/** Normalize a path from the POST body: expand a leading ~ to home, and assert it is absolute. */
+function resolveBodyPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  const p = raw === "~" || raw.startsWith("~/")
+    ? (homeDir ? normalizeSlashes(path.join(homeDir, raw === "~" ? "" : raw.slice(2))) : raw)
+    : raw;
+  if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) return null;
+  return p;
+}
+
+/** Parse and validate the upload directory from the POST body (JSON field or FormData field; includes symlink-escape protection). */
+async function resolveUploadDirectory(raw: unknown, ensure = false): Promise<
   { directory: string } | { response: NextResponse }
 > {
-  const directory = filePathFromApiSegments(segments);
+  const directory = resolveBodyPath(raw);
+  if (!directory) return { response: NextResponse.json({ error: "path must be absolute" }, { status: 400 }) };
+
+  return validateUploadDirectory(directory, ensure);
+}
+
+/**
+ * Best-effort: keep an auto-created attachments directory invisible to git.
+ * An untracked `.gitignore` containing `*` also matches itself, so the whole
+ * directory (files included) stays out of `git status` without touching the
+ * repo's .gitignore or info/exclude. Cosmetic only — never blocks the upload.
+ */
+function hideFromGit(directory: string): void {
+  try {
+    fs.writeFileSync(path.join(directory, ".gitignore"), "*\n", { flag: "wx" });
+  } catch {
+    // Already there, or a read-only location — either is fine.
+  }
+}
+
+async function validateUploadDirectory(directory: string, ensure = false): Promise<
+  { directory: string } | { response: NextResponse }
+> {
   const allowedRoots = await getAllowedFileRoots();
   if (!isFilePathAllowed(directory, allowedRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  // ensure=1 (📎 attachments): create the directory on demand. Only after the
+  // lexical root check above — nothing touches the disk outside allowed roots.
+  if (ensure) {
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+    } catch (error) {
+      return { response: NextResponse.json({ error: `Cannot create directory: ${error instanceof Error ? error.message : String(error)}` }, { status: 500 }) };
+    }
   }
 
   let stat: fs.Stats;
@@ -120,6 +183,10 @@ async function getUploadDirectory(segments: string[]): Promise<
   if (!isFilePathAllowed(realDirectory, realRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
   }
+
+  // Only after the symlink-safe realpath check: the .gitignore must never land
+  // outside the allowed roots via a symlinked directory.
+  if (ensure) hideFromGit(realDirectory);
 
   return { directory: realDirectory };
 }
@@ -164,16 +231,146 @@ export async function POST(
   }
 
   try {
-    const { path: segments } = await params;
-    const type = request.nextUrl.searchParams.get("type") ?? "upload";
-    if (type === "allow-link") return allowLinkedDirectory(request, segments);
+    let { path: segments } = await params;
+    // allow-link（上游符号链目录授权）：type=allow-link + 段路径 → 授权后才能浏览根外目标
+    if (request.nextUrl.searchParams.get("type") === "allow-link") {
+      return allowLinkedDirectory(request, segments);
+    }
 
-    const uploadDirectory = await getUploadDirectory(segments);
-    if ("response" in uploadDirectory) return uploadDirectory.response;
-    const { directory } = uploadDirectory;
+    // Upstream wire form (lib/file-upload-client uploadFiles / upload-check): the
+    // directory rides in the URL path with a `type` query param selecting the
+    // channel (/api/files/<dir>?type=upload-check|upload&conflict=...). Normalize
+    // it to the local path form below (directory then comes from urlDir) so both
+    // clients work against one handler.
+    let urlDir: string | undefined;
+    {
+      const uploadType = request.nextUrl.searchParams.get("type");
+      if ((uploadType === "upload-check" || uploadType === "upload") && segments.length > 0) {
+        // Must rebuild through filePathFromApiSegments: Next.js catch-all segments
+        // arrive without the leading slash, so a plain join() turns Unix absolute
+        // paths relative ("home/x" → "path must be absolute" 400). Windows drive
+        // paths ("D:/x") survive by accident — that is why this only broke on
+        // Unix instances (48/mac).
+        urlDir = filePathFromApiSegments(segments);
+        segments = [uploadType, ...segments];
+      }
+    }
 
-    if (type === "upload-check") {
-      const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
+    // POST /api/files/ticket → two modes:
+    //   { ticket } → redeem: return the ticket payload (for the /viewer handshake; not consumed, reusable within TTL)
+    //   { path, type?, kind?, cwd? } → issue a short-lived ticket (5-minute TTL, random and irreversible).
+    //     type defaults to "download"; read/watch/preview/list/meta also work — for consumers that can only use
+    //     GET URLs such as <img>/<video> src or EventSource: exchange for a ticket first, then GET
+    //     /api/files/_t/<ticket>; the path never enters a URL.
+    //     (An older design used steady-state _e tokens, but a permanently valid token leaks forever once it
+    //     lands in an access log, hence the switch to short tickets.)
+    if (segments[0] === "ticket") {
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown; wantWatch?: unknown; ref?: unknown; gitDir?: unknown } | null;
+      if (typeof body?.ticket === "string" && body.ticket) {
+        const t = redeemFileTicket(body.ticket);
+        if (!t) {
+          return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+        }
+        return NextResponse.json({ ok: true, path: t.path, type: t.type, kind: t.kind ?? null, cwd: t.cwd ?? null });
+      }
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      const allowedRoots = await getAllowedFileRoots();
+      if (!isFilePathAllowed(p, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      // type validation: only file request types allowed; watch/list may target something that doesn't exist yet (watch listens for creation, list the parent directory)
+      const rawType = typeof body?.type === "string" ? body.type : "download";
+      const type = parseFileRequestType(rawType);
+      if (!type) {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
+      }
+      if (type !== "watch" && type !== "list") {
+        // Revision tickets (OpenFileOptions.atRevision): the target is often a deleted file —
+        // validate the revision tuple (hex sha + allowlisted gitDir + contained relpath) instead
+        // of requiring the file on disk; the GET handler re-validates before serving the blob.
+        const revRef = typeof body?.ref === "string" ? body.ref : "";
+        const revGitDir = typeof body?.gitDir === "string" ? body.gitDir : "";
+        if (revRef || revGitDir) {
+          if (!revRef || !revGitDir || !isRevisionRef(revRef)) {
+            return NextResponse.json({ error: "Invalid revision ticket request" }, { status: 400 });
+          }
+          const gitDirReal = resolveRevisionGitDir(revGitDir, allowedRoots);
+          if (!gitDirReal || !revisionRelPath(p, gitDirReal)) {
+            return NextResponse.json({ error: "Access denied" }, { status: 403 });
+          }
+          const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
+          const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
+          const revTicket = issueFileTicket(p, type, { kind, cwd, ref: revRef, gitDir: revGitDir });
+          return NextResponse.json({ ...revTicket });
+        }
+        // read/download/meta/preview require the target to be a file (read's image/audio/document streaming and text content all need a file)
+        let st: fs.Stats;
+        try { st = fs.statSync(p); } catch {
+          return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
+        if (!st.isFile()) {
+          return NextResponse.json({ error: "Not a file" }, { status: 400 });
+        }
+        if (!isExistingFilePathAllowed(p, allowedRoots)) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      }
+      const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
+      const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
+      const ticket = issueFileTicket(p, type, { kind, cwd });
+      // Bus watch registration (lib/file-watch-registry): type=watch + wantWatch → the ticket response
+      // inlines a watchId (the server starts fs.watch right away; changes are dispatched as bus "file-watch"
+      // frames; stopped explicitly via /api/files/watch-stop or automatically after 30min idle). Bus
+      // subscribers only; fallback clients still use the original watch SSE (buildTicketUrl → _t/<ticket>).
+      let watchId: string | undefined;
+      if (type === "watch" && body?.wantWatch === true) {
+        watchId = `fw-${ticket.ticket}`;
+        startFileWatch(watchId, p);
+      }
+      return NextResponse.json({ ...ticket, ...(watchId ? { watchId } : {}) });
+    }
+
+    // POST /api/files/watch-stop { watchId } — stop a bus watch (explicit unsubscribe; 30min-idle fallback)
+    if (segments[0] === "watch-stop") {
+      const body = await request.json().catch(() => null) as { watchId?: unknown } | null;
+      if (typeof body?.watchId === "string" && body.watchId) stopFileWatch(body.watchId);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Paths always travel in the body, never in the URL. The POST channels come in four kinds:
+    //   /get         → the main file-request pipeline (list/read/meta/preview/download); body { path, type?, sessionId?, probe? }
+    //   /token       → issue a steady-state path token (for consumers limited to GET URLs like <img>/<video>/EventSource); body { path } → { token }
+    //   /upload-check→ upload conflict check; body { directory, fileNames }
+    //   /upload      → upload; multipart FormData(files..., directory); the conflict query param stays (not a path)
+    if (segments[0] === "get") {
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown; probe?: unknown; ref?: unknown; gitDir?: unknown } | null;
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      const rawType = typeof body?.type === "string" ? body.type : "read";
+      const type = parseFileRequestType(rawType);
+      // Revision tuple rides the body (same channel as path): both values must be strings
+      // or the branch is skipped (regular working-tree read).
+      const revRef = typeof body?.ref === "string" && body.ref ? body.ref : null;
+      const revGitDir = typeof body?.gitDir === "string" && body.gitDir ? body.gitDir : null;
+      const revision = revRef && revGitDir ? { ref: revRef, gitDir: revGitDir } : null;
+      // watch is SSE/EventSource and must be GET → exchange via /token and use the _e channel; POST not accepted
+      if (!type || type === "watch") {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
+      }
+      const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
+      // probe=true: existence probing — a miss returns 200 { exists:false } instead of 404,
+      // for consumers that "probe whether a path exists" such as message file recognition (removes
+      // the browser's console noise over 4xx). Permission checks still apply (probing must not
+      // enable unauthorized enumeration).
+      const probe = body?.probe === true;
+      return handleFileRequest(request, p, type, sessionId, probe, revision);
+    }
+
+    if (segments[0] === "upload-check") {
+      const body = await request.json().catch(() => null) as { directory?: unknown; fileNames?: unknown } | null;
+      const vd = await resolveUploadDirectory(body?.directory ?? urlDir);
+      if ("response" in vd) return vd.response;
       const fileNames = parseUploadFileNames(body?.fileNames);
       if (!fileNames) {
         return NextResponse.json({ error: "fileNames must be an array of strings" }, { status: 400 });
@@ -182,89 +379,99 @@ export async function POST(
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
-      return NextResponse.json(inspectUploadTargets(directory, fileNames));
+      return NextResponse.json(inspectUploadTargets(vd.directory, fileNames));
     }
 
-    if (type !== "upload") {
-      return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
-    }
-
-    const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
-    if (!strategy) {
-      return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
-    }
-
-    let formData: FormData;
-    try {
-      formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
-    } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) {
+    if (segments[0] === "upload") {
+      const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
+      // ensure=1: create the target directory on demand (📎 attachments land in
+      // <cwd>/.pi-attachments, which does not exist until first use).
+      const ensureDir = request.nextUrl.searchParams.get("ensure") === "1";
+      if (!strategy) {
+        return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
+      }
+      let formData: FormData;
+      try {
+        formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+        }
+        throw error;
+      }
+      const vd = await resolveUploadDirectory(formData.get("directory") ?? urlDir, ensureDir);
+      if ("response" in vd) return vd.response;
+      const { directory } = vd;
+      const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
+      if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
+        return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+      }
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
         return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
       }
-      throw error;
-    }
-    const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
-    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
-      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
-    }
-    const fileNames = files.map((file) => file.name);
-    const validationError = validateUploadFileNames(fileNames);
-    if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 });
-    }
-
-    const inspection = inspectUploadTargets(directory, fileNames);
-    if (strategy === "error" && inspection.conflicts.length > 0) {
-      return NextResponse.json({
-        error: "One or more files already exist",
-        conflicts: inspection.conflicts,
-        nonReplaceable: inspection.nonReplaceable,
-      }, { status: 409 });
-    }
-
-    const conflictSet = new Set(inspection.conflicts);
-    const nonReplaceableSet = new Set(inspection.nonReplaceable);
-    const uploaded: string[] = [];
-    const skipped: string[] = [];
-    const errors: Array<{ name: string; error: string }> = [];
-
-    for (const file of files) {
-      const destination = path.join(directory, file.name);
-      if (conflictSet.has(file.name) && strategy === "skip") {
-        skipped.push(file.name);
-        continue;
-      }
-      if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
-        errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
-        continue;
+      const fileNames = files.map((file) => file.name);
+      const validationError = validateUploadFileNames(fileNames);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
       }
 
-      let bytes: Buffer;
-      try {
-        bytes = Buffer.from(await file.arrayBuffer());
-      } catch (error) {
-        errors.push({ name: file.name, error: errorMessage(error) });
-        continue;
+      const inspection = inspectUploadTargets(directory, fileNames);
+      if (strategy === "error" && inspection.conflicts.length > 0) {
+        return NextResponse.json({
+          error: "One or more files already exist",
+          conflicts: inspection.conflicts,
+          nonReplaceable: inspection.nonReplaceable,
+        }, { status: 409 });
       }
 
-      try {
-        // Async writes: a 100MB file written synchronously would stall every
-        // stream and request this process serves until the disk catches up.
-        if (conflictSet.has(file.name)) {
-          await replaceUploadFile(destination, bytes);
-        } else {
-          await fs.promises.writeFile(destination, bytes, { flag: "wx" });
+      const conflictSet = new Set(inspection.conflicts);
+      const nonReplaceableSet = new Set(inspection.nonReplaceable);
+      const uploaded: string[] = [];
+      const skipped: string[] = [];
+      const errors: Array<{ name: string; error: string }> = [];
+
+      for (const file of files) {
+        const destination = path.join(directory, file.name);
+        if (conflictSet.has(file.name) && strategy === "skip") {
+          skipped.push(file.name);
+          continue;
         }
-        uploaded.push(file.name);
-      } catch (error) {
-        errors.push({ name: file.name, error: errorMessage(error) });
+        if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
+          errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
+          continue;
+        }
+
+        let bytes: Buffer;
+        try {
+          bytes = Buffer.from(await file.arrayBuffer());
+        } catch (error) {
+          errors.push({ name: file.name, error: errorMessage(error) });
+          continue;
+        }
+
+        // Upstream fix (#1039): conflict replacement goes through the lib's replaceUploadFile
+        // (temp file + rename), so a failed write no longer deletes the original first.
+        // Upstream 0.17: writes are async — a 100MB synchronous write would stall every
+        // stream and request this process serves until the disk catches up.
+        try {
+          if (conflictSet.has(file.name)) {
+            await replaceUploadFile(destination, bytes);
+          } else {
+            await fs.promises.writeFile(destination, bytes, { flag: "wx" });
+          }
+          uploaded.push(file.name);
+        } catch (error) {
+          errors.push({ name: file.name, error: errorMessage(error) });
+        }
       }
+
+      return NextResponse.json(
+        { uploaded, skipped, errors },
+        { status: errors.length > 0 ? 207 : 200 },
+      );
     }
 
-    return NextResponse.json(
-      { uploaded, skipped, errors },
-      { status: errors.length > 0 ? 207 : 200 },
-    );
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
@@ -314,6 +521,110 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
       fileStream.destroy();
     },
   });
+}
+
+/** Blob response for revision reads/downloads — same header policy as streamFile (incl. the SVG CSP). */
+function revisionBlobResponse(filePath: string, blob: Buffer, contentType: string, asDownload = false): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    "Cache-Control": "no-cache",
+    "Content-Disposition": contentDisposition(asDownload ? "attachment" : "inline", path.basename(filePath), "download"),
+    "X-Content-Type-Options": "nosniff",
+  };
+  // Same document-rendering hardening as streamFile: a repo-controlled SVG opened
+  // directly must not run script in the Pi Web origin (<img> embedding ignores these).
+  if (contentType === "image/svg+xml") {
+    headers["Content-Security-Policy"] =
+      `default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; ${frameAncestorsDirective()}`;
+    headers["Referrer-Policy"] = "no-referrer";
+  }
+  return new Response(new Uint8Array(blob), { headers: { ...headers, "Content-Length": String(blob.length) } });
+}
+
+/**
+ * Revision branch of the file pipeline (query params ref + gitDir): serve a git
+ * blob (cat-file, pure object-store read, no work-tree access) instead of the
+ * working-tree file. read = image bytes or a text-preview-shaped JSON chunk;
+ * download = raw bytes. Other types are rejected — watch/preview/meta have no
+ * meaning for a historical blob (v1 scope, see the file-open
+ * revision plan §2.6).
+ */
+async function handleRevisionRequest(
+  request: NextRequest,
+  filePath: string,
+  type: FileRequestType,
+  allowedRoots: Set<string>,
+  ref: string | null,
+  gitDir: string | null,
+): Promise<Response> {
+  if (!ref || !gitDir) {
+    return NextResponse.json({ error: "Revision read requires both ref and gitDir" }, { status: 400 });
+  }
+  if (type !== "read" && type !== "download") {
+    return NextResponse.json({ error: `Revision access not available for type "${type}"` }, { status: 400 });
+  }
+  if (!isRevisionRef(ref)) {
+    return NextResponse.json({ error: "Invalid revision ref" }, { status: 400 });
+  }
+  // The file path itself must still be lexically inside an allowed root (no stat
+  // possible for deleted files — the allowlist check is the same one the regular
+  // branch applies before its stat gate).
+  if (!isFilePathAllowed(filePath, allowedRoots)) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  const gitDirReal = resolveRevisionGitDir(gitDir, allowedRoots);
+  if (!gitDirReal) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  const relPath = revisionRelPath(filePath, gitDirReal);
+  if (!relPath) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+
+  let size: number;
+  try {
+    size = await revisionBlobSize(gitDirReal, ref, relPath);
+  } catch {
+    return NextResponse.json({ error: "Revision not found" }, { status: 404 });
+  }
+
+  try {
+    if (type === "download") {
+      if (size > REVISION_DOWNLOAD_MAX_BYTES) {
+        return NextResponse.json({ error: "Revision too large for download (>25MB)" }, { status: 413 });
+      }
+      const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+      const mime = getImageMime(filePath) || "application/octet-stream";
+      return revisionBlobResponse(filePath, blob, mime, true);
+    }
+
+    const imageMime = getImageMime(filePath);
+    if (imageMime) {
+      if (size > REVISION_IMAGE_MAX_BYTES) {
+        return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
+      }
+      const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+      return revisionBlobResponse(filePath, blob, imageMime);
+    }
+
+    if (size > REVISION_TEXT_READ_MAX_BYTES) {
+      return NextResponse.json({ error: "Revision too large for text preview (>5MB)" }, { status: 413 });
+    }
+    const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+    // Same offset validation as the regular branch's text chunker.
+    const rawOffset = request.nextUrl.searchParams.get("offset");
+    if (rawOffset !== null && !/^\d+$/.test(rawOffset)) {
+      return NextResponse.json({ error: "Invalid text preview offset" }, { status: 400 });
+    }
+    const offset = Number(rawOffset ?? 0);
+    if (!Number.isSafeInteger(offset) || offset > size) {
+      return NextResponse.json({ error: "Invalid text preview offset" }, { status: 400 });
+    }
+    const chunk = revisionTextChunk(blob, size, offset);
+    return NextResponse.json({ ...chunk, language: getLanguage(filePath), size });
+  } catch {
+    return NextResponse.json({ error: "Revision read failed" }, { status: 500 });
+  }
 }
 
 function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
@@ -451,23 +762,49 @@ export async function GET(
 ) {
   try {
     const { path: segments } = await params;
-    const filePath = filePathFromApiSegments(segments);
-    // Authorization collapses `..` lexically, but the filesystem applies it
-    // after following links, so `link/../x` names a file beside the link's
-    // target, outside the roots. URL parsing already drops real `..` segments;
-    // only an encoded slash inside a segment still carries one here. The
-    // existing-path check refuses them too, but a file referenced by the
-    // session skips that check.
-    if (hasParentDirectorySegment(filePath)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    // Ticket channel: GET /api/files/_t/<ticket> — the path never enters a URL (keeps it out of tunnel/proxy access logs).
+    // Exchange POST /api/files/ticket { path } for a ticket first (5-minute TTL, reusable); see lib/file-ticket.ts.
+    let filePath: string;
+    let rawType: string;
+    let ticketRevision: { ref: string; gitDir: string } | null = null;
+    if (segments[0] === "_t" && segments.length === 2) {
+      const t = redeemFileTicket(segments[1]);
+      if (!t) {
+        return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+      }
+      filePath = t.path;
+      rawType = t.type;
+      // Revision tickets carry the tuple in the payload (same channel as path — never in a URL).
+      if (t.ref && t.gitDir) ticketRevision = { ref: t.ref, gitDir: t.gitDir };
+    } else {
+      // Design contract: file paths never enter URLs. GET keeps only the ticket (_t) opaque channel;
+      // all other reads/writes go through POST /api/files/get (path in the body). Bare path-segment access is rejected outright.
+      return NextResponse.json(
+        { error: "Path in URL is not allowed; use POST /api/files/get or POST /api/files/ticket" },
+        { status: 404 },
+      );
     }
-    const rawType = request.nextUrl.searchParams.get("type") ?? "list";
     const type = parseFileRequestType(rawType);
     if (!type) {
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
-    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    // Revision tickets carry the tuple in the payload (same channel as path — never in a URL).
+    return handleFileRequest(request, filePath, type, request.nextUrl.searchParams.get("sessionId"), false, ticketRevision);
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
 
+/** The main file-request pipeline, shared by GET (ticket _t / steady-state token _e) and POST /api/files/get. */
+async function handleFileRequest(
+  request: NextRequest,
+  filePath: string,
+  type: FileRequestType,
+  sessionId: string | null,
+  probe = false,
+  revision?: { ref: string; gitDir: string } | null,
+): Promise<Response> {
+  try {
     const allowedRoots = await getAllowedFileRoots();
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);
     const allowedBySessionReference =
@@ -477,14 +814,55 @@ export async function GET(
     if (!allowedByRoot && !allowedBySessionReference) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
+    if (allowedByRoot) {
+      // Symlink-escape protection (same containment the upload channel enforces):
+      // `root/link/../beside` is lexically inside the root, but the OS walks the
+      // link before resolving `..`, landing outside it. Authorize the real path
+      // against the real roots — what we authorize must be what we serve.
+      let realPath: string;
+      try {
+        realPath = fs.realpathSync(filePath);
+      } catch {
+        realPath = filePath;
+      }
+      if (realPath !== filePath) {
+        const realRoots = new Set([...allowedRoots].map((root) => {
+          try { return fs.realpathSync(root); } catch { return root; }
+        }));
+        if (!isFilePathAllowed(realPath, realRoots)) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      }
+    }
+
+    // Revision branch (OpenFileOptions.atRevision): serve a git blob instead of the
+    // working-tree file. The path is often a deleted file (stat impossible), so this
+    // must run before the fs.stat gate. Only read/download are served here; other
+    // types (watch/preview/meta) make no sense for a historical blob.
+    // ref/gitDir arrive inside the POST body or the ticket payload (same channel as
+    // path — they are local filesystem paths and must never land in a URL/access log).
+    if (revision) {
+      return handleRevisionRequest(request, filePath, type, allowedRoots, revision.ref, revision.gitDir);
+    }
 
     let stat: fs.Stats | undefined;
     try {
       stat = fs.statSync(filePath);
     } catch {
+      if (probe) {
+        return NextResponse.json({ exists: false, path: filePath });
+      }
       if (type !== "watch") {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+    }
+
+    if (probe && stat) {
+      return NextResponse.json({
+        exists: true,
+        isDir: stat.isDirectory(),
+        path: filePath,
+      });
     }
 
     const existingAuthorizationPath = stat ? filePath : path.dirname(filePath);
@@ -700,9 +1078,8 @@ export async function GET(
       return NextResponse.json({ error: "Not a directory" }, { status: 400 });
     }
 
-    // `hidden=1` (the explorer's "show hidden" switch) also lists what Git
-    // ignores and what the name list hides, marked with the reason; `.git`
-    // and `.DS_Store` stay out either way.
+    // `hidden=1`（探索器“显示隐藏项”开关，上游引入；本地客户端同参数）：返回被忽略/排除项并带原因标记。
+    // 本地策略：.git 不再无条件 always，改随 hidden 开关显隐（默认隐藏≠禁止查看）；.DS_Store 等仍始终隐藏。
     const showHidden = request.nextUrl.searchParams.get("hidden") === "1";
     // Avoid per-entry stat calls for normal files and directories. Symlinks and
     // filesystems without directory type information use the stat fallback.
@@ -710,10 +1087,12 @@ export async function GET(
     const hiddenReason = await getFileTreeHiddenReasons(filePath, dirents.map((d) => d.name));
     const entries = dirents
       .flatMap((d) => {
-        const hidden = hiddenReason(d.name);
-        if (hidden === "always" || (hidden && !showHidden)) return [];
         const isDir = resolveDirentIsDirectory(d, path.join(filePath, d.name));
         if (isDir === null) return [];
+        // 本地引擎（.git 特判 + .aitignore + 非 git 目录 .gitignore）优先，上游 git/name-list 判定兑底；
+        // 本地引擎命中时统一归入 ignored 原因（.git 由此获得随开关显隐能力）
+        const hidden = isIgnored(filePath, d.name, isDir) ? "ignored" : hiddenReason(d.name);
+        if (hidden === "always" || (hidden && !showHidden)) return [];
         const entry = { name: d.name, isDir, size: 0, modified: "" };
         return [hidden ? { ...entry, hidden } : entry];
       })
@@ -723,9 +1102,18 @@ export async function GET(
         return a.name.localeCompare(b.name);
       });
 
+    // The ascendable parent directory (present only within allowed file roots, otherwise null) — the boundary
+    // reference for the folder browser's "parent directory" button (本地): when the parent itself is outside the
+    // allowed set (e.g. above the project root into workspace/home), treat it as non-ascendable.
+    const parentPath = (() => {
+      const parent = getParentDirectory(filePath);
+      return parent && isFilePathAllowed(parent, allowedRoots) ? parent : null;
+    })();
+
     return NextResponse.json({
       entries: withOutsideLinkTargets(filePath, entries, dirents, allowedRoots),
       path: filePath,
+      parentPath,
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

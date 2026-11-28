@@ -1,5 +1,5 @@
 import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
-import type { McpRefusalReason, McpScope } from "./api-types";
+import type { McpRefusalReason, McpScope } from "./api-types.ts";
 import {
   fillMcpImportFields,
   isValidServerName,
@@ -7,10 +7,10 @@ import {
   type McpImportNote,
   parseMcpImport,
   suggestFreeName,
-} from "./mcp-import";
-import { findWebPasswordField, resolvedConfigValues } from "./mcp-transport";
-import type { PiSdkInternals } from "./pi-sdk-internals";
-import { isRecord } from "./is-record";
+} from "./mcp-import.ts";
+import { findWebPasswordField, resolvedConfigValues } from "./mcp-transport.ts";
+import type { PiSdkInternals } from "./pi-sdk-internals.ts";
+import { isRecord } from "./is-record.ts";
 
 // What `POST /api/mcp { action: "add" }` checks before it writes anything
 // (ADR 0006, "Adding is one paste box"). The browser sends the pasted text and

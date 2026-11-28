@@ -11,6 +11,107 @@ import remarkMath from "remark-math";
 import type { Plugin } from "unified";
 import type { Extension } from "micromark-util-types";
 
+/**
+ * The heavy math render path (rehype-katex + katex) is not statically imported here —
+ * it loads on demand together with `@/lib/markdown-math` (dynamically imported only by
+ * loadMathPlugins below); see hasMathMarker / loadMathPlugins and `@/lib/use-math-plugins`
+ * (hydration-specific work P1.2). remark-math's tokenizer itself runs statically via
+ * remarkCurrencySafeMath (upstream), so prices like "$20 … $6" never become math even
+ * before katex loads.
+ */
+
+/**
+ * Escape raw HTML tags that would otherwise be parsed by rehype-raw into
+ * invalid DOM nesting inside markdown paragraphs (e.g. a `<button>` at line
+ * start is *inline* raw HTML per CommonMark, so rehype-raw nests block or
+ * interactive elements — even a second `<p>` — inside the wrapping `<p>`,
+ * which React flags as a hydration error).
+ *
+ * Chat user text can contain such tags as paste artifacts (pick-element payloads
+ * from the in-page devtools extension, like `<div> …` / `<button> …`). Escaping keeps the
+ * text readable (`&lt;` renders as `<`) while making rehype-raw a no-op.
+ * Fenced code blocks and inline code spans are preserved verbatim, and
+ * GFM autolinks (`<https://…>` / `<user@host>`) stay untouched.
+ */
+export function escapeRawHtmlTags(markdown: string): string {
+  const lineBreak = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const lines = markdown.split(/\r?\n/);
+  const out: string[] = [];
+  let fence: { marker: string; size: number } | null = null;
+  let inlineCodeMarkerSize = 0;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (fenceMatch && fenceMatch[1][0] === fence.marker && fenceMatch[1].length >= fence.size) {
+        fence = null;
+      }
+      out.push(line);
+      continue;
+    }
+    if (fenceMatch) {
+      fence = { marker: fenceMatch[1][0], size: fenceMatch[1].length };
+      out.push(line);
+      continue;
+    }
+
+    // Indented code blocks and blank lines contain no raw HTML; blank lines
+    // also reset an unterminated inline-code run (mirrors normalizeDisplayMath).
+    if (/^(?: {4}|\t)/.test(line) || line.trim() === "") {
+      inlineCodeMarkerSize = 0;
+      out.push(line);
+      continue;
+    }
+
+    if (inlineCodeMarkerSize || line.includes("`")) {
+      const escaped = escapeLineOutsideCodeSpans(line, inlineCodeMarkerSize);
+      inlineCodeMarkerSize = escaped.markerSize;
+      out.push(escaped.line);
+      continue;
+    }
+    out.push(escapeRawHtmlInText(line));
+  }
+  return out.join(lineBreak);
+}
+
+/**
+ * Replace `<tag`/`</tag` with `&lt;tag`/`&lt;/tag`. The tag name must be
+ * followed by `>` / whitespace / `/` / EOL so GFM autolinks (`<https://…>`,
+ * `<mailto:…>`, `<user@host>`) and comparisons (`a < b`, `<3`) stay intact.
+ */
+function escapeRawHtmlInText(text: string): string {
+  return text.replace(/<(\/?[a-zA-Z][a-zA-Z0-9-]*)(?=>|\s|\/|$)/g, "&lt;$1");
+}
+
+/** Escape raw HTML outside inline-code backtick spans (marker state carried across lines). */
+function escapeLineOutsideCodeSpans(line: string, initialMarkerSize: number): { line: string; markerSize: number } {
+  let markerSize = initialMarkerSize;
+  let inCode = markerSize !== 0;
+  let result = "";
+  let cursor = 0;
+  while (cursor < line.length) {
+    const backtick = line.indexOf("`", cursor);
+    if (backtick === -1) {
+      result += inCode ? line.slice(cursor) : escapeRawHtmlInText(line.slice(cursor));
+      break;
+    }
+    result += inCode ? line.slice(cursor, backtick) : escapeRawHtmlInText(line.slice(cursor, backtick));
+    let end = backtick + 1;
+    while (end < line.length && line[end] === "`") end++;
+    const runSize = end - backtick;
+    result += "`".repeat(runSize);
+    if (markerSize === 0) {
+      markerSize = runSize;
+      inCode = true;
+    } else if (runSize === markerSize) {
+      markerSize = 0;
+      inCode = false;
+    }
+    cursor = end;
+  }
+  return { line: result, markerSize };
+}
+
 // Link schemes of desktop apps that open a note, a file or a meeting (#1108).
 // A fixed list, not "any scheme but javascript:": the text comes from the model
 // and from repository files, and OS handlers such as ms-msdt: or search-ms:
@@ -38,6 +139,9 @@ const markdownSanitizeSchema = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file", ...appLinkSchemes],
+    // data: only allowed into src (media sources live in <img>/<video> etc. — contexts where scripts don't run); the
+    // fine-grained data:image gate (only <img>, only image/*) is intercepted earlier by markdownDataImageUrlTransform.
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
   strip: [...(defaultSchema.strip || []), "iframe", "object", "style", "form"],
 };
@@ -60,13 +164,38 @@ export function markdownAppUrlTransform(value: string): string | undefined {
 const BARE_FILE_LINE_HREF = /^[^\s/:?#]+\.[a-zA-Z0-9]+:\d+(?:[:-]\d+)?(?:[?#]|$)/;
 
 /**
- * Also keeps `file:` links and a bare file name with a line suffix
- * (`app.ts:42`, which reads as a scheme), for renderers that open local files
- * in the app. The sanitizer lets the bare form through to this filter
- * (`rehypeProtectBareFileLinks`).
+ * data:image/<*> is allowed only for <img src> (message/markdown images → the file-editor
+ * extension's unified viewer); other attributes (e.g. <a href>) still go through the default
+ * sanitizer — data:text/html can execute scripts under same-origin navigation and must not pass.
+ * A URL the default filter refuses leaves no attribute (upstream's refusal semantics).
  */
-export function markdownUrlTransform(value: string): string | undefined {
-  return /^file:/i.test(value) || BARE_FILE_LINE_HREF.test(value) ? value : markdownAppUrlTransform(value);
+export function markdownDataImageUrlTransform(value: string, key?: string, node?: { tagName?: string }): string | undefined {
+  if (key === "src" && node?.tagName === "img" && /^data:image\//i.test(value)) return value;
+  const safe = defaultUrlTransform(value);
+  return safe || !value ? safe : undefined;
+}
+
+/**
+ * urlTransform factory: always keeps data: images on <img src> and desktop-app links;
+ * `file:` links only pass when the renderer can open local files in-app (a refused
+ * `file:` link leaves no attribute, as the sanitizer's refusals do).
+ */
+export function createMarkdownUrlTransform(openLocalFiles: boolean) {
+  return (value: string, key?: string, node?: { tagName?: string }): string | undefined =>
+    (/^file:/i.test(value) || BARE_FILE_LINE_HREF.test(value)) && !openLocalFiles
+      ? markdownAppUrlTransform(value)
+      : markdownUrlTransform(value, key, node);
+}
+
+/**
+ * Also keeps `file:` links (renderers that open local files in the app), a bare file
+ * name with a line suffix (`app.ts:42`, which reads as a scheme — the sanitizer lets
+ * the bare form through via `rehypeProtectBareFileLinks`), desktop-app links and
+ * data: images on <img src>; everything else falls back to react-markdown's filter.
+ */
+export function markdownUrlTransform(value: string, key?: string, node?: { tagName?: string }): string | undefined {
+  if (/^file:/i.test(value) || appLinkPattern.test(value) || BARE_FILE_LINE_HREF.test(value)) return value;
+  return markdownDataImageUrlTransform(value, key, node);
 }
 
 /** A link that leaves the page: it names a scheme or another host. */
@@ -858,9 +987,10 @@ function rehypeDisplayMathSource() {
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   ...markdownSanitizePlugins,
+  // rehypeMatchClobberedIds (upstream #1323): rewrite the link half of clobbered fragment pairs.
+  // KaTeX stays out — the fork loads math plugins on demand (P1.2, useMathMarkdownPlugins).
   rehypeMatchClobberedIds,
   rehypeDisplayMathSource,
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
 /** GitHub's heading slugs for `#fragment` links, as a data attribute: two rendered documents never share an id. */
@@ -899,6 +1029,42 @@ export const markdownDocumentRehypePlugins: ReactMarkdownOptions["rehypePlugins"
 export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   ...markdownSanitizePlugins,
+  // rehypeMatchClobberedIds (upstream #1323): rewrite the link half of clobbered fragment pairs.
+  // KaTeX stays out — the fork loads math plugins on demand (P1.2, useMathMarkdownPlugins).
   rehypeMatchClobberedIds,
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
+
+// ---------- Math plugins loaded on demand (P1.2) ----------
+
+const MATH_MARKER_RE = /\$\$|\$[^$\s$][^$\n]*\$|\\\(|\\\[/;
+
+/** Whether the body contains a math marker ($$ / inline $…$ / \(…\) / \[…\]) — when not, the math plugins need not load */
+export function hasMathMarker(text: string): boolean {
+  return MATH_MARKER_RE.test(text);
+}
+
+export type MathPlugins = {
+  remark: ReactMarkdownOptions["remarkPlugins"];
+  rehype: ReactMarkdownOptions["rehypePlugins"];
+};
+
+let mathPluginsPromise: Promise<MathPlugins> | null = null;
+let loadedMathPlugins: MathPlugins | null = null;
+
+/** Math plugins already loaded (null when not) — hooks use this as the initial value so "load first, render later" scenarios (e.g. unit tests / SSR preload) take effect synchronously */
+export function getLoadedMathPlugins(): MathPlugins | null {
+  return loadedMathPlugins;
+}
+
+/** Dynamically load the math plugins (module-level cache; call only when hasMathMarker is true) */
+export function loadMathPlugins(): Promise<MathPlugins> {
+  if (!mathPluginsPromise) {
+    mathPluginsPromise = import("@/lib/markdown-math").then((m) => {
+      // remark-math 的 tokenizer 已静态在场（remarkCurrencySafeMath；单一注册也保证上游的
+      // 货币安全规则不会被二次注册旁路），懒加载只需追加 katex 渲染层。
+      loadedMathPlugins = { remark: [], rehype: m.mathRehypePlugins };
+      return loadedMathPlugins;
+    });
+  }
+  return mathPluginsPromise;
+}

@@ -15,7 +15,7 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { GET, PUT, PATCH, DELETE } = await jiti.import("./route.ts");
+const { GET, POST, PUT, PATCH, DELETE } = await jiti.import("./route.ts");
 const { allowFileRoot } = await jiti.import("../../../../lib/file-access.ts");
 const { parseFrontmatter } = await jiti.import("../../../../lib/frontmatter.ts");
 
@@ -300,6 +300,14 @@ test("profiles route keeps same-name global and project profiles independently e
 
   response = await DELETE(jsonRequest("DELETE", { cwd, scope: "global", name: "api-test-agent" }));
   assert.equal(response.status, 200);
+
+  // The POST query form (cwd in the body, never in the URL) is semantically identical to GET ?cwd=
+  const postResponse = await POST(jsonRequest("POST", { cwd }));
+  assert.equal(postResponse.status, 200);
+  assert.deepEqual(Array.isArray((await postResponse.json()).profiles), true);
+
+  const postMissing = await POST(jsonRequest("POST", {}));
+  assert.equal(postMissing.status, 400);
 });
 
 test("profiles route toggles a built-in through settings.json without writing a profile file", async (t) => {

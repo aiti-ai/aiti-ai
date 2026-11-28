@@ -8,7 +8,7 @@ import {
   SettingsManager,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentSessionLike } from "./pi-types";
+import type { AgentSessionLike } from "./pi-types.ts";
 import {
   subagentNotificationText,
   subagentToolDetails,
@@ -16,7 +16,7 @@ import {
   type StartSubagentRequest,
   type SubagentExecution,
   type SubagentExtensionRuntime,
-} from "./subagent-extension";
+} from "./subagent-extension.ts";
 import {
   readSubagentRun,
   resolveSubagentProfile,
@@ -32,23 +32,24 @@ import {
   type SubagentMetadata,
   type SubagentResultMetadata,
   type SubagentRunInfo,
-} from "./subagents";
-import type { SessionEntry } from "./types";
-import type { DebugParentNotification, DebugSubagentRun } from "./debug-types";
-import { buildSubagentPromptPlan } from "./subagent-prompt";
-import { createSubagentSkillsBinding } from "./subagent-skills";
-import { appendSubagentInputFiles, loadSubagentInputFiles, subagentInputLimits } from "./subagent-input";
-import { getProjectTrustStatus } from "./project-trust";
-import { createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions";
-import type { McpHost } from "./mcp-host";
-import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
-import { resolveShellTools } from "./powershell-settings";
-import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings";
-import { SubagentQueue } from "./subagent-queue";
-import { addWorktree, removeWorktree } from "./worktree";
+} from "./subagents.ts";
+import type { SessionEntry } from "./types.ts";
+import type { DebugParentNotification, DebugSubagentRun } from "./debug-types.ts";
+import { buildSubagentPromptPlan } from "./subagent-prompt.ts";
+import { createSubagentSkillsBinding } from "./subagent-skills.ts";
+import { appendSubagentInputFiles, loadSubagentInputFiles, subagentInputLimits } from "./subagent-input.ts";
+import { getProjectTrustStatus } from "./project-trust.ts";
+import { createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions.ts";
+import type { McpHost } from "./mcp-host.ts";
+import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy.ts";
+import { resolveShellTools } from "./powershell-settings.ts";
+import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings.ts";
+import { SubagentQueue } from "./subagent-queue.ts";
+import { addWorktree, removeWorktree } from "./worktree.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
-import { isThinkingLevel } from "./thinking-levels";
+import { isThinkingLevel } from "./thinking-levels.ts";
+import { notifySessionCreated } from "./session-created-notify.ts";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -729,6 +730,10 @@ export function createSubagentController(
       const sessionManager = isolatedWorktree
         ? SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile })
         : SessionManager.create(parent.cwd, undefined, { parentSession: parent.sessionFile });
+      // Notify from the creator for all sessions: subagent sessions show up in
+      // the sidebar immediately too (previously they only appeared indirectly
+      // via the run frame).
+      notifySessionCreated(sessionManager.getSessionId(), sessionManager.getCwd(), "subagent");
       const createdAt = new Date().toISOString();
       const metadata: SubagentMetadata = {
         version: 1,

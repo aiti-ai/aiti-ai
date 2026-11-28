@@ -1,11 +1,8 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
-import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
-import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { default as vs } from "react-syntax-highlighter/dist/esm/styles/prism/vs";
+import { default as vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
@@ -22,6 +19,20 @@ interface MermaidBlockProps {
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
+
+// Full Prism (~1.24MB) is split out of the first-load chunk via React.lazy
+// (SyntaxHighlighterLite only registers common languages); plain text is the
+// fallback until the chunk is ready, styled to match the streaming branch
+// (hydration focus P1.1).
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite.tsx"));
+const PLAIN_CODE_PRE_STYLE: CSSProperties = {
+  margin: 0,
+  padding: "11px 13px",
+  fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+  lineHeight: 1.62,
+  overflowX: "auto",
+  backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+};
 
 export function downloadSvgFile(xml: string, filename: string): void {
   const url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
@@ -315,51 +326,11 @@ interface CodeBlockProps {
   lang: string;
   headerAction?: ReactNode;
   isStreaming?: boolean;
-}
-
-// Prism's light theme uses backgroundColor, while its dark theme uses the
-// background shorthand. Keep the pre background solely in customStyle so a
-// theme switch cannot remove/update one and reset the other in React's diff.
-const codeBlockDarkTheme = {
-  ...vscDarkPlus,
-  'pre[class*="language-"]': {
-    ...vscDarkPlus['pre[class*="language-"]'],
-  },
-};
-delete codeBlockDarkTheme['pre[class*="language-"]'].background;
-
-type CodeLinesProps = Parameters<NonNullable<SyntaxHighlighterProps["renderer"]>>[0];
-
-/**
- * A fence's lines, each a row of its number and its text (`.markdown-code-line`
- * in app/globals.css): long lines wrap, as in pi's TUI, and a wrapped line goes
- * on under its own text, never under the number. The text keeps the row's own
- * classes, which color the later lines of a token that spans several (a block
- * comment).
- */
-function renderCodeLines({ rows, stylesheet, useInlineStyles }: CodeLinesProps) {
-  return rows.map((row, index) => {
-    const children = row.children ?? [];
-    const number = children[0]?.properties?.className.includes("react-syntax-highlighter-line-number") ? children[0] : null;
-    const text = {
-      ...row,
-      properties: { ...row.properties, className: [...(row.properties?.className ?? []), "markdown-code-line-text"] },
-      children: number ? children.slice(1) : children,
-    };
-    return (
-      <span key={index} className="markdown-code-line">
-        {number && (
-          <span
-            className="markdown-code-line-number"
-            data-line-number={index + 1}
-            aria-hidden="true"
-            style={number.properties?.style}
-          />
-        )}
-        {renderSyntaxNode({ node: text, stylesheet, useInlineStyles, key: "text" })}
-      </span>
-    );
-  });
+  /** Paragraph-click context (passed through from markdown): used for line-level click broadcasts */
+  messageRole?: string;
+  cwd?: string;
+  sessionId?: string;
+  messageId?: string;
 }
 
 /** Lines per piece of a streaming fence. */
@@ -413,7 +384,7 @@ function StreamingCodeChunks({ code }: { code: string }) {
  * renders through the same highlighter as `text` (same lines, numbers and
  * box, no tokens) until an idle slice lets it take its language.
  */
-export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming, messageRole, cwd, sessionId, messageId }: CodeBlockProps) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -453,42 +424,35 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
         </div>
       </div>
       {isStreaming ? (
-        <pre
-          style={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "anywhere",
-            backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-        >
-          <code style={{ fontFamily: "var(--font-mono)" }}><StreamingCodeChunks code={code} /></code>
+        <pre style={PLAIN_CODE_PRE_STYLE}>
+          <code style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" }}><StreamingCodeChunks code={code} /></code>
         </pre>
       ) : (
-        <SyntaxHighlighter
-          language={highlighted ? lang || "text" : "text"}
-          style={isDark ? codeBlockDarkTheme : vs}
-          showLineNumbers
-          lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal", flexShrink: 0 }}
-          renderer={renderCodeLines}
-          customStyle={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            fontWeight: "var(--font-mono-weight)",
-            // The light `vs` theme puts its own 1px #ddd border on <pre>; the
-            // block's wrapper already draws the frame.
-            border: "none",
-            borderRadius: 0,
-            backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-          codeTagProps={{ style: { fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" } }}
+        <Suspense
+          fallback={
+            <pre style={PLAIN_CODE_PRE_STYLE}>
+              <code style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" }}>{code}</code>
+            </pre>
+          }
         >
-          {code}
-        </SyntaxHighlighter>
+          <SyntaxHighlighter
+            language={lang || "text"}
+            style={isDark ? vscDarkPlus : vs}
+            showLineNumbers
+            lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
+            customStyle={{
+              margin: 0,
+              padding: "11px 13px",
+              fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+              lineHeight: 1.62,
+              borderRadius: 0,
+              backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+            }}
+            codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+          >
+            {code}
+          </SyntaxHighlighter>
+        </Suspense>
       )}
     </div>
   );

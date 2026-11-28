@@ -2,35 +2,50 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { isHiddenRelation, SIDE_BOUNDARY_MESSAGE_TYPE } from "@/lib/session-family";
 import Image from "next/image";
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
-import type { FileLinkTarget } from "@/lib/file-links";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
+import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines, stripAnsi } from "@/lib/ansi";
 import { splitNoticeLinks, splitNoticeText } from "@/lib/notice-text";
 import { EXTENSION_DIALOG_BASE_WIDTH, fitExtensionDialogWidth } from "@/lib/extension-dialog-fit";
+import { apiUrl, withBasePath } from "@/lib/base-path";
+import { useMoneySynced } from "@/lib/money";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBlocks, getTurnAnchors, hasAssistantAnswer, hasTurnRef, isHiddenCustomMessage, splitFinalAssistantBlocks, liveOutputPreview, LIVE_OUTPUT_PREVIEW_LINES, sumCost } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
+import { summarizeCacheMisses, type CacheMissSummary } from "@/lib/transcript-notices";
+import { cacheMissSummaryText } from "./TranscriptNotices.tsx";
+import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
+import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
+import type { FileLinkTarget } from "@/lib/file-links";
 import type { SessionReferenceTarget } from "@/lib/session-reference-target";
-import { MessageView } from "./MessageView";
-import { MarkdownBody } from "./MarkdownBody";
-import { ChatInput, getUserMessageDraftImages, getUserMessageText, type ChatInputHandle } from "./ChatInput";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { QuoteSelectionPopover } from "./QuoteSelectionPopover";
-import { ExtensionStatusBar } from "./ExtensionStatusBar";
-import { AnsiText } from "./AnsiText";
+import { MessageView, estimateTokens } from "./MessageView.tsx";
+import { UpdateGuideDialog } from "./UpdateGuideDialog.tsx";
+import { getExtClientService } from "./ExtSlots.tsx";
+import { SessionRequestCardHost } from "./SessionRequestSlot.tsx";
+import { MarkdownBody } from "./MarkdownBody.tsx";
+import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput.tsx";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { ChatMinimap, useMessageRefs } from "./ChatMinimap.tsx";
+import { ExtSlot, useExtSlotItems } from "./ExtSlots.tsx";
+import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets.tsx";
+import { hasExtRender } from "@/lib/ext-ui-store";
+import type { NewSessionPreparer } from "@/hooks/new-session-preparers";
+import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
+import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
+import { runSessionForkGates } from "@/lib/ext/fork-gates";
+import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar.tsx";
+import { AnsiText } from "./AnsiText.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
 import { useAgentSession, type AgentEndInfo, type NewSessionChoices, type NoticeItem } from "@/hooks/useAgentSession";
-import { selectHasStreamingContent, selectIsStreaming, selectStreamingMessage, useStreamingSelector } from "@/hooks/useStreamingSelector";
-import type { StreamingStore } from "@/lib/streaming-message";
-import { streamRateKey } from "@/lib/stream-token-rate";
 import { useDragDrop } from "@/hooks/useDragDrop";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useSkipOffscreenRows } from "@/hooks/useSkipOffscreenRows";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -38,8 +53,8 @@ import type { DebugClientSession } from "@/lib/debug-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
 import type { SettingsSection } from "@/lib/settings-navigation";
-import { getTranscriptNotices, summarizeCacheMisses, type CacheMissSummary } from "@/lib/transcript-notices";
-import { cacheMissSummaryText, TRANSCRIPT_NOTICE_WARNING_COLOR, TranscriptNoticeLines } from "@/components/TranscriptNotices";
+import type { BackendUsageSnapshot } from "@/lib/ext/types";
+import { getHomeDir, subscribeHomeDir } from "@/lib/home-dir";
 import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { claimDoneChime, DONE_CHIME_SAME_EVENT_MS } from "@/lib/done-chime";
 import {
@@ -53,6 +68,10 @@ import {
 } from "@/lib/chat-lazy-load";
 import { errorMessage } from "@/lib/errors";
 
+// Initial render window: mount a full page at once. The mainstream approach is
+// virtualization + overscan (2-3x the visible viewport); a narrow viewport fits
+// roughly 6-10 messages, so 30 ≈ 3-4 screens with buffer (50 was too high, lowered).
+
 interface Props {
   session: SessionInfo | null;
   searchTarget?: { sessionId: string; entryId: string; blockIndex?: number } | null;
@@ -61,6 +80,13 @@ interface Props {
   onScrollPositionChange?: (sessionId: string, position: ChatScrollPosition) => void;
   sessionRunning?: boolean;
   newSessionCwd: string | null;
+  /** New-session page workspace choice (the target cwd staged by AppShell; null = use
+   *  the current workspace). Selecting does not switch the app workspace immediately —
+   *  AppShell switches after the session is created (see handleSessionCreated). */
+  newSessionWorkspace?: string | null;
+  /** Workspace dropdown candidates for the new-session page (recent projects + current cwd; supplied by AppShell). */
+  workspaceOptions?: Array<{ key: string; root: string }>;
+  onNewSessionWorkspaceChange?: (cwd: string | null) => void;
   newSessionDraftKey: string | null;
   /** Shown above the composer while a fresh composer is still empty: where its session starts. */
   newSessionContextBar?: ReactNode;
@@ -73,6 +99,10 @@ interface Props {
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
   onSessionForked?: (newSessionId: string, session?: SessionInfo) => void;
+  /** "Edit from here" on forkRebindHandoff backends (pi spawn): switch the shell to the branched child session and auto-send there. */
+  onEditFromHereHandoff?: (handoff: { sessionId: string; message: string; images?: AttachedImage[] }) => void;
+  /** External-session placeholder/alias ids resolved by the server into real composite ids (e.g. zcode:new-* → zcode:sess_*). */
+  onSessionIdCanonicalized?: (previousId: string, canonicalId: string) => void;
   /** A subagent's or side chat's tab beside the main chat: the page's global shortcuts stay with the main chat. */
   panel?: boolean;
   /** `/side`: a side chat was forked from this session; open its tab. */
@@ -87,15 +117,34 @@ interface Props {
   onDebugSnapshotReaderChange?: (reader: (() => DebugClientSession) | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
+  /** Register the stats refresher so AppShell can pull fresh stats (incl.
+   *  contextUsage for idle sessions) when the session panel opens. */
+  onSessionStatsRefresherRegister?: (fn: (() => void) | null) => void;
+  /** Compaction control registration (AppShell session-info panel's tri-state compact
+   *  button): when compact is undefined (no session / sessionCap("compact") fails) the
+   *  panel button hides — same rule as ChatInput. */
+  onCompactControlsRegister?: (controls: CompactControls | null) => void;
   /** Opens Settings on a section: a bare `/mcp` that pi's built-in MCP extension owns opens Settings › MCP. */
   onOpenSettings?: (section: SettingsSection) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
+  /** Latest-run backend usage of this session (external backends with the getUsage capability).
+   *  AppShell feeds it to the stats-row quota chip and the session-info account-quota details. */
+  onBackendUsageChange?: (info: { sessionId: string; usage: BackendUsageSnapshot; backendSource?: string } | null) => void;
+  /** Current display model changed (AppShell's session-info "remaining quota" section pins the current provider by this). */
+  onDisplayModelChange?: (model: { provider: string; modelId: string } | null) => void;
   onOpenFile?: (filePath: string, target?: FileLinkTarget) => void;
   /** Files dropped onto the chat were written into the working directory. */
   onFilesUploaded?: () => void;
   onOpenSubagent?: (sessionId: string, label: string) => void;
+  /** Expose the queue-export resolver to the parent (AppShell export dialog). */
+  onExportQueue?: (resolver: () => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onAskInNewChat?: (prompt: string, sourceSessionId: string, sourceEntryId: string) => Promise<void>;
   quoteSelectionEnabled?: boolean;
   initialPrompt?: string;
+  /** Images riding along with initialPrompt (edit-from-here rebind handoff: pi spawn has no
+   *  in-place continuation, the edited message — possibly with images — is sent post-switch). */
+  initialPromptImages?: AttachedImage[];
   onInitialPromptConsumed?: () => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
@@ -103,21 +152,67 @@ interface Props {
   onSoundToggle?: () => void;
   playDoneSound?: () => void;
   unlockAudio?: () => void;
-  /** Keeps the completion sound's audio running until the returned release is called. */
-  holdAudio?: () => () => void;
+  /** Suspend in-panel audio (a tab that lost visibility to a video call, etc.). */
+  holdAudio?: () => void;
 }
+
+/** Per-turn elapsed-time badge (mirrors zcode desktop's "working (xm ys)"): a purely
+ *  local UI clock that refreshes every second, starting at this turn's agent_start
+ *  (useAgentSession.runStartedAtRef); display logic only, no state polling/requests. */
+function ElapsedBadge({ startedAt }: { startedAt: number }) {
+  // Pure render: the ticking time lives in state, updated by the interval (react-hooks/purity —
+  // Date.now() during render is impure; same visible behavior).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const secs = Math.max(0, Math.round((now - startedAt) / 1000));
+  const label = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
+  return <span style={{ fontVariantNumeric: "tabular-nums" }}>({label})</span>;
+}
+
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
+const LAST_BACKEND_KEY = "pi-web:last-session-backend";
+/**
+ * Detach preference for NEW sessions: host the backend's agent process in a
+ * wrapper that outlives pi-web (turn survives restarts / extension reloads).
+ * Only offered for providers that opted in (`detachable`) on a host whose
+ * agent-starter has a runner; default on (the point of the feature).
+ */
+const NEW_SESSION_DETACH_KEY = "pi-web:new-session-detach";
+/** Option value prefix for extension entries (newSessionBackendOptions) in the
+ *  new-session Backend dropdown. Selecting one runs the entry's action (e.g. opening
+ *  ACP agent management) without changing the current backend selection. */
+const BACKEND_EXT_OPTION_PREFIX = "__ext_opt__:";
+/** Option value for the dropdown's built-in "rescan backends" entry: re-runs
+ *  backend registration scans (POST /api/session-backends/rescan) to pick up
+ *  CLIs installed after the host booted, without changing the current
+ *  backend selection (same mechanics as BACKEND_EXT_OPTION_PREFIX entries). */
+const BACKEND_RESCAN_OPTION_VALUE = "__rescan_backends__";
+/** Shared look for the new-session Workspace / Backend dropdowns. */
+const NEW_SESSION_SELECT_STYLE: CSSProperties = {
+  padding: "4px 8px",
+  background: "var(--bg-hover)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  color: "var(--text)",
+  fontFamily: "inherit",
+  fontSize: 12,
+  cursor: "pointer",
+};
 
 // One update check per page. Every fresh composer mounts the header again
 // (each move of the new-session bar does), and a link that turned up late
-// each time would lengthen the versions line under the reader's eyes; from
-// the second header on it is there in the first paint.
+// each time could push the bar onto a line of its own under the composer's
+// eyes; from the second header on it is there in the first paint.
 let appUpdateCheck: Promise<AppUpdateResponse | null> | null = null;
 let appUpdateFound: AppUpdateResponse | null = null;
 
 function checkAppUpdate(): Promise<AppUpdateResponse | null> {
-  appUpdateCheck ??= fetch("/api/app-update")
+  appUpdateCheck ??= fetch(apiUrl("/api/app-update"))
     .then(async (response) => {
       if (!response.ok) return null;
       const result = await response.json() as AppUpdateResponse;
@@ -141,7 +236,9 @@ function NewSessionUpdateLink({
 }: {
   label: (version: string) => string;
 }) {
+  const { t } = useI18n();
   const [update, setUpdate] = useState<AppUpdateResponse | null>(() => appUpdateFound);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   useEffect(() => {
     if (appUpdateFound) return;
@@ -155,24 +252,85 @@ function NewSessionUpdateLink({
   if (!update) return null;
   const accessibleLabel = label(update.latestVersion);
 
-  // In the versions line, after the version in use: "→ v<latest> ↗".
   return (
     <>
-      <span className="new-session-meta-arrow" aria-hidden="true">→</span>
-      <a
-        className="new-session-update"
-        href={update.releaseUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={accessibleLabel}
-        aria-label={accessibleLabel}
-      >
-        v{update.latestVersion}
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M7 17 17 7" />
-          <path d="M7 7h10v10" />
-        </svg>
-      </a>
+    <a
+      href={update.releaseUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
+      onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        alignSelf: "center",
+        gap: 3,
+        minHeight: 32,
+        minWidth: 0,
+        padding: "0 4px",
+        background: "transparent",
+        borderRadius: 5,
+        color: "var(--accent)",
+        fontSize: 12,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        textDecoration: "none",
+        transition: "background 0.12s",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>v{update.latestVersion}</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+        <path d="M7 17 17 7" />
+        <path d="M7 7h10v10" />
+      </svg>
+    </a>
+    <button
+      type="button"
+      title={t("appUpdate.dialogTitle")}
+      aria-label={t("appUpdate.updateButton")}
+      onClick={() => {
+        // ui-takeover: when the aiti-updater extension is loaded it owns the
+        // upgrade flow (launch pipeline → standalone assistant window with the
+        // confirm gate); the guide dialog stays as the no-extension fallback —
+        // also on launch failure, so the click never dead-ends silently.
+        const launcher = getExtClientService<() => Promise<unknown>>("aiti-updater.launch");
+        if (launcher) {
+          void Promise.resolve(launcher()).catch(() => setGuideOpen(true));
+          return;
+        }
+        setGuideOpen(true);
+      }}
+      onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        alignSelf: "center",
+        gap: 4,
+        minHeight: 32,
+        padding: "0 6px",
+        border: "none",
+        background: "transparent",
+        borderRadius: 5,
+        color: "var(--accent)",
+        fontSize: 12,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+        <path d="M12 3v12" />
+        <path d="m6 11 6 6 6-6" />
+        <path d="M5 21h14" />
+      </svg>
+      {t("appUpdate.updateButton")}
+    </button>
+    {guideOpen && <UpdateGuideDialog update={update} onClose={() => setGuideOpen(false)} />}
     </>
   );
 }
@@ -200,6 +358,9 @@ function getUserInputText(message: AgentMessage): string | null {
     const text = message.content.trim();
     return text.length > 0 ? text : null;
   }
+  // Non-pi backends (e.g. echo agents) deliver {role, text, ts} frames with no
+  // content blocks at all — treat missing content as empty input, never crash.
+  if (!Array.isArray(message.content)) return null;
   const text = message.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -213,8 +374,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cost, ca
   useLayoutEffect(() => {
     if (reveal) setExpanded(true);
   }, [reveal]);
-  // The chevron already says this folds; the words stay in the accessible name.
-  const parts = [`${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
+  const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
   if (durationMs !== undefined) parts.push(t("chat.turnDuration", { time: formatTurnDuration(durationMs) }));
   // Folded, the cost of the steps inside is added up here (#1768); open, each shows under its step.
@@ -227,14 +387,12 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cost, ca
       <button
         type="button"
         aria-expanded={expanded || reveal}
-        aria-label={[t("chat.processDetails"), ...parts, ...(cacheMissText ? [cacheMissText] : [])].join(" · ")}
         onClick={() => setExpanded((v) => !v)}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
           width: "auto",
-          maxWidth: "100%",
           minHeight: 24,
           padding: "2px 0",
           border: "none",
@@ -251,7 +409,6 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cost, ca
         </svg>
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {parts.join(" · ")}
-          {cacheMissText && <span style={{ color: TRANSCRIPT_NOTICE_WARNING_COLOR }}>{` · ${cacheMissText}`}</span>}
         </span>
       </button>
       {(expanded || reveal) && (
@@ -263,9 +420,93 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cost, ca
   );
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, panel = false, onSideSession, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onFilesUploaded, onOpenSubagent, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
+export interface CompactControls {
+  compact?: (customInstructions?: string) => boolean | Promise<boolean>;
+  abort?: () => void;
+  cancelQueue?: () => void;
+  isCompacting: boolean;
+  compactQueued: boolean;
+}
+
+/**
+ * Permission-card input summary (permission UI contract, agent spec §6.1): prefer
+ * key fields like command/path/url to build a one-line readable summary; object
+ * inputs collapse their full JSON into the details view.
+ */
+
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, panel = false, onSideSession, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onOpenSettings, onContextUsageChange, onBackendUsageChange, onDisplayModelChange, onOpenFile, onFilesUploaded, onOpenSubagent, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, initialPromptImages, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const isCompact = useIsCompact();
+
+  // ── Session backend selection (multi-agent frontend) ─────────────────────────
+  // Shown only on the isNew welcome page; options come from /api/session-backends
+  // (extension-registered backends appear automatically).
+  // null = local pi (the default; absent from the list and needs no request).
+  // The last chosen backend is kept in localStorage and preselected on the next new session.
+  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>>([]);
+  // Detach availability on this host (agent-starter): runner + reason shipped by
+  // the same endpoint; the per-session toggle shows only when available AND the
+  // selected backend opted in.
+  const [detachSupport, setDetachSupport] = useState<{ available: boolean; runner?: string; reason?: string } | null>(null);
+  const [detachNewSession, setDetachNewSession] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(NEW_SESSION_DETACH_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  // Whether any extension declares a backend rescan hook (GET response field).
+  // When true the dropdown renders even with zero extension backends ("Pi (local)"
+  // + the rescan entry) so newly installed CLIs can be picked up without a restart.
+  const [backendRescanable, setBackendRescanable] = useState(false);
+  const [backendsRescanning, setBackendsRescanning] = useState(false);
+  // Transient result note shown next to the dropdown after a rescan (auto-cleared).
+  const [backendRescanNote, setBackendRescanNote] = useState<string | null>(null);
+  const backendRescanNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Last-seen unavailable backend types (for the rescan outcome note: "picked up" vs "still missing").
+  const backendUnavailableRef = useRef<Set<string>>(new Set());
+  // Extension entries inside the new-session Backend dropdown (newSessionBackendOptions),
+  // e.g. an ACP agent management entry. Declarative static items get meta.onClick wired
+  // by the host forwarder after materialization; entries without onClick don't render
+  // (nothing clickable in the dropdown).
+  const backendExtraOptions = useExtSlotItems("newSessionBackendOptions")
+    .filter((it) => typeof it.meta?.onClick === "function");
+  // New-session welcome-page extension pickers (newSessionSelectors, rendered between
+  // Workspace×Backend) and the pre-creation preparer pipeline (newSessionPreparers,
+  // awaited in order inside ensureNewSession when the first message is sent — worktree
+  // creation/checkout and every other write happens at that moment; the selection phase
+  // has zero side effects).
+  const hasNewSessionSelectors = useExtSlotItems("newSessionSelectors").some(hasExtRender);
+  // Workspace selector takeover (newSessionWorkspacePicker): once an extension renders one, it
+  // replaces the native <select> (which stays the fallback: unregistered/older hosts are
+  // unchanged). The list itself, the hidden-workspace filter and the footer actions then live
+  // in the extension (session-manager shares the sidebar's projects menu); the target is
+  // staged through the "pi-web.newSession" service, exactly like the native selector.
+  const hasNewSessionWorkspacePicker = useExtSlotItems("newSessionWorkspacePicker").some(hasExtRender);
+  const newSessionPreparers: NewSessionPreparer[] = useExtSlotItems("newSessionPreparers")
+    .filter((it) => typeof it.meta?.prepare === "function")
+    .map((it) => ({ id: it.id, prepare: it.meta!.prepare as NewSessionPreparer["prepare"] }));
+  // New-session welcome-page widget zones (newSessionWidgets, top/bottom render points)
+  // + the customize-panel toggle. The Zone consumes slots and preferences itself
+  // (lib/new-session-widgets.ts); this only holds panel visibility.
+  const [nswCustomizeOpen, setNswCustomizeOpen] = useState(false);
+  // Workspace path display: abbreviate the home directory as ~ (passive subscription,
+  // no requests — it shortens automatically once another consumer fetches it).
+  const [homeDir, setHomeDir] = useState<string | null>(() => getHomeDir());
+  useEffect(() => {
+    setHomeDir(getHomeDir());
+    return subscribeHomeDir(setHomeDir);
+  }, []);
+  const workspaceLabel = (root: string) =>
+    homeDir && root.startsWith(homeDir) ? `~${root.slice(homeDir.length)}` : root;
+  const [sessionBackend, setSessionBackend] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_BACKEND_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
   const completionNotificationsEnabled = !isHiddenRelation(session?.relation);
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -289,6 +530,36 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completionNotificationsEnabled, onAgentEnd, session?.id]);
 
+  // Stabilize the onEditContent reference so React.memo keeps history messages from re-rendering
+  const handleEditContent = useCallback((message: UserMessage) => {
+    chatInputRef?.current?.replaceMessage(message);
+  }, [chatInputRef]);
+
+  // "问 AI" on an error/warning notice: prefill the composer with a prompt that
+  // quotes the notice verbatim — these UI-only notices never reach the model
+  // (extension_ui_request notify goes to the page, not the conversation), so the
+  // quoted text is the AI's only window into what the user is asking about.
+  // Prefill only, never auto-send; a non-empty composer gets the prompt appended
+  // so an in-progress draft survives.
+  const askAiAboutNotice = useCallback((message: string) => {
+    const prefill = t("chat.noticeAskAiPrompt", { message });
+    const input = chatInputRef?.current;
+    if (!input) return;
+    if (input.hasInput()) {
+      input.appendText(prefill);
+    } else {
+      input.setText(prefill);
+    }
+    input.focus();
+  }, [chatInputRef, t]);
+
+  // Spacer heights measured/derived below (bottom composer + prompt anchor).
+  // Reflected up-front so they can be passed into useAgentSession for
+  // step-follow geometry.
+  const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
+  const bottomComposerHeightRef = useRef(0);
+  const promptAnchorSpacerHeightRef = useRef(0); // Always 0: step-follow is fully owned by smartFollowStep
+  // Bottom "step eye-room" bottomEyeRoom: derived during render (see the scrollViewportH declaration), no longer effect+state.
   const initialScrollPositionRef = useRef(searchTarget ? null : initialScrollPosition ?? null);
   const [pendingScrollRestore, setPendingScrollRestore] = useState<Extract<ChatScrollPosition, { atBottom: false }> | null>(() => {
     const position = initialScrollPositionRef.current;
@@ -297,45 +568,73 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
 
   const {
-    loading, error, messages, activeToolResults, toolClocks, entryIds, messageKeys, liveUserEntryIds, historyCursor, hasEarlierMessages, earlierTurnCount, streamingStore,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, missingCwd, canForkMissingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    loading, error, messages, activeToolResults, toolClocks, entryIds, messageKeys, liveUserEntryIds, historyCursor, hasEarlierMessages, earlierTurnCount, streamState,
+    agentRunning, settling, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, missingCwd, canForkMissingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    modelsRefreshing, modelsRefreshable, refreshModels,
+    followPaused,
     retryInfo, contextUsage, forkingEntryId,
-    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, addNotice,
+    isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
+    slashCommands, slashCommandsLoading, queuedMessages, sessionTasks,
+    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
+    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, dismissNotice,
+    switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    sessionRequest, respondToSessionRequest,
     isAutoModelSelection,
     isAutoThinkingSelection,
     defaultModel,
     savedDefaultThinkingLevel,
     agentPhase,
+    runStartedAtRef,
     isNew,
-    editEntryId,
-    showScrollToBottom,
-    sessionIdRef, scrollContainerRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef, userScrolledAwayRef,
     lastUserMsgRef, promptAnchorActive,
-    handleSend, handleAbort, startSideChat, handleFork, forkIntoCwd, handleEditContent, cancelEdit, handleModelChange,
+    editEntryId, cancelEdit,
+    showScrollToBottom,
+    handleSend, handleAbort, startSideChat, handleFork, handleForkNew, forkIntoCwd, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     dismissCompactError,
-    handleRecallQueue,
+    refreshSessionStats,
+    handleSetDefaultModel, handleSetDefaultThinkingLevel,
+    handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadSlashCommands, loadAllModels, scrollUserMsgToTop,
-    loadContext, activeLeafId, scrollToBottom, scrollToMessage,
+    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, loadAllModels, scrollToBottom, scrollUserMsgToTop,
+    loadContext, activeLeafId, scrollToMessage, reloadCurrentSession, addNotice,
   } = useAgentSession({
-    session, sessionRunning, newSessionCwd, newSessionDraftKey, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd: wrappedOnAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSideSession,
+    session, sessionRunning, newSessionCwd, newSessionBackend: sessionBackend,
+    newSessionDetach: detachNewSession, newSessionPreparers, newSessionDraftKey, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd: wrappedOnAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, onSessionIdCanonicalized, onSideSession,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     onOpenSettings, onDebugSnapshotReaderChange, t,
     deferInitialScroll: Boolean(pendingScrollRestore),
+    promptAnchorSpacerHeightRef,
+    bottomComposerHeightRef,
   });
-  // Only whether a reply is streaming and has content yet: the chunks themselves
-  // re-render StreamingReply alone.
-  const isStreaming = useStreamingSelector(streamingStore, selectIsStreaming);
-  const hasStreamingContent = useStreamingSelector(streamingStore, selectHasStreamingContent);
-  const getStreamingMessage = useCallback(() => streamingStore.getState().streamingMessage, [streamingStore]);
-  const sessionBusy = agentRunning || bashRunning;
+
+  // FX rates: only subscribe/fetch when the floating bar actually has a USD cost to show (/api/fx is pulled on demand).
+  useMoneySynced((backendUsage?.costUsd ?? 0) > 0);
+
+  // ── Stop pending state: immediate feedback on click (zcode session/stop once took up
+  // to 23s; the backend is now fire-and-forget). "Stopping" is owned by useAgentSession
+  // and auto-resets when the current turn settles (agent_end / full settle / bash stop).
+  // Deliberately NOT tied to agentRunning: after an abort, a queued follow-up turn
+  // re-sets running immediately (stop only halts the current message; the queue moves
+  // on), so waiting for "fully idle" to reset would leave "stopping" stuck forever
+  // (observed 2026-09). ──
+  const handleAbortRequest = useCallback(() => {
+    void handleAbort(); // handleAbort already sets aborting=true internally and swallows+logs errors; it does not throw
+  }, [handleAbort]);
+
+  // ── Capability-aware control gating ──────────────────────────────────────
+  // Backend sessions hide unsupported features per capabilities; local sessions
+  // (no capabilities) pass everything through.
+  const sessionCap = useCallback(<K extends string>(k: K, fallback = true): boolean =>
+    sessionCapabilities ? (sessionCapabilities[k] ?? false) : fallback,
+  [sessionCapabilities]);
+
   // The new session starts with the forked message in its composer, ready to send again or change.
   const forkFromMessage = useCallback((entryId: string, message: UserMessage) => {
     void handleFork(entryId, { value: getUserMessageText(message), images: getUserMessageDraftImages(message) });
   }, [handleFork]);
+
   // While this session's run is under way its chime may come with the phone
   // locked, where a suspended context cannot start again (#1157).
   useEffect(() => {
@@ -359,6 +658,204 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     else setForkPickerOpen(false);
   }, [forkIntoCwd]);
 
+  // Expose the queue-export resolver to the parent (AppShell export dialog).
+  useEffect(() => {
+    onExportQueue?.(exportQueueData);
+  }, [onExportQueue, exportQueueData]);
+
+  // Register the stats refresher (AppShell pulls fresh stats when the session
+  // panel opens — idle sessions have no live state to read contextUsage from).
+  useEffect(() => {
+    onSessionStatsRefresherRegister?.(() => { void refreshSessionStats(); });
+    return () => onSessionStatsRefresherRegister?.(null);
+  }, [onSessionStatsRefresherRegister, refreshSessionStats]);
+
+  // Compaction control registration: mirrored after the onSessionStatsRefresherRegister
+  // precedent, registered back to AppShell (session-info panel button); state tracks
+  // isCompacting / compactQueued live.
+  const compactControls = useMemo(() => ({
+    compact: session || isNew
+      ? (sessionCap("compact") ? handleCompact : undefined)
+      : undefined,
+    abort: handleAbortCompaction,
+    cancelQueue: cancelCompactQueue,
+    isCompacting,
+    compactQueued,
+  }), [session, isNew, sessionCap, handleCompact, handleAbortCompaction, cancelCompactQueue, isCompacting, compactQueued]);
+  useEffect(() => {
+    onCompactControlsRegister?.(compactControls);
+    return () => onCompactControlsRegister?.(null);
+  }, [onCompactControlsRegister, compactControls]);
+  const sessionBusy = agentRunning || bashRunning;
+  // The "stopping" state reset now lives in useAgentSession (reset at agent_end /
+  // settle / bash completion), see handleAbort and the settlement points — this no
+  // longer depends on sessionBusy (it stays true while queued turns continue).
+
+  // ── Manual refresh for stopped sessions (2026-09-15): a quiet "refresh" entry at the
+  // very bottom of the message flow. Scenario: the session is stopped but may have been
+  // advanced externally (zcode desktop/CLI continuing the same session outside this
+  // app; the reused handle holds a stale in-memory history) — one click re-pulls
+  // messages and re-aligns state with the source. ──
+  const [refreshing, setRefreshing] = useState(false);
+  const handleManualRefresh = useCallback(() => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void reloadCurrentSession().finally(() => setRefreshing(false));
+  }, [refreshing, reloadCurrentSession]);
+  const [quotedSelection, setQuotedSelection] = useState<{
+    text: string;
+    top: number;
+    left: number;
+    /** The assistant entry the selection came from: a branch forks at it. */
+    sourceEntryId?: string;
+  } | null>(null);
+  const [quoteInputOpen, setQuoteInputOpen] = useState(false);
+  /** Which flow the quote dialog drives: the fork's fork_branch new chat or upstream's side chat. */
+  const [quoteFlow, setQuoteFlow] = useState<"new" | "side">("side");
+  const [quoteSubmitting, setQuoteSubmitting] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const quotePopoverRef = useRef<HTMLDivElement | null>(null);
+  const quoteChatInputRef = useRef<ChatInputHandle | null>(null);
+  const closeQuotedSelection = useCallback(() => {
+    setQuotedSelection(null);
+    setQuoteInputOpen(false);
+    setQuoteError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!quoteSelectionEnabled) closeQuotedSelection();
+  }, [quoteSelectionEnabled, closeQuotedSelection]);
+
+  const captureQuotedSelection = useCallback(() => {
+    if (!quoteSelectionEnabled || quoteInputOpen) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const root = messageContentRef.current;
+    if (!selection || selection.isCollapsed || !range || !root || !root.contains(range.commonAncestorContainer)) {
+      setQuotedSelection(null);
+      return;
+    }
+    const text = selection.toString().trim();
+    if (!text) {
+      setQuotedSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    // The assistant entry the selection sits in: asking in a new chat forks at
+    // that entry (fork feature; upstream asks from the session root).
+    const ancestor = (range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer as Element
+      : range.startContainer.parentElement);
+    const sourceEntryId = [ancestor, range.startContainer.parentElement, range.endContainer.parentElement]
+      .map((element) => element?.closest<HTMLElement>('[data-message-role="assistant"]')?.dataset.entryId)
+      .find((entryId): entryId is string => Boolean(entryId));
+    setQuotedSelection({
+      text,
+      top: Math.min(window.innerHeight - 44, rect.bottom + 8),
+      left: Math.max(64, Math.min(window.innerWidth - 64, rect.left + rect.width / 2)),
+      sourceEntryId,
+    });
+  }, [quoteSelectionEnabled, quoteInputOpen]);
+
+  useEffect(() => {
+    if (!quoteInputOpen || !quotedSelection) return;
+    quoteChatInputRef.current?.insertIfEmpty(buildQuotedSelection(quotedSelection.text));
+  }, [quoteInputOpen, quotedSelection]);
+
+  useLayoutEffect(() => {
+    const popover = quotePopoverRef.current;
+    if (!popover || !quotedSelection) return;
+    const viewport = window.visualViewport;
+    const position = () => {
+      const rect = popover.getBoundingClientRect();
+      const top = viewport?.offsetTop ?? 0;
+      const left = viewport?.offsetLeft ?? 0;
+      popover.style.top = `${Math.max(top + 8, Math.min(quotedSelection.top, top + (viewport?.height ?? window.innerHeight) - rect.height - 8))}px`;
+      popover.style.left = `${Math.max(left + 8, Math.min(quotedSelection.left - rect.width / 2, left + (viewport?.width ?? window.innerWidth) - rect.width - 8))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(popover);
+    window.addEventListener("resize", position);
+    viewport?.addEventListener("resize", position);
+    viewport?.addEventListener("scroll", position);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      viewport?.removeEventListener("resize", position);
+      viewport?.removeEventListener("scroll", position);
+    };
+  }, [quotedSelection, quoteInputOpen, quoteError]);
+
+  useEffect(() => {
+    if (!quotedSelection) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!quoteInputOpen && !quotePopoverRef.current?.contains(event.target as Node)) closeQuotedSelection();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!quoteSubmitting) closeQuotedSelection();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [quotedSelection, quoteInputOpen, quoteSubmitting, closeQuotedSelection]);
+
+  const quoteSelectionHere = useCallback(() => {
+    if (!quotedSelection) return;
+    chatInputRef?.current?.insertQuote(buildQuotedSelection(quotedSelection.text));
+    // No `removeAllRanges()` here: inserting focuses the composer, and that
+    // focus already collapses the page's selection. Calling it afterwards also
+    // clears the composer's own selection and drops its caret to offset 0
+    // (#1319), so the quote would be typed in front of instead of after.
+    closeQuotedSelection();
+  }, [chatInputRef, quotedSelection, closeQuotedSelection]);
+
+  // [fork] Ask in a NEW chat: fork_branch at the quoted entry, then the host
+  // carries the composer prompt over (pendingQuotePrompt). Upstream's side
+  // chat flow (below) stays as the default when onAskInNewChat is absent.
+  const askSelectionInNewChat = useCallback(async (prompt: string) => {
+    const sourceSessionId = sessionIdRef.current ?? session?.id;
+    if (quoteSubmitting || !prompt.trim() || !quotedSelection?.sourceEntryId || !sourceSessionId || !onAskInNewChat) return;
+    setQuoteSubmitting(true);
+    setQuoteError(null);
+    unlockAudio?.();
+    try {
+      await onAskInNewChat(prompt, sourceSessionId, quotedSelection.sourceEntryId);
+      closeQuotedSelection();
+    } catch (error) {
+      quoteChatInputRef.current?.restoreSubmission(prompt);
+      setQuoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setQuoteSubmitting(false);
+    }
+  }, [onAskInNewChat, quotedSelection, quoteSubmitting, session?.id, sessionIdRef, closeQuotedSelection, unlockAudio]);
+
+  const askSelectionInSideChat = useCallback(async (prompt: string) => {
+    if (quoteSubmitting || !prompt.trim() || !quotedSelection) return;
+    setQuoteSubmitting(true);
+    setQuoteError(null);
+    try {
+      const refusal = await startSideChat(prompt, quotedSelection.text);
+      if (!refusal) {
+        closeQuotedSelection();
+        return;
+      }
+      quoteChatInputRef.current?.restoreSubmission(prompt);
+      setQuoteError(refusal);
+    } catch (error) {
+      quoteChatInputRef.current?.restoreSubmission(prompt);
+      setQuoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setQuoteSubmitting(false);
+    }
+  }, [quotedSelection, quoteSubmitting, closeQuotedSelection, startSideChat]);
+
   // The composer's Side chat button: its draft goes back on a refusal, as a failed send's does.
   const askInSideChat = useCallback(async (message: string) => {
     let refusal: string | null;
@@ -377,8 +874,205 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (loading || error || !initialPrompt || initialPromptSentRef.current) return;
     initialPromptSentRef.current = true;
     onInitialPromptConsumed?.();
-    void handleSend(initialPrompt);
-  }, [initialPrompt, loading, error, handleSend, onInitialPromptConsumed]);
+    void handleSend(initialPrompt, initialPromptImages);
+  }, [initialPrompt, initialPromptImages, loading, error, handleSend, onInitialPromptConsumed]);
+
+  // ── "Edit from here" pending-send marker (frontend-only, takes effect on send) ────────
+  // Click: prefill the composer + highlight the message + button becomes "cancel";
+  // nothing moves in place, no backend operations.
+  // Cancel / navigate away / refresh: auto-restore (state dies with unmount; suppressDraft
+  // guarantees nothing lands in the draft).
+  // Send: handleSendWrapped first navigates back (navigate_tree; first message → rebuild
+  // from root), then sends normally.
+  const [editFromHerePending, setEditFromHerePending] = useState<{
+    entryId: string;
+    /** Rewind target: normally the previous assistant entryId; for the first message, the message's own entryId */
+    targetId: string;
+    /** Leaf loaded after rewinding (null for the first message) */
+    leafId: string | null;
+  } | null>(null);
+  const editFromHerePendingRef = useRef(editFromHerePending);
+  editFromHerePendingRef.current = editFromHerePending;
+
+  // Branch navigation (BranchNavigator/context links) moves the view → the pending
+  // "edit from here" marker is invalidated and auto-cancelled (otherwise sending would
+  // force a rewind to the marked position, overriding the branch the user just navigated to).
+  // The send path is unaffected: handleSendWrapped clears pending before rewinding;
+  // setState(null) here is idempotent.
+  useEffect(() => {
+    setEditFromHerePending(null);
+  }, [activeLeafId]);
+
+  // Marking (clicking "edit from here"): don't overwrite when the composer has text and no
+  // marker exists (same contract as replaceMessage's canRestore); with an existing marker,
+  // clear the old prefill first then mark the new one (leftover text from the previous
+  // target would make replaceMessage silently fail).
+  // Pre-gate (AI-change handling): edit-from-here = rewind to that branch point and resend →
+  // an extension (e.g. the git-history extension's three revert options) first lets the user
+  // decide whether to roll back file changes in that range; cancelling aborts the marking
+  // (forking a new session doesn't touch the original one, so the gate doesn't apply).
+  const handleEditFromHereMark = useCallback(async (entryId: string, message: UserMessage, branchPointId: string | null) => {
+    // The quiet pre-check runs before the gate: with composer text and no marker we would
+    // silently abort anyway — popping the revert gate first would waste the user's answer.
+    const hasPending = editFromHerePendingRef.current != null;
+    if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
+    const sid = sessionIdRef.current;
+    if (sid) {
+      // The cut-turn set = the edited message M plus every later user message entryId
+      // (in session order) — the extension uses it to scope the rollback range precisely
+      // (including the edited turn), not just ops after the entryId.
+      // Find M's position in entryIds, then collect the role==="user" entryIds after it.
+      const cutUserEntryIds: string[] = [];
+      const mi = entryIds.indexOf(entryId);
+      if (mi >= 0) {
+        for (let i = mi; i < messages.length; i++) {
+          if (messages[i]?.role === "user" && entryIds[i]) cutUserEntryIds.push(entryIds[i]);
+        }
+      }
+      const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before", cutUserEntryIds });
+      if (!allowed) return;
+      // The revert gate is a non-modal overlay: the user may have typed while it was open — re-check to avoid clobbering a prefill (canRestore contract).
+      if (!editFromHerePendingRef.current && chatInputRef?.current?.hasInput?.()) return;
+    }
+    if (hasPending) chatInputRef?.current?.clearInput?.();
+    setEditFromHerePending({
+      entryId,
+      targetId: branchPointId ?? entryId,
+      leafId: branchPointId,
+    });
+    handleEditContent(message);
+  }, [chatInputRef, handleEditContent, sessionIdRef, messages, entryIds]);
+
+  // Cancel: restore highlighting + clear the prefilled composer (clearInput also clears the draft)
+  const handleCancelEditFromHere = useCallback(() => {
+    setEditFromHerePending(null);
+    chatInputRef?.current?.clearInput?.();
+  }, [chatInputRef]);
+
+  // Send: with a pending marker, rewind the session first (the point where it actually
+  // takes effect), then send the edited message.
+  // Bash commands (! prefix) don't trigger the rewind — the user just wants to run a
+  // shell command; the marker stays for the next send.
+  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
+    const pending = editFromHerePendingRef.current;
+    if (pending) {
+      if (message.trim().startsWith("!")) {
+        await handleSend(message, images, files);
+        return;
+      }
+      setEditFromHerePending(null);
+      await handleEditFromStartSend(pending.targetId, pending.leafId, pending.entryId, message, images);
+      return;
+    }
+    await handleSend(message, images, files);
+  }, [handleEditFromStartSend, handleSend]);
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+  /** "Continue" button: appears once the AI has fully stopped (no streaming) — clicking
+   *  quickly sends a "continue" message to keep the agent running.
+   *  Visible only while the agent is idle (ChatInput renders it only in the non-streaming
+   *  branch). When the queue still has undelivered messages (e.g. restored after a restart
+   *  but never continued), the queue is delivered instead (runAgentContinue path);
+   *  only an empty queue sends a plain "continue". */
+  const handleContinue = useCallback(() => {
+    const queued = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
+    if (queued > 0) {
+      void handleContinueQueue();
+      return;
+    }
+    void handleSend(t("chat.continue"));
+  }, [handleSend, handleContinueQueue, queuedMessages, t]);
+
+  // Bottom "step eye-room": while the agent runs, pad the height (ch-120-composerH) so
+  // smartFollowStep's "pin the last message bottom at 120px" never exceeds maxScrollTop
+  // (lost when 19031a2 removed the spacer → steps got clamped flush to the bottom).
+  // ch changes with the AI pane/window ⇒ tracked by ResizeObserver; the container may
+  // mount late (empty session has no container on first paint) ⇒ the callback ref forwards
+  // scrollContainerRef and bumps scReady so the RO re-attaches once the container appears.
+  const [scReady, setScReady] = useState(0);
+  const handleScrollBoxRef = useCallback((node: HTMLDivElement | null) => {
+    scrollContainerRef.current = node;
+    setScReady((n) => n + 1);
+  }, [scrollContainerRef]);
+  const [scrollViewportH, setScrollViewportH] = useState(0);
+  useLayoutEffect(() => {
+    const sc = scrollContainerRef.current;
+    if (!sc) return;
+    const update = () => setScrollViewportH(sc.clientHeight);
+    update();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(sc);
+    return () => ro?.disconnect();
+  }, [scReady, scrollContainerRef]);
+  // Bottom "step eye-room": while the agent runs, pad the height (ch-120-composerH) so
+  // smartFollowStep's "pin the last message bottom at 120px" never exceeds maxScrollTop
+  // (lost when 19031a2 removed the spacer → steps got clamped flush to the bottom).
+  // Must be derived during render (effect+state will not do): handleSend optimistically
+  // sets agentRunning + appends the user message in the same commit, and the send jump
+  // (scrollUserMsgToTop) reads maxScrollTop in that commit's layout phase. If the padding
+  // lands one beat late (the old effect version), maxScrollTop excludes the padding →
+  // target clamps to the current position = no-op, the new message stays below the
+  // viewport and later steps are suppressed by the 2s press guard → "nothing moves after
+  // sending" (the root cause of step-follow breaking). The derived value lands in the
+  // same commit as agentRunning, so the jump naturally sees a maxScrollTop that includes
+  // the padding.
+  // Loop guard: the padding does not change the flex-fixed clientHeight (the RO reads
+  // it; unchanged value → setState bails).
+  const bottomEyeRoom = agentRunning
+    ? Math.max(0, scrollViewportH - 120 - bottomComposerHeight)
+    : 0;
+
+  /** Draft storage key for the active session (matches ChatInput's draftKey).
+   *  New sessions MUST use newSessionDraftKey (which contains a unique per-creation
+   *  draftId) instead of `new:<cwd>`: a shared cwd-level key would silently restore the
+   *  previous new-session leftovers (even a single @) into every subsequent new session,
+   *  and promoteNewSession's rekey would never line up. */
+  const draftKey = session?.id ?? newSessionDraftKey ?? undefined;
+
+  // Draft cluster moved out (defork P2): draft scanning/silent restore/dialog composition
+  // are all taken over by the draft-keeper extension via the composer contract; core no
+  // longer owns a draft store and only handles server-side queue recovery + ext routing.
+  // Recovery items = server queue recovery + draft items from the extension provider
+  // (the keeper).
+  const extRecoveryItems = useRecoveryProviderItems() as PendingRecoveryItem[];
+  const recoveryItems = [
+    ...pendingRecovery,
+    ...extRecoveryItems,
+  ];
+
+  // Recovery dialog resolution: ext: prefixed items route back to their provider
+  // (the keeper decides restore/queue/discard itself); server items go through
+  // resolveRecovery; continueRun triggers handleContinueQueue for pure-draft items.
+  const handleResolveRecovery = useCallback(async (
+    keep: string[],
+    discard: string[],
+    continueRun: boolean,
+  ): Promise<PendingRecoveryItem[]> => {
+    const extKept = keep.filter((id) => id.startsWith("ext:")).length;
+    const routed = routeRecoveryResolve(keep, discard);
+    const serverKeep = routed.kept;
+    const serverDiscard = routed.discarded;
+    if (serverKeep.length === 0 && serverDiscard.length === 0) {
+      if (continueRun && extKept > 0) void handleContinueQueue();
+      return pendingRecovery;
+    }
+    return resolveRecovery(serverKeep, serverDiscard, continueRun && serverKeep.length > 0);
+  }, [pendingRecovery, resolveRecovery, handleContinueQueue]);
+
+  // Reset dismissal whenever the session or its pending list changes identity.
+  useEffect(() => {
+    setRecoveryDismissed(false);
+  }, [session?.id]);
+
+  // After recovery/import resolution (pendingRecovery drops to zero), expand
+  // the queue panel so the restored messages are visible immediately instead
+  // of being hidden behind the auto-collapse threshold.
+  const prevRecoveryCountRef = useRef(recoveryItems.length);
+  useEffect(() => {
+    if (recoveryItems.length === 0 && prevRecoveryCountRef.current > 0) {
+      chatInputRef?.current?.expandQueue();
+    }
+    prevRecoveryCountRef.current = recoveryItems.length;
+  }, [recoveryItems.length, chatInputRef]);
 
   // One sound when a dialog appears with none on screen. A dialog queued behind
   // another one surfaces the moment the user answers that one, so it stays quiet.
@@ -391,8 +1085,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   // Register the abort handler for the global Esc shortcut
   useEffect(() => {
-    if (!panel) registerAbortHandler(sessionBusy ? handleAbort : null);
-  }, [panel, sessionBusy, handleAbort]);
+    if (!panel) registerAbortHandler(sessionBusy ? handleAbortRequest : null);
+  }, [panel, sessionBusy, handleAbortRequest]);
+
+  // --- Scroll-to-earliest / scroll-to-latest floating buttons ---
+
 
   // --- Lazy-load historical messages ---
   // Only render the last N messages initially. When the user scrolls to the
@@ -529,6 +1226,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     ));
     if (element instanceof HTMLElement) {
       scrollToMessage(element, position.anchorOffset);
+      // [fork] messages render with content-visibility:auto (estimated 160px placeholders).
+      // The first scroll lands against estimated heights above the anchor; once the real
+      // blocks lay out, heights shift. Re-anchor one frame later to absorb the drift.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!element.isConnected) return;
+        scrollToMessage(element, position.anchorOffset);
+      }));
       setPendingScrollRestore(null);
       return;
     }
@@ -586,6 +1290,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!sentinel || !container) return;
+    
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting) return;
@@ -613,7 +1318,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           loadingOlderRef.current = false;
         });
       },
-      { root: container, threshold: 0 }
+      { root: container, threshold: 0, rootMargin: "0px" }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -673,6 +1378,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   }, [ctxKey, onContextUsageChange]);
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
 
+  const displayModelKey = displayModelValue ? `${displayModelValue.provider}:${displayModelValue.modelId}` : null;
+  useEffect(() => {
+    if (displayModelKey) {
+      const [provider, ...rest] = displayModelKey.split(":");
+      onDisplayModelChange?.({ provider, modelId: rest.join(":") });
+    } else {
+      onDisplayModelChange?.(null);
+    }
+  }, [displayModelKey, onDisplayModelChange]);
+  useEffect(() => () => { onDisplayModelChange?.(null); }, [onDisplayModelChange]);
+
   // Images attach to the prompt. Other files go through the file explorer's
   // upload into the working directory, never replacing a file already there,
   // and come back as @mentions. The composer's attach button takes the same
@@ -705,13 +1421,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     }
   }, [addNotice, chatInputRef, newSessionCwd, onFilesUploaded, session?.cwd, t]);
 
-  const onDrop = useCallback((items: DroppedItem[], session?: SessionReferenceTarget) => {
-    // A dragged session row quotes it: it joins the composer as a chip and its
-    // token is written when the message is sent (#1716).
-    if (session) {
-      chatInputRef?.current?.addSessionReference(session);
-      return;
-    }
+  const onDrop = useCallback((items: DroppedItem[]) => {
     const { images, files, folders } = splitDroppedItems(items);
     if (images.length > 0) chatInputRef?.current?.addImages(images);
     if (folders.length > 0) {
@@ -720,18 +1430,59 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (files.length > 0) void uploadDroppedFiles(files);
   }, [addNotice, chatInputRef, t, uploadDroppedFiles]);
 
+  // 📎 document attachments mean "show this to the session", not "add to my
+  // project": they land in <cwd>/.pi-attachments (auto-created on the server,
+  // git-invisible via its own `.gitignore` with `*`) and come back as @mentions
+  // of the relative path. Drag-and-drop keeps the explicit upload-to-project
+  // semantics (project root, sidebar upload is the same flow).
+  const uploadAttachedFiles = useCallback(async (files: File[]) => {
+    const cwd = session?.cwd ?? newSessionCwd;
+    if (!cwd) {
+      addNotice({ type: "warning", message: t("chat.dropNeedsCwd") });
+      return;
+    }
+    try {
+      const attachmentsDir = `${cwd.replace(/\/+$/, "")}/.pi-attachments`;
+      const { status, data } = await uploadFiles(attachmentsDir, files, "skip", undefined, true);
+      if (status !== 200 && status !== 207) throw new Error(data.error ?? `HTTP ${status}`);
+      const uploaded = data.uploaded ?? [];
+      const skipped = data.skipped ?? [];
+      const mentions = buildFileAtMentionsText([...uploaded, ...skipped].map((name) => `.pi-attachments/${name}`));
+      if (mentions) chatInputRef?.current?.insertText(mentions);
+      if (uploaded.length > 0) {
+        addNotice({ type: "success", message: t("chat.attachUploaded", { count: uploaded.length }) });
+      }
+      if (skipped.length > 0) {
+        addNotice({ type: "warning", message: t("chat.attachAlreadyExists", { names: skipped.join(", ") }) });
+      }
+      for (const failure of data.errors ?? []) {
+        addNotice({ type: "error", message: t("chat.dropFailed", { message: `${failure.name}: ${failure.error}` }) });
+      }
+    } catch (uploadError) {
+      addNotice({ type: "error", message: t("chat.dropFailed", { message: uploadError instanceof Error ? uploadError.message : String(uploadError) }) });
+    }
+  }, [addNotice, chatInputRef, newSessionCwd, session?.cwd, t]);
+
   const onAttachFiles = useCallback((files: File[]) => {
-    onDrop(files.map((file) => ({ kind: "file", file })));
-  }, [onDrop]);
+    const { images, files: docs } = splitDroppedItems(files.map((file) => ({ kind: "file", file })));
+    if (images.length > 0) chatInputRef?.current?.addImages(images);
+    if (docs.length > 0) void uploadAttachedFiles(docs);
+  }, [chatInputRef, uploadAttachedFiles]);
+
+  // Local pi sessions (no backendSource/capabilities in get_state) and backends
+  // without the fileAttachments capability have their prompt file attachments
+  // dropped silently — route 📎 documents through the .pi-attachments upload
+  // instead (onAttachFiles above).
+  const docFilesToUpload = backendSource == null || !sessionCap("fileAttachments");
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
   // While a run goes, an extension message that opened it anchors its turn before the reply lands.
-  const openTail = agentRunning || isStreaming;
+  const openTail = agentRunning || streamState.isStreaming;
   const turnAnchors = useMemo(() => getTurnAnchors(messages, { openTail }), [messages, openTail]);
   const turnRefCount = messages.reduce((count, message, idx) => count + (hasTurnRef(message, turnAnchors[idx]) ? 1 : 0), 0);
   // Stable Map identity: `messages` doesn't change during streaming updates
-  // (the streaming message lives in streamingStore), so memoized MessageViews
+  // (the streaming message lives in streamState), so memoized MessageViews
   // skip re-rendering on every message_update event. An inline `new Map()`
   // here used to defeat MessageView's memo() on each streamed chunk.
   const toolResultsMap = useMemo(() => {
@@ -762,108 +1513,160 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     setVisibleCount((current) => Math.max(current, messages.length * 2));
   }, [messages.length]);
 
-  const isEmptyNew = isNew && messages.length === 0 && !isStreaming && !sessionBusy;
+  const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  // Backend usage seam: the stats-row quota chip and the session-info quota details own
+  // the display (provider-usage extension); the data stays here (get_usage protocol).
+  // A fresh empty session forwards null (same suppression the old floating badge had).
+  useEffect(() => {
+    if (!onBackendUsageChange) return;
+    if (isEmptyNew || !backendUsage || !session?.id) {
+      onBackendUsageChange(null);
+      return;
+    }
+    onBackendUsageChange({ sessionId: session.id, usage: backendUsage, backendSource });
+  }, [backendUsage, backendSource, isEmptyNew, session?.id, onBackendUsageChange]);
+  useEffect(() => () => { onBackendUsageChange?.(null); }, [onBackendUsageChange]);
+  // Discover available backends (new-session welcome page only; extension-registered
+  // backends appear automatically, and the selector doesn't render when there are none).
+  useEffect(() => {
+    if (!isNew || backendOptions.length > 0) return;
+    let cancelled = false;
+    // dedupeFetch: StrictMode double effect / remounts share one request (the backend list is stable; 2.5s micro-cache).
+    dedupeFetch(apiUrl("/api/session-backends"))
+      .then((r) => (r.ok ? r.json() : { providers: [] }))
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>; rescanable?: boolean; detach?: { available: boolean; runner?: string; reason?: string } }) => {
+        if (cancelled) return;
+        setBackendOptions(d.providers ?? []);
+        setDetachSupport(d.detach ?? null);
+        setBackendRescanable(Boolean(d.rescanable));
+        backendUnavailableRef.current = new Set((d.providers ?? []).filter((p) => p.available === false).map((p) => p.type));
+        // Fall back to local pi when the remembered backend no longer exists or is unavailable (extension
+        // uninstalled/renamed, or its CLI is missing — creating would fail at send time)
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur && p.available !== false) ? cur : null));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, backendOptions.length]);
+  // Rescan backend registrations (POST /api/session-backends/rescan): re-runs
+  // every extension's probe+register pass so CLIs installed after the host
+  // booted appear without a restart. Updates the dropdown in place and shows a
+  // transient note with the outcome next to it.
+  const rescanBackends = useCallback(async () => {
+    if (backendsRescanning) return;
+    setBackendsRescanning(true);
+    try {
+      const r = await fetch(apiUrl("/api/session-backends/rescan"), { method: "POST" });
+      const d = await r.json().catch(() => null) as
+        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>; detach?: { available: boolean; runner?: string; reason?: string } }
+        | null;
+      if (d?.ok) {
+        setBackendOptions(d.providers ?? []);
+        setDetachSupport(d.detach ?? null);
+        setBackendRescanable(true);
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur && p.available !== false) ? cur : null));
+        // Outcome note: newly picked-up entries first (was unavailable, now ready),
+        // then the still-missing ones with their install hint (full text on hover).
+        const nowMissing = (d.providers ?? []).filter((p) => p.available === false);
+        const missingTypes = new Set(nowMissing.map((p) => p.type));
+        const pickedUp = [...backendUnavailableRef.current].filter((t) => !missingTypes.has(t))
+          .map((t) => (d.providers ?? []).find((p) => p.type === t)?.label ?? t);
+        backendUnavailableRef.current = missingTypes;
+        const missText = nowMissing.map((p) => `${p.label}${p.installHint ? ` (${p.installHint})` : ""}`).join(", ");
+        const note = pickedUp.length > 0
+          ? nowMissing.length > 0
+            ? t("chat.rescanNowAvailableMissing", { names: pickedUp.join(", "), count: nowMissing.length })
+            : t("chat.rescanNowAvailable", { names: pickedUp.join(", ") })
+          : nowMissing.length > 0
+            ? t("chat.rescanMissing", { count: nowMissing.length, details: missText })
+            : t("chat.rescanAllReady");
+        if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+        setBackendRescanNote(note);
+        // Install hints need reading time: keep the note longer when something is missing.
+        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), nowMissing.length ? 15000 : 8000);
+      } else {
+        if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+        setBackendRescanNote(t("chat.rescanFailed"));
+        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+      }
+    } catch {
+      // network failure: keep the current list, note the failure transiently
+      if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+      setBackendRescanNote(t("chat.rescanFailed"));
+      backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+    } finally {
+      setBackendsRescanning(false);
+    }
+  }, [backendsRescanning, t]);
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
+  const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
-  const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
-  const promptAnchorSpacerHeightRef = useRef(0);
-  const promptAnchorMeasureFrameRef = useRef<number | null>(null);
-  const promptAnchorAdjustmentDoneRef = useRef(false);
-  const promptAnchorUpdateRef = useRef<(() => void) | null>(null);
+  const bottomComposerRef = useRef<HTMLDivElement | null>(null);
+  const bottomComposerScrollFrameRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
-    const spacer = promptAnchorSpacerRef.current;
-    if (!agentRunning || !promptAnchorActive) {
-      promptAnchorUpdateRef.current = null;
-      promptAnchorSpacerHeightRef.current = 0;
-      promptAnchorAdjustmentDoneRef.current = false;
-      if (spacer) spacer.style.height = "";
+    const composer = bottomComposerRef.current;
+    if (!composer) {
+      bottomComposerHeightRef.current = 0;
+      setBottomComposerHeight(0);
       return;
     }
 
-    const container = scrollContainerRef.current;
-    const messageContent = messageContentRef.current;
-    const userMessage = lastUserMsgRef.current;
-    if (!container || !messageContent || !userMessage || !spacer) return;
+    const updateBottomComposerHeight = (height?: number) => {
+      // The RO callback passes borderBoxSize (fires after layout, free to read); only the initial/no-arg call reads rect
+      const nextHeight = Math.ceil(height ?? composer.getBoundingClientRect().height);
+      if (bottomComposerHeightRef.current === nextHeight) return;
 
-    let disposed = false;
-    const updatePromptAnchorSpacer = () => {
-      if (
-        disposed
-        || scrollContainerRef.current !== container
-        || messageContentRef.current !== messageContent
-        || lastUserMsgRef.current !== userMessage
-        || promptAnchorSpacerRef.current !== spacer
-      ) return;
+      const previousHeight = bottomComposerHeightRef.current;
+      bottomComposerHeightRef.current = nextHeight;
+      setBottomComposerHeight(nextHeight);
 
-      const containerTop = container.getBoundingClientRect().top;
-      const userMessageTop = userMessage.getBoundingClientRect().top
-        - containerTop
-        + container.scrollTop;
-      const targetTop = Math.max(0, userMessageTop - 16);
-      const contentEnd = spacer.getBoundingClientRect().top
-        - containerTop
-        + container.scrollTop;
-      const nextPromptAnchorSpacerHeight = getPromptAnchorSpacerHeight(
-        targetTop,
-        contentEnd,
-        container.clientHeight,
-      );
-
-      const isInitialMeasurement = !promptAnchorAdjustmentDoneRef.current;
-      const needsInitialAdjustment = isInitialMeasurement
-        && nextPromptAnchorSpacerHeight > 0;
-      if (isInitialMeasurement) promptAnchorAdjustmentDoneRef.current = true;
-      if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
-
-      promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-      spacer.style.height = nextPromptAnchorSpacerHeight > 0
-        ? `${nextPromptAnchorSpacerHeight}px`
-        : "";
-      if (needsInitialAdjustment) scrollUserMsgToTop();
-    };
-
-    promptAnchorUpdateRef.current = updatePromptAnchorSpacer;
-    const schedulePromptAnchorMeasure = () => {
-      if (disposed || promptAnchorMeasureFrameRef.current !== null) return;
-      promptAnchorMeasureFrameRef.current = requestAnimationFrame(() => {
-        promptAnchorMeasureFrameRef.current = null;
-        updatePromptAnchorSpacer();
+      if (bottomComposerScrollFrameRef.current !== null) {
+        cancelAnimationFrame(bottomComposerScrollFrameRef.current);
+      }
+      bottomComposerScrollFrameRef.current = requestAnimationFrame(() => {
+        bottomComposerScrollFrameRef.current = null;
+        const currentContainer = scrollContainerRef.current;
+        const distanceFromBottom = currentContainer
+          ? currentContainer.scrollHeight - currentContainer.clientHeight - currentContainer.scrollTop
+          : Number.POSITIVE_INFINITY;
+        // Preserve a tail-pinned view while avoiding a jump for history readers.
+        // The walked-away check also blocks this: a user who just wheeled up a
+        // few pixels must not be snapped back to the tail by a composer resize
+        // (error banner / queue banner appearing) — same bug family as the idle
+        // re-pin in useAgentSession.
+        if (!userScrolledAwayRef.current && distanceFromBottom <= Math.abs(nextHeight - previousHeight) + 1) {
+          scrollToBottom("auto");
+        }
       });
     };
+    updateBottomComposerHeight();
 
-    updatePromptAnchorSpacer();
     const observer = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(schedulePromptAnchorMeasure);
-    observer?.observe(container);
-    observer?.observe(messageContent);
-    observer?.observe(userMessage);
+      : new ResizeObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        updateBottomComposerHeight(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+      });
+    observer?.observe(composer);
     return () => {
-      disposed = true;
-      if (promptAnchorUpdateRef.current === updatePromptAnchorSpacer) {
-        promptAnchorUpdateRef.current = null;
-      }
       observer?.disconnect();
-      if (promptAnchorMeasureFrameRef.current !== null) {
-        cancelAnimationFrame(promptAnchorMeasureFrameRef.current);
-        promptAnchorMeasureFrameRef.current = null;
+      if (bottomComposerScrollFrameRef.current !== null) {
+        cancelAnimationFrame(bottomComposerScrollFrameRef.current);
+        bottomComposerScrollFrameRef.current = null;
       }
     };
-  }, [
-    agentRunning,
-    lastUserMsgRef,
-    messages.length,
-    promptAnchorActive,
-    scrollContainerRef,
-    scrollUserMsgToTop,
-  ]);
+  }, [error, isEmptyNew, loading, scrollContainerRef, scrollToBottom]);
 
-  // Each streamed chunk StreamingReply commits, and the bubble coming and going.
-  const updatePromptAnchor = useCallback(() => {
-    promptAnchorUpdateRef.current?.();
-  }, []);
-  useLayoutEffect(updatePromptAnchor, [isStreaming, hasStreamingContent, updatePromptAnchor]);
+  // Step-follow is fully owned by useAgentSession's smartFollowStep (useEffect
+  // [streamState] → when content grows past the viewport, scrollTo back to 120px).
+  // No promptAnchorSpacer here anymore: that spacer's math was independent of content
+  // position (constant delta), constantly inflated the 3/4 blank space below the
+  // viewport during streaming, and conflicted with smartFollowStep's target computation
+  // (measured: constant 457px spacer + sparse steps + abrupt jump at the end).
+  // Spacer constant 0 → smartFollowStep steps normally per screen and the last message
+  // stays pinned at the viewport's top quarter.
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -876,13 +1679,30 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
-      onSend={handleSend}
-      onAbort={handleAbort}
+      sessionId={session?.id ?? null}
+      onSend={handleSendWrapped}
+      onAbort={handleAbortRequest}
+      aborting={aborting}
+      // Fork-new-session is only available for local pi sessions (non-empty
+      // sessionCapabilities = external backend; the handle adapter has no fork_branch);
+      // fresh draft sessions with nothing to copy don't wire it either.
+      onForkNew={isNew || sessionCapabilities ? undefined : handleForkNew}
+      // Steer needs a mid-run injection surface the backend actually has: gate it by
+      // capability like setModel/compact do, otherwise the button appears on every
+      // steer:false backend (qoder/codex/cursor/…) and silently enqueues a follow-up.
+      onSteer={agentRunning && sessionCap("steer") ? handleSteer : undefined}
       onSideChat={onSideSession && !isHiddenRelation(session?.relation) ? askInSideChat : undefined}
-      onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
+      onQueueFollowUp={handleFollowUp}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
+      onQueueSteerSend={sessionCap("steer") ? handleSteer : undefined}
+      onConvertQueueItem={convertQueuedMessage}
       isStreaming={sessionBusy}
+      canContinue={!isEmptyNew}
+      // Welcome page: no minimap is rendered, so the composer column centers on the
+      // same 820px line as the widget cards / selectors (session view keeps the inset).
+      centerColumn={isEmptyNew}
+      onContinue={handleContinue}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
@@ -891,31 +1711,65 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       missingCwd={missingCwd}
       onForkMissingCwd={canForkMissingCwd ? openForkPicker : undefined}
       modelScopeWarnings={modelScopeWarnings}
+      onRefreshModels={isNew && modelsRefreshable ? refreshModels : undefined}
+      modelsRefreshing={modelsRefreshing}
       allModelList={allModelList}
       onLoadAllModels={isModelScopeActive ? loadAllModels : undefined}
-      onModelChange={handleModelChange}
+      onModelChange={
+        session && session.agent && !sessionCap("setModel")
+          ? undefined
+          : handleModelChange
+      }
       modelSwitching={modelSwitching}
+      contextPercent={contextUsage?.percent ?? null}
+      // Context-meter extension seam: full context snapshot + session panel entry (§4.1 of the context-meter plan doc)
+      contextUsage={contextUsage}
+      onSessionStatsPanelOpen={onSessionStatsPanelOpen}
       defaultModel={defaultModel}
       onSetDefaultModel={handleSetDefaultModel}
-      onCompact={session || isNew ? handleCompact : undefined}
+      onCompact={session || isNew
+        ? (sessionCap("compact") ? handleCompact : undefined)
+        : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}
       compactError={compactError}
       onDismissCompactError={dismissCompactError}
       compactResult={compactResult}
+      compactQueued={compactQueued}
+      modelSwitchPending={modelSwitchPending}
+      onCancelCompactQueue={cancelCompactQueue}
       toolPreset={toolPreset}
-      onToolPresetChange={(session && !isHiddenRelation(session.relation)) || isNew ? handleToolPresetChange : undefined}
+      onToolPresetChange={((session && !isHiddenRelation(session.relation)) || isNew) && sessionCap("setActiveTools", true)
+        ? handleToolPresetChange
+        : undefined}
+      sessionCapabilities={sessionCapabilities}
+      onSwitchPermissionMode={switchPermissionMode}
       thinkingLevel={thinkingLevel}
       isAutoThinkingSelection={isAutoThinkingSelection}
-      onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
+      onThinkingLevelChange={session || isNew
+        ? (sessionCap("setThinkingLevel") ? handleThinkingLevelChange : undefined)
+        : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
       savedDefaultThinkingLevel={savedDefaultThinkingLevel}
       onSetDefaultThinkingLevel={session || isNew ? handleSetDefaultThinkingLevel : undefined}
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
+      tasks={sessionTasks}
       inputHistory={inputHistory}
       onRecallQueue={handleRecallQueue}
+      onExportQueue={exportQueueData}
+      onImportQueue={importQueueData}
+      onStageImport={stageImport}
+      onMoveQueue={moveQueuedMessage}
+      onRecallOne={recallQueuedMessage}
+      onRequeueAt={requeueAt}
+      onRemoveQueueItem={removeQueuedMessage}
+      queueTrash={queueTrash}
+      onRestoreQueueItem={restoreQueueItem}
+      onPurgeQueueTrash={purgeQueueTrash}
+      onTrashComposerInput={trashComposerInput}
+      onRestoreComposerTrash={restoreComposerTrash}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
       onLoadSlashCommands={loadSlashCommands}
@@ -924,9 +1778,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}
-      draftKey={session?.id ?? newSessionDraftKey ?? undefined}
+      draftKey={draftKey}
       cwd={session?.cwd ?? newSessionCwd}
+      suppressDraft={editFromHerePending != null}
+      followStreaming={!followPaused}
+      extensionStatuses={extensionStatuses}
+      extensionWidgets={extensionWidgets}
       onAttachFiles={onAttachFiles}
+      docFilesToUpload={docFilesToUpload}
     />
   );
 
@@ -987,45 +1846,91 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         </div>
       )}
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {/* Inside the transcript's box, not the whole column: the shelf ends
-            above the composer and scrolls there instead of covering it (#1780). */}
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            bottom: 12,
-            left: 0,
-            right: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
-            zIndex: 40,
-            display: "flex",
-            // Toasts live in the top-right corner
-            justifyContent: "flex-end",
-            alignItems: "flex-start",
-            padding: `0 ${CHAT_COLUMN_PADDING}px`,
-            pointerEvents: "none",
+      {/* 队列恢复对话框由 aiti-recovery 扩展经 recoveryDialog 插槽接管（注入式活 props；
+          sole-owner：core 不渲染自身实现——去 fork 化 B3）。渲染条件留 core（有恢复项才挂插槽）。 */}
+      {recoveryItems.length > 0 && !recoveryDismissed && (
+        <ExtSlot
+          name="recoveryDialog"
+          extra={{
+            items: recoveryItems,
+            sessionId: session?.id ?? sessionIdRef.current ?? undefined,
+            onResolve: handleResolveRecovery,
+            onExport: exportQueueData,
+            onImport: importQueueData,
+            onDismiss: () => setRecoveryDismissed(true),
+            mode: recoveryIsImport ? "import" : "recovery",
           }}
-        >
-          <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
-        </div>
+        />
+      )}
+
+
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 0,
+          right: isMobile || isCompact ? 0 : CHAT_MINIMAP_WIDTH,
+          zIndex: 40,
+          display: "flex",
+          // Toasts live in the top-right corner
+          justifyContent: "flex-end",
+          padding: `0 ${CHAT_COLUMN_PADDING}px`,
+          pointerEvents: "none",
+        }}
+      >
+        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} onAskAi={askAiAboutNotice} onDismiss={dismissNotice} />
+      </div>
+
+      {/* Session request card takeover seam (agent-capability UI moved out of core):
+        extension routing first (the session-cards extension / the zcode agent client
+        extension), misses fall to the core minimal fallback card (capabilities never
+        render bare). Plan: docs/pi-web-agent-capability-ui-ext-plan.md §2.1. */}
+      {sessionRequest && (
+        <SessionRequestCardHost
+          request={sessionRequest}
+          respond={(answer) => respondToSessionRequest(sessionRequest.requestId, answer)}
+          backendSource={backendSource}
+          currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
+        />
+      )}
+
+      {/* New-session welcome-page widget zone · top (newSessionWidgets; renders only on
+          isEmptyNew, zero footprint otherwise). The zone flex-grows to absorb ALL free space
+          above the composer (cards stay at natural height and hug the top, leaving natural
+          breathing room below; overflowY keeps short windows safe — the composer is never
+          squeezed). extra only feeds data {cwd,isMobile,area}; panel state lives in this
+          component (nswCustomizeOpen). */}
+      {isEmptyNew && (
+        <NewSessionWidgetZone
+          area="top"
+          cwd={newSessionCwd}
+          onEdit={() => setNswCustomizeOpen(true)}
+        />
+      )}
+
+      {/* flex-1 only in session view (hosts the message scroll box); on the welcome page
+          the box would be empty yet still claim half the free flex space, squeezing the
+          top widget zone (2026-11-15: top zone is flex-1 now). */}
+      <div className={`relative flex min-h-0 min-w-0 overflow-hidden${isEmptyNew ? "" : " flex-1"}`}>
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
         )}
         {extensionCustomUi && (
           <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />
         )}
-        {!isEmptyNew && <>
+        {!isEmptyNew && (<>
         <div
-          ref={scrollContainerRef}
+          ref={handleScrollBoxRef}
+          data-chat-scroll
           // The message list is the one place long output has to be dragged through,
           // so it shows its scrollbar instead of hiding it behind the minimap (#788).
           // A stable gutter keeps the centred column from shifting when a short
           // session grows past one screen.
           className="scrollbar-subtle min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-gutter:stable]"
-          style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
+          style={{ paddingBottom: bottomEyeRoom, visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+            <div ref={messageContentRef} onPointerUp={captureQuotedSelection} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
               for (let i = messages.length - 1; i >= 0; i--) {
@@ -1052,18 +1957,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; recoverTruncation?: boolean; turnDurationMs?: number; withNotices?: boolean } = {}): ReactNode => {
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; turnAssistantEntryIds?: string[]; suppressMessageFooter?: boolean; recoverTruncation?: boolean } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
                 if (msg.role === "custom" && msg.customType === SIDE_BOUNDARY_MESSAGE_TYPE) return <SideChatDivider key="side-chat-divider" />;
                 if (isHiddenCustomMessage(msg)) return null;
-                // pi's notices.* (#1265): read from the stored message, not a turn view's copy.
-                const notices = options.withNotices === false ? [] : getTranscriptNotices(messages[idx]);
+                const prevAssistantEntryId =
+                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
+                    ? entryIds[idx - 1]
+                    : undefined;
                 const isVisible = hasTurnRef(msg, turnAnchors[idx]);
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
                 const keyPrefix = options.keyPrefix ?? "message";
-                // Not the entry id alone: a message sent or streamed in this run
-                // gets its id only when the file is read again (#1184).
-                const messageKey = messageKeys[idx];
+                const messageKey = entryIds[idx] ?? idx;
                 let showTimestamp = false;
                 if (msg.role === "assistant") {
                   showTimestamp = true;
@@ -1072,7 +1977,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     if (messages[j].role === "assistant") { showTimestamp = false; break; }
                   }
                   // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
-                  if (showTimestamp && isStreaming && idx === messages.length - 1) {
+                  if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
                     showTimestamp = false;
                   }
                 }
@@ -1091,33 +1996,74 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     onOpenSubagent={onOpenSubagent}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={bashRunning || isNew ? undefined : forkFromMessage}
+                    onFork={isNew || !sessionCap("fork") ? undefined : forkFromMessage}
                     forkEntryId={liveEntryId}
+                    forkBashRunning={bashRunning}
                     forking={forkingEntryId === (entryIds[idx] ?? liveEntryId)}
+                    onNavigate={isNew ? undefined : handleNavigate}
+                    prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
                     onEditContent={sessionBusy ? undefined : handleEditContent}
                     onCancelEdit={cancelEdit}
                     isEditing={editEntryId === entryIds[idx]}
+                    onEditFromHere={sessionBusy || isNew || !(sessionCap("navigateTree") || sessionCap("fork")) ? undefined : handleEditFromHereMark}
+                    editingFromStart={editFromHerePending?.entryId === entryIds[idx]}
+                    onCancelEditFromStart={handleCancelEditFromHere}
                     showTimestamp={showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={options.writtenFiles}
-                    turnDurationMs={options.turnDurationMs}
+                    turnAssistantEntryIds={options.turnAssistantEntryIds}
+                    suppressMessageFooter={options.suppressMessageFooter}
                     onCompact={options.recoverTruncation ? handleCompact : undefined}
                     isCompacting={options.recoverTruncation ? isCompacting : undefined}
                     compactError={options.recoverTruncation ? compactError : undefined}
                   />
                 );
-                const noticeLines = notices.length > 0 ? <TranscriptNoticeLines key={`${keyPrefix}-notices-${messageKey}`} notices={notices} /> : null;
-                // One shape with or without notices, so lines arriving on a reload do not remount the view.
-                if (!isVisible || currentRefIdx === undefined) return <Fragment key={`${keyPrefix}-${messageKey}`}>{view}{noticeLines}</Fragment>;
+                // Edit-from-here veil (plan A, purely visual preview): while a mark is
+                // pending, everything after the marked message gets dimmed — sending
+                // rewinds the session and moves those messages out of the current
+                // branch. pointer-events stay untouched (re-marking / navigation /
+                // copy keep working); the veil disappears by itself once the mark is
+                // sent or cancelled (derived from editFromHerePending, no cleanup).
+                const veiled = editFromHereMarkIdx >= 0 && idx > editFromHereMarkIdx;
+                let renderedView: ReactNode = view;
+                if (veiled && renderedView != null) {
+                  renderedView = (
+                    <div style={{ position: "relative", opacity: 0.55, transition: "opacity 0.15s" }}>
+                      {renderedView}
+                      <div aria-hidden style={{ position: "absolute", inset: 0, background: "rgba(127,127,127,0.10)", pointerEvents: "none" }} />
+                    </div>
+                  );
+                }
+                if (editFromHereMarkIdx >= 0 && idx === editFromHereMarkIdx + 1 && renderedView != null) {
+                  renderedView = (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px", margin: "6px 0", borderRadius: 6, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.22)", fontSize: 11, color: "var(--text-dim)" }}>
+                        <span style={{ flex: 1 }}>{t("chat.editHereVeilHint")}</span>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditFromHere}
+                          title={t("i18n.editFromHereCancelTitle")}
+                          style={{ display: "flex", alignItems: "center", padding: "3px 8px", height: 22, background: "none", border: "none", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 400, whiteSpace: "nowrap" }}
+                        >
+                          {t("i18n.editFromHereCancel")}
+                        </button>
+                      </div>
+                      {renderedView}
+                    </>
+                  );
+                }
+                if (!isVisible || currentRefIdx === undefined) return renderedView;
                 return (
-                  <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)}>
-                    {view}
-                    {noticeLines}
+                  <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} data-chat-msg-role={msg.role} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" } as React.CSSProperties}>
+                    {renderedView}
                   </div>
                 );
               };
 
+              // Edit-from-here veil scope: position of the marked message within the
+              // rendered history; everything after it is preview-dimmed (see renderMessage).
+              const editFromHereMarkIdx = editFromHerePending ? entryIds.indexOf(editFromHerePending.entryId) : -1;
               const rendered: ReactNode[] = [];
               for (let idx = 0; idx < messages.length;) {
                 const hasAnchor = turnAnchors[idx];
@@ -1145,7 +2091,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   continue;
                 }
 
-                const isLiveTail = (sessionBusy || isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
+                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
                 if (isLiveTail) {
                   for (let renderIdx = groupStartIdx; renderIdx < endIdx; renderIdx++) {
                     rendered.push(renderMessage(renderIdx));
@@ -1156,17 +2102,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
                 if (hasAnchor) rendered.push(renderMessage(userIdx));
 
-                // A leading segment without its anchor has no start time, and neither has the bubble a
-                // send shows at once: it carries the browser's clock, not pi's, until the reload after
-                // the run brings the session file's entry (the only kind with an entry id).
-                const turnDurationMs = hasAnchor && entryIds[userIdx] ? getTurnDurationMs(messages, userIdx, endIdx) : undefined;
-
                 const finalViews = getFinalAnswerViews(finalAnswerViewCache, messages[finalAssistantIdx] as AssistantMessage);
                 const finalAnswerMessage = finalViews.answer;
 
                 const processViews: ReactNode[] = [];
-                // processViews also holds the notice lines of steps that show nothing else.
-                let processMessageCount = 0;
                 let processToolCount = 0;
                 let processRefIdx: number | undefined;
                 let revealProcess = false;
@@ -1177,42 +2116,40 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     // Not counted either: a turn whose only extra is a hidden message has no process details.
                     if (isHiddenCustomMessage(processMessage)) continue;
                     revealProcess ||= Boolean(pendingSearchScroll && pendingSearchScroll.entryId === entryIds[processIdx]);
-                    processMessageCount += 1;
                     processViews.push(renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }));
                     continue;
                   }
                   if (processMessage.role !== "assistant") continue;
                   const message = processIdx === finalAssistantIdx ? finalViews.process : processMessage;
-                  // The final message's notices go under its answer when it has one.
-                  const withNotices = processIdx !== finalAssistantIdx || !finalAnswerMessage;
                   const blocks = getDisplayableAssistantBlocks(message);
-                  if (blocks.length === 0) {
-                    const notices = withNotices ? getTranscriptNotices(processMessage) : [];
-                    if (notices.length > 0) processViews.push(<TranscriptNoticeLines key={`process-notices-${messageKeys[processIdx]}`} notices={notices} />);
-                    continue;
-                  }
+                  if (blocks.length === 0) continue;
                   processRefIdx ??= visibleRefIndexByMessage.get(processIdx);
                   processToolCount += countToolCallBlocks(blocks);
-                  processMessageCount += 1;
                   revealProcess ||= Boolean(pendingSearchScroll && entryIds[processIdx] === pendingSearchScroll.entryId && (!searchBlock || blocks.includes(searchBlock)));
                   processViews.push(renderMessage(processIdx, {
                     attachRef: false,
                     keyPrefix: "process",
                     messageOverride: message,
                     showTimestamp: false,
-                    withNotices,
+                    // Turn-wide written files are already aggregated by the turn-level
+                    // footer at the final answer (assistantEntryIds), so per-message
+                    // footers on process messages are suppressed here to avoid the same
+                    // file appearing twice when the group is expanded. Only suppressed
+                    // when the turn truly has a final answer — an interrupted turn (no
+                    // answer blocks) has no final-answer render point, making the process
+                    // messages' footer the only display spot; it must be kept.
+                    suppressMessageFooter: Boolean(finalAnswerMessage),
                   }));
                 }
 
-                // Only notice lines, from steps that show nothing else: no fold for them.
-                if (processMessageCount === 0) rendered.push(...processViews);
-                else if (processViews.length > 0) {
+                if (processViews.length > 0) {
                   const answered = collapsesProcessDetails(finalAnswerMessage);
                   // The steps inside the fold: the final message's own notices and usage go under its answer.
                   const foldedMessages = messages.slice(userIdx + 1, finalAnswerMessage ? finalAssistantIdx : finalAssistantIdx + 1);
+                  const turnDurationMs = hasAnchor && entryIds[userIdx] ? getTurnDurationMs(messages, userIdx, endIdx) : undefined;
                   rendered.push(
                     <div
-                      key={`process-group-${messageKeys[groupStartIdx]}`}
+                      key={`process-group-${entryIds[groupStartIdx] ?? groupStartIdx}`}
                       ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
                     >
                       {/* Re-key on answer availability: useState reads defaultExpanded only
@@ -1220,7 +2157,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                           would otherwise stay open once its answer shows up, e.g. when
                           switching between an answered and an unanswered leaf of the same
                           turn. Manual toggles survive every other re-render. */}
-                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processMessageCount} toolCallCount={processToolCount} durationMs={turnDurationMs} cost={sumCost(foldedMessages)} cacheMisses={summarizeCacheMisses(foldedMessages)} defaultExpanded={!answered} reveal={revealProcess} t={t}>
+                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processViews.length} toolCallCount={processToolCount} durationMs={turnDurationMs} cost={sumCost(foldedMessages)} cacheMisses={summarizeCacheMisses(foldedMessages)} defaultExpanded={!answered} reveal={revealProcess} t={t}>
                         {processViews}
                       </ProcessDetailsGroup>
                     </div>,
@@ -1233,9 +2170,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   // Gather the turn's assistant blocks and derive the file list
                   // from the write/edit calls among them.
                   const turnContent: AssistantContentBlock[] = [];
+                  const turnAssistantEntryIds: string[] = [];
                   for (let i = userIdx + 1; i <= finalAssistantIdx; i++) {
                     const m = messages[i];
                     if (m?.role === "assistant") {
+                      const turnEntryId = entryIds[i];
+                      if (turnEntryId) turnAssistantEntryIds.push(turnEntryId);
                       for (const b of (m as AssistantMessage).content ?? []) turnContent.push(b);
                     }
                   }
@@ -1243,9 +2183,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   rendered.push(renderMessage(finalAssistantIdx, {
                     messageOverride: finalAnswerMessage,
                     writtenFiles,
-                    // Without process details the turn's time goes under the answer.
-                    turnDurationMs: processViews.length === 0 ? turnDurationMs : undefined,
-                    recoverTruncation: endIdx === messages.length && !isStreaming && !hasAssistantAnswer(finalAnswerMessage),
+                    turnAssistantEntryIds,
+                    recoverTruncation: endIdx === messages.length && !streamState.isStreaming && !hasAssistantAnswer(finalAnswerMessage),
                   }));
                 }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
@@ -1266,13 +2205,27 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 </>
               );
             })()}
-            {isStreaming && hasStreamingContent && (
-              <StreamingReply store={streamingStore} onCommit={updatePromptAnchor} toolResults={toolResultsMap} modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} />
+            {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
+              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} />
             )}
 
-            {(agentRunning || isCompacting) && !hasStreamingContent && (agentPhase || isCompacting) && (
+            {agentRunning && !hasStreamingContent && (agentPhase || isCompacting || settling) && (
               <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0))}</span>
+                {settling && !agentPhase ? (
+                  // agent_end: the run's answer is fully on screen, the SDK is just wrapping up
+                  // (compaction checks / extension settle hooks). A non-spinning completion chip — the
+                  // sidebar may still show running until agent_settled reconciles, but the chat flow
+                  // should never scream "still running" once the answer is out.
+                  <span>
+                    {t("chat.turnCompleteSettling")}
+                    {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
+                  </span>
+                ) : (
+                  <span className="animate-[pulse_1.5s_infinite]">
+                    {phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0))}
+                    {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
+                  </span>
+                )}
               </div>
             )}
 
@@ -1314,14 +2267,49 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               </div>
             )}
 
-            <div ref={promptAnchorSpacerRef} aria-hidden="true" />
+            {/* Stopped sessions: a quiet one-line "refresh" entry at the very bottom of
+                the message flow (manual re-align when advanced externally / stale in-memory
+                history). Common to all agents; hidden while running / on new sessions
+                (refreshing a new session would break draft semantics). */}
+            {!sessionBusy && !isNew && messages.length > 0 && (
+              <div className="flex justify-center py-1.5">
+                <button
+                  onClick={handleManualRefresh}
+                  disabled={refreshing}
+                  title={t("chat.refreshSessionHint")}
+                  className="text-[11px] leading-none text-text-muted/55 transition-colors hover:text-text-muted hover:underline disabled:opacity-60"
+                >
+                  {refreshing ? t("chat.refreshing") : `↻ ${t("chat.refreshSession")}`}
+                </button>
+              </div>
+            )}
+
+            {/* Height placeholder for the bottom composer (keeps the tail pin); the step-follow spacer was removed (constant 0) */}
+            <div aria-hidden="true" style={{ height: bottomComposerHeight }} />
+
+            <div ref={messagesEndRef} />
             </div>
           </div>
         </div>
-        {isMobile || pendingScrollRestore ? null : (
+
+        {/* The message scroll nav bar was extracted into an extension (the message-nav
+            extension registers into the chatOverlay slot); the message anchor banner
+            (the message-anchor extension) uses the same slot. currentSession forwards
+            the session title: name + firstMessage (when there is no name, same as the
+            left session list, the first user input is used). extra.revealHistory: when
+            the message-nav extension's "to earliest/previous" jump target lies outside
+            the render window, expand everything at once — same source as ChatMinimap's
+            onRevealHistory. */}
+        <ExtSlot
+          name="chatOverlay"
+          currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
+          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap }}
+        />
+
+        {isMobile || isCompact ? null : (
           <ChatMinimap
             messages={messages}
-            getStreamingMessage={getStreamingMessage}
+            streamingMessage={streamState.streamingMessage}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}
             onRevealHistory={revealHistoryForMinimap}
@@ -1329,18 +2317,132 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             turnAnchors={turnAnchors}
           />
         )}
-        </>}
+        </>)}
       </div>
 
-      {quoteSelectionEnabled && (
-        <QuoteSelectionPopover
-          rootRef={messageContentRef}
-          chatInputRef={chatInputRef}
-          startSideChat={onSideSession && !isHiddenRelation(session?.relation) ? startSideChat : undefined}
-        />
+      {quoteSelectionEnabled && quotedSelection && createPortal(
+        <div
+          ref={quotePopoverRef}
+          role={quoteInputOpen ? "dialog" : "toolbar"}
+          aria-label={t(quoteInputOpen ? "chat.newQuoteChat" : "chat.selectionActions")}
+          style={{
+            position: "fixed",
+            top: quotedSelection.top,
+            left: quotedSelection.left,
+            zIndex: 260,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 3,
+            width: quoteInputOpen ? "min(420px, calc(100vw - 16px))" : undefined,
+            maxWidth: "calc(100vw - 16px)",
+            maxHeight: "calc(var(--app-viewport-height, 100dvh) - 16px)",
+            overflowY: "auto",
+            padding: quoteInputOpen ? 12 : 3,
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--bg)",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+          }}
+        >
+          {onAskInNewChat && quotedSelection.sourceEntryId && !bashRunning && (
+            <button
+              type="button"
+              className="file-viewer-icon-button"
+              title={t("chat.askInNewChat")}
+              aria-label={t("chat.askInNewChat")}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { setQuoteFlow("new"); setQuoteInputOpen(true); window.getSelection()?.removeAllRanges(); }}
+              style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 3v12M18 9a9 9 0 0 1-9 9" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+              </svg>
+              <span>{t("chat.askInNewChat")}</span>
+            </button>
+          )}
+          {onSideSession && !isHiddenRelation(session?.relation) && (
+            <button
+              type="button"
+              className="file-viewer-icon-button"
+              title={t("chat.askInSideChat")}
+              aria-label={t("chat.askInSideChat")}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { setQuoteFlow("side"); setQuoteInputOpen(true); window.getSelection()?.removeAllRanges(); }}
+              style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a8 8 0 0 1-8 8H5.5a2 2 0 0 1-1.4-3.4A8 8 0 1 1 21 12z" /><path d="M13 8.5v7M9.5 12h7" />
+              </svg>
+              <span>{t("chat.askInSideChat")}</span>
+            </button>
+          )}
+          {quoteInputOpen ? (
+            <fieldset
+              disabled={quoteSubmitting}
+              aria-busy={quoteSubmitting}
+              style={{ width: "100%", minWidth: 0, margin: 0, padding: 0, border: "none", display: "flex", flexDirection: "column", gap: 10 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600 }}>{t(quoteFlow === "new" ? "chat.askInNewChat" : "chat.askInSideChat")}</span>
+                <button type="button" className="file-viewer-icon-button" title={t("i18n.close")} aria-label={t("i18n.close")} disabled={quoteSubmitting} onClick={closeQuotedSelection} style={{ border: "none" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+                </button>
+              </div>
+              <ChatInput
+                ref={quoteChatInputRef}
+                compact
+                onSend={quoteFlow === "new" ? askSelectionInNewChat : askSelectionInSideChat}
+                onAbort={closeQuotedSelection}
+                isStreaming={false}
+              />
+              {quoteError && <div role="alert" style={{ color: "#dc2626", fontSize: 12, overflowWrap: "anywhere" }}>{quoteError}</div>}
+            </fieldset>
+          ) : <>
+          <button
+            type="button"
+            className="file-viewer-icon-button"
+            title={t("chat.quoteSelection")}
+            aria-label={t("chat.quoteSelection")}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={quoteSelectionHere}
+            style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" />
+              <path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" />
+            </svg>
+            <span>{t("chat.quoteSelection")}</span>
+          </button>
+          {onSideSession && !isHiddenRelation(session?.relation) && (
+            <button
+              type="button"
+              className="file-viewer-icon-button"
+              title={t("chat.askInSideChat")}
+              aria-label={t("chat.askInSideChat")}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { setQuoteFlow("side"); setQuoteInputOpen(true); window.getSelection()?.removeAllRanges(); }}
+              style={{ width: "auto", height: 35, flex: "0 0 auto", gap: 5, padding: "0 10px", border: "none", fontSize: 12, fontWeight: 500 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a8 8 0 0 1-8 8H5.5a2 2 0 0 1-1.4-3.4A8 8 0 1 1 21 12z" />
+              </svg>
+              <span>{t("chat.askInSideChat")}</span>
+            </button>
+          )}
+          </>}
+        </div>,
+        document.body,
       )}
 
-      <div className="relative flex min-h-0 flex-col">
+      
+
+      {/* shrink-0 on the welcome page only: the composer must never be flex-squeezed.
+          With a multi-line textarea (auto-grow up to 200px) in a short viewport the old
+          shrinkable container got compressed while the textarea kept its height and
+          overflowed over the widget zone below it (measured 139px overlap at 390x420,
+          2026-11-15). Session view keeps the old behavior (compact/stacked + bottomMode
+          folding already handle short viewports there). */}
+      <div ref={bottomComposerRef} className={`relative flex min-h-0 flex-col${isEmptyNew ? " shrink-0" : ""}`}>
         {!isEmptyNew && (
           <div
             style={{
@@ -1368,39 +2470,177 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </button>
           </div>
         )}
-        {/* The brand (the logo, "Pi Web" and its versions line), then the
-            project/worktree row right above the composer, all on the
-            composer's left edge (.new-session-brand, .new-session-meta and
-            .new-session-context in app/globals.css; the side padding and
-            width are inline here). */}
         {isEmptyNew && (
-          <div className="new-session-hero" style={{ paddingLeft: 16, paddingRight: isMobile ? 16 : 52 }}>
-            <div className="new-session-hero-inner" style={{ maxWidth: "var(--chat-content-max-width, 820px)" }}>
-              <div className="new-session-brand">
-                <Image src="/icons/apple-touch-icon.png" width={40} height={40} alt="" priority className="new-session-logo" />
-                <div className="new-session-brand-text">
-                  <span className="new-session-brand-name">Pi Web</span>
-                  <span className="new-session-meta">
-                    <span>web v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
-                    <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
-                    <span aria-hidden="true">·</span>
-                    <span className="new-session-meta-pi">pi v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
-                  </span>
-                </div>
+          <div className="mb-3 w-full" style={{ paddingLeft: 16, paddingRight: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto", fontFamily: "var(--font-mono)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
+                <Image src={withBasePath("/icons/apple-touch-icon.png")} width={32} height={32} alt="" priority style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
+                <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
               </div>
               {newSessionContextBar}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
+                </span>
+              </div>
             </div>
           </div>
         )}
+        {isEmptyNew && (workspaceOptions.length > 0 || hasNewSessionWorkspacePicker || backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable || hasNewSessionSelectors) && (
+          // 820px content column + symmetric 16px gutters (inside the widened max) → inner
+          // content left edge lands on the same centerline as the composer/cards (2026-11-15).
+          <div className="mx-auto mb-3 w-full" style={{ maxWidth: "calc(var(--chat-content-max-width, 820px) + 32px)", paddingLeft: 16, paddingRight: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+              {/* Workspace selection (before Backend): defaults to the current cwd; choosing
+                  only stages a target and doesn't switch immediately — after sending creates
+                  the session, AppShell switches into the target workspace and opens the new
+                  session. */}
+              {(workspaceOptions.length > 0 || hasNewSessionWorkspacePicker) && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+                  <span style={{ color: "var(--text-muted)" }}>{t("chat.newSessionWorkspace")}</span>
+                  {hasNewSessionWorkspacePicker ? (
+                    // Extension takeover: same trigger look, but the list/actions are the
+                    // sidebar's projects menu (hidden filter, pinned order, activity, browse).
+                    <ExtSlot
+                      name="newSessionWorkspacePicker"
+                      extra={{ cwd: newSessionCwd, selected: newSessionWorkspace ?? newSessionCwd ?? null, isMobile }}
+                    />
+                  ) : (
+                    <select
+                      value={newSessionWorkspace ?? newSessionCwd ?? ""}
+                      onChange={(e) => onNewSessionWorkspaceChange?.(e.target.value || null)}
+                      title={newSessionWorkspace ?? newSessionCwd ?? undefined}
+                      style={{ ...NEW_SESSION_SELECT_STYLE, maxWidth: "min(52vw, 360px)", minWidth: 0 }}
+                    >
+                      {workspaceOptions.map((p) => (
+                        <option key={p.key} value={p.root}>
+                          {workspaceLabel(p.root)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </span>
+              )}
+              {/* Extension pickers (branch/worktree pickers etc.): slot rendering wraps no
+                  box (renders a fragment, the picker itself is a flex child), keeping the
+                  flexWrap layout intact; the intent bar wraps to the next line via
+                  flexBasis:100%. extra only feeds data {cwd,isMobile} (slot extra red
+                  line); all writes live in newSessionPreparers. */}
+              {hasNewSessionSelectors && (
+                <ExtSlot name="newSessionSelectors" extra={{ cwd: newSessionCwd, isMobile }} />
+              )}
+              {(backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable) && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+                  <span style={{ color: "var(--text-muted)" }}>{t("chat.newSessionBackend")}</span>
+                  <select
+                    value={sessionBackend ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      // Built-in "rescan backends" entry: re-runs backend registration
+                      // scans (newly installed CLIs) without changing the current
+                      // backend selection — same mechanics as extension entries.
+                      if (raw === BACKEND_RESCAN_OPTION_VALUE) {
+                        e.target.value = sessionBackend ?? "";
+                        void rescanBackends();
+                        return;
+                      }
+                      // Extension entry (e.g. "Manage ACP Agents…"): not a backend option —
+                      // after running its action, reset the dropdown; the current backend
+                      // selection is unchanged.
+                      if (raw.startsWith(BACKEND_EXT_OPTION_PREFIX)) {
+                        e.target.value = sessionBackend ?? "";
+                        backendExtraOptions.find((it) => `${BACKEND_EXT_OPTION_PREFIX}${it.id}` === raw)?.meta?.onClick?.();
+                        return;
+                      }
+                      const v = raw || null;
+                      setSessionBackend(v);
+                      try {
+                        if (v) localStorage.setItem(LAST_BACKEND_KEY, v);
+                        else localStorage.removeItem(LAST_BACKEND_KEY);
+                      } catch {}
+                    }}
+                    style={NEW_SESSION_SELECT_STYLE}
+                  >
+                    <option value="">{t("chat.backendPiLocal")}</option>
+                    {backendOptions.map((b) => (
+                      <option key={b.type} value={b.type} disabled={b.available === false} title={b.installHint}>
+                        {b.available === false ? t("chat.backendNotInstalled", { label: b.label }) : b.label}
+                      </option>
+                    ))}
+                    {/* Backend management entries are an extension point: each backend
+                        extension contributes its own entries as the dropdown's last items
+                        via the newSessionBackendOptions slot (e.g. the ACP agent
+                        extension's agent management); core knows nothing about specific
+                        backends. */}
+                    {backendExtraOptions.map((item) => (
+                      <option key={item.id} value={`${BACKEND_EXT_OPTION_PREFIX}${item.id}`}>
+                        {item.meta?.label ?? item.id}
+                      </option>
+                    ))}
+                    {/* Built-in last entry: re-run backend registration scans to pick up
+                        CLIs installed after the host booted (core knows nothing about
+                        specific backends — extensions opt in via server.rescanBackends). */}
+                    {backendRescanable && (
+                      <option value={BACKEND_RESCAN_OPTION_VALUE} disabled={backendsRescanning}>
+                        {backendsRescanning ? t("chat.rescanningBackends") : t("chat.rescanBackends")}
+                      </option>
+                    )}
+                  </select>
+                </span>
+              )}
+              {(() => {
+                // Per-session detach toggle: only for a backend that opted in AND a
+                // host whose agent-starter has a runner (otherwise the choice would
+                // silently fall back to a plain child).
+                const selected = backendOptions.find((b) => b.type === sessionBackend);
+                const supported = Boolean(selected?.detachable) && detachSupport?.available === true;
+                if (!supported) return null;
+                const hint = t("chat.detachHint", { runner: detachSupport?.runner ?? "auto" });
+                return (
+                  <label
+                    title={hint}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", color: "var(--text-muted)", userSelect: "none" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={detachNewSession}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setDetachNewSession(next);
+                        try {
+                          localStorage.setItem(NEW_SESSION_DETACH_KEY, next ? "1" : "0");
+                        } catch {}
+                      }}
+                      style={{ cursor: "pointer" }}
+                    />
+                    {t("chat.surviveRestarts")}
+                  </label>
+                );
+              })()}
+              {backendRescanNote && (
+                <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{backendRescanNote}</span>
+              )}
+            </div>
+          </div>
+        )}
+        {/* Extension widgets appear in only two places: the desktop bottom status shelf
+            (ExtensionStatusBar below) and the mobile ⓘ/+ InfoSheet (ChatInput). They used
+            to render another copy above/below the input per placement, duplicating the
+            status shelf (the same widget twice, one above and one below) — since collapsed;
+            placement only survives as the direction icon on the status shelf trigger. */}
         {chatInputElement}
-        <ExtensionStatusBar
-          statuses={extensionStatuses}
-          widgets={extensionWidgets}
-          onCommand={handleSend}
-          commandsDisabled={sessionBusy}
-        />
+        {/* Mobile: the status shelf as a whole is not persistent (the input bar is the
+            bottom-most persistent element); changes go through a toast, details live in
+            ChatInput's ⓘ sheet. Desktop keeps the status shelf.
+            docs/pi-web-mobile-input-wechat-plan.md §6 */}
+        {isMobile
+          ? <ExtensionStatusToast statuses={extensionStatuses} />
+          : <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} onCommand={handleSend} commandsDisabled={sessionBusy} />}
       </div>
-      {isEmptyNew && <div className="min-h-0 flex-1" />}
       {forkPickerOpen && (
         <DirectoryPicker
           busy={forkPickerBusy}
@@ -1411,6 +2651,19 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           }}
           onSelect={(path) => void handleForkPick(path)}
         />
+      )}
+      {/* New-session welcome-page widget zone · bottom (the old filler spot below the
+          composer; returns an equivalent filler div when nothing is visible, so layout
+          stays byte-identical) + the customize panel singleton (portal to body). */}
+      {isEmptyNew && (
+        <NewSessionWidgetZone
+          area="bottom"
+          cwd={newSessionCwd}
+          onEdit={() => setNswCustomizeOpen(true)}
+        />
+      )}
+      {isEmptyNew && nswCustomizeOpen && (
+        <NewSessionWidgetsCustomize onClose={() => setNswCustomizeOpen(false)} />
       )}
     </div>
   );
@@ -1429,22 +2682,6 @@ function SideChatDivider() {
   );
 }
 
-const StreamingReply = memo(function StreamingReply({ store, onCommit, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent }: {
-  store: StreamingStore;
-  /** Runs after each chunk is in the DOM. */
-  onCommit: () => void;
-  toolResults: Map<string, ToolResultMessage>;
-  modelNames: Record<string, string>;
-  cwd?: string;
-  onOpenFile?: (filePath: string, target?: FileLinkTarget) => void;
-  onOpenSubagent?: (sessionId: string, label: string) => void;
-}) {
-  const message = useStreamingSelector(store, selectStreamingMessage);
-  useLayoutEffect(onCommit, [message, onCommit]);
-  if (!message) return null;
-  return <MessageView key={streamRateKey(message)} message={message} toolResults={toolResults} isStreaming modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} />;
-});
-
 // A one-line notice is exactly as tall as its entrance animation pins it, and
 // its line sits dead centre: the two 1px borders, a 21px line box (14px at
 // line-height 1.5) and this padding twice add up to 60px. Letting the card's
@@ -1458,15 +2695,281 @@ const NOTICE_TEXT_PADDING_Y_PX = (NOTICE_MIN_HEIGHT_PX - 2 - NOTICE_LINE_BOX_PX)
 const NOTICE_MAX_HEIGHT_PX = 500;
 const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;
 
-function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: NoticeItem[]; floating?: boolean; onPauseChange?: (id: string | null) => void }) {
+// Vertical distance (px) an upward swipe must cover before the toast is dismissed.
+const NOTICE_SWIPE_DISMISS_PX = 40;
+
+function currentSelectionText(): string {
+  try {
+    return window.getSelection()?.toString() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** One toast card: tap anywhere to dismiss, flick up to dismiss, ✕ in the corner. */
+function NoticeToastCard({ notice, floating = false, onPauseChange, onAskAi, onDismiss }: {
+  notice: NoticeItem;
+  floating?: boolean;
+  onPauseChange?: (id: string | null) => void;
+  onAskAi?: (message: string) => void;
+  onDismiss?: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // Follow-finger feedback while flicking up; reset (spring back) when the swipe is too short.
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  // Mutable gesture bookkeeping — native listeners (non-passive, to allow preventDefault)
+  // write here, click/touch handlers read here. Kept in a ref so nothing re-subscribes.
+  const gestureRef = useRef({ active: false, startX: 0, startY: 0, insideText: false, dragged: false, swiped: false });
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !onDismiss) return;
+    const gesture = gestureRef.current;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      gesture.active = true;
+      gesture.swiped = false;
+      gesture.dragged = false;
+      gesture.startX = touch.clientX;
+      gesture.startY = touch.clientY;
+      // A touch inside the text area scrolls the text (native); only the rest of the card flicks.
+      gesture.insideText = !!(event.target instanceof Element && event.target.closest("[data-notice-scroll]"));
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!gesture.active || gesture.insideText) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - gesture.startX;
+      const dy = touch.clientY - gesture.startY;
+      if (dy < 0 && Math.abs(dy) > Math.abs(dx)) {
+        // Upward flick on the card: follow the finger and keep the page from scrolling along.
+        gesture.dragged = true;
+        event.preventDefault();
+        setDragging(true);
+        setDragY(Math.max(dy, -NOTICE_SWIPE_DISMISS_PX * 2));
+      }
+    };
+    const onTouchEnd = () => {
+      if (!gesture.active) return;
+      gesture.active = false;
+      setDragging(false);
+      if (!gesture.dragged) return;
+      gesture.swiped = true;
+      gesture.dragged = false;
+      setDragY((current) => {
+        if (-current >= NOTICE_SWIPE_DISMISS_PX) onDismiss?.(notice.id);
+        return 0;
+      });
+    };
+    const onTouchCancel = () => {
+      gesture.active = false;
+      gesture.dragged = false;
+      setDragging(false);
+      setDragY(0);
+    };
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [notice.id, onDismiss]);
+
+  const handleClick = (event: ReactMouseEvent) => {
+    if (!onDismiss) return;
+    const target = event.target instanceof Element ? event.target : null;
+    // Links and buttons (Ask AI, ✕) keep their own behaviour
+    if (target?.closest("a, button")) return;
+    // The touchend of a flick lands here too — it already dismissed or sprang back
+    if (gestureRef.current.swiped) {
+      gestureRef.current.swiped = false;
+      return;
+    }
+    // Selecting text to copy is not a dismiss tap
+    if (currentSelectionText()) return;
+    onDismiss(notice.id);
+  };
+
+  const color = notice.type === "error"
+    ? "#ef4444"
+    : notice.type === "warning"
+      ? "#d97706"
+      : notice.type === "success"
+        ? "#10b981"
+        : "var(--accent)";
+  const lift = Math.min(-dragY, NOTICE_SWIPE_DISMISS_PX);
+  return (
+    <div
+      ref={cardRef}
+      className="notice-shelf-item"
+      onClick={onDismiss ? handleClick : undefined}
+      onMouseEnter={() => onPauseChange?.(notice.id)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) onPauseChange?.(null);
+      }}
+      onFocus={() => onPauseChange?.(notice.id)}
+      onBlur={(event) => {
+        if (!event.currentTarget.matches(":hover")) onPauseChange?.(null);
+      }}
+      style={{
+        display: "flex",
+        // Top-align children so the type dot sits by the first line on multi-line toasts
+        alignItems: "flex-start",
+        gap: 10,
+        minHeight: NOTICE_MIN_HEIGHT_PX,
+        height: "auto",
+        // Overall height cap: overflow is handled by inner scrolling in the text
+        // area (see the span's overflowY below); the container itself stays hidden,
+        // keeping the dot pinned at the top instead of scrolling with the text
+        maxHeight: NOTICE_MAX_HEIGHT_PX,
+        // The floating wrapper is pointerEvents:"none" (click-through by design),
+        // so the toast itself must opt back into interactivity or hover events never reach it
+        pointerEvents: "auto",
+        marginBottom: 0,
+        overflow: "hidden",
+        borderRadius: 14,
+        border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+        background: "var(--bg)",
+        color: "var(--text-muted)",
+        width: "fit-content",
+        maxWidth: "min(100%, 620px)",
+        boxShadow: floating
+          ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
+          : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+        fontSize: 14,
+        lineHeight: 1.5,
+        transformOrigin: "top right",
+        transform: dragY !== 0 ? `translateY(${dragY}px)` : undefined,
+        transition: dragging ? "none" : "transform 0.16s ease",
+        opacity: dragging ? Math.max(0.5, 1 - (lift / NOTICE_SWIPE_DISMISS_PX) * 0.5) : undefined,
+        cursor: onDismiss ? "pointer" : undefined,
+        // Use backwards fill for the entrance animation so height styles return to
+        // inline styles once it finishes; otherwise the keyframe's fixed 60px would
+        // stick around in fill mode and permanently clamp the expanded toast
+        animation: notice.exiting
+          ? "notice-shelf-out 0.18s ease-in forwards"
+          : "notice-shelf-in 0.18s ease-out backwards",
+        padding: "0 12px",
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: color,
+          flexShrink: 0,
+          // Align with the optical center of the first text line: the text's
+          // vertical padding + (21px line box - 7px dot) / 2
+          marginTop: NOTICE_TEXT_PADDING_Y_PX + 7,
+        }}
+      />
+      {/* Full text by default: pre-line preserves \n (nowrap/normal collapse
+          newlines into spaces) and long lines wrap instead of truncating;
+          content taller than the cap scrolls inside the text area */}
+      <span
+        tabIndex={0}
+        style={{ padding: `${NOTICE_TEXT_PADDING_Y_PX}px 0`, minWidth: 0, maxWidth: "100%", maxHeight: NOTICE_TEXT_MAX_HEIGHT_PX, overflowY: "auto", scrollbarWidth: "thin", whiteSpace: "pre-line", wordBreak: "break-word" }}
+        data-notice-scroll="1"
+      >
+        {splitNoticeText(notice.message).map((part, partIndex) => part.kind === "art" ? (
+          // A terminal QR code or bar (#755): every space kept, rows touching, and a
+          // font stack whose first font has the blocks too (the bundled Noto subset
+          // has none, so spaces and blocks would come from fonts of different widths).
+          <span
+            key={partIndex}
+            style={{
+              display: "inline-block",
+              verticalAlign: "top",
+              maxWidth: "100%",
+              overflowX: "auto",
+              whiteSpace: "pre",
+              fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
+              lineHeight: 1,
+              color: "var(--text)",
+            }}
+          >
+            {part.text}
+          </span>
+        ) : <Fragment key={partIndex}>{splitNoticeLinks(part.text).map((piece, pieceIndex) => piece.kind === "link" ? (
+          <a
+            key={`${partIndex}-${pieceIndex}`}
+            href={piece.text}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2, wordBreak: "break-all" }}
+          >
+            {piece.text}
+          </a>
+        ) : piece.text)}</Fragment>)}
+      </span>
+      {(notice.type === "error" || notice.type === "warning") && onAskAi && (
+        <button
+          type="button"
+          onClick={() => onAskAi(notice.message)}
+          title={t("chat.noticeAskAiTitle")}
+          style={{
+            flexShrink: 0,
+            alignSelf: "flex-start",
+            // Optically centre on the first text line: the compact button is
+            // ~22px tall against the 21px line box, so it starts a hair above it.
+            marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+            padding: "2px 10px",
+            fontSize: 12,
+            lineHeight: 1.5,
+            borderRadius: 999,
+            border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
+            background: "color-mix(in srgb, var(--bg) 90%, var(--accent) 10%)",
+            color: "var(--accent)",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {t("chat.noticeAskAi")}
+        </button>
+      )}
+      {onDismiss && (
+        <button
+          type="button"
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDismiss(notice.id);
+          }}
+          style={{
+            flexShrink: 0,
+            alignSelf: "flex-start",
+            marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+            background: "none",
+            border: "none",
+            color: "var(--text-dim)",
+            cursor: "pointer",
+            fontSize: 13,
+            lineHeight: 1,
+            padding: "4px 2px",
+          }}
+        >✕</button>
+      )}
+    </div>
+  );
+}
+
+function NoticeShelf({ notices, floating = false, align = "left", onPauseChange, onAskAi, onDismiss }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void; onAskAi?: (message: string) => void; onDismiss?: (id: string) => void }) {
   if (notices.length === 0) return null;
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
-        // Right-anchored: every toast's right edge aligns here, widths extend leftward
-        alignItems: "flex-end",
+        alignItems: align === "right" ? "flex-end" : "stretch",
         marginBottom: floating ? 0 : 10,
         // Never taller than the box it floats in, the transcript's above the
         // composer: a stack that does not fit scrolls there (#1780). The scroll
@@ -1483,118 +2986,11 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
         } as const : {}),
       }}
     >
-      {notices.map((notice, index) => {
-        const color = notice.type === "error"
-          ? "#ef4444"
-          : notice.type === "warning"
-            ? "#d97706"
-            : notice.type === "success"
-              ? "#10b981"
-              : "var(--accent)";
-        return (
-          <div
-            key={notice.id}
-            className="notice-shelf-item"
-            onMouseEnter={() => onPauseChange?.(notice.id)}
-            onMouseLeave={(event) => {
-              if (!event.currentTarget.contains(document.activeElement)) onPauseChange?.(null);
-            }}
-            onFocus={() => onPauseChange?.(notice.id)}
-            onBlur={(event) => {
-              if (!event.currentTarget.matches(":hover")) onPauseChange?.(null);
-            }}
-            style={{
-              display: "flex",
-              // Top-align children so the type dot sits by the first line on multi-line toasts
-              alignItems: "flex-start",
-              gap: 10,
-              minHeight: NOTICE_MIN_HEIGHT_PX,
-              height: "auto",
-              // 整体高度上限：超出后由文本区内部滚动承担（见下方 span 的 overflowY），
-              // 容器自身保持 hidden，小圆点固定在顶部不随文本滚动
-              maxHeight: NOTICE_MAX_HEIGHT_PX,
-              // The floating wrapper is pointerEvents:"none" (click-through by design),
-              // so the toast itself must opt back into interactivity or hover events never reach it
-              pointerEvents: "auto",
-              marginBottom: index === notices.length - 1 ? 0 : 6,
-              // Each card keeps its height; the shelf scrolls instead of squeezing them
-              flexShrink: 0,
-              overflow: "hidden",
-              borderRadius: 14,
-              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              width: "fit-content",
-              maxWidth: "min(100%, 620px)",
-              boxShadow: floating
-                ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
-                : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
-              fontSize: 14,
-              lineHeight: 1.5,
-              transformOrigin: "top right",
-              // Use backwards fill for the entrance animation so height styles return to
-              // inline styles once it finishes; otherwise the keyframe's fixed 60px would
-              // stick around in fill mode and permanently clamp the expanded toast
-              animation: notice.exiting
-                ? "notice-shelf-out 0.18s ease-in forwards"
-                : "notice-shelf-in 0.18s ease-out backwards",
-              padding: "0 12px",
-            }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: color,
-                flexShrink: 0,
-                // Align with the optical center of the first text line: the text's
-                // vertical padding + (21px line box - 7px dot) / 2
-                marginTop: NOTICE_TEXT_PADDING_Y_PX + 7,
-              }}
-            />
-            {/* Full text by default: pre-line preserves \n (nowrap/normal collapse
-                newlines into spaces) and long lines wrap instead of truncating;
-                content taller than the cap scrolls inside the text area */}
-            <span
-              tabIndex={0}
-              style={{ padding: `${NOTICE_TEXT_PADDING_Y_PX}px 0`, minWidth: 0, maxWidth: "100%", maxHeight: NOTICE_TEXT_MAX_HEIGHT_PX, overflowY: "auto", scrollbarWidth: "thin", whiteSpace: "pre-line", wordBreak: "break-word" }}
-            >
-              {splitNoticeText(notice.message).map((part, partIndex) => part.kind === "art" ? (
-                // A terminal QR code or bar (#755): every space kept, rows touching, and a
-                // font stack whose first font has the blocks too (the bundled Noto subset
-                // has none, so spaces and blocks would come from fonts of different widths).
-                <span
-                  key={partIndex}
-                  style={{
-                    display: "inline-block",
-                    verticalAlign: "top",
-                    maxWidth: "100%",
-                    overflowX: "auto",
-                    whiteSpace: "pre",
-                    fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
-                    lineHeight: 1,
-                    color: "var(--text)",
-                  }}
-                >
-                  {part.text}
-                </span>
-              ) : <Fragment key={partIndex}>{splitNoticeLinks(part.text).map((piece, pieceIndex) => piece.kind === "link" ? (
-                <a
-                  key={`${partIndex}-${pieceIndex}`}
-                  href={piece.text}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2, wordBreak: "break-all" }}
-                >
-                  {piece.text}
-                </a>
-              ) : piece.text)}</Fragment>)}
-            </span>
-          </div>
-        );
-      })}
-    </div>
+      {notices.map((notice, index) => (
+        <div key={notice.id} style={{ marginBottom: index === notices.length - 1 ? 0 : 6 }}>
+          <NoticeToastCard notice={notice} floating={floating} onPauseChange={onPauseChange} onAskAi={onAskAi} onDismiss={onDismiss} />
+        </div>
+      ))}    </div>
   );
 }
 
@@ -1794,7 +3190,10 @@ function ExtensionDialog({
           <div style={{ flex: 1, minWidth: 0 }}>
             {/* Pi's TUI shows the title verbatim, newlines included; select/input have no
                 separate message field, so extensions put multi-line text here. */}
-            <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{stripAnsi(request.title)}</div>
+            {/* The dialog's own height is content-driven (only max-height is set), so a
+                percentage cap on the header never resolves — the cap is viewport-based
+                and the header shrinks and scrolls (#890, fork). */}
+            <div style={{ flexShrink: 1, minHeight: 0, color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "50vh", overflowY: "auto" }}>{stripAnsi(request.title)}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
               <span>{t("chat.extensionRequest")}</span>
               <ExtensionWaitingCount count={waitingCount} />
@@ -2216,6 +3615,125 @@ function ExtensionCustomPanel({
         </pre>
       </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Throttled render container for the streaming message: while streaming,
+ * streamState.streamingMessage is a fresh object every frame (rAF flush); rendering it
+ * directly breaks MessageView's memo every frame → the whole message tree reconciles
+ * every frame. This throttles: the new object is handed to MessageView at most every
+ * 200ms; intermediate frames reuse the old reference (memo hit, zero reconciliation).
+ * Aligned with MarkdownBody's throttled parsing (200ms) — the text tail lags at most
+ * one throttle window, visually imperceptible. When streaming ends (isStreaming=false)
+ * the component unmounts and the message moves into the history list for full rendering.
+ */
+function StreamingMessageView({ message, modelNames }: {
+  message: AgentMessage;
+  modelNames?: Record<string, string>;
+}) {
+  const { t } = useI18n();
+  const [renderMsg, setRenderMsg] = useState<AgentMessage | null>(message);
+  const lastTs = useRef(0);
+  const streamStartRef = useRef<number | null>(null);
+  const prevTokensRef = useRef(0);
+  useEffect(() => {
+    const now = performance.now();
+    if (now - lastTs.current >= 200) {
+      lastTs.current = now;
+      setRenderMsg(message);
+    } else {
+      const t = setTimeout(() => {
+        lastTs.current = performance.now();
+        setRenderMsg(message);
+      }, 200 - (now - lastTs.current));
+      return () => clearTimeout(t);
+    }
+  }, [message]);
+  if (!renderMsg) return null;
+  const content = streamingTextOf(renderMsg);
+  // Lightweight speed indicator: estimated token count + t/s badge (mirrors the fully
+  // rendered AssistantMessageView's styling/thresholds). The full character scan happens
+  // once per throttled render (≥200ms apart), a negligible cost.
+  let tokens = 0;
+  if (renderMsg.role === "assistant") {
+    for (const b of ((renderMsg as AssistantMessage).content ?? []) as AssistantContentBlock[]) {
+      if (b.type === "text") tokens += estimateTokens(b.text);
+      else if (b.type === "thinking") tokens += estimateTokens(b.thinking);
+      else if (b.type === "toolCall") tokens += estimateTokens(b.rawInput ?? JSON.stringify(b.input ?? {}) ?? "");
+    }
+    tokens = Math.round(tokens);
+  }
+  // Timing baseline: on first tokens, or when the token count drops (within one agent
+  // run, message_start replaces streamingMessage wholesale and the component doesn't
+  // unmount) → reset the baseline so later messages don't dilute the t/s.
+  if (tokens > 0 && (streamStartRef.current === null || tokens < prevTokensRef.current)) {
+    // eslint-disable-next-line react-hooks/purity -- streaming timing baseline, not a pure render-derived value
+    streamStartRef.current = Date.now();
+  }
+  prevTokensRef.current = tokens;
+  let tps: number | null = null;
+  if (tokens > 0 && streamStartRef.current !== null) {
+    // eslint-disable-next-line react-hooks/purity -- same as above: reads the timing baseline during render
+    const elapsed = (Date.now() - streamStartRef.current) / 1000;
+    if (elapsed > 0.5) tps = tokens / elapsed;
+  }
+  // While streaming, render lightweight plain text (no markdown parsing): react-markdown
+  // costs 100ms+ per parse of a few thousand lines of incremental text, whereas a
+  // pre-wrap text node update is ~1ms. After streaming ends (streamingMessage cleared),
+  // the message renders as rich text through the full MessageView; streaming-phase cost
+  // stays negligible.
+  return (
+    <div>
+      {tokens > 0 && (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+          {renderMsg.role === "assistant" && (renderMsg as AssistantMessage).provider ? (
+            <span>{modelNames?.[`${(renderMsg as AssistantMessage).provider}:${(renderMsg as AssistantMessage).model}`] ?? modelNames?.[(renderMsg as AssistantMessage).model] ?? (renderMsg as AssistantMessage).model}</span>
+          ) : null}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--text)" }} title={t("i18n.estimatedTokens")}>
+            <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 400 }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+              </svg>
+              {tokens}
+            </span>
+            {tps !== null && (() => {
+              const bg = tps >= 50 ? "#53b3cb" : tps >= 30 ? "#9bc53d" : tps >= 15 ? "#f9c22e" : "#e01a4f";
+              return (
+                <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 4, background: bg, color: "#fff", fontSize: 11, fontWeight: 400 }}>
+                  {tps.toFixed(1)} t/s
+                </span>
+              );
+            })()}
+          </span>
+        </div>
+      )}
+      <StreamingText content={content} />
+    </div>
+  );
+}
+
+/** Lightweight streaming text extraction: AssistantMessage.content is a block array
+ *  (text/thinking/toolCall); lightweight mode concatenates only text blocks — thinking/
+ *  tool-call progress is not shown live (keeps zero parsing). Once complete, the message
+ *  enters the history list and renders through the full MessageView with all blocks
+ *  visible. */
+function streamingTextOf(msg: AgentMessage): string {
+  if (!("content" in msg)) return "";
+  if (typeof msg.content === "string") return msg.content;
+  let out = "";
+  for (const b of msg.content) {
+    if (b.type === "text") out += b.text;
+  }
+  return out;
+}
+
+/** Lightweight streaming text rendering: a single pre-wrap node, zero markdown parsing, diffing only the text as deltas arrive. */
+function StreamingText({ content }: { content: string }) {
+  return (
+    <div className="streaming-plain" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {content}
     </div>
   );
 }

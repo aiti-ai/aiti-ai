@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { plantUmlSvgUrl } from "@/lib/plantuml";
-import { CodeBlock, DiagramZoomDialog, PreviewFrame, PreviewToggleButton } from "./MermaidBlock";
+import { CodeBlock, DiagramZoomDialog, PreviewFrame, PreviewToggleButton } from "./MermaidBlock.tsx";
 
 /**
  * The sources the user chose to render on plantuml.com, for the page's life:

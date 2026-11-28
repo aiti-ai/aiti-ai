@@ -1,11 +1,11 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { writePrivateFileAtomicSync } from "./atomic-file";
-import { stripJsonComments } from "./jsonc";
-import { invalidateModelsCache } from "./models-cache";
-import { isRecord } from "./is-record";
-import { errorMessage } from "./errors";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import { stripJsonComments } from "./jsonc.ts";
+import { invalidateModelsCache } from "./models-cache.ts";
+import { isRecord } from "./is-record.ts";
+import { errorMessage } from "./errors.ts";
 
 const MODEL_COST_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
 

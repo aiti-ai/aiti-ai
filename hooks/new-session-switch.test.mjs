@@ -7,8 +7,10 @@ import { createJiti } from "jiti";
 // each step of its startup (#1146). Switching unmounts the composer, which
 // closes its event stream; the prompt must still reach the new session.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
-const { renderHook } = await import(pathToFileURL(shimPath).href);
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } }); // jsx 选项 → jiti 强制转译（Node 24 原生 strip 不支持 JSX） // transformOptions 非空 → jiti 自行转译（Node 24 原生 strip-types 不支持 JSX）
+const { renderHook } = await import(shimPath);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });

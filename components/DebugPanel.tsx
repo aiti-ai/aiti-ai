@@ -1,14 +1,15 @@
 "use client";
 
-import { Component, Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { apiUrl } from "@/lib/base-path";
 import { copyText } from "@/lib/clipboard";
 import type { DebugClientSession, DebugEventConnectionSnapshot, DebugSessionDetail, DebugSessionSummary, DebugSnapshotResponse } from "@/lib/debug-types";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
-import { StatusIcon } from "./AgentSessionPanel";
-import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers";
-import { sessionRowTitle } from "./SessionTree";
-import { FolderIcon, SpinnerIcon } from "./SidebarIcons";
+import { StatusIcon } from "./AgentSessionPanel.tsx";
+import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers.ts";
+import { sessionRowTitle } from "./SessionTree.tsx";
+import { FolderIcon, SpinnerIcon } from "./SidebarIcons.tsx";
 import {
   DEBUG_CLOSE_REASON_KEYS,
   DEBUG_LEASE_OUTCOME_KEYS,
@@ -76,8 +77,8 @@ import {
   type DebugTitleOf,
   type DebugTone,
   type DebugVerdict,
-} from "./debug-panel-state";
-import type { Translate } from "@/lib/i18n/types";
+  type Translate,
+} from "./debug-panel-state.ts";
 
 /**
  * The top bar's Debug panel: how this page talks to the server (its event stream, its lease, the
@@ -98,30 +99,10 @@ interface Props {
   onClose(restoreFocus: boolean): void;
 }
 
-/** Keeps a render error in the panel from taking the page down with it. */
-export class DebugPanelBoundary extends Component<{ fallback: string; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error("Debug panel failed:", error);
-  }
-
-  render() {
-    if (!this.state.failed) return this.props.children;
-    return (
-      <div
-        role="status"
-        style={{ padding: "10px 16px", background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 12 }}
-      >
-        {this.props.fallback}
-      </div>
-    );
-  }
-}
+/** Keeps a render error in the panel from taking the page down with it.
+ *  Moved to ./DebugPanelBoundary.tsx (AppShell imports the boundary without this
+ *  module's heavy family; re-exported here for any legacy consumers). */
+export { DebugPanelBoundary } from "./DebugPanelBoundary.tsx";
 
 export function DebugPanel({ readerRef, selectedSessionId, sessions, onClose }: Props) {
   const { t } = useI18n();
@@ -174,7 +155,8 @@ export function DebugPanel({ readerRef, selectedSessionId, sessions, onClose }: 
   useEffect(() => {
     disposedRef.current = false;
     const poller = createDebugPoller({
-      fetch: (url, init) => fetch(url, init),
+      // fork: basePath (/dev 等) 由 apiUrl 包装——上游裸写 /api，非根部署下全 404。
+      fetch: (url, init) => fetch(apiUrl(url), init),
       sessionId: () => debugTargetSessionId(readClientSession(readerRef.current).client, selectedRef.current),
       isVisible: () => document.visibilityState === "visible",
       onReading: (reading) => {
@@ -259,6 +241,7 @@ export function DebugPanel({ readerRef, selectedSessionId, sessions, onClose }: 
       sessions={sessions}
       copied={copied}
       onCopy={handleCopy}
+      onClose={() => onCloseRef.current(true)}
       t={t}
       sectionRef={sectionRef}
     />
@@ -280,6 +263,8 @@ interface ViewProps {
   sessions: readonly SessionInfo[];
   copied: boolean;
   onCopy(): void;
+  /** The header's top-right close button; same path as Escape (focus restore included). */
+  onClose(): void;
   t: Translate;
   /** The panel's element, for the Escape that closes it to tell whether focus was inside. */
   sectionRef?: Ref<HTMLElement>;
@@ -298,7 +283,7 @@ interface Ctx {
 }
 
 /** The panel itself, from what DebugPanel read; pure, so tests render it from fixtures. */
-export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, selectedSessionId, sessions, copied, onCopy, t, sectionRef }: ViewProps) {
+export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, selectedSessionId, sessions, copied, onCopy, onClose, t, sectionRef }: ViewProps) {
   const now = page?.at ?? server.receivedAt ?? 0;
   const client = page?.client ?? null;
   const targetSessionId = debugTargetSessionId(client, selectedSessionId);
@@ -326,6 +311,12 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
         <VerdictView verdict={verdict} t={t} />
         <button type="button" className="debug-panel-copy" onClick={onCopy} title={t("debug.copyTitle")}>
           {copied ? t("debug.copied") : t("debug.copyJson")}
+        </button>
+        <button type="button" className="debug-panel-close" onClick={onClose} title={t("i18n.close")} aria-label={t("i18n.close")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
       {page !== null && (
@@ -1538,6 +1529,24 @@ const DEBUG_PANEL_CSS = `
   .debug-panel-copy:hover {
     background: var(--bg-hover);
     color: var(--text);
+  }
+  .debug-panel-close {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--text-muted);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .debug-panel-close:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .debug-panel-scroll {
     display: flex;

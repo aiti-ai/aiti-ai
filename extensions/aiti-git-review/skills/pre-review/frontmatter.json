@@ -1,0 +1,5 @@
+{
+  "title": "Git 代码审核 · AI 预审",
+  "placeholder": "先预审一遍未提交变更，直接标问题…",
+  "outputs": { "format": "text" }
+}

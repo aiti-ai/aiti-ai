@@ -1,0 +1,183 @@
+/**
+ * aiti-msg-smart · 消息智能（段落点击识别 → 弹层动作条）
+ *
+ * 能力：注册 core 段落点击薄扩展点（registerParagraphClick），点击消息段落 →
+ * 弹层卡片（对齐原 core QuoteReplyPopover 行为）：question 选项/引用回复 +
+ * 文件打开/定位 + 外部 msg-popover-action 主题 provider（aiti-cmd 命令等）。
+ * 全部识别/渲染在扩展侧，core 零感知。
+ *
+ * 扩展主题（ctx.registerTopicItem / ctx.getTopicItems）：
+ *   - msg-popover-action：段落点击弹层动作 provider。recognize(text, {cwd, messageRole, element}) →
+ *     返回动作列表 [{id, type, label, title, danger, unavailable, match, onClick(text, cwd)}]。
+ *     element 可选（DOM 元素），provider 可据此做 DOM 上下文识别（如取 <code> 内容）。
+ *   - inline-code-action：行内 <code> 点击弹层动作 provider。recognize(text, {element}) →
+ *     返回动作列表 [{id, type, label, title, danger, onClick(text, element)}]。
+ *     默认「复制」按钮内置，provider 添加额外动作（如收藏命令）。
+ *
+ * Action icons (client side, see client/src/action-icons.js): provider actions may declare
+ *   icon: { svg: "<path …/>" } (inline markup) | "<semanticName>" | short text/emoji.
+ *   When absent, type acts as the semantic fallback ("command", "share", …).
+ *
+ * 纯客户端扩展为主：file 存在性校验走 core /api/files（encodeFilePathForApi）；
+ * 跨仓分辨（主 cwd 未命中时）经自身 server api 进程内消费 aiti-git-trace services.trace 出口。
+ * features（recognizer.*）启停：extman 可见，前端 fetch /api/extensions/status 查询。
+ */
+export default {
+  id: "aiti-msg-smart",
+  name: "消息智能（段落点击识别）",
+  icon: "icon.svg",
+  client: "dist/aiti-msg-smart-client.mjs",
+
+  // 可选依赖（依赖与能力模型 P0 示例，评审记录 2026-09-06 确认）：有 aiti-git-trace 时
+  // 跨仓文件分辨可用（经 services.trace 出口），没有也不影响本扩展其余识别功能。
+  // 纯声明——extman 详情展示 ·optional 边；禁用/卸载 git-trace 不触发任何警告。
+  optionalDependsOn: ["aiti-git-trace"],
+
+  ui: {
+    clientDependsOn: [],
+    i18n: {
+      // 注意：client ctx.t 只查本表（ExtSlots makeClientContext 的 tableFor），
+      // 查不到返回 key 原文——新增 T.* 词条必须同步补齐三表，否则按钮显示裸 key。
+      "zh-CN": {
+        "it.quote.label": "引用",
+        "ext.displayName": "消息智能",
+        "feat.group.recognizer": "识别器",
+        "chat.quoteReply": "引用回复",
+        "chat.quoteFull": "引用全文",
+        "chat.quoteLine": "引用单句",
+        "chat.copy": "复制",
+        "chat.copied": "已复制",
+        "i18n.openFile": "打开文件",
+        "export.revealDir": "定位目录",
+        "files.openFolder": "打开文件夹",
+        "chat.share": "分享",
+        "chat.newSession": "新会话",
+        "chat.newSessionTip": "把该内容引用到新建会话的输入框（15 秒内有效）",
+        "chat.openUrl": "新窗口打开",
+        "chat.quoteMsgTip": "把这条消息引用到输入框",
+        "chat.copyThought": "复制该行思考",
+        "chat.copyCode": "复制该行代码",
+        "chat.copySelection": "复制选中片段",
+        "chat.copyPara": "复制整段文本",
+        "chat.quoteThought": "把该行思考引用到输入框",
+        "chat.quoteCode": "把该行引用到输入框",
+        "chat.quoteSelection": "把选中片段引用到当前会话输入框",
+        "chat.quotePara": "把整段引用到输入框",
+      },
+      "en": {
+        "feat.recognizer.question.desc": "Recognizes closed/choice questions → option buttons + quote-reply",
+        "feat.recognizer.selection.desc": "Text selection in the message area → popover: copy / quote-reply",
+        "feat.recognizer.file.desc": "Extracts file/dir paths in a paragraph → open/locate buttons (existence-checked)",
+        "feat.recognizer.fileExternalRoots.desc": "When the main cwd doesn't match, resolves cross-repo files together with aiti-git-trace's session rules/watched paths",
+        "feat.recognizer.url.desc": "Recognizes http/https links in a paragraph → open-in-new-window button",
+        "feat.recognizer.summary.desc": "Copy-full-text action on any paragraph",
+        "feat.group.recognizer": "Recognizers",
+        "ext.displayName": "Message Intelligence",
+        "feat.recognizer.question": "Question recognition (quote-reply)",
+        "feat.recognizer.selection": "Selection recognition (quoted fragment)",
+        "feat.recognizer.file": "File/dir recognition",
+        "feat.recognizer.fileExternalRoots": "Cross-repo file resolution",
+        "feat.recognizer.url": "Link recognition",
+        "feat.recognizer.summary": "Copy full text",
+      
+        "chat.quoteReply": "Quote reply",
+        "it.quote.label": "Quote",
+        "chat.quoteFull": "Quote full",
+        "chat.quoteLine": "Quote line",
+        "chat.copy": "Copy",
+        "chat.copied": "Copied",
+        "i18n.openFile": "Open",
+        "export.revealDir": "Reveal",
+        "files.openFolder": "Open Folder",
+        "chat.share": "Share",
+        "chat.newSession": "New session",
+        "chat.newSessionTip": "Quote into a new session's composer (valid for 15 s)",
+        "chat.openUrl": "Open in new window",
+        "chat.quoteMsgTip": "Quote this message into the composer",
+        "chat.copyThought": "Copy this thought line",
+        "chat.copyCode": "Copy this code line",
+        "chat.copySelection": "Copy selection",
+        "chat.copyPara": "Copy full text",
+        "chat.quoteThought": "Quote this thought line into the composer",
+        "chat.quoteCode": "Quote this line into the composer",
+        "chat.quoteSelection": "Quote selection into the current composer",
+        "chat.quotePara": "Quote the full text into the composer",
+      },
+      "zh-TW": {
+        "it.quote.label": "引用",
+        "ext.displayName": "訊息智慧",
+        "chat.quoteReply": "引用回覆",
+        "chat.quoteFull": "引用全文",
+        "chat.quoteLine": "引用單句",
+        "chat.copy": "複製",
+        "chat.copied": "已複製",
+        "chat.share": "分享",
+        "chat.newSession": "新會話",
+        "chat.newSessionTip": "把該內容引用到新建會話的輸入框（15 秒內有效）",
+        "chat.openUrl": "新視窗開啟",
+        "chat.quoteMsgTip": "把這條訊息引用到輸入框",
+        "chat.copyThought": "複製該行思考",
+        "chat.copyCode": "複製該行程式碼",
+        "chat.copySelection": "複製選取片段",
+        "chat.copyPara": "複製整段文字",
+        "chat.quoteThought": "把該行思考引用到輸入框",
+        "chat.quoteCode": "把該行引用到輸入框",
+        "chat.quoteSelection": "把選取片段引用到目前會話輸入框",
+        "chat.quotePara": "把整段引用到輸入框",
+        "i18n.openFile": "開啟檔案",
+        "export.revealDir": "定位目錄",
+        "files.openFolder": "開啟資料夾",
+        "feat.group.recognizer": "識別器",
+        "feat.recognizer.question": "問題識別（引用回覆）",
+        "feat.recognizer.question.desc": "識別封閉問句/選擇問 → 選項按鈕 + 引用回覆",
+        "feat.recognizer.selection": "劃選識別（引用片段）",
+        "feat.recognizer.selection.desc": "訊息區劃選文字 → 彈層：複製 / 引用回覆（目前會話）/ 新會話引用（投遞到新建會話 composer）",
+        "feat.recognizer.file": "檔案/目錄識別",
+        "feat.recognizer.file.desc": "擷取段落內檔案/目錄路徑 → 開啟/定位按鈕（存在性校驗）",
+        "feat.recognizer.fileExternalRoots": "跨倉檔案分辨",
+        "feat.recognizer.fileExternalRoots.desc": "主 cwd 未命中時，配合 aiti-git-trace 的會話識別倉/關注路徑分辨 cwd 外檔案（如寫入 ~/workspace/pi-web 卻只說 docs/x.md）",
+        "feat.recognizer.url": "連結識別",
+        "feat.recognizer.url.desc": "識別段落內 http/https 連結 → 新視窗開啟按鈕",
+        "feat.recognizer.summary": "複製全文",
+        "feat.recognizer.summary.desc": "任意段落提供複製全文動作",
+      },
+    },
+  },
+
+  features: [
+    { id: "recognizer.question", label: "问题识别（引用回复）", description: "识别封闭问句/选择问 → 选项按钮 + 引用回复", group: "i18n:feat.group.recognizer", default: true },
+    { id: "recognizer.selection", label: "划选识别（引用片段）", description: "消息区划选文字 → 弹层：复制 / 引用回复（当前会话）/ 新会话引用（投递到新建会话 composer）", group: "i18n:feat.group.recognizer", default: true },
+    { id: "recognizer.file", label: "文件/目录识别", description: "提取段落内文件/目录路径 → 打开/定位按钮（存在性校验）", group: "i18n:feat.group.recognizer", default: true },
+    { id: "recognizer.fileExternalRoots", label: "跨仓文件分辨", description: "主 cwd 未命中时，配合 aiti-git-trace 的会话识别仓/关注路径分辩 cwd 外文件（如写入 ~/workspace/pi-web 却只说 docs/x.md）", group: "i18n:feat.group.recognizer", default: true },
+    { id: "recognizer.url", label: "链接识别", description: "识别段落内 http/https 链接 → 新窗口打开按钮", group: "i18n:feat.group.recognizer", default: true },
+    { id: "recognizer.summary", label: "复制全文", description: "任意段落提供复制全文动作", group: "i18n:feat.group.recognizer", default: true },
+  ],
+
+  server: {
+    // 跨仓分辨根薄出口：进程内消费 aiti-git-trace services.trace 服务出口
+    // （docs/aiti-plan-first-plan.md §3 模式：不点对点 HTTP、不读兄弟 configDir）；
+    // 本扩展客户端只调自己的 API。数据策略（去重/剔 cwd/排序）仍归客户端 mergeExternalRoots。
+    async api(req: any, ctx: any) {
+      if (ctx?.path?.[0] !== "resolve-roots" || req.method !== "POST") {
+        return new Response(JSON.stringify({ ok: false, error: "not found" }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+      let body: any = {};
+      try { body = await req.json(); } catch { /* 空 body 容忍 */ }
+      const cwd = typeof body?.cwd === "string" ? body.cwd : "";
+      const session = typeof body?.session === "string" ? body.session : "";
+      // 双轨（DI 方案 P1）：ctx.services 优先，__piWebExt.byId 穿透兜底（生产旧 core 过渡期）
+      const svc = ctx?.services?.get?.("aiti-git-trace.trace")
+        ?? (() => { const reg = (globalThis as any).__piWebExt; const loaded = reg && typeof reg.byId === "function" ? reg.byId("aiti-git-trace") : null; return loaded?.ext?.services?.trace ?? null; })();
+      let stores: any[] = [];
+      let watchPaths: any[] = [];
+      const traceOk = !!svc && typeof svc.sessionStores === "function"; // capability 探测（§3.3）
+      if (traceOk) {
+        try { stores = svc.sessionStores(session) ?? []; } catch { /* 台账损坏等：按空处理 */ }
+        try { watchPaths = typeof svc.watchPaths === "function" ? (svc.watchPaths(cwd) ?? []) : []; } catch { /* 同上 */ }
+      }
+      return new Response(JSON.stringify({ ok: true, traceOk, stores, watchPaths }), {
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      });
+    },
+  },
+};

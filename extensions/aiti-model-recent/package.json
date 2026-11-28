@@ -1,0 +1,39 @@
+{
+  "name": "@aiti-ai/aiti-model-recent",
+  "version": "0.1.13",
+  "type": "module",
+  "description": "The model selector's \"recently used\" data provider — a pure service extension (zero UI); the panel's recent section fetches data synchronously and pick events feed the LRU; the localStorage key matches the original implementation, zero migration",
+  "displayNameI18n": {
+    "en": "Recent Models"
+  },
+  "descriptionI18n": {
+    "zh-CN": "模型选择器「最近使用」数据提供方——纯 service 扩展（零 UI），面板最近段同步取数 + pick 事件入库 LRU；localStorage key 与原实现一致零迁移"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "常用的模型，应当在指尖。",
+  "soulI18n": {
+    "en": "Frequently used models should be at your fingertips."
+  },
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "3078a124294cc109",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-model-recent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

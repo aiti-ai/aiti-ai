@@ -64,7 +64,7 @@ import {
   ConfigStatusDot,
   ConfigSwitch,
   ConfigTrustNotice,
-} from "./SettingsUi";
+} from "./SettingsUi.tsx";
 import {
   MCP_CODEMODE_MODE_DESCRIPTION_KEYS,
   MCP_CODEMODE_MODE_KEYS,
@@ -150,10 +150,10 @@ import {
   type McpTestBlock,
   type McpTestRun,
   type McpWriteBlock,
-} from "./mcp-config-helpers";
-import { McpAddServer, type McpAddActionRequest } from "./McpAddServer";
-import { EMPTY_MCP_ADD_DRAFT, type McpAddDraft } from "./mcp-add-helpers";
-import { McpSignInRow } from "./McpSignIn";
+} from "./mcp-config-helpers.ts";
+import { McpAddServer, type McpAddActionRequest } from "./McpAddServer.tsx";
+import { EMPTY_MCP_ADD_DRAFT, type McpAddDraft } from "./mcp-add-helpers.ts";
+import { McpSignInRow } from "./McpSignIn.tsx";
 import {
   MCP_SIGN_IN_POLL_MS,
   cancelMcpSignInFlow,
@@ -169,8 +169,8 @@ import {
   pasteMcpSignIn,
   postMcpSignIn,
   type McpSignInRun,
-} from "./mcp-sign-in-helpers";
-import { projectTrustReloadKey, scopeLabel } from "./settings-ui-helpers";
+} from "./mcp-sign-in-helpers.ts";
+import { projectTrustReloadKey, scopeLabel } from "./settings-ui-helpers.ts";
 import type { Translate } from "@/lib/i18n/types";
 
 /** What the panel has loaded; a project the route refused leaves the global listing and `projectError`. */
@@ -548,7 +548,7 @@ export function McpConfig({
   }, [activeFlowsKey, pollRound]);
 
   // A sign-in that ended changed mcp-auth.json and recorded what connecting
-  // found: the overview is read again, for Signed in and the Status row.
+  // found: the overview is read again, for Signed in and the Connection row.
   const previousSignInsRef = useRef(signIns);
   useEffect(() => {
     const previous = previousSignInsRef.current;

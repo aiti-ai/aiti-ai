@@ -2,12 +2,15 @@ import {
   createAgentSessionServices,
   getAgentDir,
   SettingsManager,
+  type InlineExtension,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { rememberProviderModels } from "./deferred-provider-models";
-import { serializeByKey } from "./key-serializer";
-import { llamaCppExtension } from "./pi-sdk-internals";
+import { rememberProviderModels } from "./deferred-provider-models.ts";
+import { serializeByKey } from "./key-serializer.ts";
+import { llamaCppExtension } from "./pi-sdk-internals.ts";
+import { replayImageProviders } from "./image-generation.ts";
+import { openRouterImageApiProvider, OPENROUTER_PROVIDER } from "./image-openrouter-api.ts";
 
 /**
  * ModelRuntime that also includes providers registered by extensions (an
@@ -22,12 +25,35 @@ import { llamaCppExtension } from "./pi-sdk-internals";
  * The OAuth login stream and the catalog refresh build their own: `login()`
  * and a network `refresh()` change the runtime they run on, for seconds.
  */
+/**
+ * Replays image providers that extensions registered through
+ * `ctx.core.registerImageProvider()` (lib/image-generation.ts). The SDK builds a
+ * fresh runtime on TTL expiry and `/reload`, so the ledger must be re-applied
+ * here — the same shape as llamaCppExtension, one layer up.
+ */
+const imageProvidersExtension: InlineExtension = {
+  name: "pi-web:image-providers",
+  builtin: true,
+  async factory(pi) {
+    const replayed = replayImageProviders(pi as unknown as { registerProvider: (name: string, config: never) => void });
+    if (replayed > 0) console.log(`[pi-web] replayed ${replayed} extension-registered image provider(s)`);
+    // pi's built-in `openrouter-images` posts to chat/completions, which OpenRouter's
+    // dedicated image models reject (404 "use /api/v1/images"). Register a sibling
+    // provider that speaks the image endpoint so those models are usable.
+    try {
+      pi.registerProvider(OPENROUTER_PROVIDER, openRouterImageApiProvider() as never);
+    } catch (e) {
+      console.warn("[pi-web] openrouter image-api provider registration failed:", e);
+    }
+  },
+};
+
 export async function createModelRuntimeWithExtensions(): Promise<ModelRuntime> {
   const agentDir = getAgentDir();
   const services = await createAgentSessionServices({
     cwd: agentDir,
     agentDir,
-    resourceLoaderOptions: { extensionFactories: [llamaCppExtension] },
+    resourceLoaderOptions: { extensionFactories: [llamaCppExtension, imageProvidersExtension] },
   });
   await rememberProviderModels(services.modelRuntime);
   return services.modelRuntime;

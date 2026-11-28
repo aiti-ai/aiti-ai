@@ -36,7 +36,7 @@ Server-side Pi extensions with detached work can prevent automatic idle
 session eviction through the versioned global registry:
 
 ```js
-const liveness = globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")];
+const liveness = globalThis[Symbol.for("@aiti-ai/pi-web/session-liveness/v1")];
 const release = liveness?.version === 1
   ? liveness.register({
       name: "my-extension",

@@ -2,13 +2,14 @@
 
 import { LLAMA_CPP_PROVIDER_ID } from "@/lib/provider-listing";
 import { useState, useEffect, useCallback, useId, useRef, type ButtonHTMLAttributes, type DragEvent } from "react";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
+import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
-import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
-import { checkProviderEntries, ProviderEntryError, type ProviderEntryProblem } from "@/lib/model-provider-check";
-import { checkImageMaxBytes, DEFAULT_IMAGE_MAX_BYTES, formatImageBytes, ImageMaxBytesError, imageMaxBytes, parseImageMaxBytes, withImageMaxBytes } from "@/lib/model-image-limits";
-import type { ModelContextSettings } from "./ModelContextWindow";
+import { checkProviderEntries, ProviderEntryError, type ProviderEntryProblem } from "@/lib/model-provider-check.ts";
+import { checkImageMaxBytes, DEFAULT_IMAGE_MAX_BYTES, formatImageBytes, ImageMaxBytesError, imageMaxBytes, parseImageMaxBytes, withImageMaxBytes } from "@/lib/model-image-limits.ts";
 import {
   getLastSettingsSelection,
   setLastSettingsSelection,
@@ -39,7 +40,7 @@ import {
   type ModelCostDraft,
   type ModelCostKey,
   type ModelOrderChange,
-} from "./models-config-helpers";
+} from "./models-config-helpers.ts";
 import {
   ConfigButton,
   ConfigDetail,
@@ -59,7 +60,7 @@ import {
   ConfigSidebarText,
   ConfigSplitView,
   useConfigDetailNavigation,
-} from "./SettingsUi";
+} from "./SettingsUi.tsx";
 import {
   EnabledModelsBanner,
   EnabledModelsProviderSwitch,
@@ -67,12 +68,13 @@ import {
   EnabledModelsSection,
   useEnabledModels,
   type EnabledModelsController,
-} from "./EnabledModelsSection";
-import { providerBadgeLabel } from "./enabled-models-helpers";
-import { OAuthPastePanel } from "./OAuthPastePanel";
-import { ProviderIcon } from "./ProviderIcon";
-import { ProviderUsageSummary } from "./ProviderUsageSummary";
-import { readJsonOrThrow } from "@/lib/fetch-json";
+} from "./EnabledModelsSection.tsx";
+import { providerBadgeLabel } from "./enabled-models-helpers.ts";
+import { OAuthPastePanel } from "./OAuthPastePanel.tsx";
+import { ProviderIcon } from "./ProviderIcon.tsx";
+import { ProviderUsageSummary } from "./ProviderUsageSummary.tsx";
+import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
+import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow.tsx";
 import { errorMessage } from "@/lib/errors";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -157,6 +159,17 @@ type ModelCatalogState =
   | { phase: "loading" }
   | { phase: "success"; recommendation: ModelCatalogRecommendation; appliedCount: number }
   | { phase: "error"; message: string };
+
+type ModelProbeStatus =
+  | { phase: "probing" }
+  | { phase: "done"; corrected: boolean; probedMaxTokens?: number }
+  | { phase: "error"; message: string; probedMaxTokens?: number };
+
+// pi's default output budget; models whose metadata reports at or below this
+// need no probe (under-reporting is harmless, and a request is not worth it).
+const MIN_PROBE_MAX_TOKENS = 16384;
+
+const probeKey = (providerName: string, modelId: string): string => `${providerName}\u0000${modelId}`;
 
 type Selection =
   | { type: "provider"; name: string }
@@ -373,7 +386,7 @@ function ProviderDetail({ name, editingName, fallbackLabel, provider, onChange, 
     setDiscoveryState({ phase: "loading" });
     setSelectedModelIds([]);
     try {
-      const res = await fetch("/api/models-config/discover", {
+      const res = await fetch(apiUrl("/api/models-config/discover"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerName: name, provider: { ...provider, models: undefined } }),
@@ -484,6 +497,8 @@ function ProviderDetail({ name, editingName, fallbackLabel, provider, onChange, 
           onChange={(headers) => set("headers", headers)}
         />
       </ConfigField>
+
+      <ProviderUsageSummary providerId={name} enabled />
 
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
         {discoveryState.phase !== "success" && (
@@ -637,7 +652,7 @@ function ThinkingLevelMapEditor({
         const btnBase: React.CSSProperties = {
           padding: "4px 10px",
           fontSize: 10,
-          border: "none",
+          borderLeft: "none", borderRight: "none", borderTop: "none", borderBottom: "none",
           cursor: "pointer",
           fontWeight: 400,
           transition: "background 0.1s, color 0.1s",
@@ -813,9 +828,29 @@ function HeaderListEditor({ headers, onChange }: {
   );
 }
 
+// Verified corrections for providers whose /models metadata disagrees with
+// their request-time validation. Ark's coding endpoint reports glm-5-2-260617
+// with max_output_token_length 131072 but rejects max_tokens above 128000
+// (HTTP 400 verified at 128001). Everything else takes its cap straight from
+// the provider's own model metadata during discovery.
+const MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS: Record<string, Record<string, number>> = {
+  "ark-coding": { "glm-5-2-260617": 128000 },
+};
+
+function capMaxOutputTokens(
+  providerName: string,
+  modelId: string,
+  maxTokens: number | undefined,
+): number | undefined {
+  if (maxTokens === undefined) return undefined;
+  const corrected = MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS[providerName]?.[modelId];
+  return corrected !== undefined ? Math.min(maxTokens, corrected) : maxTokens;
+}
+
 function fillEmptyModelFields(
   model: ModelEntry,
   preset: ModelCatalogPreset,
+  providerName = "",
 ): { model: ModelEntry; appliedCount: number } {
   const next = { ...model };
   let appliedCount = 0;
@@ -836,7 +871,7 @@ function fillEmptyModelFields(
     appliedCount += 1;
   }
   if (model.maxTokens === undefined && preset.maxTokens !== undefined) {
-    next.maxTokens = preset.maxTokens;
+    next.maxTokens = capMaxOutputTokens(providerName, model.id, preset.maxTokens);
     appliedCount += 1;
   }
 
@@ -862,12 +897,14 @@ function ModelDetail({
   providerName,
   provider,
   model,
+  probeStatus,
   onChange,
   onDelete,
 }: {
   providerName: string;
   provider: ProviderEntry;
   model: ModelEntry;
+  probeStatus?: ModelProbeStatus;
   onChange: (m: ModelEntry) => void;
   onDelete: () => void;
 }) {
@@ -940,7 +977,7 @@ function ModelDetail({
     const requestId = ++testRequestIdRef.current;
     setTestState({ phase: "testing" });
     try {
-      const res = await fetch("/api/models-config/test", {
+      const res = await fetch(apiUrl("/api/models-config/test"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerName, provider, model }),
@@ -982,14 +1019,14 @@ function ModelDetail({
     try {
       const params = new URLSearchParams({ q: query, provider: providerName, limit: "50" });
       if (effectiveBaseUrl?.trim()) params.set("baseUrl", effectiveBaseUrl.trim());
-      const res = await fetch(`/api/models-config/catalog?${params}`);
+      const res = await fetch(apiUrl(`/api/models-config/catalog?${params}`));
       const data = await res.json() as { recommendation?: ModelCatalogRecommendation; error?: string };
       if (requestId !== catalogRequestIdRef.current) return;
       if (!res.ok || data.error || !data.recommendation) {
         setCatalogState({ phase: "error", message: data.error ?? `HTTP ${res.status}` });
         return;
       }
-      const filled = fillEmptyModelFields(model, data.recommendation.preset);
+      const filled = fillEmptyModelFields(model, data.recommendation.preset, providerName);
       if (filled.appliedCount > 0) {
         catalogUndoRef.current = model;
         onChange(filled.model);
@@ -1224,6 +1261,22 @@ function ModelDetail({
             <NumInput value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
               onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)} placeholder="16384" />
           </ConfigField>
+          {probeStatus?.phase === "probing" && (
+            <div style={{ fontSize: 10, color: "#f59e0b", gridColumn: "1 / -1" }}>{t("models.probeInProgress")}</div>
+          )}
+          {probeStatus?.phase === "done" && probeStatus.corrected && (
+            <div style={{ fontSize: 10, color: "#10b981", gridColumn: "1 / -1" }}>
+              {t("models.probeCorrected", { value: String(model.maxTokens ?? "") })}
+            </div>
+          )}
+          {probeStatus?.phase === "done" && !probeStatus.corrected && (
+            <div style={{ fontSize: 10, color: "var(--text-dim)", gridColumn: "1 / -1" }}>{t("models.probeDone")}</div>
+          )}
+          {probeStatus?.phase === "error" && (
+            <div style={{ fontSize: 10, color: "#ef4444", gridColumn: "1 / -1" }} title={probeStatus.message}>
+              {t("models.probeFailed")}: {probeStatus.message}
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -1389,8 +1442,7 @@ function ModelDetail({
 // ── OAuth detail ──────────────────────────────────────────────────────────────
 
 function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
-  provider: OAuthProvider; onRefresh: () => void; enabledModels: EnabledModelsController;
-  contextSettings: ModelContextSettings;
+  provider: OAuthProvider; onRefresh: () => void; enabledModels: EnabledModelsController; contextSettings: ModelContextSettings;
 }) {
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const { t } = useI18n();
@@ -1421,7 +1473,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
     setLoginState({ phase: "connecting" });
     setInputValue("");
 
-    const es = new EventSource(`/api/auth/login/${encodeURIComponent(provider.id)}`);
+    const es = new EventSource(apiUrl(`/api/auth/login/${encodeURIComponent(provider.id)}`));
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {
@@ -1468,7 +1520,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
   }, [provider.id, onRefresh, t]);
 
   const handleLogout = useCallback(async () => {
-    await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
+    await fetch(apiUrl(`/api/auth/logout/${encodeURIComponent(provider.id)}`), { method: "POST" });
     setLoginState({ phase: "idle" });
     onRefresh();
   }, [provider.id, onRefresh]);
@@ -1477,7 +1529,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
     if (!code.trim()) return;
     setLoginState({ phase: "progress", message: t("models.verifying") });
     try {
-      const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
+      const res = await fetch(apiUrl(`/api/auth/login/${encodeURIComponent(provider.id)}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, code: code.trim() }),
@@ -1497,7 +1549,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
   const submitSelection = useCallback(async (token: string, value: string) => {
     setLoginState({ phase: "progress", message: t("i18n.continuing") });
     try {
-      const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
+      const res = await fetch(apiUrl(`/api/auth/login/${encodeURIComponent(provider.id)}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, code: value }),
@@ -1650,8 +1702,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
 const DEFAULT_LLAMA_ROUTER_URL = "http://127.0.0.1:8080";
 
 function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
-  provider: ApiKeyProvider; onRefresh: () => void; enabledModels: EnabledModelsController;
-  contextSettings: ModelContextSettings;
+  provider: ApiKeyProvider; onRefresh: () => void; enabledModels: EnabledModelsController; contextSettings: ModelContextSettings;
 }) {
   const llama = provider.id === LLAMA_CPP_PROVIDER_ID;
   const [serverUrl, setServerUrl] = useState(llama && !provider.configured ? DEFAULT_LLAMA_ROUTER_URL : "");
@@ -1671,7 +1722,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
     setError(null);
     setSavedOk(false);
     try {
-      const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, {
+      const res = await fetch(apiUrl(`/api/auth/api-key/${encodeURIComponent(provider.id)}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey: apiKey.trim(), ...(llama ? { serverUrl: serverUrl.trim() } : {}) }),
@@ -1701,7 +1752,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
     setRemoving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, { method: "DELETE" });
+      const res = await fetch(apiUrl(`/api/auth/api-key/${encodeURIComponent(provider.id)}`), { method: "DELETE" });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setError(d.error ?? `HTTP ${res.status}`);
       else onRefresh();
@@ -1824,6 +1875,10 @@ function AddProviderPicker({
   const [search, setSearch] = useState("");
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
+  // Mobile system back = close the picker (the outer settings panel's back layer still sits
+  // beneath; LIFO closes this layer first)
+  useOverlayBack(isMobile, onClose);
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 30); }, []);
 
@@ -2000,8 +2055,18 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
    */
   const [providerNameDraft, setProviderNameDraft] = useState<{ provider: string; name: string } | null>(null);
 
-  /** Resolves true once the lists and runtime names have been replaced. */
-  const refreshAuthProviders = useCallback(() => fetch("/api/auth/providers")
+  // Max-output-cap verification for brand-new discovered models: one minimal
+  // probe request per model, only for completely-new unknown models. Keyed by
+  // provider + model id so equal ids in different providers stay distinct.
+  const [probeStatus, setProbeStatus] = useState<Record<string, ModelProbeStatus>>({});
+  const probeStatusRef = useRef<Record<string, ModelProbeStatus>>({});
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+    probeStatusRef.current = probeStatus;
+  }, [config, probeStatus]);
+
+  const loadOAuthProviders = useCallback(() => fetch(apiUrl("/api/auth/providers"))
     .then((r) => r.json())
     .then((d: { oauthProviders?: OAuthProvider[]; apiKeyProviders?: ApiKeyProvider[]; providerNames?: Record<string, string> }) => {
       if (Array.isArray(d.oauthProviders)) setOauthProviders(d.oauthProviders);
@@ -2012,9 +2077,30 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     .catch(() => false)
     .finally(() => setAuthListed(true)), []);
 
+  const loadApiKeyProviders = useCallback(() => fetch(apiUrl("/api/auth/all-providers"))
+    .then((r) => r.json())
+    .then((d: { providers?: ApiKeyProvider[] }) => {
+      if (Array.isArray(d.providers)) setApiKeyProviders(d.providers);
+      return true;
+    })
+    .catch(() => false), []);
+
+  // A dual-auth provider moves between the two lists when its credential type
+  // changes, so any auth change has to reload both — refreshing only one leaves
+  // the provider rendered twice, and disconnecting the stale row would delete
+  // the credential that was just created (#309).
+  const refreshAuthProviders = useCallback(() => Promise.all([
+    loadOAuthProviders(),
+    loadApiKeyProviders(),
+  ]).then((results) => results.every(Boolean)), [loadOAuthProviders, loadApiKeyProviders]);
+
   useEffect(() => {
-    fetch("/api/models-config")
-      .then((r) => readJsonOrThrow<ModelsJson>(r))
+    fetch(apiUrl("/api/models-config"))
+      .then(async (r) => {
+        const d = await r.json() as ModelsJson & { error?: string };
+        if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
+        return d;
+      })
       .then((d) => {
         const normalized = d.providers ? d : { ...d, providers: {} };
         setConfig(normalized);
@@ -2050,7 +2136,9 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     }
   }, [apiKeyProviders, config.providers, oauthProviders, savedNames, selection]);
 
-  const contextSettings = (providerId: string): ModelContextSettings => ({
+  // Upstream (#1288 era): per-model context-window overrides for managed providers, edited
+  // inline in EnabledModelsSection and written to providers[id].modelOverrides on Save.
+  const contextSettings = useCallback((providerId: string): ModelContextSettings => ({
     overrides: config.providers?.[providerId]?.modelOverrides,
     disabled: loading || saving || loadError !== null,
     onChange: (modelId, value) => {
@@ -2062,7 +2150,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         setSaveError(String(error));
       }
     },
-  });
+  }), [config, loading, saving, loadError]);
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";
@@ -2130,38 +2218,132 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     });
   }, []);
 
-  const addDiscoveredModels = useCallback((providerName: string, discovered: DiscoveredModel[]) => {
+  // Apply a probed cap correction to a model entry, patching only maxTokens
+  // (downward) so concurrent edits to the entry are preserved.
+  const applyProbeResult = useCallback((providerName: string, modelId: string, confirmedMaxTokens: number) => {
     setConfig((prev) => {
-      const known = new Set((prev.providers?.[providerName]?.models ?? []).map((model) => model.id));
-      trackAddedModels(
-        savedModelIdsRef.current,
-        providerName,
-        discovered.filter((model) => !known.has(model.id)).length,
-      );
       const provider = prev.providers?.[providerName] ?? {};
       const models = [...(provider.models ?? [])];
-      const existingIds = new Set(models.map((model) => model.id));
-      for (const discoveredModel of discovered) {
-        if (existingIds.has(discoveredModel.id)) continue;
-        existingIds.add(discoveredModel.id);
-        // Keeps the capabilities the upstream published (#856).
-        models.push({ ...discoveredModel });
-      }
+      const idx = models.findIndex((m) => m.id === modelId);
+      if (idx === -1) return prev;
+      const current = models[idx];
+      if (current.maxTokens === undefined || confirmedMaxTokens >= current.maxTokens) return prev;
+      models[idx] = { ...current, maxTokens: confirmedMaxTokens };
       return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
     });
   }, []);
 
+  // One minimal "Reply with OK only." request per brand-new model to confirm
+  // the metadata max output cap is actually accepted (Ark's coding endpoint
+  // rejects glm's reported 131072). On rejection the API's bound is parsed and
+  // applied. Runs at most once per model per session.
+  const probeModelCap = useCallback(async (
+    providerName: string,
+    provider: ProviderEntry,
+    model: ModelEntry,
+  ) => {
+    const modelId = model.id;
+    if (!modelId || model.maxTokens === undefined) return;
+    const key = probeKey(providerName, modelId);
+    const existing = probeStatusRef.current[key];
+    // Re-probe when the cap changed (catalog fill, manual edit, probe
+    // correction); skip only while a probe is in flight or when the same cap
+    // was already confirmed, so saving with a fresh value re-verifies it.
+    if (existing?.phase === "probing") return;
+    if (existing?.phase === "done" && existing.probedMaxTokens === model.maxTokens) return;
+    setProbeStatus((prev) => ({ ...prev, [key]: { phase: "probing" } }));
+    try {
+      const res = await fetch(apiUrl("/api/models-config/probe-cap"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerName,
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            apiKey: provider.apiKey,
+            headers: provider.headers,
+            compat: provider.compat,
+          },
+          model: { id: modelId, maxTokens: model.maxTokens, compat: model.compat },
+        }),
+      });
+      const d = await res.json() as { ok?: boolean; confirmedMaxTokens?: number; error?: string };
+      if (d.ok && typeof d.confirmedMaxTokens === "number") {
+        const corrected = d.confirmedMaxTokens !== model.maxTokens;
+        if (corrected) applyProbeResult(providerName, modelId, d.confirmedMaxTokens);
+        // Record the final (post-correction) cap so a later save with the same
+        // value is not re-probed, but any edit re-triggers verification.
+        const finalMaxTokens = corrected ? d.confirmedMaxTokens : model.maxTokens;
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "done", corrected, probedMaxTokens: finalMaxTokens } }));
+      } else {
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: d.error ?? "Probe failed", probedMaxTokens: model.maxTokens } }));
+      }
+    } catch (e) {
+      setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: e instanceof Error ? e.message : String(e), probedMaxTokens: model.maxTokens } }));
+    }
+  }, [applyProbeResult]);
+
+  const addDiscoveredModels = useCallback((providerName: string, discovered: DiscoveredModel[]) => {
+    const provider = configRef.current.providers?.[providerName] ?? {};
+    const existingIds = new Set((provider.models ?? []).map((m) => m.id));
+    const newModels: ModelEntry[] = discovered
+      .filter((discoveredModel) => !existingIds.has(discoveredModel.id))
+      .map((discoveredModel) => ({
+        id: discoveredModel.id,
+        ...(discoveredModel.name ? { name: discoveredModel.name } : {}),
+        ...(discoveredModel.contextWindow !== undefined ? { contextWindow: discoveredModel.contextWindow } : {}),
+        // Seed max output tokens from the provider's own /models metadata
+        // (token_limits.max_output_token_length etc.), corrected only where
+        // that metadata is known to over-report (Ark coding glm).
+        ...(discoveredModel.maxTokens !== undefined
+          ? { maxTokens: capMaxOutputTokens(providerName, discoveredModel.id, discoveredModel.maxTokens) }
+          : {}),
+        ...(discoveredModel.input?.length ? { input: [...discoveredModel.input] } : {}),
+        // Keeps the capabilities the upstream published (#856).
+        ...(discoveredModel.reasoning ? { reasoning: true } : {}),
+        ...(discoveredModel.thinkingLevelMap ? { thinkingLevelMap: discoveredModel.thinkingLevelMap } : {}),
+      }));
+    if (newModels.length === 0) return;
+    setConfig((prev) => {
+      const p = prev.providers?.[providerName] ?? {};
+      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...p, models: [...(p.models ?? []), ...newModels] } } };
+    });
+    // Verify max output caps of brand-new models with one minimal probe request
+    // each. Scope is intentionally tight: only models that are completely new
+    // (not already configured) and whose cap is not already known via a
+    // correction; models at or below pi's default output budget are skipped.
+    for (const model of newModels) {
+      if (model.maxTokens !== undefined && model.maxTokens > MIN_PROBE_MAX_TOKENS) {
+        void probeModelCap(providerName, provider, model);
+      }
+    }
+  }, [probeModelCap]);
+
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
+    const provider = configRef.current.providers?.[providerName] ?? {};
+    const prevModel = provider.models?.[index];
+    // Re-verify the output cap whenever it changes (catalog fill seeds it,
+    // manual edits tweak it) so a stale/over-reported value is caught before
+    // save. probeModelCap internally skips when the same cap was confirmed.
+    const maxTokensChanged = m.maxTokens !== prevModel?.maxTokens;
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
       const models = [...(provider.models ?? [])];
       // The edited model keeps its row key, so its sidebar row is not remounted on every keystroke.
       const key = modelKeysRef.current.get(models[index]);
       if (key) modelKeysRef.current.set(m, key);
-      models[index] = m;
+      // Clamp max output tokens to the provider's API cap (e.g. Ark coding
+      // rejects max_tokens > 128000) so manual edits and catalog fills can
+      // never persist a value the API refuses.
+      const cappedMaxTokens = capMaxOutputTokens(providerName, m.id, m.maxTokens);
+      models[index] = cappedMaxTokens === m.maxTokens ? m : { ...m, maxTokens: cappedMaxTokens };
       return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
     });
-  }, []);
+    if (maxTokensChanged && m.id && m.maxTokens !== undefined && m.maxTokens > MIN_PROBE_MAX_TOKENS && provider.baseUrl?.trim()) {
+      void probeModelCap(providerName, provider, m);
+    }
+  }, [probeModelCap]);
 
   const applyModelOrder = useCallback((change: ModelOrderChange<ModelsJson> | null) => {
     if (!change) return;
@@ -2232,6 +2414,14 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   }, [applyModelOrder, config, loadError, saving]);
 
   const removeModel = useCallback((providerName: string, index: number) => {
+    const removedId = configRef.current.providers?.[providerName]?.models?.[index]?.id;
+    if (removedId) {
+      setProbeStatus((prev) => {
+        const next = { ...prev };
+        delete next[probeKey(providerName, removedId)];
+        return next;
+      });
+    }
     savedModelIdsRef.current.get(providerName)?.splice(index, 1);
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
@@ -2249,26 +2439,50 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     setSaveError(null);
     setSavedOk(false);
     // A provider name typed but not applied with Rename is still a visible
-    // edit: move the provider before writing, like every other field.
-    let draft = config;
+    // edit: move the provider before writing, like every other field. The
+    // rename itself rides on the post-probe snapshot below (savedDraft).
     const pendingName = providerNameDraft?.name.trim();
     if (providerNameDraft && pendingName && config.providers?.[providerNameDraft.provider]) {
-      const renamed = applyProviderRename(config, providerNameDraft.provider, pendingName);
-      if (!renamed) {
+      // Validation only: the rename itself rides on the post-probe snapshot
+      // below (savedDraft), so probes' maxTokens corrections are kept.
+      if (!applyProviderRename(config, providerNameDraft.provider, pendingName)) {
         setSaveError(t("models.providerIdTaken", { name: pendingName }));
         setSaving(false);
         return;
       }
-      draft = renamed;
     }
     try {
-      draft = normalizeContextWindowOverrides(draft);
-      checkProviderEntries(draft);
-      checkImageMaxBytes(draft);
-      const res = await fetch("/api/models-config", {
+      // Verify output caps of every probeable model whose value is stale or
+      // unverified before persisting, so a catalog/hand-edited maxTokens that
+      // the provider actually rejects (e.g. a downgraded sensenova variant) is
+      // corrected first rather than saved and failing at runtime.
+      const probeTasks: Promise<void>[] = [];
+      for (const [pName, provider] of Object.entries(config.providers ?? {})) {
+        if (!provider.baseUrl?.trim()) continue;
+        for (const model of provider.models ?? []) {
+          if (!model.id || model.maxTokens === undefined || model.maxTokens <= MIN_PROBE_MAX_TOKENS) continue;
+          probeTasks.push(probeModelCap(pName, provider, model));
+        }
+      }
+      if (probeTasks.length > 0) await Promise.all(probeTasks);
+      // Use the latest config: probes above may have corrected maxTokens via
+      // applyProbeResult, and the closure `config` is the pre-probe snapshot.
+      const latest = configRef.current;
+      // The pending rename rides on top of the post-probe snapshot: probes may
+      // have corrected maxTokens via applyProbeResult, and the closure `draft`
+      // is the pre-probe one — saving either alone would lose one of the two.
+      const savedDraft = providerNameDraft && pendingName && latest.providers?.[providerNameDraft.provider]
+        ? applyProviderRename(latest, providerNameDraft.provider, pendingName) ?? latest
+        : latest;
+      // Upstream: context-window overrides normalize on save (string → positive integer,
+      // "500k" and other junk throw ContextWindowError before reaching the writer).
+      const normalizedDraft = normalizeContextWindowOverrides(savedDraft);
+      checkProviderEntries(normalizedDraft);
+      checkImageMaxBytes(normalizedDraft);
+      const res = await fetch(apiUrl("/api/models-config"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(normalizedDraft),
       });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
@@ -2279,14 +2493,14 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         // renamed, models added, deleted or renamed. Re-verify the stored
         // patterns against the new catalog and re-read.
         const renames = [...renamesRef.current].map(([from, to]) => ({ from, to }));
-        const modelRenames = collectModelRenames(draft, savedModelIdsRef.current, renamesRef.current);
-        savedProvidersRef.current = new Set(Object.keys(draft.providers ?? {}));
-        savedModelIdsRef.current = savedModelIds(draft);
+        const modelRenames = collectModelRenames(savedDraft, savedModelIdsRef.current, renamesRef.current);
+        savedProvidersRef.current = new Set(Object.keys(savedDraft.providers ?? {}));
+        savedModelIdsRef.current = savedModelIds(savedDraft);
         renamesRef.current.clear();
         enabledModels.resync(renames, modelRenames);
         // Runtime names follow the saved ids and `name`s. Until they arrive, the old runtime
         // name still equals the old saved `name`, so both move together.
-        const nextSavedNames = savedProviderNames(draft);
+        const nextSavedNames = savedProviderNames(savedDraft);
         void refreshAuthProviders().then((refreshed) => { if (refreshed) setSavedNames(nextSavedNames); });
       }
     } catch (e) {
@@ -2299,7 +2513,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     } finally {
       setSaving(false);
     }
-  }, [applyProviderRename, config, enabledModels, loadError, providerNameDraft, refreshAuthProviders, t]);
+  }, [applyProviderRename, config, enabledModels, loadError, probeModelCap, providerNameDraft, refreshAuthProviders, t]);
 
   const providers = Object.entries(config.providers ?? {}).filter(([id, entry]) => {
     if (!isOverridesOnly(entry) || savedNames.has(id)) return true;
@@ -2338,8 +2552,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     }
     if (selection.type === "provider") {
       const provider = config.providers?.[selection.name];
-      // Only an entry the list shows as custom: an overrides-only one waits for the provider lists.
-      if (!provider || !providers.some(([id]) => id === selection.name)) return null;
+      if (!provider) return null;
       return (
         <ProviderDetail
           key={selection.name}
@@ -2365,6 +2578,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         providerName={selection.providerName}
         provider={provider}
         model={model}
+        probeStatus={probeStatus[probeKey(selection.providerName, model.id)]}
         onChange={(m) => updateModel(selection.providerName, selection.index, m)}
         onDelete={() => removeModel(selection.providerName, selection.index)}
       />
@@ -2453,6 +2667,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
                     {/* Model rows */}
                     {models.map((m, i) => {
                       const isModelSelected = selection?.type === "model" && selection.providerName === pName && selection.index === i;
+                      const probeState = m.id ? probeStatus[probeKey(pName, m.id)] : undefined;
                       let modelKey = modelKeysRef.current.get(m);
                       if (!modelKey) {
                         modelKey = `model-${++modelKeySequenceRef.current}`;
@@ -2479,6 +2694,18 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
                           <ConfigSidebarText className="is-grow" style={{ color: m.id ? "var(--text-muted)" : "var(--text-dim)" }}>
                             {modelSidebarLabel(m) || t("i18n.newModel")}
                           </ConfigSidebarText>
+                          {probeState?.phase === "probing" && (
+                            <span style={{ fontSize: 9, color: "#f59e0b", flexShrink: 0 }} title={t("models.probeInProgress")}>⏳</span>
+                          )}
+                          {probeState?.phase === "done" && (
+                            <span style={{ fontSize: 9, color: "#10b981", flexShrink: 0 }}
+                              title={probeState.corrected ? t("models.probeCorrected", { value: String(m.maxTokens ?? "") }) : t("models.probeDone")}>
+                              {probeState.corrected ? "✓↓" : "✓"}
+                            </span>
+                          )}
+                          {probeState?.phase === "error" && (
+                            <span style={{ fontSize: 9, color: "#ef4444", flexShrink: 0 }} title={probeState.message}>!</span>
+                          )}
                           {m.reasoning && (
                             <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}

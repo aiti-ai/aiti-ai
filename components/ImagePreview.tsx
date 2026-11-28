@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { openImageInEditorViewer } from "./editor-image-preview.ts";
 
 interface ImagePreviewProps {
   src: string;
@@ -19,6 +20,14 @@ export function ImagePreview({ src, alt = "", children, className, style }: Imag
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Click → the file-editor extension's unified viewer (floating dialog; lazily-loaded
+  // extensions are materialized first); if the extension is unavailable → the upstream native lightbox.
+  const openPreview = () => {
+    void openImageInEditorViewer(src, { alt }).then((handled) => {
+      if (!handled) setOpen(true);
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -60,7 +69,7 @@ export function ImagePreview({ src, alt = "", children, className, style }: Imag
           cursor: "zoom-in",
           ...style,
         }}
-        onClick={() => setOpen(true)}
+        onClick={openPreview}
         aria-label={triggerLabel}
         aria-haspopup="dialog"
         aria-expanded={open}

@@ -8,7 +8,7 @@
 // and a nested block (a quoted message that quoted another session) reads back
 // as body text inside the outer one.
 
-import { SESSION_REFERENCE_TAG } from "./session-reference";
+import { SESSION_REFERENCE_TAG } from "./session-reference.ts";
 
 export interface SessionReferenceView {
   kind: "reference";

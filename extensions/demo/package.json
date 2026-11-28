@@ -1,0 +1,58 @@
+{
+  "name": "@aiti-ai/demo",
+  "version": "0.2.3",
+  "type": "module",
+  "homepage": "https://aiti.pw/extensions/demo.html",
+  "description": "Reference extension demonstrating every extension point: two client styles side by side (plain hyperscript, and JSX with npm dependencies built by vite), config files, skills and server-side hooks. Meant to be read as the canonical example of how an aiti extension is put together.",
+  "displayNameI18n": {
+    "en": "Demo"
+  },
+  "descriptionI18n": {
+    "zh-CN": "全插槽演示扩展 —— 框架验证用，覆盖每个扩展点"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "框架先有例子，人才有样子。",
+  "soulI18n": {
+    "en": "The framework needs examples before people have a model to follow."
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "hello.txt",
+      "humor-flag.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "keywords": [
+    "aiti",
+    "aiti-devtools",
+    "pi-web",
+    "extension",
+    "example",
+    "reference",
+    "slots",
+    "widgets"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/demo"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "contentHash": "0e96842cc62373a6"
+}

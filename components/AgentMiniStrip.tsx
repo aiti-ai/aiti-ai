@@ -5,8 +5,8 @@ import { useHorizontalStrip } from "@/hooks/useHorizontalStrip";
 import { useI18n } from "@/hooks/useI18n";
 import { sideChatTitle } from "@/lib/session-family";
 import type { SessionInfo } from "@/lib/types";
-import { AgentKindIcon, StatusIcon, subagentTitle } from "./AgentSessionPanel";
-import { LockToggle } from "./LockToggle";
+import { AgentKindIcon, StatusIcon, subagentTitle } from "./AgentSessionPanel.tsx";
+import { LockToggle } from "./LockToggle.tsx";
 
 interface Props {
   rootSession: SessionInfo;
@@ -134,7 +134,7 @@ export function AgentMiniStrip({ rootSession, members, selectedSessionId, runnin
         iconSize={14}
         onClick={onToggleLock}
         onFocus={() => setFocusedId(LOCK_FOCUS_KEY)}
-        aria-label={t("agentSwitcher.lockStrip")}
+        aria-label={locked ? t("agentSwitcher.unlockStrip") : t("agentSwitcher.lockStrip")}
         title={locked ? t("agentSwitcher.unlockStrip") : t("agentSwitcher.lockStrip")}
         tabIndex={tabStopId === LOCK_FOCUS_KEY ? 0 : -1}
         style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 6 }}

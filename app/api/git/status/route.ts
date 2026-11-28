@@ -4,9 +4,11 @@ import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed, isWi
 import { getGitStatus } from "@/lib/git-changes";
 import { errorMessage } from "@/lib/errors";
 
-export async function GET(request: NextRequest) {
+// POST /api/git/status { cwd }: cwd goes in the body, not the URL — keeps local paths out of tunnel/proxy access logs.
+export async function POST(request: NextRequest) {
   try {
-    const cwd = request.nextUrl.searchParams.get("cwd") ?? "";
+    const body = await request.json().catch(() => null) as { cwd?: unknown } | null;
+    const cwd = typeof body?.cwd === "string" ? body.cwd : "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }

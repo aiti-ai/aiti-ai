@@ -1,0 +1,30 @@
+{
+  "name": "@aiti-ai/aiti-debug-inject",
+  "version": "0.3.11",
+  "description": "Minimal remote-debug injection — injects another pi-web instance's debugger into this instance's pages; the service URL is a text feature in extman, off by default",
+  "displayNameI18n": {
+    "en": "Remote Debug Inject"
+  },
+  "descriptionI18n": {
+    "zh-CN": "极简远程调试注入 —— 把另一个 pi-web 实例的调试器注入本实例页面，服务地址是 extman 里的文本 feature，默认关闭"
+  },
+  "soul": "调试器该穿在哪件衣服里，由你说了算。",
+  "soulI18n": {
+    "en": "Which outfit the debugger wears is up to you."
+  },
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "3ee8367d54b1e00b",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-debug-inject"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

@@ -1,5 +1,8 @@
-import type { McpConfigFieldRef } from "./api-types";
-import { isRecord } from "./is-record";
+import type { McpConfigFieldRef } from "./api-types.ts";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 // Which values of an `mcp.json` entry pi resolves before it connects, and the
 // PI_WEB_PASSWORD rule over them. Client-safe, with no runtime imports: the

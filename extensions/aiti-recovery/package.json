@@ -1,0 +1,39 @@
+{
+  "name": "@aiti-ai/aiti-recovery",
+  "version": "0.1.13",
+  "type": "module",
+  "description": "Recovery UI extension — queue recovery dialog (resolving queued messages left by interrupted sessions one by one) + restart recovery wizard (two-step handling of interrupted sessions), red-line semantics preserved: never auto-deliver, resuming only sends \"continue\"",
+  "displayNameI18n": {
+    "en": "Recovery"
+  },
+  "descriptionI18n": {
+    "zh-CN": "恢复 UI 扩展——队列恢复对话框（会话中断排队消息逐条决议）+ 重启恢复向导（中断会话两步处理），红线语义保留：绝不自动投递，续跑只发「继续」"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "中断不可怕，可怕的是找不到回去的路。",
+  "soulI18n": {
+    "en": "Interruption isn't scary; what's scary is not finding the way back."
+  },
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "5bf953990c1d3ccd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-recovery"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

@@ -122,6 +122,21 @@ export function ForkIcon(props: SidebarIconProps) {
   );
 }
 
+/** Fork-new-session icon (git-fork outline: three nodes converging downward
+ *  into a new node) — shared by the composer's fork button (desktop + mobile)
+ *  and the message-bar fork action. Distinguish from "edit from here / branch". */
+export function ForkNewIcon(props: SidebarIconProps) {
+  return (
+    <SidebarIcon {...props} strokeWidth={1.8}>
+      <circle cx="12" cy="18" r="3" />
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="6" r="3" />
+      <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
+      <path d="M12 12v3" />
+    </SidebarIcon>
+  );
+}
+
 /** An arrow leaving a box: a session row's "Open in new tab" (a browser tab, not a copy). */
 export function OpenInNewTabIcon(props: SidebarIconProps) {
   return (

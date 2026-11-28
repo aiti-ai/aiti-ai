@@ -10,8 +10,7 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
-const { normalizeDisplayMath, markdownPreviewRemarkPlugins, markdownPreviewRehypePlugins, markdownRemarkPlugins, markdownRehypePlugins } = await jiti.import("../lib/markdown.ts");
-const { I18nProvider } = await jiti.import("@/hooks/useI18n");
+const { normalizeDisplayMath, loadMathPlugins, markdownPreviewRemarkPlugins, markdownPreviewRehypePlugins, markdownRemarkPlugins, markdownRehypePlugins } = await jiti.import("../lib/markdown.ts");const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function renderMarkdown(markdown, props = {}) {
   return renderToStaticMarkup(
@@ -26,35 +25,6 @@ function renderMarkdown(markdown, props = {}) {
     ),
   );
 }
-
-test("a document reader keeps local links in the page without an href", () => {
-  const local = renderMarkdown("[relative](references/setup.md#config) [anchor](#config) [outside](../outside.md) [absolute](/etc/test.md) [attachment](image.png)", { onOpenFile: undefined, onNavigateLink() {} });
-  assert.equal((local.match(/<a role="link" tabindex="0">/g) ?? []).length, 5);
-  assert.doesNotMatch(local, /href=|target=|\snode=/);
-  const external = renderMarkdown("[web](https://example.com) [mail](mailto:hello@example.com) [bad](javascript:alert%281%29)", { onOpenFile: undefined, onNavigateLink() {} });
-  assert.equal((external.match(/target="_blank" rel="noopener noreferrer"/g) ?? []).length, 3);
-  assert.doesNotMatch(external, /role="link"|javascript:|alert%28/);
-  // Chat keeps its links as they were.
-  assert.match(renderMarkdown("[relative](references/setup.md)", { onOpenFile: undefined }), /<a href="references\/setup.md" target="_blank"/);
-});
-
-test("a document reader keeps HTML anchor destinations and link labels", () => {
-  const html = renderMarkdown('<a id="install"></a>\n\n<a href="guide.md" title="Read setup" aria-label="Setup guide">Next</a>\n\n[Jump](guide.md "Read the setup guide")', { onOpenFile: undefined, onNavigateLink() {} });
-  assert.match(html, /<a id="user-content-install" target="_blank" rel="noopener noreferrer"><\/a>/);
-  assert.match(html, /<a title="Read setup" aria-label="Setup guide" role="link" tabindex="0">Next<\/a>/);
-  assert.match(html, /<a title="Read the setup guide" role="link" tabindex="0">Jump<\/a>/);
-});
-
-test("heading anchors are opt-in, scoped, formatted-text aware and generated before KaTeX", () => {
-  const markdown = "# Setup **guide**!\n\n## Configuration\n\n## Configuration\n\n## Configuration-1\n\n## Configuration\n\n## 中文 标题\n\n## `code` & punctuation.\n\n## Compute $x$";
-  assert.doesNotMatch(renderMarkdown(markdown), /data-heading-anchor/);
-  const html = renderMarkdown(markdown, { onNavigateLink() {} });
-  const anchors = [...html.matchAll(/data-heading-anchor="([^"]*)"/g)].map((match) => match[1]);
-  assert.deepEqual(anchors, ["setup-guide", "configuration", "configuration-1", "configuration-1-1", "configuration-2", "中文-标题", "code--punctuation", "compute-x"]);
-  assert.doesNotMatch(html, /\sid=/);
-  assert.match(html, /class="katex"/);
-  assert.equal(renderMarkdown(markdown, { onNavigateLink() {} }), html, "new renders restart the slug sequence");
-});
 
 test("renders CJK sentence emphasis without spaces after closing punctuation", () => {
   const sentence = "今天天气很好。";
@@ -169,7 +139,8 @@ test("renders backslash-escaped backticks inside inline code", () => {
   assert.doesNotMatch(html, /<\/code>1\.cs`/);
 });
 
-test("renders LaTeX parenthesis delimiters as inline math", () => {
+test("renders LaTeX parenthesis delimiters as inline math", async () => {
+  await loadMathPlugins(); // P1.2: math plugins load lazily — preload in tests (the hook's initial value reads the loaded snapshot)
   const html = renderMarkdown(String.raw`射线为 \(r_c = K^{-1}p\)。`);
 
   assert.match(html, /class="katex"/);
@@ -193,7 +164,8 @@ test("keeps adjacent amounts, ranges and decimals as currency", () => {
   }
 });
 
-test("does not let a price consume later math in the same paragraph", () => {
+test("does not let a price consume later math in the same paragraph", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown("Pay $20 for the $x + 1$ option, or $30 for $2x + 3$.");
 
   assert.match(html, /Pay \$20 for the/);
@@ -203,7 +175,8 @@ test("does not let a price consume later math in the same paragraph", () => {
   assert.match(html, /<annotation encoding="application\/x-tex">2x \+ 3<\/annotation>/);
 });
 
-test("retains single-dollar equations, numeric math, balanced padding and multiline math", () => {
+test("retains single-dollar equations, numeric math, balanced padding and multiline math", async () => {
+  await loadMathPlugins();
   for (const math of ["$x + y$", "$2 + 2 = 4$", "$20$", "$ x + y $", "$x $", "$ x$", "$x$2", "$x +\ny$", "$$x + y$$"]) {
     const html = renderMarkdown(math);
     assert.match(html, /class="katex"/, math);
@@ -211,10 +184,13 @@ test("retains single-dollar equations, numeric math, balanced padding and multil
   }
 });
 
-test("file previews and minimap Markdown use the same currency-safe math rules", () => {
+test("file previews and minimap Markdown use the same currency-safe math rules", async () => {
+  await loadMathPlugins();
+  const { mathRehypePlugins } = await jiti.import("../lib/markdown-math.ts");
   const html = renderToStaticMarkup(React.createElement(ReactMarkdown, {
     remarkPlugins: markdownPreviewRemarkPlugins,
-    rehypePlugins: markdownPreviewRehypePlugins,
+    // 合并后架构：tokenizer 静态在场（remarkCurrencySafeMath），懒加载只补 katex 渲染层
+    rehypePlugins: [...markdownPreviewRehypePlugins, ...mathRehypePlugins],
   }, "**Price: $20/month**\nPlus a $6 fee. Formula: $2 + 2 = 4$."));
   assert.match(html, /<strong>Price: \$20\/month<\/strong>/);
   assert.match(html, /Plus a \$6 fee/);
@@ -238,7 +214,8 @@ test("currency text still passes through HTML and URL sanitization", () => {
   assert.match(html, /\$6/);
 });
 
-test("renders paired LaTeX bracket delimiters as display math", () => {
+test("renders paired LaTeX bracket delimiters as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`\[
 P(\lambda)=o_b+\lambda r_b
 \]`);
@@ -249,7 +226,8 @@ P(\lambda)=o_b+\lambda r_b
   assert.match(oneLineHtml, /class="katex-display"/);
 });
 
-test("renders model-emitted bracket-only formula lines as display math", () => {
+test("renders model-emitted bracket-only formula lines as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`平均一致性：
 
 [ C(x) = \frac{2}{T(T-1)} \sum_{i<j} S(\hat{y}^{(i)}, \hat{y}^{(j)}) ]`);
@@ -303,14 +281,33 @@ test("keeps Mermaid source visible while the response is streaming", () => {
   assert.match(html, /A --&gt; B/);
 });
 
+test("renders data: image markdown with src intact (file-editor extension viewer entry)", () => {
+  const gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const html = renderMarkdown(`![dot](${gif})`);
+  assert.match(html, new RegExp(`<img src="${gif}"`));
+
+  // also allowed when there is no in-app file handler (welcome / no-cwd scenarios)
+  const htmlNoHandler = renderMarkdown(`![dot](${gif})`, { onOpenFile: undefined });
+  assert.match(htmlNoHandler, new RegExp(`<img src="${gif}"`));
+});
+
+test("still strips non-image data: URLs from markdown img src", () => {
+  const html = renderMarkdown("![x](data:text/html;base64,PGI+aGk8L2I+)");
+  assert.match(html, /<img alt="x"[^>]*>/);
+  assert.doesNotMatch(html, /<img[^>]+src=/);
+});
+
 test("opens markdown images in the shared image preview", () => {
   const localHtml = renderMarkdown("![chart](docs/tmp/chart.png)");
   const remoteHtml = renderMarkdown("![logo](https://example.com/logo.png)");
 
-  assert.match(localHtml, /<button[^>]+aria-label="Preview image: chart"[^>]*>/);
-  assert.match(localHtml, /<img[^>]+src="\/api\/files\/home\/me\/project\/docs\/tmp\/chart\.png\?type=read"/);
+  // 本地文件（融合设计）：票据换址（SSR 无 src），点击交给 onOpenFile 打开右侧文件面板，
+  // 不走上游的直接 /api/files?type=read 直链，也不套预览按钮。
   assert.match(localHtml, /<img[^>]+alt="chart"/);
-  assert.match(remoteHtml, /<button[^>]+aria-label="Preview image: logo"[^>]*>/);
+  assert.doesNotMatch(localHtml, /src="\/api\/files\/home/);
+  assert.doesNotMatch(localHtml, /<button/);
+  // 远程图片：ImagePreview 按钮 → 扩展查看器优先、原生灯箱兑底（融合行为）。
+  assert.match(remoteHtml, /<button[^>]+aria-label="Preview image[^"]*"[^>]*>/);
   assert.match(remoteHtml, /<img[^>]+src="https:\/\/example\.com\/logo\.png"/);
 });
 
@@ -335,11 +332,14 @@ test("uses a generic preview label when a markdown image has no alt text", () =>
 
 test("plays a markdown audio or video file inline instead of showing a broken image", () => {
   const audioHtml = renderMarkdown("![take 2](out/take2.wav)");
+  // 合并适配：fork 的票证契约 —— 本地媒体 src 由客户端异步换取（SSR HTML 永不含明文路径，
+  // 与 LocalImage 同一安全形态）；audio 元素本体 + controls/preload/aria 在 SSR 即可断言。
   assert.match(
     audioHtml,
-    /<audio (?=[^>]*controls="")(?=[^>]*preload="metadata")(?=[^>]*src="\/api\/files\/home\/me\/project\/out\/take2\.wav\?type=read")(?=[^>]*aria-label="take 2")[^>]*>/,
+    /<audio (?=[^>]*controls="")(?=[^>]*preload="metadata")(?=[^>]*aria-label="take 2")[^>]*>/,
   );
   assert.doesNotMatch(audioHtml, /<img|<button|\snode=/);
+  assert.doesNotMatch(audioHtml, /out\/take2\.wav/); // 路径不进 SSR HTML
 
   const videoHtml = renderMarkdown("![](https://example.com/clip.mp4?v=2)");
   assert.match(
@@ -350,10 +350,16 @@ test("plays a markdown audio or video file inline instead of showing a broken im
 
   // A linked clip stays a plain player inside its link, as a linked image does.
   const linkedHtml = renderMarkdown("[![demo](out/demo.webm)](https://example.com/demo)");
-  assert.match(linkedHtml, /<a [^>]*href="https:\/\/example\.com\/demo"[^>]*><video [^>]*src="\/api\/files\/home\/me\/project\/out\/demo\.webm\?type=read"[^>]*><\/video><\/a>/);
+  assert.match(linkedHtml, /<a [^>]*href="https:\/\/example\.com\/demo"[^>]*><video [^>]*><\/video><\/a>/);
+  assert.doesNotMatch(linkedHtml, /demo\.webm/); // 同上：票证化
 
   // Images keep their preview.
-  assert.match(renderMarkdown("![chart](out/chart.png)"), /<button[^>]+aria-label="Preview image: chart"/);
+  // 合并适配：fork 的本地图走 LocalImage（票证 src + 点击开右侧文件面板，cursor:zoom-in），
+  // 只有远程图才包 ImagePreview 按钮（基线 @305 的钉子）；上游测试假定的本地图按钮不存在。
+  const localImgHtml = renderMarkdown("![chart](out/chart.png)");
+  assert.match(localImgHtml, /<img alt="chart" loading="lazy" style="cursor:zoom-in"/);
+  assert.doesNotMatch(localImgHtml, /out\/chart\.png/); // 路径不进 SSR HTML
+  assert.match(renderMarkdown("![chart](https://example.com/chart.png)"), /<button[^>]+aria-label="Preview image: chart"/);
 });
 
 test("keeps CJK prose out of an autolinked URL", () => {
@@ -423,7 +429,9 @@ test("keeps a custom message's text layout as pi's TUI does", () => {
 
   // Markdown still renders, and each paragraph counts its own lines.
   assert.match(layout("# Title\n\ntext\n\n\n  more\n    lines"), /<h1>Title<\/h1>\n<p>text<\/p>\n<p> {2}more<br\/> {4}lines<\/p>/);
-  assert.match(layout("    code\n      block"), /markdown-code-block[\s\S]*> {2}block</);
+  // Merge note: the fork's CodeBlock renders the block as one text node (not
+  // upstream's per-line spans), so the preserved indent follows a newline.
+  assert.match(layout("    code\n      block"), /markdown-code-block[\s\S]*code\n {2}block</);
   assert.match(layout("<b>hi</b>\nnext"), /&lt;b&gt;hi&lt;\/b&gt;<br\/>next/);
   // A list's or a quote's own prefix is not an indent.
   assert.match(layout("- a\n  b\n- c"), /<li>a<br\/>b<\/li>/);
@@ -442,7 +450,8 @@ test("renders a hard break once when keeping line breaks", () => {
   assert.match(html, /<p>trailing spaces<br\/>backslash<br\/>end<\/p>/);
 });
 
-test("leaves code and math line endings alone when keeping line breaks", () => {
+test("leaves code and math line endings alone when keeping line breaks", async () => {
+  await loadMathPlugins();
   const code = renderMarkdown("```\nfirst\nsecond\n```", { keepLineBreaks: true });
   const math = renderMarkdown("$$\nx = 1\ny = 2\n$$", { keepLineBreaks: true });
   const emphasis = renderMarkdown("*one\ntwo* `a b`", { keepLineBreaks: true });

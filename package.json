@@ -1,41 +1,58 @@
 {
-  "name": "@agegr/pi-web",
-  "version": "0.19.0",
+  "name": "@aiti-ai/pi-web",
+  "version": "0.18.0-aiti.3",
   "description": "Web UI for the pi coding agent",
-  "homepage": "https://github.com/agegr/pi-web#readme",
+  "homepage": "https://aiti.pw/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agegr/pi-web.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git"
   },
   "bugs": {
-    "url": "https://github.com/agegr/pi-web/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
   "license": "MIT",
   "engines": {
     "node": ">=22.19.0"
   },
-  "browserslist": [
-    "chrome 111",
-    "edge 111",
-    "firefox 111",
-    "safari 16.2",
-    "ios_saf 16.2"
-  ],
+  "publishConfig": {
+    "tag": "latest"
+  },
   "bin": {
     "pi-web": "bin/pi-web.js"
   },
   "files": [
     "bin",
+    "extensions",
+    "!extensions/*/node_modules",
+    "!extensions/*/node_modules/**",
+    "!extensions/node_modules",
+    "!extensions/node_modules/**",
+    "!extensions/demo",
+    "!extensions/demo/**",
+    "!extensions/sm-demo-source",
+    "!extensions/sm-demo-source/**",
+    "!extensions/aiti-crash-fatal",
+    "!extensions/aiti-crash-fatal/**",
     ".next",
     "!.next/cache",
     "!.next/dev",
     "!.next/**/*.js.map",
+    "!.next/trace",
+    "!.next/trace-build",
+    "!.next/diagnostics",
     "public",
     "next.config.ts",
-    "package.json"
+    "patches",
+    "package.json",
+    "pi-plugins.manifest.json",
+    "!extensions/_shared",
+    "!extensions/_shared/**",
+    "package-lock.json",
+    "!extensions/.local-pkgs",
+    "!extensions/.build-root"
   ],
   "scripts": {
-    "postinstall": "node bin/prepare-terminal.js",
+    "postinstall": "node bin/prepare-terminal.js && patch-package",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
     "build": "next build --webpack",
@@ -44,8 +61,12 @@
     "lint": "eslint .",
     "test:terminal": "node e2e/terminal.mjs",
     "test:e2e": "node e2e/run.mjs",
-    "test": "node --experimental-strip-types --test \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\"",
-    "release": "npm version patch -m \"Release v%s\""
+    "test": "node --experimental-strip-types --test --test-force-exit \"app/**/*.test.mjs\" \"bin/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\" \"scripts/**/*.test.mjs\"",
+    "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public",
+    "prepack": "node tools/materialize-ext-assets.mjs && node scripts/sanitize-npm-package.mjs",
+    "check:pi-plugin-pins": "node scripts/check-pi-plugin-pins.mjs",
+    "local": "node scripts/local.mjs",
+    "local:build": "node scripts/local.mjs --build-only"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.6.1",
@@ -58,24 +79,32 @@
     "@earendil-works/pi-tui": "1.6.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "esbuild": "^0.28.1",
+    "ignore": "^5.3.2",
     "js-yaml": "^5.2.3",
     "next": "16.4.6",
     "node-pty": "1.2.0-beta.15",
+    "patch-package": "^8.0.1",
     "proper-lockfile": "4.1.2",
+    "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "refractor": "5.0.0",
     "semver": "7.8.5",
     "typebox": "1.3.27",
     "undici": "8.12.3",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@lobehub/icons": "^5.6.0",
     "@tailwindcss/postcss": "^4.2.2",
+    "@types/hast": "^3.0.5",
     "@types/js-yaml": "^4.0.9",
     "@types/mdast": "^4.0.4",
-    "@types/node": "^25",
+    "@types/node": "25.9.5",
     "@types/proper-lockfile": "4.1.4",
-    "@types/react": "^19",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.18",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/semver": "7.8.0",
@@ -87,6 +116,7 @@
     "katex": "^0.16.47",
     "mammoth": "^1.12.0",
     "mermaid": "^11.16.1",
+    "micromark-util-types": "^2.0.2",
     "playwright": "^1.62.1",
     "postcss": "^8.5.26",
     "react-markdown": "^10.1.0",
@@ -99,6 +129,32 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5"
+    "typescript": "6.0.3",
+    "unified": "^11.0.5",
+    "vite": "^6.4.3"
+  },
+  "trustedDependencies": [
+    "@google/genai",
+    "protobufjs",
+    "unrs-resolver"
+  ],
+  "browserslist": [
+    "chrome 111",
+    "edge 111",
+    "firefox 111",
+    "safari 16.2",
+    "ios_saf 16.2"
+  ],
+  "keywords": [
+    "pi-web",
+    "pi-coding-agent",
+    "web-ui",
+    "ai-agent",
+    "nextjs"
+  ],
+  "allowScripts": {
+    "node-pty@1.2.0-beta.15": true,
+    "protobufjs@7.6.6": true,
+    "unrs-resolver@1.11.1": true
   }
 }

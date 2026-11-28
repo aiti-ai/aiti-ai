@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Demo Local · aiti-devtools 本地调试（免认证）</title>
+<style>body{font-family:sans-serif;padding:2rem;line-height:1.8}button{font-size:1rem;padding:.5rem 1.2rem;margin:.4rem}</style>
+<script>window.__AITI_BASE__ = "http://127.0.0.1:3080";</script>
+</head>
+<body>
+<h1>Demo Local（免认证）</h1>
+<p>id = <b>page-local</b>。launcher 从本地（DSH 同端口 /aiti）加载，无需 Authelia。</p>
+<button onclick="alert('local demo clicked')">本地按钮</button>
+<button onclick="throwErr()">💥 触发错误（throw）</button>
+<button onclick="rejectPromise()">💥 触发错误（Promise）</button>
+<button onclick="location.href='page-b.html'">➡️ 跳转 Demo B</button>
+<button onclick="history.back()">⬅️ 返回</button>
+<script>
+  function throwErr() { throw new Error('demo 手动触发错误：本地按钮处理失败'); }
+  function rejectPromise() { Promise.reject(new Error('demo 手动触发错误：异步加载失败')); }
+  const BASE = window.__AITI_BASE__;
+  const s = document.createElement('script');
+  s.src = BASE + "/aiti/aiti-launcher.js";
+  s.setAttribute("data-bridge-url", BASE + "/aiti");
+  s.setAttribute("data-ai-url", BASE + "/");
+  document.body.appendChild(s);
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 import { join } from "path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { displaySettingsPath } from "./enabled-models-runtime";
+import { displaySettingsPath } from "./enabled-models-runtime.ts";
 
 /** What the model and reasoning selectors' "save as default" action writes. */
 export interface DefaultPreferencesEdit {

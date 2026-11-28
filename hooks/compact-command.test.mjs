@@ -34,12 +34,14 @@ function callbackSource(name) {
   };
   visit(hookFile);
   assert.ok(found, `useCallback ${name} not found`);
+  // TypeScript 6 emits a "use strict" directive prologue here (5.x did not):
+  // strip it so the fragment stays an expression.
   return ts.transpileModule(`(${found.getText(hookFile)})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText.trim().replace(/;$/, "");
+  }).outputText.trim().replace(/^"use strict";\s*/, "").replace(/;$/, "");
 }
 
-const CALLBACKS = ["handleCompact", "handleBuiltinSlashCommand"];
+const CALLBACKS = ["runCompactNow", "handleCompact", "handleBuiltinSlashCommand"];
 const compiled = Object.fromEntries(CALLBACKS.map((name) => [
   name,
   // The callbacks read hook state as free variables; `with` resolves them from the scope.
@@ -54,16 +56,19 @@ function deferred() {
 }
 
 function hook() {
-  const calls = { notices: [], compacting: [], compactErrors: [], compactResults: [], requests: [], reloads: [], promoted: 0, restored: [] };
+  const calls = { notices: [], compacting: [], compactErrors: [], compactResults: [], compactQueued: [], requests: [], reloads: [], promoted: 0, restored: [] };
   const compact = deferred();
   const scope = {
     sessionIdRef: { current: "session-1" },
     ensureNewSession: async () => "session-1",
     addNotice: (notice) => calls.notices.push(notice),
     isCompacting: false,
+    agentRunning: false,
     setIsCompacting: (value) => calls.compacting.push(value),
     setCompactError: (error) => calls.compactErrors.push(error),
     setCompactResult: (result) => calls.compactResults.push(result),
+    setCompactQueued: (value) => calls.compactQueued.push(value),
+    compactPostingRef: { current: false },
     readCompactResult: (result) => result,
     // The compact POST blocks for the whole compaction, as the real one does.
     sendAgentCommand: (sid, command) => {
@@ -75,7 +80,7 @@ function hook() {
     opts: { chatInputRef: { current: { prependText: (text) => calls.restored.push(text) } } },
   };
   for (const name of CALLBACKS) scope[name] = compiled[name](scope);
-  return { run: scope.handleBuiltinSlashCommand, calls, finishCompaction: compact.resolve, failCompaction: compact.reject };
+  return { run: scope.handleBuiltinSlashCommand, calls, finishCompaction: compact.resolve, failCompaction: compact.reject, resolveCompact: compact.resolve };
 }
 
 test("/compact completes at once and runs the compaction detached", async () => {
@@ -106,6 +111,28 @@ test("/compact passes its instructions to the detached compaction", async () => 
   assert.equal(calls.requests[0].customInstructions, "keep the tests");
   finishCompaction({});
   await new Promise((resolve) => setImmediate(resolve));
+});
+
+test("a busy session parks the compaction server-side (queued response)", async () => {
+  const { run, calls, resolveCompact } = hook();
+  await run("/compact");
+  // The request carries the queue flag; the server answers "parked" instead of a result.
+  assert.equal(calls.requests[0].queueIfBusy, true);
+  resolveCompact({ queued: true, queuedAt: Date.now() });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.compactQueued, [true]);
+  // Pending state, not an in-flight compaction: no spinner left running, no result
+  // banner (the leading null is the reset every compact POST starts with).
+  assert.deepEqual(calls.compacting, [true, false]);
+  assert.deepEqual(calls.compactResults, [null]);
+  assert.equal(calls.promoted, 0);
+});
+
+test("the queued flag rides along with custom instructions", async () => {
+  const { run, calls } = hook();
+  await run("/compact focus on the queue work");
+  assert.equal(calls.requests[0].queueIfBusy, true);
+  assert.equal(calls.requests[0].customInstructions, "focus on the queue work");
 });
 
 test("/compact gives its instructions back when the compaction fails", async () => {

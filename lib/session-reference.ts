@@ -16,7 +16,7 @@
 // the app has no locale there. UI copy stays in lib/i18n.
 
 import type { SessionEntry } from "@/lib/types";
-import { TRANSCRIPT_MAX_CHARS, sessionToMarkdown } from "./session-markdown";
+import { TRANSCRIPT_MAX_CHARS, sessionToMarkdown } from "./session-markdown.ts";
 
 export const SESSION_REFERENCE_TOKEN_RE =
   /\[([^\]\r\n]*)\]\(#session:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/g;

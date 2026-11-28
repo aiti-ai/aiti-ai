@@ -1,0 +1,226 @@
+/**
+ * comp-i18n · 跨扩展复用组件自带多语。
+ *
+ * Why: aiti-folder's reusable components (WorkspaceDropdown / DirectoryPicker / FolderSwitcher)
+ * 会被其他扩展构建期内联（session-manager、aiti-git-review 等）。运行时宿主 t() 委托的是
+ * 调用方扩展的 i18n 字典——那里没有本扩展的 key，界面会原样显示 key 字符串。
+ *
+ * 解法：可复用组件用到的文案内置在 COMPONENT_DICT，ct() 按当前语言直查；
+ * 未收录的 key 回落宿主 t()（不破坏既有行为）。新增可复用组件文案一律加到这里，
+ * 组件内不要再用宿主 t() 直查本扩展页面专属词条。
+ */
+import { t } from "./host-shim";
+
+const COMPONENT_DICT: Record<string, Record<string, string>> = {
+  en: {
+    "files.cancel": "Cancel",
+    "files.loading": "Loading files...",
+    "files.noSubdirs": "No subdirectories",
+    "files.parentDir": "Parent directory",
+    "files.selectFolder": "Select this folder",
+    "i18n.close": "Close",
+    "i18n.cancel": "Cancel",
+    "i18n.checking": "Checking…",
+    "sidebar.customPath": "Custom path…",
+    // Shared directory picker (extensions/_shared/directory-picker.tsx)
+    "directoryPicker.selectDirectory": "Select directory",
+    "directoryPicker.goToParent": "Go to parent directory",
+    "directoryPicker.directoryPath": "Directory path",
+    "directoryPicker.editPath": "Edit path",
+    "directoryPicker.pathEditHint": "Click or type to edit the path (Alt+D / Ctrl+L)",
+    "directoryPicker.copyPath": "Copy path",
+    "directoryPicker.copied": "Path copied",
+    "directoryPicker.pathPlaceholder": "/path/to/project or ~/project",
+    "directoryPicker.loadingDirectories": "Loading directories…",
+    "directoryPicker.noDrives": "No drives found",
+    "directoryPicker.noSubdirectories": "No subdirectories",
+    "directoryPicker.selectCurrentDirectory": "Select current directory",
+    "directoryPicker.selectThisFolder": "Select this folder",
+    "directoryPicker.newFolder": "New folder",
+    "directoryPicker.newFolderIn": "Create a new folder in {path}",
+    "directoryPicker.folderName": "Folder name",
+    "directoryPicker.create": "Create",
+    "directoryPicker.creating": "Creating…",
+    "files.openFolder": "Open Folder",
+    "sidebar.filterProjects": "Filter projects…",
+    "sidebar.noMatchingProjects": "No matching projects",
+    "sidebar.useDefaultDirectory": "Use default directory",
+    "files.showIgnored": "Show ignored items",
+    "files.hideIgnored": "Hide ignored items",
+    "files.pin": "Pin",
+    "files.ignoredGitInternalTip": "{path} (internal git metadata, hidden by default)",
+    "files.ignoredByRulesTip": "{path} (ignored by .gitignore/.aitignore)",
+
+    "git.branchPanelTitle": "Branch panel (branch / tag / stash)",
+    "git.pushTitle": "Push commits",
+    "git.pullTitle": "Pull (ff-only)",
+    "git.pushConfirm": "Push {count} commit(s) to upstream?",
+    "git.pullConfirm": "Pull {count} commit(s) from upstream (ff-only)?",
+    "git.commitTitle": "Commit",
+    "git.commitShort": "Commit",
+    "git.stageAll": "Select all",
+    "git.stageNone": "Staged only",
+    "git.stagedCount": "{count} selected",
+    "git.commitPlaceholder": "Commit message…",
+    "git.amend": "Amend last commit",
+    "git.commitBtn": "Commit",
+    "git.planShort": "Group",
+    "git.planTitle": "Group & commit plan (staged group-by-group, breakpoint-resumable)",
+    "git.planMoveTo": "Move to next group",
+    "git.planExclude": "Exclude from plan",
+    "git.planRestore": "Restore to first group",
+    "git.planAddGroup": "＋ New group (takes last file of largest group)",
+    "git.planExcluded": "Excluded (won't be committed)",
+    "git.planStuck": "Stuck at group {group} — earlier groups already committed",
+    "git.planRolledBack": "rolled back to base HEAD",
+    "git.planRollback": "Roll back plan (reset --mixed)",
+    "git.planExecute": "Commit group by group",
+    "git.planConfirm": "Commit {count} group(s), one commit each?",
+    "git.planNewGroupMessage": "chore: new group",
+    "git.aiRefine": "AI refine",
+    "git.aiRefineBusy": "AI grouping… (up to 3 min)",
+    "git.aiMessage": "Generate",
+    "git.aiMessageBusy": "Generating… (usually under a minute)",
+    "git.aiMessageBusyLong": "Still generating… (large changes take longer)",
+    "git.aiMessagePending": "Still waiting… (the session keeps running in the background)",
+    "git.aiMessageStillPending": "The session is still generating in the background — open the dialog again and press Generate to pick the result up.",
+    "git.aiMessageEmpty": "The AI answered, but the text could not be cleaned into a commit message — please retry.",
+    "git.aiMessageOverwrite": "Message already has content. Overwrite with the generated commit message?",
+    "git.aiMessageTitle": "Generate a commit message with AI (reads AGENTS.md and the diff of selected files)",
+    "git.wiPickTitle": "Insert a work-item header at the top of the message (aiti-codehub picker)",
+    "git.stagedBucket": "Staged",
+    "git.unstagedBucket": "Changes",
+    "git.stageTitle": "Stage",
+    "git.unstageTitle": "Unstage",
+    "git.discardTitle": "Discard changes",
+    // 已跟踪文件（引擎 discard = checkout 恢复到上次提交；untracked 由客户端分流到回收站，走下方专属文案）
+    "git.discardConfirm": "Discard ALL uncommitted changes of {path}? (tracked files restore to the last commit)",
+    "git.discardUntrackedConfirm": "Move the untracked file to the trash? (restorable from the trash)",
+    "git.diffTitle": "View diff (git-review)",
+    "git.changesToggle": "Toggle changed-files section",
+    "git.planRetry": "Retry remaining groups",
+    "git.nestedRepoTip": "Nested git repository (click to toggle its changes)",
+    "git.nestedFallbackHint": "git-ops engine unavailable — read-only view",
+    "git.moreActions": "More actions",
+    "git.branchPanelEntry": "Branch panel",
+    "git.refreshRepo": "Refresh this repo (git status only)",
+    "git.openAsFolderTab": "Open as folder tab",
+    "git.collapseChanges": "Collapse changes",
+  },
+  "zh-CN": {
+    "files.cancel": "取消",
+    "files.loading": "正在加载文件...",
+    "files.noSubdirs": "无子目录",
+    "files.parentDir": "上级目录",
+    "files.selectFolder": "选择此文件夹",
+    "i18n.close": "关闭",
+    "i18n.cancel": "取消",
+    "i18n.checking": "检查中…",
+    "sidebar.customPath": "自定义路径…",
+    // Shared directory picker (extensions/_shared/directory-picker.tsx)
+    "directoryPicker.selectDirectory": "选择目录",
+    "directoryPicker.goToParent": "转到上级目录",
+    "directoryPicker.directoryPath": "目录路径",
+    "directoryPicker.editPath": "编辑路径",
+    "directoryPicker.pathEditHint": "点击或直接键入以编辑路径（Alt+D / Ctrl+L）",
+    "directoryPicker.copyPath": "复制路径",
+    "directoryPicker.copied": "已复制路径",
+    "directoryPicker.pathPlaceholder": "/路径/到/项目 或 ~/项目",
+    "directoryPicker.loadingDirectories": "正在加载目录…",
+    "directoryPicker.noDrives": "未找到盘符",
+    "directoryPicker.noSubdirectories": "没有子目录",
+    "directoryPicker.selectCurrentDirectory": "选择当前目录",
+    "directoryPicker.selectThisFolder": "选择此文件夹",
+    "directoryPicker.newFolder": "新建文件夹",
+    "directoryPicker.newFolderIn": "在 {path} 新建文件夹",
+    "directoryPicker.folderName": "文件夹名",
+    "directoryPicker.create": "创建",
+    "directoryPicker.creating": "创建中…",
+    "files.openFolder": "打开文件夹",
+    "sidebar.filterProjects": "筛选项目…",
+    "sidebar.noMatchingProjects": "没有匹配的项目",
+    "sidebar.useDefaultDirectory": "使用默认目录",
+    "files.showIgnored": "显示忽略项",
+    "files.hideIgnored": "隐藏被忽略项",
+    "files.pin": "钉住",
+    "files.ignoredGitInternalTip": "{path}（git 仓库内部，默认隐藏）",
+    "files.ignoredByRulesTip": "{path}（已被 .gitignore/.aitignore 忽略）",
+
+    "git.branchPanelTitle": "分支面板（分支 / tag / stash）",
+    "git.pushTitle": "推送提交",
+    "git.pullTitle": "拉取（ff-only）",
+    "git.pushConfirm": "推送 {count} 个提交到上游？",
+    "git.pullConfirm": "从上游拉取 {count} 个提交（ff-only）？",
+    "git.commitTitle": "提交",
+    "git.commitShort": "提交",
+    "git.stageAll": "全选",
+    "git.stageNone": "仅暂存区",
+    "git.stagedCount": "已选 {count} 个",
+    "git.commitPlaceholder": "提交消息…",
+    "git.amend": "修正上一笔（amend）",
+    "git.commitBtn": "提交",
+    "git.planShort": "分组",
+    "git.planTitle": "分组提交计划（逐组提交 · 失败断点可回滚）",
+    "git.planMoveTo": "移到下一组",
+    "git.planExclude": "剔除出计划",
+    "git.planRestore": "恢复到第一组",
+    "git.planAddGroup": "＋ 新建组（取最大组的最后一个文件）",
+    "git.planExcluded": "已剔除（不会提交）",
+    "git.planStuck": "卡在第 {group} 组——之前的组已提交",
+    "git.planRolledBack": "已回滚到起点 HEAD",
+    "git.planRollback": "回滚本计划（reset --mixed）",
+    "git.planExecute": "逐组提交",
+    "git.planConfirm": "共 {count} 组，每组一笔提交？",
+    "git.planNewGroupMessage": "chore: new group",
+    "git.aiRefine": "AI 精修",
+    "git.aiRefineBusy": "AI 分组中…（最长 3 分钟）",
+    "git.aiMessage": "生成",
+    "git.aiMessageBusy": "生成中…（通常 1 分钟内）",
+    "git.aiMessageBusyLong": "仍在生成…（改动较大时需要更久）",
+    "git.aiMessagePending": "仍在等待…（会话在后台继续生成）",
+    "git.aiMessageStillPending": "会话仍在后台生成——稍后重新打开本弹窗、再点一次生成即可取回结果。",
+    "git.aiMessageEmpty": "AI 已作答，但无法整理成提交信息——请重试。",
+    "git.aiMessageOverwrite": "输入框已有内容，生成结果将覆盖，是否继续？",
+    "git.aiMessageTitle": "AI 生成提交信息（读取 AGENTS.md 与所选文件的 diff）",
+    "git.wiPickTitle": "在消息开头插入工作项头部（aiti-codehub 选择器）",
+    "git.stagedBucket": "已暂存",
+    "git.unstagedBucket": "工作区",
+    "git.stageTitle": "暂存",
+    "git.unstageTitle": "取消暂存",
+    "git.discardTitle": "丢弃变更",
+    // 已跟踪文件（引擎 discard = checkout 恢复到上次提交；untracked 由客户端分流到回收站，走下方专属文案）
+    "git.discardConfirm": "丢弃 {path} 的全部未提交改动？（已跟踪文件将恢复到上次提交）",
+    "git.discardUntrackedConfirm": "将未跟踪文件移入回收站？（可在回收站还原）",
+    "git.diffTitle": "查看 diff（git-review）",
+    "git.changesToggle": "开/合变更文件区",
+    "git.planRetry": "重试剩余组",
+    "git.nestedRepoTip": "嵌套 Git 仓库（点击展开/收起其变更）",
+    "git.nestedFallbackHint": "git-ops 引擎未启用——只读视图",
+    "git.moreActions": "更多操作",
+    "git.branchPanelEntry": "分支面板",
+    "git.refreshRepo": "刷新本仓（仅 git 状态）",
+    "git.openAsFolderTab": "打开为独立文件夹标签页",
+    "git.collapseChanges": "收起变更区",
+  },
+};
+
+/** Current locale (pi-web injects __PI_LOCALE__; falls back to <html lang>; zh* normalised to zh-CN).
+ *  Exported for callers that must tell the server which language to prompt in
+ *  (e.g. the AI commit-message template). */
+export function currentLocale(): string {
+  const raw = (window as any).__PI_LOCALE__ || document.documentElement.lang || "en";
+  const l = String(raw);
+  if (l.startsWith("zh")) return "zh-CN";
+  return l;
+}
+
+/** 组件多语：内置字典优先；未收录回落宿主 t() */
+export function ct(key: string, params?: Record<string, unknown>): string {
+  const dict = COMPONENT_DICT[currentLocale()];
+  let hit: string | undefined = dict && dict[key];
+  if (hit === undefined) hit = t(key);
+  if (params && typeof hit === "string") {
+    for (const [k, v] of Object.entries(params)) hit = hit.split("{" + k + "}").join(String(v));
+  }
+  return hit;
+}

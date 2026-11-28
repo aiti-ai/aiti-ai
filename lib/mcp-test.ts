@@ -1,5 +1,5 @@
 import { ModelRegistry, type McpExposure, type McpServerConfig, type McpServerEntry } from "@earendil-works/pi-coding-agent";
-import type { McpScope, McpTestResult, McpTestState, McpTestTool } from "./api-types";
+import type { McpScope, McpTestResult, McpTestState, McpTestTool } from "./api-types.ts";
 import {
   argSecretParts,
   commandSecretParts,
@@ -9,11 +9,11 @@ import {
   maskUrl,
   SECRET_MASK,
   urlSecretParts,
-} from "./mcp-secrets";
-import { guardedCredentialStore, mcpOAuthUrl, mcpSignInKey, mcpSignOutCount, mcpSignOutGuard, type McpSignInWriteGuard } from "./mcp-sign-out";
-import { recordMcpStatus } from "./mcp-status";
-import { createPiWebMcpTransportFactory, resolvedConfigValues } from "./mcp-transport";
-import { getModelRuntimeWithExtensions } from "./model-runtime";
+} from "./mcp-secrets.ts";
+import { guardedCredentialStore, mcpOAuthUrl, mcpSignInKey, mcpSignOutCount, mcpSignOutGuard, type McpSignInWriteGuard } from "./mcp-sign-out.ts";
+import { recordMcpStatus } from "./mcp-status.ts";
+import { createPiWebMcpTransportFactory, resolvedConfigValues } from "./mcp-transport.ts";
+import { createModelRuntimeWithExtensions } from "./model-runtime.ts";
 import type {
   McpClient,
   McpOAuthCredentialStore,
@@ -22,9 +22,9 @@ import type {
   McpTransport,
   PiSdkInternals,
   StdioTransport,
-} from "./pi-sdk-internals";
-import { cancellableDelay } from "./cancellable-delay";
-import { errorMessage } from "./errors";
+} from "./pi-sdk-internals.ts";
+import { cancellableDelay } from "./cancellable-delay.ts";
+import { errorMessage } from "./errors.ts";
 
 // Settings › MCP's Test (ADR 0006): connect one `mcp.json` entry once, outside
 // any session, list what it offers, and close it again. It connects the way a
@@ -369,16 +369,16 @@ export function openTestConnection(
 /**
  * Reads a pi provider's token for an entry with `auth.provider`, as a
  * session's MCP extension does (`modelRegistry.getApiKeyForProvider()`), with
- * the providers extensions register: the shared runtime is fetched at the
- * first request that asks, once per connection, and asked again on every
- * request, so a provider's refresh applies. Undefined when it cannot be read,
- * as in a session; the server then answers 401.
+ * the providers extensions register: the runtime is built at the first request
+ * that asks, once per connection, and asked again on every request, so a
+ * provider's refresh applies. Undefined when it cannot be read, as in a
+ * session; the server then answers 401.
  */
 function providerTokenReader(): (provider: string) => Promise<string | undefined> {
   let registry: Promise<ModelRegistry> | undefined;
   return async (provider) => {
     try {
-      registry ??= getModelRuntimeWithExtensions().then((runtime) => new ModelRegistry(runtime));
+      registry ??= createModelRuntimeWithExtensions().then((runtime) => new ModelRegistry(runtime));
       return await (await registry).getApiKeyForProvider(provider);
     } catch {
       return undefined;
@@ -454,7 +454,9 @@ export async function observeTestConnection(
     toolCount: tools.length,
     durationMs,
     ...cwd,
-    ...(state === "connected" && connection.hasResources ? { resources: true as const } : {}),
+    ...(state === "connected" && connection.hasResources
+      ? { resources: true as const }
+      : {}),
     ...(client?.serverInfo ? { serverInfo: describeServerInfo(client.serverInfo, redact) } : {}),
   };
   if (state === "failed") {

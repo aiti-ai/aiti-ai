@@ -1,5 +1,5 @@
-import { stripAnsi } from "./ansi";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
+import { stripAnsi } from "./ansi.ts";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types.ts";
 
 interface DisplayOptions {
   isStreaming?: boolean;
@@ -11,6 +11,26 @@ const THINKING_PREVIEW_SOURCE_CHARS = 4_000;
 export function getThinkingPreview(thinking: string): string {
   const head = stripAnsi(thinking.trimStart().slice(0, THINKING_PREVIEW_SOURCE_CHARS)).trimStart();
   return head.match(/^[^\r\n]{0,240}/u)?.[0].trimEnd() ?? "";
+}
+
+/** Character cap for the streaming collapsed-row marquee preview (same scale as
+ *  getThinkingPreview's 240; the tail is kept when truncating — newest content
+ *  sits at the end of the line) */
+const THINKING_TAIL_PREVIEW_MAX = 240;
+
+/** Streaming collapsed-row marquee preview: take the last non-empty line
+ *  (aligned with reasoning-roll behavior in coding CLIs). Only used while
+ *  "streaming + collapsed" — the marquee tracks the latest thinking content;
+ *  collapsed history rows still use getThinkingPreview (first line). Overlong
+ *  single lines keep the tail when truncated (the marquee's scrollLeft follows
+ *  the right edge, so the user sees the newest characters at the end). */
+export function getThinkingTailPreview(thinking: string): string {
+  const lines = thinking.split(/\r\n|\r|\n/u);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (line) return line.length > THINKING_TAIL_PREVIEW_MAX ? line.slice(-THINKING_TAIL_PREVIEW_MAX) : line;
+  }
+  return "";
 }
 
 export const THINKING_PIECE_CHARS = 8_000;

@@ -1,13 +1,23 @@
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { LLAMA_CPP_PROVIDER_ID } from "@/lib/provider-listing";
 import { NextResponse } from "next/server";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { removeStoredCredentialIfType, storeProviderCredential } from "@/lib/provider-credential-store";
-import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { refreshModelCatalogs } from "@/lib/model-catalog-refresh";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ provider: string }> };
+
+// GET /api/auth/api-key/[provider] — returns auth status (never returns the actual key)
+export async function GET(_req: Request, { params }: Params) {
+  const { provider } = await params;
+  const modelRuntime = await getModelRuntimeWithExtensions();
+  const status = modelRuntime.getProviderAuthStatus(provider);
+  const displayName = modelRuntime.getProvider(provider)?.name ?? provider;
+  const models = modelRuntime.getModels(provider).length;
+  return NextResponse.json({ provider, displayName, configured: status.configured, source: status.source, models });
+}
 
 // llama.cpp takes the router URL and an optional key through its own login.
 export async function POST(req: Request, { params }: Params) {

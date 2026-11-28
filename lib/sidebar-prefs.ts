@@ -1,11 +1,7 @@
-import { getBrowserStorage } from "./browser-storage";
-import { RECENT_SECTIONS, type RecentSection, type SidebarListMode } from "./session-tree";
-
 /**
  * Per-browser sidebar preferences: the active tab (sessions or files), the
  * user's explicit project group expand/collapse choices, the archive view's
- * folded projects, whether the pinned section is collapsed, the session list's
- * mode (by project or recent) and the recent list's folded date sections, whether the files section below the sessions is
+ * folded projects, whether the pinned section is collapsed, whether the files section below the sessions is
  * collapsed, whether the files tab or section lists ignored files, whether the
  * Git changes panel shows a flat list or a folder tree, and the folders the
  * worktree listing last found outside git.
@@ -14,7 +10,6 @@ import { RECENT_SECTIONS, type RecentSection, type SidebarListMode } from "./ses
  */
 
 const SIDEBAR_TAB_STORAGE_KEY = "pi-web:sidebar-tab";
-const GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups-v2";
 /**
  * The group choices before v2. A group that stopped being current was saved
  * there as open, so every project ever visited came back expanded; its
@@ -22,14 +17,15 @@ const GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups-v2";
  * move to v2 (loadGroupExpansion).
  */
 const LEGACY_GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups";
-const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-archive-collapsed";
+const GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups-v2";
 const PINNED_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-pins-collapsed";
-const LIST_MODE_STORAGE_KEY = "pi-web:sidebar-list-mode";
-const RECENT_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-recent-collapsed";
 const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-web:sidebar-files-show-ignored";
 const FILES_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-files-collapsed";
 const CHANGES_VIEW_MODE_STORAGE_KEY = "pi-web:sidebar-changes-view-mode";
+const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-archive-collapsed";
 const NON_GIT_CWDS_STORAGE_KEY = "pi-web:sidebar-non-git-cwds";
+/** Newest project keys kept for the non-git worktree memory. */
+const MAX_NON_GIT_CWDS = 50;
 /**
  * Keys nothing reads now: the sessions/explorer split's, which the two tabs
  * replaced, and the group choices before v2 (loadGroupExpansion reads them
@@ -39,8 +35,6 @@ const RETIRED_STORAGE_KEYS = ["pi-web:file-explorer:open", "pi-web:sidebar-sessi
 
 /** Oldest choices are dropped beyond this many project keys. */
 const MAX_GROUP_EXPANSION_ENTRIES = 300;
-/** Oldest folders are dropped beyond this many. */
-const MAX_NON_GIT_CWDS = 50;
 
 export type SidebarTab = "sessions" | "files";
 
@@ -51,6 +45,15 @@ interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem?(key: string): void;
+}
+
+function getBrowserStorage(): StorageLike | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 export function loadSidebarTab(storage: StorageLike | null = getBrowserStorage()): SidebarTab {
@@ -82,13 +85,6 @@ function cleanGroupExpansion(value: unknown): Record<string, boolean> {
   return result;
 }
 
-/**
- * The saved group choices. A browser without v2 yet takes the collapses of
- * the old key and saves them as v2 at once, so the old key can go
- * (forgetRetiredSidebarKeys, after this) and is never read again; its
- * expansions are dropped: the defaults (current and pinned projects open)
- * come back once.
- */
 export function loadGroupExpansion(storage: StorageLike | null = getBrowserStorage()): Record<string, boolean> {
   if (!storage) return {};
   try {
@@ -131,11 +127,7 @@ export function saveGroupExpansion(
   }
 }
 
-/**
- * The archive view's folded projects (project keys, oldest choice first). Its
- * groups are open unless folded here: apart from the main tree's choices, so
- * folding a project's archive never folds its live sessions.
- */
+/** The archive view's folded project keys, newest kept last (upstream #1351 fold). */
 export function loadArchiveCollapsed(storage: StorageLike | null = getBrowserStorage()): string[] {
   if (!storage) return [];
   try {
@@ -183,48 +175,7 @@ export function savePinnedCollapsed(
   }
 }
 
-/** The session list's mode: by project unless the browser saved the recent list. */
-export function loadListMode(storage: StorageLike | null = getBrowserStorage()): SidebarListMode {
-  if (!storage) return "projects";
-  try {
-    return storage.getItem(LIST_MODE_STORAGE_KEY) === "recent" ? "recent" : "projects";
-  } catch {
-    return "projects";
-  }
-}
-
-export function saveListMode(mode: SidebarListMode, storage: StorageLike | null = getBrowserStorage()): void {
-  if (!storage) return;
-  try {
-    storage.setItem(LIST_MODE_STORAGE_KEY, mode);
-  } catch {
-    // Persistence is best-effort.
-  }
-}
-
-/** The recent list's folded date sections; open unless saved here. Unknown names are dropped. */
-export function loadRecentCollapsed(storage: StorageLike | null = getBrowserStorage()): RecentSection[] {
-  if (!storage) return [];
-  try {
-    const raw = storage.getItem(RECENT_COLLAPSED_STORAGE_KEY);
-    const value: unknown = raw === null ? [] : JSON.parse(raw);
-    if (!Array.isArray(value)) return [];
-    return RECENT_SECTIONS.filter((section) => value.includes(section));
-  } catch {
-    return [];
-  }
-}
-
-export function saveRecentCollapsed(sections: readonly RecentSection[], storage: StorageLike | null = getBrowserStorage()): void {
-  if (!storage) return;
-  try {
-    storage.setItem(RECENT_COLLAPSED_STORAGE_KEY, JSON.stringify(RECENT_SECTIONS.filter((section) => sections.includes(section))));
-  } catch {
-    // Persistence is best-effort.
-  }
-}
-
-/** The files tab's (or section's) ignored-files switch; off unless the browser saved it on. */
+/** The files tab's ignored-files switch; off unless the browser saved it on. */
 export function loadShowIgnoredFiles(storage: StorageLike | null = getBrowserStorage()): boolean {
   if (!storage) return false;
   try {

@@ -1,20 +1,20 @@
 "use client";
 
 import { forwardRef, useState, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { getFileIcon, FolderIcon } from "./FileIcons";
-import { MentionIcon } from "./SidebarIcons";
-import { DismissButton } from "./DismissButton";
+import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
+import { DismissButton } from "./DismissButton.tsx";
+import { apiUrl } from "@/lib/base-path";
 import {
-  encodeFilePathForApi,
   getFileDirectory,
   getFileName,
   getRelativeFilePath,
   joinFilePath,
   normalizeFilePathSlashes,
+  encodeFilePathForApi,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import type { FileIndexEntry } from "@/lib/file-fuzzy";
-import { uploadFiles, type DroppedItem, type UploadConflictStrategy, type UploadError, type UploadResponse } from "@/lib/file-upload-client";
+import { type DroppedItem, type UploadConflictStrategy, type UploadError, type UploadResponse } from "@/lib/file-upload-client";
 import { buildSearchTree, type SearchTreeNode } from "@/lib/search-tree";
 import type { FileTreeHiddenReason } from "@/lib/file-tree-visibility";
 import { createExpandedPathsMemory } from "@/lib/file-tree-expansion";
@@ -53,6 +53,7 @@ interface FileNode {
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
@@ -67,6 +68,8 @@ interface Props {
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  /** Expand to (and highlight + scroll into view) a directory/file path. */
+  revealPath: (absPath: string) => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -101,8 +104,12 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
 }
 
 async function fetchEntries(dirPath: string, showHidden = false): Promise<FileNode[]> {
-  const encoded = encodeFilePathForApi(dirPath);
-  const res = await fetch(`/api/files/${encoded}?type=list${showHidden ? "&hidden=1" : ""}`);
+  // POST-body 令牌化（路径走 body 不进 URL）+ basePath；hidden=1 与 GET 形式同契约
+  const res = await fetch(apiUrl(`/api/files/get${showHidden ? "?hidden=1" : ""}`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: dirPath, type: "list" }),
+  });
   if (!res.ok) throw await responseError(res, "Failed to load files");
   const data = await res.json() as { entries?: FileEntry[] };
   return (data.entries ?? []).map((e) => ({
@@ -121,7 +128,7 @@ async function fetchEntries(dirPath: string, showHidden = false): Promise<FileNo
 // Sends the target the operator was shown, so a link pointed elsewhere since
 // the listing is refused instead of granting a directory nobody looked at.
 async function allowOutsideLink(linkPath: string, target: string): Promise<void> {
-  const res = await fetch(`/api/files/${encodeFilePathForApi(linkPath)}?type=allow-link`, {
+  const res = await fetch(apiUrl(`/api/files/${encodeFilePathForApi(linkPath)}?type=allow-link`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target }),
@@ -130,10 +137,32 @@ async function allowOutsideLink(linkPath: string, target: string): Promise<void>
 }
 
 async function fetchGitStatus(cwd: string, signal: AbortSignal): Promise<GitStatusResponse> {
-  const params = new URLSearchParams({ cwd });
-  const res = await fetch(`/api/git/status?${params.toString()}`, { signal });
+  const res = await fetch(apiUrl("/api/git/status"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cwd }),
+    signal,
+  });
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
+}
+
+/** Two-step download: POST exchanges the path for a ticket (the path never goes in the URL, keeping it
+ *  out of tunnel/proxy access logs) → streaming GET with the ticket */
+async function downloadViaTicket(fullPath: string): Promise<void> {
+  const res = await fetch(apiUrl("/api/files/ticket"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: fullPath }),
+  });
+  const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
+  if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  const a = document.createElement("a");
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 const GIT_STATUS_KEYS: Record<GitFileStatusKind, string> = {
@@ -177,6 +206,52 @@ function GitStatusBadge({ status, t }: { status: GitFileStatus; t: Translate }) 
   );
 }
 
+// 本地实现而非 lib/file-upload-client：上传 URL 必须过 apiUrl（basePath 部署），lib 版本尚不支持
+function uploadFiles(
+  targetDirectory: string,
+  files: File[],
+  strategy: UploadConflictStrategy,
+  onProgress: (progress: number) => void,
+): Promise<{ status: number; data: UploadResponse }> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("directory", targetDirectory);
+    files.forEach((file) => formData.append("files", file, file.name));
+
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      apiUrl(`/api/files/upload?conflict=${strategy}`),
+    );
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error while uploading files"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.onload = () => {
+      let data: UploadResponse = {};
+      try {
+        data = JSON.parse(xhr.responseText) as UploadResponse;
+      } catch {
+        if (xhr.responseText) data.error = xhr.responseText;
+      }
+      resolve({ status: xhr.status, data });
+    };
+    xhr.send(formData);
+  });
+}
+
+function MentionIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
+    </svg>
+  );
+}
+
 function OutsideLinkIcon({ size = 11 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -200,6 +275,7 @@ export function TreeNode({
   depth,
   cwd,
   onOpenFile,
+  onOpenFolder,
   onAtMention,
   expandedPaths,
   onToggleExpanded,
@@ -218,6 +294,7 @@ export function TreeNode({
   depth: number;
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   expandedPaths: Set<string>;
   onToggleExpanded: (fullPath: string, open: boolean) => void;
@@ -306,6 +383,14 @@ export function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
+  // Load children when the directory becomes open (covers both user clicks and
+  // programmatic expansion via revealPath).
+  useEffect(() => {
+    if (open && !loaded) {
+      void loadChildren();
+    }
+  }, [open, loaded, loadChildren]);
+
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
@@ -340,6 +425,7 @@ export function TreeNode({
   return (
     <div>
       <div
+        data-file-node={node.fullPath}
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -447,6 +533,34 @@ export function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
+        {node.isDir && onOpenFolder && hovered && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenFolder(node.fullPath, node.name); }}
+            title={t("files.openInPanel")}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              padding: "0 8px",
+              height: 20,
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--accent)",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t("files.open")}
+          </button>
+        )}
         {onAtMention && hovered && (
           <button
             onClick={(e) => {
@@ -456,7 +570,7 @@ export function TreeNode({
             title={t("files.insertPath")}
             style={{
               position: "absolute",
-              right: !node.isDir ? 28 : 4,
+              right: !node.isDir ? 28 : 34,
               top: "50%",
               transform: "translateY(-50%)",
               display: "flex",
@@ -481,9 +595,13 @@ export function TreeNode({
         )}
         {hovered && !node.isDir && (
           <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
+            href="#"
             download
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              downloadViaTicket(node.fullPath).catch((err) => console.error("Download failed:", err));
+            }}
             title={t("files.download")}
             style={{
               position: "absolute",
@@ -569,6 +687,7 @@ export function TreeNode({
               depth={depth + 1}
               cwd={cwd}
               onOpenFile={onOpenFile}
+              onOpenFolder={onOpenFolder}
               onAtMention={onAtMention}
               expandedPaths={expandedPaths}
               onToggleExpanded={onToggleExpanded}
@@ -877,6 +996,7 @@ function ChangesViewToggleIcon({ mode }: { mode: ChangesViewMode }) {
 export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileExplorer({
   cwd,
   onOpenFile,
+  onOpenFolder,
   refreshKey,
   onAtMention,
   onAtMentions,
@@ -934,7 +1054,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setSearchLoading(true);
     setSearchError(false);
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
+      // POST: cwd stays out of the URL (access-log safe); apiUrl adds the basePath (subpath deployments)
+      fetch(apiUrl("/api/file-index"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd, q: query }),
+        signal: controller.signal,
+      })
         .then((response) => response.ok ? response.json() as Promise<{ matches?: FileIndexEntry[] }> : Promise.reject(new Error("Search failed")))
         .then((data) => setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path)))
         .catch(() => {
@@ -1078,11 +1204,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
     try {
       const res = await fetch(
-        `/api/files/${encodeFilePathForApi(directory)}?type=upload-check`,
+        apiUrl("/api/files/upload-check"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileNames: files.map((file) => file.name) }),
+          body: JSON.stringify({ directory: cwd, fileNames: files.map((file) => file.name) }),
         },
       );
       const data = await res.json().catch(() => ({})) as UploadResponse;
@@ -1116,7 +1242,34 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
-  }), [uploadBusy]);
+    revealPath(absPath) {
+      // Expand the target itself plus every ancestor directory, then highlight
+      // and scroll it into view once it's rendered (expansion loads children
+      // asynchronously, so poll briefly for the node).
+      const toExpand: string[] = [absPath];
+      let cur = getFileDirectory(absPath);
+      while (cur && (!cwd || cur.length >= cwd.length)) {
+        toExpand.push(cur);
+        if (cur === cwd) break;
+        const parent = getFileDirectory(cur);
+        if (!parent || parent === cur) break;
+        cur = parent;
+      }
+      setExpandedPaths((prev) => new Set([...prev, ...toExpand]));
+      setHighlightedPaths(new Set([absPath]));
+      const find = () => document.querySelector(`[data-file-node="${absPath.replace(/"/g, "&quot;")}"]`);
+      const started = Date.now();
+      const poll = () => {
+        const el = find();
+        if (el) {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+          return;
+        }
+        if (Date.now() - started < 3000) setTimeout(poll, 120);
+      };
+      setTimeout(poll, 60);
+    },
+  }), [uploadBusy, cwd]);
 
   const resetFileDrag = useCallback(() => {
     fileDragDepthRef.current = 0;
@@ -1572,6 +1725,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 depth={0}
                 cwd={cwd}
                 onOpenFile={onOpenFile}
+                onOpenFolder={onOpenFolder}
                 onAtMention={onAtMention}
                 expandedPaths={expandedPaths}
                 onToggleExpanded={handleToggleExpanded}

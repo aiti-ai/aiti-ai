@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import test from "node:test";
 import { createJiti } from "jiti";
 
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, jsx: { runtime: "automatic" } });
-const { ModelSelector, filterModelOptions, groupModelOptions } = await jiti.import("./ModelSelector.tsx");
+const jiti = createJiti(import.meta.url, {
+  jsx: { runtime: "automatic" },
+  tsconfigPaths: true,
+});
+
+const {
+  RECENT_MODELS_KEY,
+  RECENT_MODELS_LIMIT,
+  ModelSelector,
+  filterModelOptions,
+  groupModelOptions,
+  readRecentModels,
+  rememberRecentModel,
+  pickRecentOptions,
+  recentRowHint,
+  buildSelectorNavRows,
+  selectorRowKey,
+} = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function render(props) {
@@ -20,6 +37,345 @@ function render(props) {
     ),
   );
 }
+
+/** Per-test localStorage stub (Node has no window.localStorage) */
+function installStorage(initial = {}) {
+  const map = new Map(Object.entries(initial));
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (map.has(k) ? map.get(k) : null),
+      setItem: (k, v) => map.set(k, String(v)),
+      removeItem: (k) => map.delete(k),
+    },
+  };
+  return map;
+}
+
+const opt = (provider, modelId, name = modelId) => ({ provider, modelId, name });
+
+test("rememberRecentModel records and reorders LRU (dedupe + move-to-front)", () => {
+  installStorage();
+  rememberRecentModel("a", "m1");
+  rememberRecentModel("b", "m2");
+  rememberRecentModel("a", "m1"); // repeat → move to front, no duplicate
+  assert.deepEqual(
+    readRecentModels().map((e) => `${e.provider}/${e.modelId}`),
+    ["a/m1", "b/m2"],
+  );
+});
+
+test("rememberRecentModel caps at RECENT_MODELS_LIMIT, evicting oldest", () => {
+  installStorage();
+  for (let i = 0; i < RECENT_MODELS_LIMIT + 2; i++) rememberRecentModel("p", `m${i}`);
+  const stored = readRecentModels();
+  assert.equal(stored.length, RECENT_MODELS_LIMIT);
+  assert.equal(stored[0].modelId, `m${RECENT_MODELS_LIMIT + 1}`); // newest kept
+  assert.equal(stored.at(-1).modelId, `m2`); // m0/m1 evicted
+});
+
+test("rememberRecentModel survives model ids containing '/'", () => {
+  installStorage();
+  rememberRecentModel("modelscope", "ZhipuAI/GLM-5.2");
+  rememberRecentModel("modelscope", "Qwen/Qwen3.8-Flash-Next");
+  assert.deepEqual(
+    readRecentModels().map((e) => `${e.provider}/${e.modelId}`),
+    ["modelscope/Qwen/Qwen3.8-Flash-Next", "modelscope/ZhipuAI/GLM-5.2"],
+  );
+});
+
+test("readRecentModels returns [] on corrupted JSON / non-array / invalid entries", () => {
+  installStorage({ [RECENT_MODELS_KEY]: "{broken json" });
+  assert.deepEqual(readRecentModels(), []);
+
+  installStorage({ [RECENT_MODELS_KEY]: JSON.stringify({ not: "an array" }) });
+  assert.deepEqual(readRecentModels(), []);
+
+  installStorage({
+    [RECENT_MODELS_KEY]: JSON.stringify([
+      { provider: "ok", modelId: "m1", at: 1 },
+      null,
+      "string",
+      { provider: 42, modelId: "m2" }, // non-string provider → dropped
+      { provider: "ok2" }, // missing modelId → dropped
+    ]),
+  });
+  assert.deepEqual(readRecentModels(), [{ provider: "ok", modelId: "m1", at: 1 }]);
+});
+
+test("readRecentModels tolerates missing key and unavailable storage", () => {
+  installStorage();
+  assert.deepEqual(readRecentModels(), []);
+
+  const savedWindow = globalThis.window;
+  try {
+    delete globalThis.window; // privacy mode etc. → silent degrade
+    assert.deepEqual(readRecentModels(), []);
+    assert.doesNotThrow(() => rememberRecentModel("a", "m1"));
+  } finally {
+    globalThis.window = savedWindow; // don't pollute subsequent tests (fixes order coupling)
+  }
+});
+
+const CATALOG = [
+  opt("zai", "glm-flash", "GLM-5.3-Flash"),
+  opt("deepseek", "v4-flash", "DeepSeek V4 Flash"),
+  opt("modelscope", "ZhipuAI/GLM-5.2", "GLM-5.2"),
+];
+
+test("pickRecentOptions maps stored entries to options in recency order", () => {
+  const recent = [
+    { provider: "deepseek", modelId: "v4-flash", at: 300 },
+    { provider: "zai", modelId: "glm-flash", at: 200 },
+  ];
+  assert.deepEqual(
+    pickRecentOptions(recent, CATALOG, { open: true, filter: "" }),
+    [CATALOG[1], CATALOG[0]],
+  );
+});
+
+test("pickRecentOptions drops unavailable models and dedupes repeats", () => {
+  const recent = [
+    { provider: "gone", modelId: "deleted", at: 900 }, // no longer available
+    { provider: "zai", modelId: "glm-flash", at: 800 },
+    { provider: "zai", modelId: "glm-flash", at: 100 }, // repeat entry
+  ];
+  assert.deepEqual(
+    pickRecentOptions(recent, CATALOG, { open: true, filter: "" }),
+    [CATALOG[0]],
+  );
+});
+
+test("pickRecentOptions caps at RECENT_MODELS_LIMIT", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ provider: "zai", modelId: `m${i}`, at: i }));
+  const catalog = many.map((e) => opt(e.provider, e.modelId));
+  assert.equal(pickRecentOptions(many, catalog, { open: true, filter: "" }).length, RECENT_MODELS_LIMIT);
+});
+
+test("pickRecentOptions hidden while panel closed or filtering", () => {
+  const recent = [{ provider: "zai", modelId: "glm-flash", at: 1 }];
+  assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: false, filter: "" }), []);
+  assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "glm" }), []);
+  assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "  " }).length, 1); // whitespace-only filter = no filter
+});
+
+test("recent models stay listed under their provider group (2026-11-21: reversed the 2026-09-14 dedup — users browse by provider)", () => {
+  const recent = [CATALOG[0]];
+  // The panel shows the recents section AND keeps every model under its provider group.
+  const keys = buildSelectorNavRows({ hasClear: true, recentOptions: recent, mainOptions: CATALOG })
+    .map(selectorRowKey);
+  assert.ok(keys.includes("recent:zai:glm-flash"), "recents section present");
+  assert.ok(keys.includes("main:zai:glm-flash"), "recent model must also stay under its provider group");
+});
+
+test("filterModelOptions matches provider name as well as display name and id", async () => {
+  const { filterModelOptions } = await jiti.import("./ModelSelector.tsx");
+  assert.deepEqual(filterModelOptions(CATALOG, "modelscope"), [CATALOG[2]]); // provider hit
+  assert.deepEqual(filterModelOptions(CATALOG, "GLM-5.3-Flash"), [CATALOG[0]]); // display name hit (unchanged)
+  assert.equal(filterModelOptions(CATALOG, "nomatch").length, 0);
+  assert.deepEqual(filterModelOptions(CATALOG, "  "), CATALOG); // no filter
+});
+
+test("computePanelGeometry: desktop (no keyboard) keeps legacy anchored-above layout", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  // no keyboard: visible area == layout viewport
+  const vp = { layoutHeight: 800, visibleTop: 0, visibleBottom: 800 };
+  const g = computePanelGeometry({ top: 300, bottom: 332 }, vp, "up");
+  assert.equal(g.openAbove, true);
+  assert.equal(g.bottom, 800 - (300 - 6)); // bottom edge sits 6px above the anchor
+  assert.equal(g.maxHeight, Math.min(300 - 12, 800 * 0.6)); // min of visible space and the 0.6 cap
+});
+
+test("computePanelGeometry: keyboard open pins panel above keyboard when anchor obscured", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  // keyboard open: visible area compressed to 0..400, anchor (composer) still reports the old position top=760 (obscured by the keyboard)
+  const g = computePanelGeometry(
+    { top: 760, bottom: 792 },
+    { layoutHeight: 800, visibleTop: 0, visibleBottom: 400 },
+    "up",
+  );
+  assert.equal(g.openAbove, true);
+  assert.equal(g.bottom, 800 - (400 - 6)); // bottom clamped above the keyboard so the panel no longer extends behind it
+  assert.equal(g.maxHeight, Math.max(120, Math.min(394 - 6, 400 * 0.6))); // space/cap computed from the visible height
+});
+
+test("computePanelGeometry: anchor scrolled above visible top → panel pinned to visible bottom", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  const g = computePanelGeometry(
+    { top: 10, bottom: 42 },
+    { layoutHeight: 800, visibleTop: 100, visibleBottom: 500 },
+    "up",
+  );
+  assert.equal(g.bottom, 800 - (500 - 6));
+  assert.equal(g.maxHeight, Math.max(120, Math.min(494 - 100 - 6, 400 * 0.6)));
+});
+
+test("computePanelGeometry: placement auto opens below when more space below", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  const vp = { layoutHeight: 800, visibleTop: 0, visibleBottom: 800 };
+  const g = computePanelGeometry({ top: 100, bottom: 132 }, vp, "auto");
+  assert.equal(g.openAbove, false);
+  assert.equal(g.top, 132 + 6);
+  assert.equal(g.maxHeight, Math.max(120, Math.min(800 - 6 - 138, 800 * 0.6)));
+});
+
+test("ModelRefreshRow: idle is clickable; refreshing shows a spinner and is disabled (data-model-refresh state marker)", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelRefreshRow } = await jiti.import("./ModelSelector.tsx");
+  const idle = renderToStaticMarkup(React.createElement(ModelRefreshRow, {
+    refreshing: false, label: "刷新模型列表", refreshingLabel: "刷新中…", onClick: () => {},
+  }));
+  assert.match(idle, /data-model-refresh="idle"/);
+  assert.match(idle, /刷新模型列表/);
+  assert.doesNotMatch(idle, /disabled/);
+  const busy = renderToStaticMarkup(React.createElement(ModelRefreshRow, {
+    refreshing: true, label: "刷新模型列表", refreshingLabel: "刷新中…", onClick: () => {},
+  }));
+  assert.match(busy, /data-model-refresh="busy"/);
+  assert.match(busy, /disabled/);
+  assert.match(busy, /刷新中…/);
+  assert.match(busy, /pi-refresh-spin/, "refreshing label spins");
+});
+
+// ── Same info on small screens as on desktop (2026-09-13 decision: the small-screen model panel is no longer a stripped-down variant) ──
+// The list body has been one and the same component since the v4 seventh review (92dfb4f); the only
+// remaining info difference was the small screen hiding the provider suffix (2016da9, justified at
+// the time by narrow-screen squeeze). The small-screen panel is now full-screen/full-height with ample
+// width — restore the suffix, and let the recent section (no group header) tell same-named models
+// across providers apart.
+const modelSelectorSource = await readFile(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
+
+test("option rows show the provider suffix consistently on desktop and small screens (must not regress to mobile-hidden)", () => {
+  assert.doesNotMatch(
+    modelSelectorSource,
+    /isMobile\s*\?\s*undefined\s*:\s*option\.provider/,
+    "the mobile-hidden provider-suffix branch must stay removed",
+  );
+  // Recent and provider-grouped rows render the ext-agent catalog hint (e.g. qoder billing
+  // "0.5x", pi cost "$0.6/$2.2 per M") with the provider id as fallback — no bare
+  // hint={option.provider} may remain (recents used to pin the provider, dropping hints).
+  const bareProviderHints = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
+  assert.equal(bareProviderHints.length, 0, `all option rows must prefer the catalog hint with provider fallback (found ${bareProviderHints.length} bare provider hint(s))`);
+  // Provider-grouped rows keep the bare hint+fallback form (their group header names the
+  // provider); recents rows have no header, so they compose hint · provider (recentRowHint).
+  const fallbackHints = modelSelectorSource.match(/hint=\{option\.hint \?\? option\.provider\}/g) ?? [];
+  assert.equal(
+    fallbackHints.length, 1,
+    `provider-grouped rows must render hint with provider fallback (found ${fallbackHints.length})`,
+  );
+  const recentHintRows = modelSelectorSource.match(/hint=\{recentRowHint\(option\)\}/g) ?? [];
+  assert.equal(
+    recentHintRows.length, 1,
+    `recents rows must render the hint · provider composite (found ${recentHintRows.length})`,
+  );
+});
+
+// ── Recents suffix must keep the provider identifiable next to a price hint (2026-11-19 user report:
+//    "$0.6/$2.2 per M" alone tells nothing about which provider the model came from) ──
+test("recentRowHint composes price hint · provider; provider-only when no hint", () => {
+  assert.equal(
+    recentRowHint({ provider: "zai", providerName: "Z.ai", modelId: "glm-5", name: "GLM-5", hint: "$0.6/$2.2 per M" }),
+    "$0.6/$2.2 per M · Z.ai",
+    "price hint suffixed with the provider display name",
+  );
+  assert.equal(
+    recentRowHint({ provider: "zai", modelId: "glm-5", name: "GLM-5", hint: "0.5x" }),
+    "0.5x · zai",
+    "no providerName → provider id suffix",
+  );
+  assert.equal(
+    recentRowHint({ provider: "zai", providerName: "Z.ai", modelId: "glm-5", name: "GLM-5" }),
+    "Z.ai",
+    "no hint → provider display name (same fallback as grouped rows)",
+  );
+});
+
+test("ModelOptionButton shows name + provider suffix + availability status together", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelOptionButton } = await jiti.import("./ModelSelector.tsx");
+  const { I18nProvider } = await jiti.import("@/hooks/useI18n");
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelOptionButton, {
+    active: true,
+    label: "deepseek-v4-flash",
+    hint: "qoder-local",
+    status: "rl",
+    onClick: () => {},
+  })));
+  assert.match(html, /deepseek-v4-flash/);
+  assert.match(html, /qoder-local/, "provider suffix must render (same on mobile)");
+  assert.match(html, /429/, "rate-limit badge must render");
+});
+
+// ── Small-screen bottom row overflow prevention (2026-09-14) ──
+test("hideIcon: the trigger button's leading icon can be hidden (saves width in the narrow small-screen slot), kept by default (desktop unchanged)", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
+  const { I18nProvider } = await jiti.import("@/hooks/useI18n");
+  const props = { options: CATALOG, value: { provider: "zai", modelId: "glm-flash" }, onChange: () => {} };
+  const render = (p) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelSelector, p)));
+  const withIcon = render(props);
+  assert.match(withIcon, /rect x="4" y="4"/, "leading icon renders by default");
+  assert.match(withIcon, /GLM-5\.3-Flash/);
+  const hidden = render({ ...props, hideIcon: true });
+  assert.doesNotMatch(hidden, /rect x="4" y="4"/, "no leading icon when hideIcon is set");
+  assert.match(hidden, /GLM-5\.3-Flash/, "model name still shown (ellipsis truncation allowed)");
+  // keep the spinner while busy (status feedback is not lost when hideIcon is set)
+  const busy = render({ ...props, hideIcon: true, busy: true });
+  assert.match(busy, /spin 0\.8s linear infinite/, "spinner still rendered while busy");
+});
+
+// ── Dropdown footer action area (2026-09-19): the "manage models" entry is registered by the model-wizard extension ──
+// The slot row renders via ExtSlot (depends on the ext store; SSR static rendering yields nothing),
+// so the wiring is asserted at source level here to keep it from being removed by accident.
+test("dropdown footer action slot (modelSelectorFooter) must render inside the panel", () => {
+  assert.match(
+    modelSelectorSource,
+    /name="modelSelectorFooter"/,
+    "modelSelectorFooter slot renders at the bottom of the ModelSelector panel (same pattern as workspacePickerActions; nothing renders and nothing regresses when unregistered)",
+  );
+});
+const source = await readFile(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
+
+test("does not autofocus the model filter on mobile", () => {
+  // Autofocus would open the on-screen keyboard as soon as the picker opens.
+  assert.match(source, /aria-label=\{t\("chat\.filterModels"\)\}[\s\S]*?autoFocus=\{!isMobile\}/);
+  assert.doesNotMatch(source, /^\s*autoFocus\s*$/m);
+});
+
+// ── Programmatic open (openRequest signal, 2026-11-22): the composer's command hints open the
+// dropdown without a pointer press (type "model" → run the "select model" command). SSR cannot run
+// effects, so the wiring is asserted at source level; the runtime behavior is covered by the dev E2E. ──
+test("openRequest: declares the signal prop, consumes each value once and honors locked", () => {
+  assert.match(source, /openRequest\?: number;/, "props contract exposes the incrementing open signal");
+  assert.match(source, /openRequest === undefined \|\| openRequest <= 0/, "ignores the idle default (0/undefined)");
+  assert.match(source, /lastOpenRequestRef\.current === openRequest/, "consumes each counter value exactly once");
+  assert.match(source, /if \(open \|\| locked\) return;/, "does not bypass the trigger's refusal to open, nor re-record focus while the panel is up");
+  // The focus hand-back path must stay the existing one: a programmatic open records the pre-open
+  // focus target (the composer textarea) so picking a model hands focus back to where the user types.
+  assert.match(source, /rememberFocusBeforeOpen\(\);\s*\n\s*setOpen\(true\);/, "reuses rememberFocusBeforeOpen before opening");
+});
+
+test("openRequest: wired by ChatInput on the desktop and mobile instances only", async () => {
+  const chatInput = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(chatInput, /openModelSelector: \(\) => \{/, "composer service exposes openModelSelector");
+  assert.match(chatInput, /setModelSelectorOpenRequest\(\(n\) => n \+ 1\)/, "openModelSelector bumps the counter");
+  // Desktop: refocusing would steal focus from the panel's auto-focused filter input.
+  assert.match(chatInput, /if \(isMobile\) refocusInput\(\);/, "only mobile focuses the composer before opening");
+  const bound = chatInput.match(/openRequest=\{modelSelectorOpenRequest\}/g) ?? [];
+  assert.equal(bound.length, 2, "desktop + mobile instances consume the signal; the InfoSheet copy does not");
+});
+
+test("keeps the server's model order (#783)", () => {
+  // /api/models already returns pi's /model order; sorting by name here would
+  // scatter a models.json provider's hand-ordered models again.
+  assert.doesNotMatch(source, /\.sort\(/);
+});
+
+test("main grouped list is not filtered by the recents section (no exclusion call in the component)", () => {
+  assert.doesNotMatch(source, /excludeRecentOptions\(/);
+});
 
 test("filters model options by model name, id, provider, and provider/id", () => {
   const options = [
@@ -58,4 +414,39 @@ test("names a current model outside the scope from the loaded full list", () => 
   });
 
   assert.match(html, /GPT-6 Luna/);
+});
+
+test("buildSelectorNavRows flattens selectable rows in visual order (clear / recents / main)", () => {
+  const recent = [opt("a", "r1"), opt("b", "r2")];
+  const main = [opt("a", "m1"), opt("b", "m2")];
+
+  // No clear row → recents first, then the grouped list
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: false, recentOptions: recent, mainOptions: main })
+      .map(selectorRowKey),
+    ["recent:a:r1", "recent:b:r2", "main:a:m1", "main:b:m2"],
+  );
+
+  // Clear row rides on top (it renders above the recents section)
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: true, recentOptions: recent, mainOptions: main })
+      .map((row) => row.kind),
+    ["clear", "option", "option", "option", "option"],
+  );
+
+  // While filtering: no clear row and no recents section → just the matching options
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: false, recentOptions: [], mainOptions: main })
+      .map(selectorRowKey),
+    ["main:a:m1", "main:b:m2"],
+  );
+
+  // Empty panel → no navigable rows (Enter is a no-op, activeHighlight stays -1)
+  assert.deepEqual(buildSelectorNavRows({ hasClear: false, recentOptions: [], mainOptions: [] }), []);
+});
+
+test("selectorRowKey joins provider/modelId field-wise so '/'-containing ids stay unambiguous", () => {
+  const row = { kind: "option", section: "main", option: opt("modelscope", "ZhipuAI/GLM-5.2") };
+  assert.equal(selectorRowKey(row), "main:modelscope:ZhipuAI/GLM-5.2");
+  assert.equal(selectorRowKey({ kind: "clear" }), "clear");
 });

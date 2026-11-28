@@ -1,0 +1,34 @@
+{
+  "name": "@aiti-ai/aiti-mail",
+  "version": "0.1.11",
+  "type": "module",
+  "description": "The general \"mail sending outlet\" inside pi-web — zero-dependency SMTP client + send log (node:sqlite) + management dialog (config/test/log)",
+  "displayNameI18n": {
+    "en": "Mail Sender"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 内通用「邮件发送出口」——零依赖 SMTP 客户端 + 发送记录（node:sqlite）+ 管理弹窗（配置/测试/记录）"
+  },
+  "scripts": {
+    "test": "node --test tools/smtp.test.mjs",
+    "deploy": "node tools/deploy.mjs",
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "02d9dc4ada82d753",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-mail"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

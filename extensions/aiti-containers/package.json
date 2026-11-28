@@ -1,0 +1,36 @@
+{
+  "name": "@aiti-ai/aiti-containers",
+  "version": "0.1.2",
+  "description": "Container explorer for the pi-web AI window: containers / images / volumes / networks / compose projects with whitelisted actions, plus agent tools over docker, podman and nerdctl.",
+  "displayNameI18n": {
+    "en": "Containers"
+  },
+  "descriptionI18n": {
+    "zh-CN": "AI 窗里的容器浏览器：容器 / 镜像 / 卷 / 网络 / compose 项目，操作走白名单，另带 docker / podman / nerdctl 的 agent 工具"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "build:client": "node tools/build.mjs",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "soul": "容器不是黑盒——看得见、点得动，AI 也说得清。",
+  "soulI18n": {
+    "en": "Containers are not a black box — you can see them, click them, and the AI can explain them."
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-containers"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  },
+  "contentHash": "bb451f4fd595b42c"
+}

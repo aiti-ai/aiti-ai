@@ -32,7 +32,9 @@ function callbackSource(name) {
   visit(hookFile);
   assert.ok(found, `useCallback ${name} not found`);
   return ts.transpileModule(`(${found.getText(hookFile)})`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    // alwaysStrict: false — TS 6 prepends a "use strict"; prologue by default (TS 5 did not),
+    // which would turn `return <fn>;` in the `with` wrapper into returning that string.
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, alwaysStrict: false },
   }).outputText.trim().replace(/;$/, "");
 }
 

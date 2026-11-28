@@ -1,0 +1,411 @@
+/**
+ * aiti-secret-vault · pi-web management surface for the encrypted secret vault.
+ *
+ * Pairs with the `@aiti-ai/pi-secret-vault` pi extension (which owns the hooks,
+ * the AI tools and the session registry). This extension only manages the
+ * library from the web UI: list / add / rotate / reveal / remove aliases,
+ * lock/unlock, and switch the unlock mode between a keyfile and the OS
+ * keychain. It never touches the AI conversation and never logs values.
+ *
+ * Storage (same files as the pi extension):
+ *   ~/.pi/agent/secret-vault/{global.json, vault.<cwdHash8>.json, config.json, master.key?}
+ *   ~/.pi/agent/secret-vault/session-state.json   (alias names only)
+ *
+ * API (mounted by the host under /api/extensions/aiti-secret-vault/):
+ *   GET    /status                  store status + mounted session overview
+ *   GET    /entries                 alias metadata (zero values)
+ *   POST   /entries                 {alias, value, desc?, tags?, project?}  add/rotate
+ *   DELETE /entries/:alias          remove
+ *   POST   /entries/:alias/reveal   {value} — human action, no-store
+ *   POST   /lock | /unlock
+ *   POST   /mode                    {mode: "keyfile"|"keychain"} rekey + re-encrypt
+ *   GET    /sessions                zero-value session records
+ */
+
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  VaultError,
+  VaultStore,
+  readSessionState,
+  type VaultKeyMode,
+} from "@aiti-ai/secret-vault-core";
+import * as secretVaultCore from "@aiti-ai/secret-vault-core";
+
+// Local copy: the installed core may be older than the pi package that writes
+// the records (7 days matches the core constant).
+const SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Preflight lives in secret-vault-core >= 0.3. Resolve it through the namespace so
+// an older installed copy degrades to 501 instead of failing the module load.
+const corePreflight = secretVaultCore as unknown as {
+  preflightScan?: (store: VaultStore, text: string, opts?: { strict?: boolean }) => unknown;
+  preflightMask?: (store: VaultStore, text: string, indices: number[], opts?: { strict?: boolean }) => unknown;
+};
+const preflightAvailable = (): boolean =>
+  typeof corePreflight.preflightScan === "function" && typeof corePreflight.preflightMask === "function";
+
+// Weak-password assessment lives here so the dialog works with any installed
+// core version (the pi side uses the richer core helper; UI warnings must not
+// depend on a staged dependency refresh).
+const WEAK_DICTIONARY = new Set([
+  "password", "passw0rd", "password1", "password123", "p@ssw0rd", "123456", "12345678",
+  "123456789", "qwerty", "qwerty12", "qwerty123", "abc123", "abc12345", "abcd1234",
+  "abcdef", "abcdefgh", "iloveyou", "admin", "admin123", "root", "root123", "letmein",
+  "welcome", "welcome123", "monkey", "dragon", "master", "sunshine", "princess", "football",
+  "baseball", "shadow", "superman", "trustno1", "1qaz2wsx", "qazwsx", "woaini", "5201314",
+  "7758521", "88888888", "111111", "000000", "123123", "112233", "654321", "987654321",
+]);
+
+function entropy(value: string): number {
+  if (!value) return 0;
+  const counts = new Map<string, number>();
+  for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let bits = 0;
+  for (const n of counts.values()) {
+    const p = n / value.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
+
+interface WeakAssessment {
+  weak: boolean;
+  reasons: string[];
+}
+
+function assessWeak(value: string): WeakAssessment {
+  const v = String(value ?? "").trim();
+  const lower = v.toLowerCase();
+  const reasons: string[] = [];
+  if (WEAK_DICTIONARY.has(lower)) reasons.push("dictionary");
+  if (/^rsec_[0-9a-f]{8}$/.test(v)) reasons.push("token-shape");
+  if (v.length < 8) reasons.push("short");
+  if (/^[0-9]+$/.test(v) && v.length < 12) reasons.push("digits-only");
+  if (/^[a-z]+$/.test(v) && v.length < 12) reasons.push("lowercase-only");
+  if (v.length >= 8 && !WEAK_DICTIONARY.has(lower) && entropy(v) < 2.5) reasons.push("low-entropy");
+  const repeated = v.length > 1 && new Set(v).size === 1;
+  if (repeated || /(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|qwer|asdf|zxcv|password|admin)/i.test(v)) reasons.push("sequence");
+  return { weak: reasons.length > 0, reasons };
+}
+
+/** Same-host liveness check for pi sessions (EPERM means alive but not ours). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Hide sessions whose process is gone; pid-less legacy records keep a 7-day TTL. */
+function liveSessions(records: Record<string, { mounted?: string[]; pid?: number; updatedAt?: string }>): Record<string, unknown> {
+  const now = Date.now();
+  return Object.fromEntries(
+    Object.entries(records).filter(([, rec]) => {
+      if (!rec.mounted || rec.mounted.length === 0) return false; // only sessions that actually hold aliases
+      if (rec.pid) return pidAlive(rec.pid);
+      const at = rec.updatedAt ? Date.parse(rec.updatedAt) : Number.NaN;
+      return Number.isFinite(at) && now - at <= SESSION_RETENTION_MS;
+    }),
+  );
+}
+
+const weakMap = (store: VaultStore): Record<string, boolean> => {
+  const out: Record<string, boolean> = {};
+  for (const info of store.list()) {
+    try {
+      out[info.alias] = assessWeak(store.get(info.alias).value).weak;
+    } catch {
+      // locked / undecryptable entries are simply not flagged
+    }
+  }
+  return out;
+};
+
+const VAULT_DIR = process.env.PI_SECRET_VAULT_DIR || join(homedir(), ".pi", "agent", "secret-vault");
+const SESSION_STATE_PATH = join(VAULT_DIR, "session-state.json");
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+
+export interface VaultApiDeps {
+  store: VaultStore;
+  sessionStatePath: string;
+}
+
+function errorResponse(e: unknown): Response {
+  if (e instanceof VaultError) return json({ ok: false, code: e.code, error: e.message }, 400);
+  return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+}
+
+function parseTags(input: unknown): string[] | undefined {
+  if (Array.isArray(input)) return input.map((t) => String(t).trim()).filter(Boolean);
+  if (typeof input === "string") return input.split(",").map((t) => t.trim()).filter(Boolean);
+  return undefined;
+}
+
+/** API dispatcher (exported for tests; the host calls it with `ctx.path`). */
+export function createVaultApi(deps: VaultApiDeps) {
+  return async function api(req: Request, ctx: { path?: string[] }): Promise<Response> {
+    const path = Array.isArray(ctx?.path) ? ctx.path : [];
+    const [head, second, third] = path;
+    const store = deps.store;
+    try {
+      if (req.method === "GET" && head === "status" && !second) {
+        const sessions = readSessionState(deps.sessionStatePath);
+        const weak = weakMap(store);
+        return json({
+          ok: true,
+          status: { ...store.status(), weakEntries: Object.values(weak).filter(Boolean).length },
+          sessions: liveSessions(sessions.sessions),
+        });
+      }
+
+      if (req.method === "GET" && head === "entries" && !second) {
+        const weak = weakMap(store);
+        return json({ ok: true, entries: store.list().map((e) => ({ ...e, weak: weak[e.alias] === true })) });
+      }
+
+      if (req.method === "POST" && head === "entries" && !second) {
+        const body = (await req.json().catch(() => null)) as
+          | { alias?: string; value?: string; desc?: string; tags?: unknown; project?: boolean }
+          | null;
+        const alias = String(body?.alias ?? "").trim();
+        const value = String(body?.value ?? "");
+        if (!alias || !value) return json({ ok: false, error: "alias and value are required" }, 400);
+        const res = store.add(alias, value, {
+          desc: body?.desc ? String(body.desc).trim() : undefined,
+          tags: parseTags(body?.tags),
+          project: body?.project === true,
+        });
+        const strength = assessWeak(value);
+        return json({
+          ok: true,
+          result: { ...res, weak: strength.weak, weakReasons: strength.reasons },
+          warning: strength.weak ? `Weak password (${strength.reasons.join(", ")}); stored anyway — consider rotating it.` : undefined,
+        });
+      }
+
+      if (req.method === "DELETE" && head === "entries" && second) {
+        const removed = store.remove(String(second));
+        return removed > 0 ? json({ ok: true, removed }) : json({ ok: false, error: `no entry named "${second}"` }, 404);
+      }
+
+      if (req.method === "POST" && head === "entries" && second && third === "reveal") {
+        const entry = store.get(String(second));
+        return json({ ok: true, alias: entry.alias, scope: entry.scope, value: entry.value, weak: assessWeak(entry.value).weak });
+      }
+
+      if (req.method === "POST" && head === "lock" && !second) {
+        store.lock();
+        return json({ ok: true, status: store.status() });
+      }
+
+      if (req.method === "POST" && head === "unlock" && !second) {
+        const res = store.unlock();
+        return res.ok ? json({ ok: true, status: store.status() }) : json({ ok: false, error: res.error }, 400);
+      }
+
+      if (req.method === "POST" && head === "mode" && !second) {
+        const body = (await req.json().catch(() => null)) as { mode?: string } | null;
+        const mode = body?.mode;
+        if (mode !== "keyfile" && mode !== "keychain") return json({ ok: false, error: 'mode must be "keyfile" or "keychain"' }, 400);
+        const res = store.rekeyTo(mode as VaultKeyMode);
+        return json({ ok: true, result: res, status: store.status() });
+      }
+
+      // Pre-send preflight: stricter candidate scan + mask. Values never travel
+      // back to the browser: scan returns masked previews only, and mask takes
+      // the candidate indices from a deterministic re-scan of the same text.
+      if (req.method === "POST" && head === "preflight" && second === "scan") {
+        const body = (await req.json().catch(() => null)) as { text?: string; strict?: boolean } | null;
+        if (typeof body?.text !== "string") return json({ ok: false, error: "text required" }, 400);
+        if (!preflightAvailable()) return json({ ok: false, error: "preflight-unavailable" }, 501);
+        const res = corePreflight.preflightScan!(store, body.text, { strict: body.strict !== false }) as Record<string, unknown>;
+        return json({ ok: true, ...res });
+      }
+
+      if (req.method === "POST" && head === "preflight" && second === "mask") {
+        const body = (await req.json().catch(() => null)) as
+          | { text?: string; indices?: unknown; strict?: boolean }
+          | null;
+        if (typeof body?.text !== "string") return json({ ok: false, error: "text required" }, 400);
+        const indices = Array.isArray(body.indices) ? body.indices.filter((i): i is number => typeof i === "number") : [];
+        if (!preflightAvailable()) return json({ ok: false, error: "preflight-unavailable" }, 501);
+        const res = corePreflight.preflightMask!(store, body.text, indices, { strict: body.strict !== false }) as Record<string, unknown>;
+        return json({ ok: true, ...res });
+      }
+
+      if (req.method === "GET" && head === "sessions" && !second) {
+        return json({ ok: true, sessions: liveSessions(readSessionState(deps.sessionStatePath).sessions) });
+      }
+
+      return json({ ok: false, error: "not found" }, 404);
+    } catch (e) {
+      return errorResponse(e);
+    }
+  };
+}
+
+let store: VaultStore | null = null;
+let apiHandler: ((req: Request, ctx: { path?: string[] }) => Promise<Response>) | null = null;
+
+export default {
+  id: "aiti-secret-vault",
+  name: "Secret Vault",
+  icon: "icons/key-round.svg",
+  client: "dist/aiti-secret-vault-client.mjs",
+
+  ui: {
+    // The composer gate is registered by the client bundle, so it must load with
+    // the page — a lazy client would only materialize when the dialog is opened.
+    clientImmediately: true,
+    toolbar: [
+      {
+        id: "aiti-secret-vault-open",
+        label: "i18n:sv.open.label",
+        title: "i18n:sv.open.title",
+        icon: "icons/key-round.svg",
+      },
+    ],
+    dialogs: [{ id: "aiti-secret-vault-panel", label: "i18n:sv.panel.label" }],
+    i18n: {
+      "zh-CN": {
+        "sv.open.label": "密钥库",
+        "sv.open.title": "加密密钥库：别名 / 轮换 / 查看 / 删除 / 解锁模式",
+        "sv.panel.label": "密钥库",
+        "sv.tab.vault": "密钥库",
+        "sv.tab.sessions": "会话挂载",
+        "sv.lock": "锁定",
+        "sv.unlock": "解锁",
+        "sv.refresh": "刷新",
+        "sv.add": "新增 / 轮换",
+        "sv.pf.title": "这条消息里可能有密钥",
+        "sv.pf.hint": "● 高置信（自动打码也会处理）　○ 低置信（仅本次确认）",
+        "sv.pf.locked": "密钥库已锁定：先解锁才能打码，否则只能原样发送或取消。",
+        "sv.pf.high": "高置信",
+        "sv.pf.medium": "低置信",
+        "sv.pf.stored": "库中已存",
+        "sv.pf.mask": "打码后发送（先存入密钥库）",
+        "sv.pf.raw": "原样发送",
+        "sv.pf.cancel": "取消发送",
+        "sv.pf.remember": "本次会话不再询问（按本次选择自动处理）",
+        "sv.pf.toggle": "发送前预检",
+        "sv.pf.toggleTitle": "发送前检查消息里的密钥：开=弹窗确认，关=完全不拦截",
+        "sv.on": "开",
+        "sv.off": "关",
+        "sv.alias": "别名",
+        "sv.desc": "说明",
+        "sv.tags": "标签（逗号分隔）",
+        "sv.value": "值（仅写入本机加密库）",
+        "sv.project": "项目桶",
+        "sv.reveal": "查看",
+        "sv.delete": "删除",
+        "sv.deleteConfirm": "确认删除",
+        "sv.hide": "隐藏",
+        "sv.copy": "复制",
+        "sv.copied": "已复制",
+        "sv.empty": "暂无条目",
+        "sv.locked": "已锁定",
+        "sv.unlocked": "已解锁",
+        "sv.mode": "解锁模式",
+        "sv.mode.keyfile": "keyfile（密钥文件）",
+        "sv.mode.keychain": "keychain（系统钥匙串）",
+        "sv.mode.switch": "切换",
+        "sv.mode.confirm": "切换解锁模式会重新生成主密钥并重新加密整个库，继续？",
+        "sv.saved": "已保存",
+        "sv.removed": "已删除",
+        "sv.failed": "操作失败：",
+        "sv.session.mounted": "挂载别名",
+        "sv.session.landing": "落盘策略",
+        "sv.session.empty": "暂无会话记录",
+        "sv.session.retention": "只显示有挂载别名的活跃会话；无进程标记的旧记录保留 7 天（上限 50 条）。",
+        "sv.open": "打开",
+        "sv.updated": "更新于",
+        "sv.entries": "条目",
+        "sv.weak": "弱密码",
+        "sv.weakCount": "弱密码条目",
+        "sv.keychain": "钥匙串后端",
+        "sv.hint": "值只存本机加密库（AES-256-GCM）；AI 只能拿到占位令牌，看不到明文。",
+      },
+      en: {
+        "sv.open.label": "Secret Vault",
+        "sv.open.title": "Encrypted secret vault: aliases / rotate / reveal / remove / unlock mode",
+        "sv.panel.label": "Secret Vault",
+        "sv.tab.vault": "Vault",
+        "sv.tab.sessions": "Sessions",
+        "sv.lock": "Lock",
+        "sv.unlock": "Unlock",
+        "sv.refresh": "Refresh",
+        "sv.add": "Add / rotate",
+        "sv.pf.title": "This message may contain a credential",
+        "sv.pf.hint": "● high confidence (auto-masking would handle it)　○ low confidence (this send only)",
+        "sv.pf.locked": "The vault is locked: unlock to mask, otherwise send as-is or cancel.",
+        "sv.pf.high": "high confidence",
+        "sv.pf.medium": "low confidence",
+        "sv.pf.stored": "already stored",
+        "sv.pf.mask": "Mask and send (store in vault first)",
+        "sv.pf.raw": "Send as-is",
+        "sv.pf.cancel": "Cancel",
+        "sv.pf.remember": "Do not ask again this session (auto-apply this choice)",
+        "sv.pf.toggle": "Pre-send check",
+        "sv.pf.toggleTitle": "Check the message for credentials before sending: on = confirm dialog, off = no interception",
+        "sv.on": "on",
+        "sv.off": "off",
+        "sv.alias": "Alias",
+        "sv.desc": "Description",
+        "sv.tags": "Tags (comma separated)",
+        "sv.value": "Value (written to the local encrypted vault only)",
+        "sv.project": "Project bucket",
+        "sv.reveal": "Reveal",
+        "sv.delete": "Delete",
+        "sv.deleteConfirm": "Confirm delete",
+        "sv.hide": "Hide",
+        "sv.copy": "Copy",
+        "sv.copied": "Copied",
+        "sv.empty": "No entries",
+        "sv.locked": "locked",
+        "sv.unlocked": "unlocked",
+        "sv.mode": "Unlock mode",
+        "sv.mode.keyfile": "keyfile",
+        "sv.mode.keychain": "keychain (OS credential store)",
+        "sv.mode.switch": "Switch",
+        "sv.mode.confirm": "Switching the unlock mode regenerates the master key and re-encrypts the whole vault. Continue?",
+        "sv.saved": "Saved",
+        "sv.removed": "Removed",
+        "sv.failed": "Failed: ",
+        "sv.session.mounted": "Mounted aliases",
+        "sv.session.landing": "Landing",
+        "sv.session.empty": "No session records yet",
+        "sv.session.retention": "Only live sessions with mounted aliases are listed; pid-less records expire after 7 days (max 50).",
+        "sv.open": "Open",
+        "sv.updated": "updated",
+        "sv.entries": "entries",
+        "sv.weak": "weak",
+        "sv.weakCount": "weak entries",
+        "sv.keychain": "keychain backend",
+        "sv.hint": "Values are stored only in the local encrypted vault (AES-256-GCM). The AI sees placeholders, never plaintext.",
+      },
+    },
+  },
+
+  server: {
+    startup(_ctx: { configDir?: string }) {
+      store = new VaultStore({ dir: VAULT_DIR, cwd: process.cwd() });
+      apiHandler = createVaultApi({ store, sessionStatePath: SESSION_STATE_PATH });
+      console.log(`[aiti-secret-vault] ready · vault=${VAULT_DIR} · mode=${store.mode}`);
+    },
+    async api(req: Request, ctx: { path?: string[] }) {
+      if (!apiHandler) {
+        store = new VaultStore({ dir: VAULT_DIR, cwd: process.cwd() });
+        apiHandler = createVaultApi({ store, sessionStatePath: SESSION_STATE_PATH });
+      }
+      return apiHandler(req, ctx);
+    },
+  },
+};

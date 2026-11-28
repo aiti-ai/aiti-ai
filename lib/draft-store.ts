@@ -1,9 +1,9 @@
 import {
   MAX_ATTACHED_IMAGES,
   isBase64ImageWithinLimits,
-} from "./image-attachments";
-import { getBrowserStorage } from "./browser-storage";
-import type { SessionReferenceTarget } from "./session-reference-target";
+} from "./image-attachments.ts";
+import { getBrowserStorage } from "./browser-storage.ts";
+import type { SessionReferenceTarget } from "./session-reference-target.ts";
 
 export interface ChatDraftImage {
   data: string;

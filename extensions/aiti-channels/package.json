@@ -1,0 +1,45 @@
+{
+  "name": "@aiti-ai/aiti-channels",
+  "version": "0.1.12",
+  "description": "IM channel integration + a full frontend shell for cc-connect — hosts the cc-connect process, overview/projects/channels/sessions panels, and a socket API for outbound messaging",
+  "displayNameI18n": {
+    "en": "IM Channels"
+  },
+  "descriptionI18n": {
+    "zh-CN": "IM 渠道接入 + cc-connect 大前端外壳 —— 托管 cc-connect 进程、概览/项目/通道/会话面板、socket API 出站发消息"
+  },
+  "type": "module",
+  "homepage": "https://aiti.pw/extensions/aiti-channels.html",
+  "license": "MIT",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "_comment_build": "client/src/*.tsx 经 vite lib mode 打包为 client/aiti-channels-client.mjs（模板 templates/ext-jsx-client）",
+  "soul": "AI 不该被锁在网页里——钉钉/飞书/微信都是它的窗口。",
+  "soulI18n": {
+    "en": "AI shouldn't be locked inside a web page — DingTalk/Feishu/WeChat are all its windows."
+  },
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12",
+    "justget": "^0.2.4",
+    "yauzl": "^2.10.0"
+  },
+  "contentHash": "3c74f8733e6f19e0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-channels"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

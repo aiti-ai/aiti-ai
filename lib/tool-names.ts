@@ -7,7 +7,11 @@
  */
 
 export function isWriteToolName(toolName: string): boolean {
-  const name = toolName.toLowerCase();
+  // Same guard as isEditToolName: with attach/bridge replay, toolCall.toolName is
+  // occasionally missing → calling toLowerCase directly would throw a TypeError
+  // (page error boundary "This page couldn't load"; reproduced on a live machine
+  // 2026-08-27)
+  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
   return name === "write" ||
     name.startsWith("write_") ||
     name.endsWith(".write") ||
@@ -15,7 +19,11 @@ export function isWriteToolName(toolName: string): boolean {
 }
 
 export function isEditToolName(toolName: string): boolean {
-  const name = toolName.toLowerCase();
+  // Guard: with attach/history messages, toolCall.toolName is occasionally
+  // missing (undefined) — toLowerCase used to throw a TypeError during message
+  // rendering (the whole session area of the production page crashed,
+  // ChatWindow never mounted).
+  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
   return name === "edit" ||
     name.startsWith("edit_") ||
     name.endsWith(".edit") ||

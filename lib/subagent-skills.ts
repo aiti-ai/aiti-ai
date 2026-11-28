@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { formatSkillsForPrompt, type DefaultResourceLoader, type InlineExtension, type Skill } from "@earendil-works/pi-coding-agent";
-import { parseFrontmatter } from "./frontmatter";
-import { subagentNameList } from "./subagents";
-import { errorMessage } from "./errors";
+import { parseFrontmatter } from "./frontmatter.ts";
+import { subagentNameList } from "./subagents.ts";
+import { errorMessage } from "./errors.ts";
 
 /** One discovery binding and one prompt projection, shared by spawn and reopen. */
 export function createSubagentSkillsBinding(options: {

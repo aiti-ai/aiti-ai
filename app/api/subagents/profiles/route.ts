@@ -31,14 +31,32 @@ function validateToggleScope(scope: unknown): SubagentWritableScope | "builtin" 
   return scope;
 }
 
-export async function GET(req: Request) {
+async function handleProfiles(cwd: unknown): Promise<NextResponse> {
   try {
-    const cwd = await validateCwd(new URL(req.url).searchParams.get("cwd"));
-    return NextResponse.json({ profiles: listSubagentProfileSources(cwd) });
+    const validCwd = await validateCwd(cwd);
+    return NextResponse.json({ profiles: listSubagentProfileSources(validCwd) });
   } catch (error) {
     const message = errorMessage(error);
     return NextResponse.json({ error: message }, { status: message === "Access denied" ? 403 : 400 });
   }
+}
+
+// GET /api/subagents/profiles?cwd= — the query-string form is kept for existing callers; new code
+// must use POST (cwd goes in the JSON body, never in the URL/access logs).
+export async function GET(req: Request) {
+  return handleProfiles(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/subagents/profiles  body: { cwd } — same semantics.
+export async function POST(req: Request) {
+  let bodyCwd: unknown = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    bodyCwd = body.cwd;
+  } catch {
+    /* fallthrough → validateCwd reports "Valid cwd required" */
+  }
+  return handleProfiles(bodyCwd);
 }
 
 export async function PUT(req: Request) {

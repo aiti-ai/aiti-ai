@@ -1,13 +1,13 @@
 import { randomBytes, randomUUID } from "crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { forkSessionName, sessionDisplayTitle } from "./session-fork-name";
-import { scanSessionFileInfo } from "./session-list-scanner";
-import { readSubagentRun } from "./subagents";
-import { SIDE_SESSION_NAME } from "./session-family";
-import { createSessionToolSelectionEntry, readSessionToolSelection } from "./session-tool-selection";
-import { createSideBoundaryEntry, createSideMetadataEntry, readSideRelation } from "./side-session";
-import type { SessionEntry } from "./types";
+import { forkSessionName, sessionDisplayTitle } from "./session-fork-name.ts";
+import { scanSessionFileInfo } from "./session-list-scanner.ts";
+import { readSubagentRun } from "./subagents.ts";
+import type { SessionEntry } from "./types.ts";
+import { SIDE_SESSION_NAME } from "./session-family.ts";
+import { createSessionToolSelectionEntry, readSessionToolSelection } from "./session-tool-selection.ts";
+import { createSideBoundaryEntry, createSideMetadataEntry, readSideRelation } from "./side-session.ts";
 
 /**
  * The sidebar's Fork: pi's `/clone` (a copy of the current branch, positioned
@@ -19,8 +19,12 @@ import type { SessionEntry } from "./types";
 export type SessionForkRefusal = "not_found" | "unsaved" | "empty" | "subagent" | "side" | "cwd-invalid" | "cwd-exists";
 
 export class SessionForkError extends Error {
-  constructor(readonly code: SessionForkRefusal, message: string) {
+  readonly code: SessionForkRefusal;
+  // Explicit assignment (not a constructor parameter property): node --test imports this
+  // module through strip-only TypeScript, which rejects parameter properties.
+  constructor(code: SessionForkRefusal, message: string) {
     super(message);
+    this.code = code;
     this.name = "SessionForkError";
   }
 }

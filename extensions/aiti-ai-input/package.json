@@ -1,0 +1,67 @@
+{
+  "name": "@aiti-ai/aiti-ai-input",
+  "version": "0.4.16",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [
+        "python3-venv"
+      ],
+      "windows": [
+        {
+          "winget": "Python.Python.3.12"
+        }
+      ],
+      "darwin": [
+        "python@3.12"
+      ]
+    },
+    "services": [
+      {
+        "name": "asr",
+        "port": 8767,
+        "phase": "asr",
+        "cmd": "powershell -File start-stream.ps1 | bash start-stream.sh"
+      }
+    ]
+  },
+  "description": "Input enhancement for the AI chat composer: two-tier autocomplete (instant local → AI fallback), speech-input detection with spelling repair, streaming ASR with 2-pass refinement, switchable recognition engines (self-hosted / xfyun / Baidu / SiliconFlow / any OpenAI-compatible endpoint), hotwords, and usage reports.",
+  "displayNameI18n": {
+    "en": "AI Input Enhancer"
+  },
+  "descriptionI18n": {
+    "zh-CN": "聊天输入框增强 —— L0/L1 两层自动补全 + 收藏联想 + 🎤 实时 ASR 语音输入（多引擎可插拔/热词/2-pass 精修）+ 听写检测修复"
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "你还没打完的字，它已经替你想到一半了。",
+  "soulI18n": {
+    "en": "Before you finish typing, it has already guessed half of it."
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "user-hotwords.json",
+      "asr-config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "e42d83363c366c09",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-input"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai-input#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

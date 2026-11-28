@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>aiti custom interaction page</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; background: transparent; font: 14px/1.45 system-ui, sans-serif; }
+  main { box-sizing: border-box; height: 100%; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+         background: rgba(18, 20, 26, .92); color: #f2f4f8; border-radius: 14px; }
+  h1 { margin: 0; font-size: 15px; font-weight: 650; }
+  p { margin: 0; }
+  #detail { color: #a7b0be; }
+  #actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+  button { border: 0; border-radius: 9px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+           background: #2f6df6; color: #fff; }
+  button.secondary { background: #2a2f3a; color: #dfe4ec; }
+  #result { color: #7fd18b; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Custom interaction page</h1>
+  <p id="message">Waiting for a request…</p>
+  <p id="detail"></p>
+  <div id="actions"></div>
+  <p id="result"></p>
+</main>
+<script type="module">
+/**
+ * Minimal host-provided custom page.
+ *
+ * The host opens it as `<custom page>?base=http://127.0.0.1:<port>/&token=<token>`
+ * (see `withInteractionParams`), which is exactly what `aiti-dialog custom --page URL`
+ * or a Host API caller does. The page only renders; pending state and callbacks stay in
+ * the host broker, so refreshing this page loses nothing.
+ */
+const params = new URLSearchParams(location.search);
+const base = (params.get("base") || location.origin).replace(/\/+$/, "");
+const $ = (id) => document.getElementById(id);
+const NEGATIVE = new Set(["cancel", "reject", "no", "deny"]);
+let client = null;
+
+function render(request) {
+  $("title").textContent = request.title || `Custom · ${request.kind}`;
+  $("message").textContent = request.message || "";
+  const data = request.data && typeof request.data === "object" ? request.data : null;
+  $("detail").textContent = request.detail || (data ? JSON.stringify(data) : "");
+  $("result").textContent = "";
+  const box = $("actions");
+  box.textContent = "";
+  const actions = request.actions?.length
+    ? request.actions
+    : [
+        { id: "approve", label: "Continue", kind: "primary" },
+        { id: "reject", label: "Cancel", kind: "danger" },
+      ];
+  for (const action of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label || action.id;
+    if (action.kind && action.kind !== "primary") button.className = "secondary";
+    button.addEventListener("click", async () => {
+      try {
+        // Custom payloads ride on `value`; the host owns the final state machine.
+        await client.answer(request.id, { action: action.id, approved: !NEGATIVE.has(action.id), value: { source: "custom-example" } });
+        $("result").textContent = `answered: ${action.label || action.id}`;
+      } catch (error) {
+        $("result").textContent = `answer failed: ${error.message || error}`;
+      }
+    });
+    box.appendChild(button);
+  }
+}
+
+async function start() {
+  const { connectInteraction } = await import(`${base}/interaction-client.js`);
+  client = await connectInteraction({ baseUrl: base });
+  client.onRequest(render);
+  client.onUpdate((id, state) => { $("result").textContent = `update: ${JSON.stringify(state)}`; });
+  client.onResolved((id, result) => { $("result").textContent = `resolved: ${result.status}`; });
+  client.onSnapshot((requests) => { if (requests.length) render(requests[requests.length - 1]); });
+}
+
+// No top-level await: macOS 11 WKWebView skips such module scripts entirely.
+start().catch((error) => { $("result").textContent = `connect failed: ${error.message || error}`; });
+</script>
+</body>
+</html>

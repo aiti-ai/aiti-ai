@@ -10,9 +10,19 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-backp
 process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() }, moduleCache: false });
-const { GET } = await jiti.import("./[...path]/route.ts");
+const { POST } = await jiti.import("./[...path]/route.ts");
 const { allowFileRoot } = await jiti.import("../../../lib/allowed-roots.ts");
 allowFileRoot(root);
+
+// [fork] file paths never travel in a URL: the upstream GET /api/files/<path> channel
+// answers 404 by design, so both checks drive the POST /api/files/get body channel.
+function getFile(file, type = "download") {
+  return POST(new NextRequest("http://localhost/api/files/get", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", host: "localhost" },
+    body: JSON.stringify({ path: file, type }),
+  }), { params: Promise.resolve({ path: ["get"] }) });
+}
 
 test("a download is read from disk only as fast as the client takes it", async () => {
   const size = 16 * 1024 * 1024;
@@ -24,9 +34,7 @@ test("a download is read from disk only as fast as the client takes it", async (
   fs.createReadStream = (...args) => (stream = original.apply(fs, args));
   let response;
   try {
-    response = await GET(new NextRequest("http://localhost/api/files/x?type=download"), {
-      params: Promise.resolve({ path: file.split(path.sep).filter(Boolean) }),
-    });
+    response = await getFile(file);
   } finally {
     fs.createReadStream = original;
   }
@@ -42,9 +50,7 @@ test("a client that keeps reading still receives the whole file", async () => {
   const file = path.join(root, "whole.bin");
   const bytes = Buffer.alloc(5 * 1024 * 1024 + 123, 7);
   fs.writeFileSync(file, bytes);
-  const response = await GET(new NextRequest("http://localhost/api/files/x?type=download"), {
-    params: Promise.resolve({ path: file.split(path.sep).filter(Boolean) }),
-  });
+  const response = await getFile(file);
   const body = Buffer.from(await response.arrayBuffer());
   assert.equal(body.length, bytes.length);
   assert.ok(body.equals(bytes));

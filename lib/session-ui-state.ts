@@ -2,9 +2,9 @@ import { mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import lockfile from "proper-lockfile";
-import { writePrivateFileAtomicSync } from "./atomic-file";
-import { serializeByKey } from "./key-serializer";
-import { readRegularFileText } from "./regular-file";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import { serializeByKey } from "./key-serializer.ts";
+import { readRegularFileText } from "./regular-file.ts";
 import {
   applySessionUiStateRequest,
   emptySessionUiState,
@@ -12,9 +12,9 @@ import {
   SESSION_UI_STATE_VERSION,
   type SessionUiState,
   type SessionUiStateRequest,
-} from "./session-ui-state-shared";
-import { errorCode } from "./errors";
-import { errorMessage } from "./errors";
+} from "./session-ui-state-shared.ts";
+import { errorCode } from "./errors.ts";
+import { errorMessage } from "./errors.ts";
 
 // The sidebar's pins, archive, project order, project names and read times
 // (`lib/session-ui-state-shared.ts` has the rules) in `pi-web-session-state.json`

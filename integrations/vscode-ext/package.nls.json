@@ -1,0 +1,15 @@
+{
+  "extension.description": "The last mile of aiti-devtools: one-click dev server proxy injection + aiti-bridge lifecycle + automatic .vscode/mcp.json setup, so IDE built-in AI agents (Copilot Chat, etc.) can operate the page you are running.",
+  "command.enableDebug.title": "aiti: Enable page debugging (inject + spawn bridge + configure MCP)",
+  "command.stopDebug.title": "aiti: Stop debugging",
+  "command.openPanel.title": "aiti: Open bridge panel",
+  "command.reinject.title": "aiti: Re-inject (restart proxies; refresh the page to take effect)",
+  "setting.bridgePort.description": "Port of the aiti-bridge standalone bridge (same default as the standalone bridge/systemd).",
+  "setting.bridgePath.description": "Absolute path to aiti-bridge.mjs (leave empty to auto-detect: installed ~/.pi/web/node_modules/@aiti-ai/aiti-bridge → repo checkout packages/aiti-bridge).",
+  "setting.shimPath.description": "Absolute path to aiti-mcp-shim.cjs (leave empty to auto-detect, same resolution order as bridgePath).",
+  "setting.proxyPort.description": "Local reverse proxy listen port (opening this port in the browser = proxied dev server with injected HTML).",
+  "setting.targetUrl.description": "Target dev server URL (leave empty = auto-scan common ports; can also be picked in the panel or via commands).",
+  "setting.aiUrl.description": "AI window URL (leave empty = local bridge cockpit; may point to a pi-web instance, e.g. https://pi.example.com/ — the 💬 button in the page corner opens it).",
+  "setting.autoOpenBrowser.description": "Automatically open the proxy URL (the injected page) after enabling debugging.",
+  "setting.autoEnable.description": "Run \"Enable page debugging\" automatically on extension activation (workspace setting; for Extension Development Host automated tests / debug-as-soon-as-opened)."
+}

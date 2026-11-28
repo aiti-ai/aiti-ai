@@ -2,19 +2,19 @@ import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
-import { TEXT_PREVIEW_MAX_BYTES } from "./file-types";
+import { TEXT_PREVIEW_MAX_BYTES } from "./file-types.ts";
 import type {
   GitFileDiffResponse,
   GitFileStatus,
   GitStatusResponse,
-} from "./git-types";
+} from "./git-types.ts";
 import {
   classifyGitStatus,
   parseGitPorcelainV1,
   type GitPorcelainEntry,
-} from "./git-status";
-import { projectGitEnvironment } from "./git-environment";
-import { resolveExistingPath } from "./paths";
+} from "./git-status.ts";
+import { projectGitEnvironment } from "./git-environment.ts";
+import { resolveExistingPath } from "./paths.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 10_000;
@@ -24,7 +24,10 @@ const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 const GIT_DIFF_MAX_BYTES = 1024 * 1024;
 
 async function git(cwd: string, args: string[], maxBuffer = GIT_STATUS_MAX_BUFFER): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  // Status/diff here only read. Without this, `git status` rewrites the index's
+  // stat cache (index.lock) on every call — a write into .git that directory
+  // watchers see as a change, and that wakes every other tool watching the repo.
+  const { stdout } = await execFileAsync("git", ["--no-optional-locks", "-C", cwd, ...args], {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer,
     env: projectGitEnvironment(),
