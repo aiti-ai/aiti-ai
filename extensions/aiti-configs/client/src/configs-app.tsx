@@ -7,7 +7,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { apiUrl, t } from "./host-shim";
-import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+import { uiConfirm, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 declare global {
   interface Window { __aitiConfigsOpen?: () => void }

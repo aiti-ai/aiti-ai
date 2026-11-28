@@ -8,7 +8,7 @@
  * AGPL-3.0：SuperDoc 隔离在本扩展 vendor/，不装即无（方案 §2.3 策略红利）。
  * 重复注册幂等：先 dispose 上一轮（disposables 挂 window 单例，跨 bundle 重载存活）。
  */
-import { whenAitiEditorReady } from "../../../_shared/aiti-editor-inject.mjs";
+import { whenAitiEditorReady } from "@aiti-ai/ext-shared/aiti-editor-inject";
 import { renderSuperdocView, persistBytes } from "./word-view";
 
 function register(ctx: Record<string, any>): void {

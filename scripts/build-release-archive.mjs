@@ -262,7 +262,6 @@ if (!POSTPROCESS_ONLY) {
     }
     if (failed.length) throw new Error(`扩展构建失败: ${failed.join(", ")}`);
     console.log(`[release] 扩展 dist: built ${built}`);
-    run(`node ${JSON.stringify(join(REPO, "scripts", "materialize-shared.mjs"))}`, stage, "materialize _shared sibling copies");
     run("npm pack --pack-destination " + JSON.stringify(stage), stage, "npm pack（主包）");
     tgzPath = join(stage, `aiti-ai-pi-web-${VERSION}.tgz`);
   }

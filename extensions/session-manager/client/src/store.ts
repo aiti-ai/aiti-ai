@@ -6,8 +6,8 @@
  */
 
 import { useState, useEffect, apiUrl, getExtService, t } from "./host-shim";
-import { present as presentDock, presentState, openFloat, closePanel } from "../../../_shared/ext-float-dock-lite";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { present as presentDock, presentState, openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock-lite";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 import { decodeSessionsPayload, decodeArchivedPayload, decodeRowV2 } from "../../server/payload.ts";
 import { coversMainArea } from "./float-yield.pure";
 import type { SessionInfo } from "./sidebar/pure";

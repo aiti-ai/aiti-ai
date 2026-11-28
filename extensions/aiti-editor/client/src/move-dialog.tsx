@@ -8,8 +8,8 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiUrl, extSvc, t } from "./host-shim.ts";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 
 // ── 轻量路径工具（lib.ts 无现成，内联）──
 function lastSeg(p?: string): string {

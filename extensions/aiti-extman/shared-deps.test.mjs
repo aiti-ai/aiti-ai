@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runEsbuild } from "../_shared/esbuild-bin.ts";
+import { runEsbuild } from "@aiti-ai/ext-shared/esbuild-bin";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");

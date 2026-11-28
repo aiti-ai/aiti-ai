@@ -36,7 +36,7 @@ import {
   splitBlockAlign,
   writeBlockCollapsed,
   type BlockAlign,
-} from "../../../_shared/ext-float-dock-core";
+} from "@aiti-ai/ext-shared/ext-float-dock-core";
 import { dockPref, presented, present, CHANGE_EVENT } from "./dock";
 
 /** 区块描述（常驻区块；编排器构造）。 */

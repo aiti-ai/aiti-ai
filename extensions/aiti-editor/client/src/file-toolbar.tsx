@@ -21,7 +21,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { extSvc, t, getTopicItems } from "./host-shim.ts";
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 import { squeezeStep } from "./toolbar-squeeze.ts";
 
 export type MenuAction = { label: string; title?: string; /** 可选图标（ReactNode，如 aiti-git-review 的统一 GrEyeIcon）；渲染在文案左侧 */ icon?: any; onClick: () => void };

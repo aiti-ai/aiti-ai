@@ -5,7 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { t } from "../host-shim";
 import { truncateRunErrorText, type SessionLastRun } from "./pure";
-import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../../_shared/popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "@aiti-ai/ext-shared/popup-anchor";
 
 /** 左省略路径标签（宿主 PathLabel 复制：rtl 容器让省略号出现在左侧）。 */
 export function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {

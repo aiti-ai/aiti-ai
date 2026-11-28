@@ -18,7 +18,7 @@ import { store, useStore, displayCwd, moveBatchSession, archiveBatchSession, beg
 import { orderProjects, pinnedProjectKeys } from "./sidebar/pure";
 import { ghostBtn, miniBtn, ensureReadability, SIc } from "./helpers";
 import { MoveCwdPicker } from "./move-cwd-picker";
-import { MenuActionRow } from "../../../_shared/menu-row";
+import { MenuActionRow } from "@aiti-ai/ext-shared/menu-row";
 
 /** 与核心 lib/workspace-hide.ts 共享的隐藏列表契约（两端硬编码同一字符串）。 */
 const HIDDEN_KEY = "pi-web:hidden-workspaces";

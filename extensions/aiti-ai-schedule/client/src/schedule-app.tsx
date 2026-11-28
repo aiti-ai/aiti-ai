@@ -7,15 +7,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, extSvc, t } from "./host-shim";
 // dock v3（P3 批）：显隐收口展示状态机 + 右栏停靠 face；v4 对齐分组：+ 左栏区块 face（上对齐组）
-import { usePresent, DockBody, openFloat, closePanel, seedDockDefault, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { usePresent, DockBody, openFloat, closePanel, seedDockDefault, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3（方案 pi-web-dock-header-toolbar-plan §2.3/§2.5）：face 声明按钮、
 // 内容实现命令 + 汇报状态；未挂载时点击自动展开并排队补跑。
 import {
   useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, writeBlockCollapsed,
-} from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
-import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
-import { extItemText, primeExtRegistry, onExtRegistryReady, currentUiLocale } from "../../../_shared/ext-display-names";
+} from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
+import { uiAlert, uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
+import { extItemText, primeExtRegistry, onExtRegistryReady, currentUiLocale } from "@aiti-ai/ext-shared/ext-display-names";
 
 // ---------- Hook-task display name (cross-extension i18n) ----------
 // Declarative hook tasks registered by other extensions carry "i18n:<key>" names, resolved against

@@ -8,7 +8,7 @@ import { LANG_EXT, detectFileType, isViewableBinary, isTextFile, matches, format
 import { outlineJson } from "./json-outline";
 import { getRuntimeBytes } from "./limits-runtime";
 import { ensureEditorTicket, apiUrl, t } from "./host-shim.ts";
-import { fetchSofficeStatus, buildSofficeMissingPanel } from "../../../_shared/soffice-panel";
+import { fetchSofficeStatus, buildSofficeMissingPanel } from "@aiti-ai/ext-shared/soffice-panel";
 import { extOf, sortChain, resolveFenceChain, defaultCapabilityOf, shouldTakeover, type EditorCapability } from "./arbiter";
 import { isFenceLang } from "./markdown";
 import { mermaidRenderer } from "./md-mermaid";

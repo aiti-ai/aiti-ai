@@ -6,7 +6,7 @@
  * ⚠ 禁轮询：刷新只走按钮与打开时的一次拉取。
  */
 import { useEffect, useState } from "react";
-import { DockBody, isSidebarDockState, sidebarZoneOf, usePresent } from "../../../_shared/ext-float-dock";
+import { DockBody, isSidebarDockState, sidebarZoneOf, usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
 import { apiUrl, t } from "./host-shim";
 // 键与开关的唯一所有 = entry 薄壳（薄壳拆分 §5.2：usageOpenSet/一次性清理收编 entry，
 // register 期偏好修正不依赖本懒 chunk 加载）

@@ -16,8 +16,8 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import diffMatchPatch from "./vendor/diff-match-patch.js";
 import { execFileAsync, whichBin } from "@aiti-ai/ext-shared/exec-async";
-import { createConvertSaveAsRoute } from "./convert-saveas";
-import { locateSoffice, locateSofficeAsync, setSofficeDataDir, invalidateSofficeCache, SOFFICE_INSTALL_HINTS } from "./soffice-locate";
+import { createConvertSaveAsRoute } from "@aiti-ai/ext-shared/convert-saveas";
+import { locateSoffice, locateSofficeAsync, setSofficeDataDir, invalidateSofficeCache, SOFFICE_INSTALL_HINTS } from "@aiti-ai/ext-shared/soffice-locate";
 import {
   resolvePreviewTarget, previewRelOrEntry, previewCsp, previewMimeOf, isPreviewDoc, servePreviewDoc,
   previewBaseFromSegments, PREVIEW_MAX_BYTES, PREVIEW_DOC_MAX_BYTES,

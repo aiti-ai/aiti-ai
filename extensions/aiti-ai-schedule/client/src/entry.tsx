@@ -6,8 +6,8 @@
  */
 import { __setCtx, t } from "./host-shim";
 import { SchedulePageSlot, ScheduleDockRight, ScheduleDockSidebar, SCHED_KEY } from "./schedule-app";
-import { seedDockDefault, sidebarZoneOf, declareDockZones, presentState, present } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
+import { seedDockDefault, sidebarZoneOf, declareDockZones, presentState, present } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
 
 const OPEN_EVENT = "aiti-ai-schedule:open";
 function requestOpen(prefill?: Record<string, unknown>) {

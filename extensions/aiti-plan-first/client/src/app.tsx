@@ -9,7 +9,7 @@
  *     不随菜单关闭卸载）；持有 status/SSE/视图/动作全部状态。
  */
 import { useState, useEffect, useRef, apiUrl, t, getHostCtx, extSvc } from "./host-shim";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 import { readPendingPlan, writePendingPlan, type PendingPlan } from "./pending-plan";
 
 // ---------- 会话/工具 ----------

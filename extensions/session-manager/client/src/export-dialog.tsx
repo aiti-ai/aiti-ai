@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 import { apiUrl, createPortal, openFile, t } from "./host-shim";
 import { ensureReadability, ghostBtn, inputStyle } from "./helpers";
 import { showToast } from "./toast";
-import { createLazyModule, lazyExtView } from "../../../_shared/ext-lazy";
+import { createLazyModule, lazyExtView } from "@aiti-ai/ext-shared/ext-lazy";
 
 const dirPickerRef = createLazyModule(() => import("./sidebar/directory-picker"));
 

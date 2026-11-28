@@ -45,7 +45,7 @@ for (const extDir of targets) {
 }
 
 try {
-  const { deployCommit } = await import("../../_shared/deploy-commit.mjs");
+  const { deployCommit } = await import("@aiti-ai/ext-shared/deploy-commit");
   deployCommit({ repo: extRepo, name, paths: [name], ident: true, log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] deploy commit skipped:", String((e && e.message) || e));

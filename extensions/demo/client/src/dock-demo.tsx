@@ -13,9 +13,9 @@
  * 计数值存模块级 store（mount 恢复 / 卸载前写回），重建对用户透明。
  */
 import { useEffect, useState } from "react";
-import { useGate, usePresent, DockBody, openFloat, closePanel, isSidebarDockState, sidebarZoneOf, type PresentState } from "../../../_shared/ext-float-dock";
+import { useGate, usePresent, DockBody, openFloat, closePanel, isSidebarDockState, sidebarZoneOf, type PresentState } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3（方案 pi-web-dock-header-toolbar-plan）：face 声明按钮 + 内容实现命令/状态
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, type DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, type DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 
 export const DOCK_ITEM_KEY = "demo:dock";
 

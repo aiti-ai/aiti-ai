@@ -18,7 +18,8 @@
   "dependencies": {
     "@aiti-ai/content-share": "^0.1.16",
     "@aiti-ai/secret-mask-core": "^0.1.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "devDependencies": {
     "esbuild": "^0.24.2"

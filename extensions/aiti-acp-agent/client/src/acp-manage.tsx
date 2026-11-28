@@ -14,10 +14,10 @@ import { useState, useEffect } from "react";
 import { apiUrl, t } from "./host-shim";
 import { ACP_KEY, PlugIcon, setDialogOpen } from "./common";
 // dock v3（P2 批）：弹窗显隐收口展示状态机（左栏列表驻留，不接右栏）；渲染门控 usePresent
-import { usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3：face 声明按钮（刷新），内容实现命令 + 状态上报
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 
 // ---- API ----
 interface AcpAgent { name: string; bin: string; args?: string[]; agentKey?: string; registered?: boolean }

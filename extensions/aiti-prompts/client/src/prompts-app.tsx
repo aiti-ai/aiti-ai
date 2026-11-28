@@ -45,11 +45,11 @@ const stateListeners = new Set<() => void>();
 function notify() { for (const l of stateListeners) l(); }
 // dock v3（P2 批）：面板显隐收口展示状态机——patch.panelOpen 路由到 openFloat/closePanel，
 // state.panelOpen 不再是渲染开关（渲染门控走 useGate）；其余字段照旧合并。
-import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3：face 声明按钮（新建/刷新/分组），内容实现命令（模块级 setState）+ 状态上报
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, writeBlockCollapsed } from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
-import { uiConfirm } from "../../../_shared/ui-dialogs";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, writeBlockCollapsed } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 export const PANEL_KEY = "aiti-prompts:panel";
 /** Dock-header icon declaration: the extension's own bookmark ribbon (same shape as the
  *  toolbar button and the float dialog header) in the `{ svg }` markup form, so the dock

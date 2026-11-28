@@ -5,7 +5,7 @@
  * blob-save-route 工厂）。SuperDoc / ProseMirror 全部是 client vendor 依赖——服务端零数据面依赖。
  * 读文件复用核心 /api/files（经 aiti-editor 票据端点）。
  */
-import { createBlobSaveRoute } from "./blob-save-route";
+import { createBlobSaveRoute } from "@aiti-ai/ext-shared/blob-save-route";
 
 const saveBlobRoute = createBlobSaveRoute({
   extId: "aiti-word-superdoc",

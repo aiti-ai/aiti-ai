@@ -7,7 +7,7 @@
  * apiUrl would miss the base path on sub-path deployments.
  */
 import { apiUrl, getExtService } from "./host-shim";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 
 let cached: string | null = null;
 let pending: Promise<string> | null = null;

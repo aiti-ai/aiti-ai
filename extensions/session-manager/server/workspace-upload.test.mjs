@@ -13,7 +13,7 @@ import { tmpdir as osTmpdir } from "os";
 // （Linux 上 realpathSync 恒等，零影响；否则 e2e 路径断言逐字比较必挂）
 const tmpdir = () => realpathSync(osTmpdir());
 import { join } from "path";
-import { rmRf } from "../../_shared/test-rm-rf.mjs";
+import { rmRf } from "@aiti-ai/ext-shared/test-rm-rf";
 
 const {
   classifyArchive, sanitizeArchivePath, isJunkPath, detectSingleRootFromDir,

@@ -13,7 +13,7 @@ function globToRegExp(pattern: string): RegExp {
 import { fmtUsdCny, fxNote, isCnyBillingProvider, useMoneyTick } from "./money";
 // aiti-float dock v3（position-picker-plan §3.2 P1）：面板接停靠状态机——浮窗 face 走
 // useGate 门控；打开/关闭收口 openFloat/closePanel；右栏停靠 face 用 DockBody 包同一内容。
-import { useGate, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
+import { useGate, DockBody, openFloat, closePanel, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 
 /** 状态机 itemKey（= rightFileDock 注册复合 id "aiti-ai-usage:report"） */
 export const REPORT_KEY = "aiti-ai-usage:report";

@@ -14,7 +14,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runEsbuild } from "../_shared/esbuild-bin.ts";
+import { runEsbuild } from "@aiti-ai/ext-shared/esbuild-bin";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";

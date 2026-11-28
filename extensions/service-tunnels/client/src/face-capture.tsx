@@ -18,7 +18,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { apiUrl, BASE_PATH, extSvc } from "./host-shim";
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 
 export function FaceCaptureModal({ name, provider, site, t, mode = "enroll", onClose, onDone }: {
   name: string;

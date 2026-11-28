@@ -8,7 +8,7 @@
  */
 import { install, scan, panelCount, dupeCheck, VERSION, setOverlayBackService } from "./float";
 import { createDockStackApi } from "./dockstack";
-import { createDockHeaderStore } from "../../../_shared/ext-float-dock-core";
+import { createDockHeaderStore } from "@aiti-ai/ext-shared/ext-float-dock-core";
 
 export default function register(ctx: Record<string, unknown>): () => void {
   // dock 头工具条 store（v3，方案 pi-web-dock-header-toolbar-plan §2.7）：

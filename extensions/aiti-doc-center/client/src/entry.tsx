@@ -5,7 +5,7 @@
  * 委托入口：window.__aitiDocCenterOpen() —— 其他扩展可调起。
  */
 import { __setCtx } from "./host-shim";
-import { seedDockDefault } from "../../../_shared/ext-float-dock";
+import { seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 import { DocCenterPageSlot, DockDocs } from "./doc-center-app";
 import { registerEditorFileTags } from "./file-tags";
 

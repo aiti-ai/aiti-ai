@@ -15,10 +15,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { apiUrl, getLocale, getExtService, onExtServiceChange } from "./host-shim";
-import { BranchPanel } from "../../../_shared/git-ops-client/branch-panel";
-import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
-import { makeT } from "../../../_shared/git-ops-client/i18n.mjs";
-import { clampToViewport } from "../../../_shared/popup-anchor";
+import { BranchPanel } from "@aiti-ai/ext-shared/git-ops-client/branch-panel";
+import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
+import { makeT } from "@aiti-ai/ext-shared/git-ops-client/i18n";
+import { clampToViewport } from "@aiti-ai/ext-shared/popup-anchor";
 import { useWorktree, type WorktreeEntry } from "./sidebar/use-worktree";
 import { resolvePickerAction, effectiveMode, shortBranchName } from "./new-session-picker.pure";
 import type { PickerIntent, PickerSelection } from "./new-session-picker.pure";

@@ -40,5 +40,8 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai-speek#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

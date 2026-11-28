@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { t, apiUrl } from "./host-shim";
 import { store, useStore, managerOpen, act, emit, ensureTags, refreshTags, EMPTY_TAGS } from "./store";
 import { byIdMap, tagPath, defaultColorForClient, inputStyle, ghostBtn, miniBtn, SIc } from "./helpers";
-import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+import { uiConfirm, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 export function TagManager() {
   const s = useStore();

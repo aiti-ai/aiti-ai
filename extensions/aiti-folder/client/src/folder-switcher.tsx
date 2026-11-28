@@ -11,14 +11,14 @@
  * host-shim ctx 双注入约定）。selected 为当前高亮路径；onSelect 只回传不落库。
  */
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
-import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "@aiti-ai/ext-shared/popup-anchor";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 import { apiUrl, extSvc } from "./host-shim";
 import { ct as t } from "./comp-i18n"; // 组件自带多语：内置字典优先，回落宿主 t
 import { displayCwd, loadUnread, recentProjects, projectActivity } from "./lib";
 import { FolderIcon, CaretIcon, CheckIcon, PathLabel, ActivityBadges } from "./icons";
 import { DirectoryPicker } from "./directory-picker";
-import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
+import { isDirectoryPickerTarget } from "@aiti-ai/ext-shared/directory-picker-dom";
 
 /** 弹出菜单（已知 workspace 列表优先）。需挂在 position:relative 容器内。
  *  allOption：传入则在列表顶部渲染「全部」行，选中回传 onSelect("")。

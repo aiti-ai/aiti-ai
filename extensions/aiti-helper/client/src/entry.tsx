@@ -17,7 +17,7 @@
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  */
 import { __setCtx, regSvc, apiUrl, t } from "./host-shim";
-import { primeExtRegistry } from "../../../_shared/ext-display-names";
+import { primeExtRegistry } from "@aiti-ai/ext-shared/ext-display-names";
 import { installDialogAiButton } from "./dialog-ai-button";
 // 纯类型导入：编译期完全擦除，不会把重 UI 拉进薄 chunk；invoke 选项类型与重 UI 单源
 import type { HelperInvokeOpts } from "./helper-app";

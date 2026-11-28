@@ -25,8 +25,8 @@ import { SidebarList, dirPickerRef } from "./sidebar-dock";
 import { getRecentProjects, getProjectActivity, normalizeWorkspaceKey, type SessionInfo } from "./sidebar/pure";
 import { useWorktree } from "./sidebar/use-worktree";
 import { useBranchChip } from "./sidebar/branch-chip";
-import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, readBlockDismissed, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "../../../_shared/ext-float-dock";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, readBlockDismissed, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 // 跨扩展复用（构建期内联，DirectoryBrowser 先例）：aiti-folder 的文件夹多实例生命周期。
 // 区块 faces（左栏栈/浮窗/右栏）由 aiti-folder entry 动态注册（folder-dock v2）；
 // 编排器只负责：项目切换自动开新文件夹实例（syncFolderForCwd）+ ＋ 选择器入口。
@@ -41,7 +41,7 @@ import {
 // imported only while folderPickerOpen. The ref is reused from sidebar-dock, so the
 // project switcher and this dialog share one singleton/chunk (same Explorer-style path
 // breadcrumb + "New folder" row).
-import { LazyMount } from "../../../_shared/ext-lazy";
+import { LazyMount } from "@aiti-ai/ext-shared/ext-lazy";
 
 /* ── 未读标记（宿主同 key 持久化：pi-web:unread-session-ids——回退/接管两态共享）── */
 const UNREAD_KEY = "pi-web:unread-session-ids";

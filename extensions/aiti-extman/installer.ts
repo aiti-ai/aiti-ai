@@ -24,10 +24,12 @@ const execPath = process.execPath;
 
 const execFileAsync = promisify(execFile);
 
-// ── client TS 残留检查（层 2，方案见 docs/aiti-ext-client-hardening-plan.md §4.2）──
-// check-client.mjs 由 tools/deploy.mjs 拷到本扩展部署目录（与 installer.ts 同目录）。
-// 规则均为「合法 JS 但运行时必炸」的高置信模式；FAIL 中止安装（在删旧版之前，旧版本原样保留）。
-import { lintExtensionDir } from "./check-client.mjs";
+// -- client TS-residue lint (layer 2, see docs/aiti-ext-client-hardening-plan.md §4.2) --
+// The shared check-client lives in @aiti-ai/ext-shared (single source; no more
+// sibling copies). Rules are high-confidence "parses as JS but blows up at
+// runtime" patterns; FAIL aborts the install (old version stays in place —
+// removal happens only after a successful install).
+import { lintExtensionDir } from "@aiti-ai/ext-shared/check-client";
 
 function checkEntryClient(entryDir: string): void {
   const { files, violations } = lintExtensionDir(entryDir);

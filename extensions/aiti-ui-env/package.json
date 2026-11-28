@@ -56,7 +56,8 @@
     "vite": "^6.4.3"
   },
   "dependencies": {
-    "justget": "^0.2.4"
+    "justget": "^0.2.4",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "soul": "没有显示器，也可以有舞台。",
   "soulI18n": {

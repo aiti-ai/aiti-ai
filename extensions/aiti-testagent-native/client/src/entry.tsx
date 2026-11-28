@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { __setCtx, apiUrl, t } from "./host-shim";
-import { useGate, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
+import { useGate, DockBody, openFloat, closePanel, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 
 const WT_KEY = "aiti-testagent-native:panel";
 

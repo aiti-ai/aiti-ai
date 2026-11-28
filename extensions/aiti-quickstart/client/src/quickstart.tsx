@@ -20,7 +20,7 @@
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
 import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
-import { MenuActionRow } from "../../../_shared/menu-row";
+import { MenuActionRow } from "@aiti-ai/ext-shared/menu-row";
 import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, assembleExampleChips, normalizeExamplesConfig, shuffle, type ExamplesMode, type ExampleChip, type ExamplePromptItem, type OnboardingState } from "./quickstart-logic";
 
 /* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12；

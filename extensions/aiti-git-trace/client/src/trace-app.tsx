@@ -13,7 +13,7 @@
  * 跨扩展对接点（window）：__aitiGitTraceForkDialog（兼容转调）、__aitiGitTraceBanner。
  */
 import { useState, useEffect, t } from "./host-shim";
-import { usePresent, openFloat, isSidebarDockState } from "../../../_shared/ext-float-dock";
+import { usePresent, openFloat, isSidebarDockState } from "@aiti-ai/ext-shared/ext-float-dock";
 import {
   OPEN_EVENT, TIMELINE_KEY, WATCH_KEY, openPanel,
   bindSession, getSessionId, fetchOpsCached,

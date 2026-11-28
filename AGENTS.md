@@ -195,7 +195,7 @@ This repo is the single source for the whole ecosystem: the Next app above, plus
 
 - **These are the sources**: edit them here. There is no upstream mirror to sync back to and no redaction step.
 - Runtime dependency note: extensions declare repo dependencies in their own `package.json`; the installed `<webRoot>/node_modules` tree is reconciled by the extman extension — never hand-edit it.
-- `tools/` holds publish/release tooling (`publish-all.mjs`, `release-audit.mjs`, asset materializers); `scripts/` holds build/release automation (`deploy-all.mjs` and the release chain).
+- `tools/` holds publish/release tooling (`publish-all.mjs`, `release-audit.mjs`); `scripts/` holds build/release automation (`deploy-all.mjs` and the release chain).
 - Code gates (protocol declarations, hand-written version lines, unregistered globals, comment language, release redaction) live in a separate policy workspace and run against this checkout: `node gates/gate-all.mjs --root <this repo>`.
 
 ---

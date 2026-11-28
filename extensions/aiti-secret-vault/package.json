@@ -15,7 +15,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aiti-ai/secret-vault-core": "^0.3.2"
+    "@aiti-ai/secret-vault-core": "^0.3.2",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",

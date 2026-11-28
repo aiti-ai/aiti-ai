@@ -12,10 +12,10 @@ import { apiUrl } from "./host-shim";
 import { AC } from "./logic";
 // ==================== 语音识别服务器管理弹窗（toolbar 声明式注册 + dialogs 常挂；样式对齐宿主系统变量） ====================
 // dock v3（P2 批）：显隐收口展示状态机——信箱 __aitiAsrOpen / 面板 ✕ 全部走 openFloat/closePanel
-import { usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3：face 声明按钮（刷新），内容实现命令 + 状态上报
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 // 键与开关的唯一所有 = entry 薄壳（原信箱 __aitiAsrOpen 随开关收编 entry 退役：
 // asrOpenSet 直调 openFloat，不再经 window 间址，重试 5×200ms 一并删除）
 import { ASR_KEY, asrOpenSet, usageOpenSet } from "./entry";

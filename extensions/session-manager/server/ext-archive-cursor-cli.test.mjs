@@ -4,7 +4,7 @@
  * Run: node --test server/ext-archive-cursor-cli.test.mjs
  */
 import test from "node:test";
-import { rmRf } from "../../_shared/test-rm-rf.mjs";
+import { rmRf } from "@aiti-ai/ext-shared/test-rm-rf";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";

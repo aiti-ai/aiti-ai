@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-subagents",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Subagent fleet — Fleet observation / run control / agent management / concurrency config — fork engine, tools belong to upstream pi-subagents",
   "displayNameI18n": {
     "en": "Subagents"
@@ -21,7 +21,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "bb34e8ae0d28aae6",
+  "contentHash": "cbc0ad0850250fa7",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
@@ -30,5 +30,8 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useI18n, apiUrl } from "./host-shim";
-import { usePresent } from "../../../_shared/ext-float-dock";
+import { usePresent } from "@aiti-ai/ext-shared/ext-float-dock";
 import { qrDataUrl, downloadQrPng } from "./qr";
 import { FaceCaptureModal } from "./face-capture";
 import { MOBILE_KEY, REMEMBER_KEY, tierParams, confirmNeeded, pickCandidate, pickTunnelTool, resolveReadyUrl, upgradeToPageProto, faceSelectable, schemeKey, appendQuery, launchUrlSafe, exposeToUrls, loadSourceMemory, saveSourceMemory, pageReachability, type Source, type MobileLaunch, type Reco, type RecoCandidate } from "./mobile-logic";

@@ -9,7 +9,7 @@ import { attachGesture } from "./gesture";
 import * as dock from "./dock";
 import { createBackLayerManager, type BackLayerManager, type OverlayBackService } from "./back-layer";
 import { createsStackingContext } from "./stacking";
-import { FLOAT_INSTALLED_EVENT, positionMenuModel, appendDockIconRow, resolveDropZone, SIDEBAR_DROP_ZONE, type DockZone, type PresentState } from "../../../_shared/ext-float-dock-core";
+import { FLOAT_INSTALLED_EVENT, positionMenuModel, appendDockIconRow, resolveDropZone, SIDEBAR_DROP_ZONE, type DockZone, type PresentState } from "@aiti-ai/ext-shared/ext-float-dock-core";
 
 const DONE_ATTR = "data-piwe-float-done";
 // 遮罩自动去除标记（v0.4.5）：盖在面板祖先的半透明全屏遮罩层上 → CSS 令其透明 + 点击穿透

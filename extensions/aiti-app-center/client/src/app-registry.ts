@@ -20,8 +20,8 @@
  * 两个数组不再含 `toggle:*`；v1 残留由 pruneToggleIds() 一次性清洗。
  */
 
-import { extNameFor, extDescriptionFor, featureLabelFor, featureDescriptionFor } from "../../../_shared/ext-display-names.ts";
-import { typoMatch } from "../../../_shared/typo-search.mjs";
+import { extNameFor, extDescriptionFor, featureLabelFor, featureDescriptionFor } from "@aiti-ai/ext-shared/ext-display-names";
+import { typoMatch } from "@aiti-ai/ext-shared/typo-search";
 
 export type AppKind = "action" | "panel" | "toggle" | "manage";
 

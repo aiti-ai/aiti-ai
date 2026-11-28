@@ -14,9 +14,9 @@
 
 import { __setCtx, t } from "./host-shim";
 import { ACP_KEY, setDialogOpen, acpDefaultZone } from "./common";
-import { usePresent, isSidebarDockState, seedDockDefault, declareDockZones } from "../../../_shared/ext-float-dock-lite";
-import { dockIconDecl } from "../../../_shared/dock-icons";
-import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
+import { usePresent, isSidebarDockState, seedDockDefault, declareDockZones } from "@aiti-ai/ext-shared/ext-float-dock-lite";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
+import { lazyExtView, createLazyModule } from "@aiti-ai/ext-shared/ext-lazy";
 
 // 重模块单例：面板三面（float/right/left）与命令式入口共享一次 import
 const acpManageRef = createLazyModule(() => import("./acp-manage"));

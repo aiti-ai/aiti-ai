@@ -11,7 +11,7 @@
  * and pick the "DirectoryPicker" export — keep the name.
  */
 import { apiUrl, createPortal, getExtService, t } from "../host-shim";
-import { DirectoryPicker as SharedDirectoryPicker, type DirectoryPickerProps } from "../../../../_shared/directory-picker";
+import { DirectoryPicker as SharedDirectoryPicker, type DirectoryPickerProps } from "@aiti-ai/ext-shared/directory-picker";
 
 /** Host facilities for the shared dialog (read lazily by the component). */
 const HOST = { apiUrl, t, getExtService, createPortal };

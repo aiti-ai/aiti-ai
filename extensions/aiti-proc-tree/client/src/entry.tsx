@@ -12,7 +12,7 @@ import { __setCtx } from "./host-shim";
 import {
   present, presentState, sidebarZoneOf, seedDockDefault, seedBlockCollapsedDefault,
   declareDockZones, readBlockDismissed, FLOAT_INSTALLED_EVENT,
-} from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
 import { ProcTreeDockFace, ProcTreePage, PT_KEY, ptIconUrl } from "./app";
 
 const DOCK_STACK_SERVICE = "aiti-float.dockstack";

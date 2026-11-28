@@ -5,7 +5,7 @@
  * 弹窗 UI 全部移入 acp-manage.tsx（交互后才 import）；本文件只留壳与重模块
  * 都需要的最小件——item key、开关（openFloat/closePanel）、图标。
  */
-import { openFloat, closePanel, sidebarZoneOf } from "../../../_shared/ext-float-dock-lite";
+import { openFloat, closePanel, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock-lite";
 
 export const ACP_KEY = "aiti-acp-agent:manage";
 

@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
-import { runEsbuild } from "../_shared/esbuild-bin.ts";
+import { runEsbuild } from "@aiti-ai/ext-shared/esbuild-bin";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";

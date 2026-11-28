@@ -18,8 +18,8 @@ import { JsxExamplePanel, JsxToolbarButton, setPanelOpen } from "./jsx-example";
 import {
   DockDemoDialog, DockDemoRightTab, DockDemoSidebarSection, DockDemoToolbarButton,
 } from "./dock-demo"; // aiti-float dock v0.5.0 试点（双 face + 状态机防双开）
-import { seedDockDefault } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
+import { seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
 import { WidgetDemoCard } from "./new-session-widget";
 
 export default function register(ctx: Record<string, unknown>) {

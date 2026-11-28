@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { t, getCtx } from "./host-shim";
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 import { ensureReadability } from "./helpers";
 
 export interface ConfirmOptions {

@@ -15,7 +15,7 @@ import { t, apiUrl } from "./host-shim";
 import { ghostBtn } from "./helpers";
 import { showToast } from "./toast";
 import { DirectoryPicker } from "./sidebar/directory-picker";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 
 /** accept 基础集（zip/tar 三平台保证）；rar/7z 按 capabilities 追加。 */
 const BASE_ACCEPT = ".zip,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.tar";

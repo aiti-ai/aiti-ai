@@ -12,8 +12,8 @@ import { apiUrl, currentLocale, t } from "./host-shim";
 
 // ── 模块级开关：toolbar 按钮与 dialog 共享（Esc 关闭 / 遮罩点击关闭都走这里） ──
 // dock v3（P3 批）：显隐收口展示状态机（P3 保守：无 default，浮窗照旧；⇱ 菜单可手动右栏）
-import { useGate, usePresent, presentState, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
-import { uiAlert, uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+import { useGate, usePresent, presentState, DockBody, openFloat, closePanel, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
+import { uiAlert, uiConfirm, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 /** API URL with the current UI locale appended: the server localizes every human-readable
  *  string it returns (modes, rationale, warnings, dependency labels, errors). */

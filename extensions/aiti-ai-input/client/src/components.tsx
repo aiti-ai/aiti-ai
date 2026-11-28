@@ -15,7 +15,7 @@ import {
   acUpdateCoarse, barRemoveMark, setVoicePending, subscribeVoice, isVoicePending, setAcBar,
 } from "./logic";
 // L2 录音引擎懒加载（薄壳拆分 §5.2）：首次按住 🎤 才拉 voice-l2 chunk 并安装
-import { createLazyModule } from "../../../_shared/ext-lazy";
+import { createLazyModule } from "@aiti-ai/ext-shared/ext-lazy";
 
 const voiceL2Ref = createLazyModule(() => import("./voice-l2").then((m) => ({ install: m.installVoiceL2 })));
 /** 确保引擎已安装（幂等；安装完成 resolve）。press 手势先行置态，引擎就绪后再 start。 */

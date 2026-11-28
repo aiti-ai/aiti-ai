@@ -11,7 +11,7 @@
  */
 import { apiUrl, createPortal, extSvc } from "./host-shim";
 import { ct as t } from "./comp-i18n";
-import { DirectoryPicker as SharedDirectoryPicker, type DirectoryPickerProps } from "../../../_shared/directory-picker";
+import { DirectoryPicker as SharedDirectoryPicker, type DirectoryPickerProps } from "@aiti-ai/ext-shared/directory-picker";
 
 /** Host facilities for the shared dialog (read lazily by the component). */
 const HOST = { apiUrl, t, getExtService: extSvc, createPortal };
