@@ -1,20 +1,20 @@
 /**
- * aiti-zcode-agent —— 会话后端扩展：智谱 ZCode（桌面端内嵌 CLI runtime）驱动。
+ * aiti-zcode-agent — session backend extension driven by Zhipu ZCode (CLI runtime embedded in the desktop app).
  *
- * 协议：`node zcode.cjs --json --mode build [--resume sess_xxx] --prompt <text>`
- *   （runtime 0.16.5 实测：--json 为单个 pretty JSON 对象，exit 0 全量打印）
+ * Protocol: `node zcode.cjs --json --mode build [--resume sess_xxx] --prompt <text>`
+ *   (verified on runtime 0.16.5: --json prints a single pretty JSON object, fully at exit 0)
  *   → { sessionId, traceId, turnId, response, usage{inputTokens,...}, projection{contextWindow} }
  *
- * 进程模型：每轮一个单发进程（同 aiti-codex-agent 的 exec 模式），续接用 --resume。
- * 与 CC print 模式同款懒持久化：sess_xxx 首轮后可知，session_backend_ready 换绑。
+ * Process model: one single-shot process per turn (same exec mode as aiti-codex-agent); continuation via --resume.
+ * Same lazy persistence as CC print mode: sess_xxx is only known after the first turn, rebind via session_backend_ready.
  *
- * 认证：官方 env 注入通道（ZCODE_MODEL/ZCODE_BASE_URL/ZCODE_API_KEY，不写 config.json）；
- *       key 由桌面端凭据静默换取（官方 login 同路径，幂等），详见 zcode-core.ts §注释。
+ * Auth: official env injection channel (ZCODE_MODEL/ZCODE_BASE_URL/ZCODE_API_KEY, no config.json writes);
+ *       the key is silently exchanged from the desktop credentials (same path as official login, idempotent); see zcode-core.ts comments.
  *
- * 合规定位：编程套餐额度仅限官方工具白名单（Claude Code/Codex/ZCode/...），
- * 借道官方 CLI 本体驱动 = 合规吃套餐；所有 HTTP 调用由官方 CLI 构造，无风控面。
+ * Compliance: coding-plan quota is restricted to the official tool whitelist (Claude Code/Codex/ZCode/...);
+ * driving the official CLI itself = compliant plan usage; all HTTP calls are made by the official CLI, no risk-control surface.
  *
- * 调研底稿：docs/zcode-desktop-cli-agent-analysis.md
+ * Research notes: docs/zcode-desktop-cli-agent-analysis.md
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -26,12 +26,12 @@ import type { ChildProcess } from "node:child_process";
 import { governanceEnv } from "./external-governance.ts";
 import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
-// 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
+// Queue shared implementation layer (authoritative source pi-web-ext/_shared/backend-queue.ts; copy deployed with the extension — changes must be synced both ways)
 import { createBackendQueueSupport, createQueueFilePersistence, migrateQueueSidecar } from "@aiti-ai/ext-shared/backend-queue";
 
-/** 队列崩溃恢复 sidecar 根（startup 捕获 <stateDir>；undefined/空 = 不持久化）。 */
+/** Queue crash-recovery sidecar root (captured at startup as <stateDir>; undefined/empty = no persistence). */
 let queueStateDir: string | undefined;
-/** 任务列表快照根（<stateDir>/task-lists/<zcodeSid>.json；休眠会话面板兜底数据源，§7.5）。 */
+/** Task-list snapshot root (<stateDir>/task-lists/<zcodeSid>.json; fallback data source for dormant-session panels, §7.5). */
 let taskListDir: string | undefined;
 import {
   readExtModelState, readAgentLastUsedModel, renameExtModelState, writeExtModelState,
@@ -44,22 +44,22 @@ import {
   extractCliError, isChannelDriveable, parseModelRef, parseTurnOutput, QUOTA_LIMIT_URL, quotaLimitToQuotaView, readProviderConfigApiKey, resolveNodeBin, resolveRuntime,
   isStartPlanChannel, planQuotaView, readPlanStatus, usageToReport, wireProviderId, writeProviderConfigFile, zcodeHome, zcodeLoginDriver, humanizeZcodeError,
 } from "./zcode-core.ts";
-// 冷恢复工具行回放共享口径（权威源 pi-web-ext/_shared/seed-tool.ts；D18 四家归一）
+// Cold-recovery tool-row replay shared helper (authoritative source pi-web-ext/_shared/seed-tool.ts; D18 unified across the four backends)
 import { createSeedToolReplay } from "@aiti-ai/ext-shared/seed-tool";
 
-// 受控登录共享层（权威源 pi-web-ext/_shared/controlled-login.mjs，副本随扩展部署——改动须双向同步）
+// Controlled-login shared layer (authoritative source pi-web-ext/_shared/controlled-login.mjs; copy deployed with the extension — changes must be synced both ways)
 import { createControlledLogin, mountControlledLoginApi } from "@aiti-ai/ext-shared/controlled-login";
 
 // ============================================================================
-// 结构化契约（out-of-tree）
+// Structured contracts (out-of-tree)
 // ============================================================================
 
 type Listener = (event: Record<string, unknown>) => void;
 interface SessionCapabilitiesLike extends Record<string, boolean> {}
 
-/** zcode 会话存储只读探测（WAL 并发读安全，与 session-manager zcode adapter 同源契约）。
- *  返回该会话的 time_updated（epoch ms）作为「外部写入水位」；db 缺失/写锁/读失败 → null
- *  （调用方跳过同步、保持现状，下轮再试）。 */
+/** Read-only probe of the zcode session store (WAL-safe for concurrent reads; same contract as the session-manager zcode adapter).
+ *  Returns the session's time_updated (epoch ms) as the "external write watermark"; missing db / write lock / read failure → null
+ *  (the caller skips the sync, keeps the status quo, retries next turn). */
 function readZcodeSessionUpdatedMs(sid: string): number | null {
   try {
     const dbPath = join(zcodeHome(), "cli", "db", "db.sqlite");
@@ -78,15 +78,17 @@ function readZcodeSessionUpdatedMs(sid: string): number | null {
 }
 
 /**
- * 模型目录（注册级静态 + handle 实例共用）：CLI 只认自己 provider 表的 ref，不并 pi 目录。
- * 动态发现（不写死）：通道/模型来自桌面端 v2/config.json 注册表 + coding-plan-cache.json
- * available 条目（buildZcodeCatalogRefs；静态 seed 仅兜底）。
- * 通道级可用裁决在 buildZcodeCatalogRefs（isChannelDriveable，2026-09-15：套餐通道须自身
- * available）；此处再按已认证套餐家族过滤（detectPlanProvider；apiKeyOverride 存在/探测不出时全列）——
- * 防止用户切到无凭据通道的模型（实测：zai 未登录选 zai/Flash → 每轮凭据人话报错）。
- * start-plan（ZCode 套餐）通道不再从目录排除：照常列出并带「暂不支持」提示（buildZcodeCatalogRefs 标签），
- * 选中/新建/发消息三处人话拦截（验证码只能桌面 GUI 产生，pi-web 不可驱动，见 START_PLAN_UNSUPPORTED）。
- * 当前选中模型即使跨通道也保留（选择器需展示现状）。
+ * Model catalog (shared by registration-level static listing and handle instances): the CLI only accepts refs from its own
+ * provider table, not pi's catalog. Dynamic discovery (nothing hard-coded): channels/models come from the desktop
+ * v2/config.json registry + coding-plan-cache.json available entries (buildZcodeCatalogRefs; static seed is a fallback only).
+ * Channel-level availability is decided in buildZcodeCatalogRefs (isChannelDriveable, 2026-09-15: plan channels must be
+ * available themselves); here we additionally filter by the authenticated plan family (detectPlanProvider; all listed when
+ * apiKeyOverride exists or detection fails) — preventing users from switching to models on credential-less channels
+ * (observed: picking zai/Flash while zai is logged out → per-turn human-readable credential errors).
+ * The start-plan (ZCode plan) channel is no longer excluded from the catalog: listed as usual with an "unsupported yet" hint
+ * (buildZcodeCatalogRefs label), intercepted with plain-language messages at select/create/send (captcha can only be produced
+ * by the desktop GUI; pi-web cannot drive it; see START_PLAN_UNSUPPORTED).
+ * The currently selected model is kept even across channels (the selector must show the actual state).
  */
 function zcodeCatalog(current?: { id: string; provider: string }): ExtModelEntry[] {
   const planFamily = detectPlanProvider();
@@ -95,8 +97,9 @@ function zcodeCatalog(current?: { id: string; provider: string }): ExtModelEntry
   if (!override && planFamily) {
     builtin = builtin.filter((m) => channelFamily(m.id.split("/")[0]) === planFamily);
   }
-  // 目录内命中 → 前移并保留目录 label；不在目录（旧套餐 ref、恢复的 start-plan 会话等）→ 合成条目也带
-  // 可读标签（`模型id (通道)`，与目录同格式）并补「暂不支持」提示——避免选择器出现裸 ref 行（2026-09-14）。
+  // Hit in the catalog → move to front and keep the catalog label; not in the catalog (old plan refs, restored start-plan
+  // sessions, etc.) → synthesized entry also carries a readable label (`modelId (channel)`, same format as the catalog)
+  // plus an "unsupported yet" hint — avoiding bare-ref rows in the selector (2026-09-14).
   const cur = current?.id
     ? {
         ...current,
@@ -106,7 +109,7 @@ function zcodeCatalog(current?: { id: string; provider: string }): ExtModelEntry
   return withCurrentFirst(builtin, cur);
 }
 
-/** ref → 展示标签（`channel/modelId` → `modelId (channel)`，与目录同格式；无斜杠原样返回）。 */
+/** ref → display label (`channel/modelId` → `modelId (channel)`, same format as the catalog; returned as-is when there is no slash). */
 function refDisplayLabel(ref: string): string {
   const i = ref.indexOf("/");
   if (i <= 0 || i === ref.length - 1) return ref;
@@ -114,10 +117,10 @@ function refDisplayLabel(ref: string): string {
 }
 
 /**
- * 该 agent 上次使用的模型（状态文件里 mtime 最新的 selected；带通道合法性校验）——
- * 新建会话未显式指定模型时的默认来源（per-agent last used，对齐 pi 的 defaultModel 语义）。
- * 校验规则与 createSession 一致（channelUsable）：start-plan 不驱动 + 套餐通道须自身
- * available（2026-09-15 通道级收紧）+ 不跨未认证家族——上次用过的死通道不再作默认。
+ * This agent's last-used model (the selected entry with the newest mtime in state files; with channel validity checks) —
+ * the default source when a new session doesn't specify a model (per-agent last used, aligned with pi's defaultModel semantics).
+ * Same validation as createSession (channelUsable): start-plan never drives + plan channels must be available themselves
+ * (2026-09-15 channel-level tightening) + no cross into unauthenticated families — a previously used dead channel is no longer the default.
  */
 async function lastUsedModelRef(): Promise<{ id: string; provider: string } | undefined> {
   const last = await readAgentLastUsedModel("zcode");
@@ -126,55 +129,56 @@ async function lastUsedModelRef(): Promise<{ id: string; provider: string } | un
   return { id: last.id, provider: "zcode" };
 }
 
-/** abort 看门狗：session/stop 发出后未收口的强杀宽限期（zcode 端 turn 挂死时 stop 是 no-op）。
- *  从 abort() 入口起算（不再叠加 session/stop 的 RPC 等待）——总收口上限 = 本时长。 */
+/** Abort watchdog: grace period before force-kill when session/stop was sent but the turn hasn't settled (zcode-side stop is a no-op on a hung turn).
+ *  Counted from the abort() entry (no longer stacking the session/stop RPC wait) — total settling bound = this duration. */
 const ZCODE_ABORT_WATCHDOG_MS = 6_000;
 
 const ZCODE_CAPABILITIES_BASE: SessionCapabilitiesLike = {
-  // 原生 steer（desktop 同款）：运行中 v4/command sendText{requestedDelivery:"guide"} 注入当前轮，
-  // runtime 在下一模型/工具间隙 drain（turn.steerDrained 出队）+ 模型同轮即答（2026-09-10 真机实测）。
-  // ⚠ 必须走 v4 网关——v1 session/send 运行中路径实测只入延迟队列且永不投递（黑洞，见 analysis §7.6）。
-  // oneshot 通道无 v4 面 → 注入失败自动降级本地 followUp 队列（R9）。
+  // Native steer (same as desktop): while running, v4/command sendText{requestedDelivery:"guide"} injects into the current turn,
+  // the runtime drains it at the next model/tool gap (dequeued via turn.steerDrained) + the model answers within the same turn (verified on a real device 2026-09-10).
+  // ⚠ Must go through the v4 gateway — v1 session/send on the running path was observed to only enter the deferred queue and never deliver (black hole, see analysis §7.6).
+  // The oneshot channel has no v4 surface → failed injection automatically degrades to the local followUp queue (R9).
   steer: true,
-  followUp: true, // 每轮一个新进程 + --resume，天然顺序语义
-  contextUsage: true, // turn.completed 真实 usage（totalTokens/input 优先）+ ZCODE_CONTEXT_WINDOW（1M）；估算 tokenCount 仅兜底
-  setModel: true, // app-server：session/setModel 即时生效；oneshot：下轮 spawn 的 ZCODE_MODEL
+  followUp: true, // one new process per turn + --resume, naturally sequential semantics
+  contextUsage: true, // real usage from turn.completed (totalTokens/input first) + ZCODE_CONTEXT_WINDOW (1M); estimated tokenCount is a fallback only
+  setModel: true, // app-server: session/setModel takes effect immediately; oneshot: ZCODE_MODEL of the next spawned turn
   setThinkingLevel: false,
   renameSession: false,
   compact: false,
   executeBash: false,
-  listTools: false, // 内置工具集固定
+  listTools: false, // built-in tool set is fixed
   setActiveTools: false,
-  navigateTree: false, // zcode 无会话树——「编辑从此处」走 fork 语义（见 zcodeCapabilities fork 注）
+  navigateTree: false, // zcode has no session tree — "edit from here" uses fork semantics (see zcodeCapabilities fork note)
   deleteSession: false,
-  getCommands: false, // 可用 `zcode.cjs commands list` 读，P2
-  respondPermission: false, // app-server 反向请求自动放行（backend 语义）；权限 UI 双向桥接是后续项
+  getCommands: false, // readable via `zcode.cjs commands list`, P2
+  respondPermission: false, // app-server reverse requests are auto-approved (backend semantics); bidirectional permission UI bridging is future work
   getUsage: true,
   listModels: true,
-  fileAttachments: true, // images → v4 attachment begin/chunk/commit 上传 + session/send attachments（app-server 桌面端同款，2026-09-17）
+  fileAttachments: true, // images → v4 attachment begin/chunk/commit upload + session/send attachments (same as the desktop app-server, 2026-09-17)
   getMessages: true,
-  setPermissionMode: true, // app-server：session/setMode 即时生效（桌面端同款）；oneshot：下轮 spawn 的 --mode
-  queueManage: true, // 队列 keeper 适配：followUp 本地队列全 CRUD + steer 镜像只读（见 queueManage）
-  respondInteraction: true, // 交互元语桥接：zcode ExitPlanMode/AskUserQuestion 反向请求 → 前端审批/问题卡（oneshot 通道无反向请求面，运行时降级）
-  respondProviderHeaders: true, // start-plan 验证码桥：provider_runtime_headers_request → 前端 AliyunCaptcha SDK → respond_provider_headers
+  setPermissionMode: true, // app-server: session/setMode takes effect immediately (same as desktop); oneshot: --mode of the next spawned turn
+  queueManage: true, // queue keeper adapter: full CRUD on the local followUp queue + read-only steer mirror (see queueManage)
+  respondInteraction: true, // interaction primitive bridging: zcode ExitPlanMode/AskUserQuestion reverse requests → frontend approval/question cards (the oneshot channel has no reverse-request surface; degrades at runtime)
+  respondProviderHeaders: true, // start-plan captcha bridge: provider_runtime_headers_request → frontend AliyunCaptcha SDK → respond_provider_headers
 };
 
 /**
- * fork 能力按通道判定：session/fork 协议面只有 app-server 常驻连接可用（oneshot 每轮
- * 单发进程，fork 出的子会话无法续跑）。fork=true 同时点亮两个前端能力——消息「分支」
- * 按钮（fork 新会话不换绑）与「编辑从此处」（fork + handle 换绑就地续跑，reset 语义）。
- * 服务端限制「运行中不许 fork」原样上抛为提示（能力保留、时机受限），不静默。
+ * Fork capability is decided per channel: the session/fork protocol surface is only available on the long-lived app-server
+ * connection (oneshot spawns a single-shot process per turn; forked child sessions can't continue). fork=true lights up two
+ * frontend features at once — the message "branch" button (fork a new session without rebinding) and "edit from here"
+ * (fork + handle rebind, continue in place, reset semantics).
+ * The server-side restriction "no fork while running" is surfaced as-is as a message (capability kept, timing limited), never silent.
  */
 function zcodeCapabilities(): SessionCapabilitiesLike {
   return featureTransport() === "app-server" ? { ...ZCODE_CAPABILITIES_BASE, fork: true } : ZCODE_CAPABILITIES_BASE;
 }
 
 // ============================================================================
-// feature 读取（extman 功能管理）——DI 方案 P1：ctx.features 优先，__piWebExt 直调兜底
+// feature reads (extman feature management) — DI plan P1: ctx.features first, direct __piWebExt access as fallback
 // ============================================================================
 
-let hostFeatures: any = null; // startup 捕获 ctx.features
-let hostSvc: any = null; // startup 捕获 ctx.services（session-manager.sessions 消费用）
+let hostFeatures: any = null; // ctx.features captured at startup
+let hostSvc: any = null; // ctx.services captured at startup (consumed for session-manager.sessions)
 type FeatureRegistry = { featureValue?: (extId: string, fid: string) => boolean | string };
 function featureRegistry(): FeatureRegistry | undefined {
   return (globalThis as Record<string, unknown>).__piWebExt as FeatureRegistry | undefined;
@@ -215,19 +219,19 @@ function featureApiKeyOverride(): string | undefined {
   return v || undefined;
 }
 
-/** start-plan（ZCode 套餐）通道不可驱动的人话提示（选择/新建/发消息三处拦截共用）。 */
+/** Plain-language message for the undrivable start-plan (ZCode plan) channel (shared by the select/create/send intercepts). */
 const START_PLAN_UNSUPPORTED =
   "ZCode 套餐通道（start-plan）需要阿里云验证码验证，验证码只能由 ZCode 桌面端产生，pi-web 暂不支持。请改用 bigmodel/zai 通道模型（如 GLM-5.3），或到 ZCode 桌面端继续使用该套餐。";
 
-/** start-plan 已知会话（All Sessions 复活/已存在的会话）的拦截提示——明确告知会话是 start-plan 加载的。 */
+/** Intercept message for known start-plan sessions (revived via All Sessions / pre-existing sessions) — explicitly tells the user the session was loaded via start-plan. */
 const START_PLAN_UNSUPPORTED_KNOWN =
   "该会话是由 start-plan（ZCode 套餐）通道加载的已知会话：套餐通道需要阿里云验证码验证，验证码只能由 ZCode 桌面端产生，pi-web 暂不支持驱动。请先在模型选择器中切换到 bigmodel/zai 通道模型（如 GLM-5.3）后继续，或到 ZCode 桌面端使用该套餐。";
 
 /**
- * 通道可驱动校验（createSession 种子/恢复 + lastUsedModelRef 共用）：
- * start-plan 不驱动；apiKeyOverride 直通；其余按套餐缓存通道级裁决
- * （isChannelDriveable：套餐通道须自身 available——2026-09-15 收紧，家族级连带放行
- * 会种出「选中即每轮 429/1113」的死通道）；探测不出（无套餐数据）回落旧家族匹配。
+ * Channel drivability check (shared by createSession seeding/restoration and lastUsedModelRef):
+ * start-plan never drives; apiKeyOverride passes through; the rest use the channel-level verdict from the plan cache
+ * (isChannelDriveable: plan channels must be available themselves — tightened 2026-09-15; family-level blanket approval
+ * would seed dead channels that 429/1113 on every turn once selected); falls back to the old family match when detection has no data.
  */
 function channelUsable(providerId: string): boolean {
   if (isStartPlanChannel(providerId)) return false;
@@ -238,16 +242,16 @@ function channelUsable(providerId: string): boolean {
   return plan === null || channelFamily(providerId) === plan;
 }
 
-/** 传输通道：app-server（默认，桌面端同款长驻流式）| oneshot（每轮单发进程兜底）。 */
+/** Transport channel: app-server (default, long-lived streaming same as desktop) | oneshot (single-shot process per turn, fallback). */
 function featureTransport(): "app-server" | "oneshot" {
   const v = featureString("zcode.transport").trim();
   return v === "oneshot" ? "oneshot" : "app-server";
 }
 
 /**
- * spawn env（共享机制，_shared/agent-spawn-env.ts）：治理白名单 + 自动 AITI_BRIDGE_URL
- * （pi-web 自身实例，zcode 的 MCP shim 子进程继承 → 自动连 spawn 自己的这个实例的桥）
- * + extman spawn.env 用户列表（KEY=VALUE / -NAME 排除 / $VAR 引用，可覆盖自动值）。
+ * Spawn env (shared mechanism, _shared/agent-spawn-env.ts): governance whitelist + automatic AITI_BRIDGE_URL
+ * (the pi-web's own instance, inherited by zcode's MCP shim subprocess → automatically connects to the bridge of
+ * the instance that spawned it) + the extman spawn.env user list (KEY=VALUE / -NAME exclusion / $VAR reference, can override automatic values).
  */
 function zcodeSpawnEnv(): Record<string, string> {
 	return agentSpawnEnv({
@@ -259,7 +263,7 @@ function zcodeSpawnEnv(): Record<string, string> {
 	});
 }
 
-/** 新会话默认模型 ref：feature 显式配置 > 套餐通道探测（coding-plan-cache，轻量明文）> bigmodel 默认。 */
+/** Default model ref for new sessions: explicit feature config > plan channel detection (coding-plan-cache, lightweight plaintext) > bigmodel default. */
 function seedModelRef(): string {
   const configured = featureString("zcode.model").trim();
   if (configured && parseModelRef(configured)) return configured;
@@ -270,12 +274,13 @@ function seedModelRef(): string {
 }
 
 // ============================================================================
-// 任务列表快照（休眠会话兜底：get_state 只对活 handle 有 tasks，handle 空闲 GC /
-// 进程重启后打开历史会话时由 core state 路由经 sessionDormantState 服务读这里。
-// docs/aiti-zcode-agent-task-list-plan.md §7.5）
+// Task-list snapshots (dormant-session fallback: get_state only has tasks for live handles; when a
+// historical session is opened after the handle was GC'd while idle / after a process restart, the
+// core state router reads here via the sessionDormantState service.
+// docs/aiti-zcode-agent-task-list-plan.md §7.5)
 // ============================================================================
 
-/** zcode 会话 id 白名单（防路径穿越：文件名只允许 sess_ + 安全字符）。 */
+/** zcode session id whitelist (anti path traversal: file names allow only sess_ + safe characters). */
 const TASK_SNAPSHOT_SID_RE = /^sess_[A-Za-z0-9._-]+$/;
 
 function taskSnapshotPath(sid: string): string | undefined {
@@ -283,7 +288,7 @@ function taskSnapshotPath(sid: string): string | undefined {
   return join(taskListDir, `${sid}.json`);
 }
 
-/** 任务列表快照落盘（每次 task_update 全量覆写；原子写 = tmp + rename，Windows 兼容 §0）。 */
+/** Task-list snapshot persistence (full overwrite on every task_update; atomic write = tmp + rename, Windows compat §0). */
 function persistTaskSnapshot(sid: string, todos: TaskEntry[]): void {
   const fp = taskSnapshotPath(sid);
   if (!fp) return;
@@ -297,7 +302,7 @@ function persistTaskSnapshot(sid: string, todos: TaskEntry[]): void {
   }
 }
 
-/** 复合会话 id → zcode sid（仅认 zcode: 前缀 / 裸 sess_；new-* 未落库返回 null）。 */
+/** Composite session id → zcode sid (accepts only the zcode: prefix / bare sess_; returns null for new-* not yet persisted). */
 function zcodeSidOf(compositeId: string): string | null {
   if (typeof compositeId !== "string") return null;
   const raw = compositeId.startsWith("zcode:") ? compositeId.slice("zcode:".length) : compositeId;
@@ -305,16 +310,16 @@ function zcodeSidOf(compositeId: string): string | null {
 }
 
 /**
- * sessionDormantState 服务实现（core state 路由休眠分支消费）：休眠会话最近任务快照。
- * 应答字段与 AgentStateResponse.wire 对齐 = `{tasks}`（区别于 handle 契约 taskList() 的 `{todos}`）；
- * 无数据/非本扩展会话 → null（core 继续扫下一个提供方）。
+ * sessionDormantState service implementation (consumed by the core state router's dormant branch): latest task snapshot of a dormant session.
+ * The reply field matches AgentStateResponse.wire = `{tasks}` (distinct from the handle contract taskList()'s `{todos}`);
+ * no data / not this extension's session → null (the core keeps scanning the next provider).
  */
 async function readTaskSnapshot(compositeId: string): Promise<{ tasks: TaskEntry[] } | null> {
   const todos = await readTaskSnapshotTodos(compositeId);
   return todos ? { tasks: todos } : null;
 }
 
-/** 快照读取（id 兼容复合/裸 sid；无文件/损坏 → null）。 */
+/** Snapshot read (id accepts composite/bare sid; missing file / corrupted → null). */
 async function readTaskSnapshotTodos(compositeId: string): Promise<TaskEntry[] | null> {
   const sid = zcodeSidOf(compositeId);
   const fp = sid ? taskSnapshotPath(sid) : undefined;
@@ -328,40 +333,40 @@ async function readTaskSnapshotTodos(compositeId: string): Promise<TaskEntry[] |
 }
 
 // ============================================================================
-// ZcodeHandle —— 单发进程 × 轮次模型
+// ZcodeHandle — single-shot process × turn model
 // ============================================================================
 
 interface TurnImage { data: string; mimeType: string; filename?: string }
 
 class ZcodeHandle {
   readonly source = "aiti-zcode-agent/zcode";
-  /** fork 按通道判定（getter：feature 读取在 startup 捕获后才可用，且每次读实时）。 */
+  /** Fork decided per channel (getter: feature reads are only available after startup capture, and read live each time). */
   get capabilities(): SessionCapabilitiesLike {
     return zcodeCapabilities();
   }
-  /** 会话工作目录；All Sessions 复活路径会以 zcode 会话存储的 directory 对齐（upsert/resume workspace 一致性依赖此值）。 */
+  /** Session working directory; the All Sessions revival path aligns it with the directory in the zcode session store (upsert/resume workspace consistency depends on this value). */
   cwd: string;
   id: string;
 
   private listeners = new Set<Listener>();
   private aliveFlag = true;
   private running = false;
-  /** 真实 zcode 会话 id（sess_xxx；首轮后可知 → 换绑）。 */
+  /** Real zcode session id (sess_xxx; known only after the first turn → rebind). */
   private sessId: string | undefined;
   private lastUsage: Record<string, unknown> | undefined;
   private lastContextTokens: number | null = null;
-  /** 当前模型（public：createSession 种子/状态恢复从外部赋值；id = "bigmodel/GLM-5.3" ref）。 */
+  /** Current model (public: assigned externally by createSession seeding/state restoration; id = "bigmodel/GLM-5.3" ref). */
   model: { id: string; provider: string } | undefined;
-  /** 当前轮子进程（abort 用）。 */
+  /** Current turn's child process (used by abort). */
   private child: ChildProcess | null = null;
-  /** 当前轮取消源（runtime 解析/下载阶段的 abort；每轮新建）。 */
+  /** Current turn's cancellation source (abort during runtime resolution/download; recreated each turn). */
   private turnAbort = new AbortController();
   /**
-   * 队列支持（共享层 docs/backend-queue-manager-plan.md §3）：本地 followUp 队列（带图片，
-   * R4 闭环）+ steer 镜像 + queueManage 全 action + settle 自动续轮 + steer 失败降级（R9）。
-   * dispatch 闭包回 prompt() 全簿记（liveHistory/running/runTurn/scheduleDrain）；
-   * steer 闭包走 v4 网关 desktop 同款注入（失败 throw → 共享层降级入队）；oneshot 无 steer →
-   * 运行中一律排队（面板可见可撤回）。 */
+   * Queue support (shared layer docs/backend-queue-manager-plan.md §3): local followUp queue (with images,
+   * R4 closed loop) + steer mirror + all queueManage actions + automatic next-turn after settle + steer failure degradation (R9).
+   * The dispatch closure calls back into prompt() with full bookkeeping (liveHistory/running/runTurn/scheduleDrain);
+   * the steer closure injects through the v4 gateway, same as desktop (throws on failure → the shared layer degrades to queueing);
+   * oneshot has no steer → everything queues while running (visible and recallable in the panel). */
   private q = createBackendQueueSupport({
     isRunning: () => this.isRunning() || !this.aliveFlag,
     alive: () => this.aliveFlag,
@@ -369,45 +374,45 @@ class ZcodeHandle {
     steer: (text) => this.steerViaAppServer(text),
     onEvent: (ev) => this.emit(ev),
     log: (m) => console.warn(m),
-    // 队列崩溃恢复 sidecar（docs/aiti-remote-queue-and-sidecar-plan.md §3）
+    // Queue crash-recovery sidecar (docs/aiti-remote-queue-and-sidecar-plan.md §3)
     persistence: createQueueFilePersistence(() => (queueStateDir ? join(queueStateDir, "queues", `${this.id}.json`) : undefined), (m) => console.warn(m)),
   });
-  /** steer 镜像 id 跟踪（onSteerQueue 全量快照 diff 出队用；输入本体在共享层镜像里）。 */
+  /** Steer mirror id tracking (used to diff the onSteerQueue full snapshot for dequeue; the input itself lives in the shared-layer mirror). */
   private lastSteerIds: string[] = [];
-  /** setPermissionMode 的期望模式（每轮 spawn 的 --mode；下轮生效）。 */
+  /** Desired mode for setPermissionMode (--mode of each spawned turn; takes effect next turn). */
   private desiredMode: string | undefined;
 
   private liveHistory: unknown[] = [];
-  /** liveHistory 的上次「源回填」水位（zcode session.time_updated；0 = 未锚定）。
-   *  外部写入（zcode 桌面端/CLI 另起进程写同一会话）水位前进时，getMessages 前从源重读重建。 */
+  /** Last "source backfill" watermark of liveHistory (zcode session.time_updated; 0 = not anchored).
+   *  When the watermark advances due to external writes (zcode desktop/CLI writing the same session from another process), getMessages re-reads and rebuilds from the source first. */
   private historySeedRevMs = 0;
-  /** 外部同步单飞锁（并发 getMessages 不重复 parse）。 */
+  /** External-sync single-flight lock (concurrent getMessages don't parse repeatedly). */
   private historySyncInflight: Promise<void> | null = null;
-  /** 最后活动时间戳（epoch ms）：/api/sessions 用它修正侧栏占位行的冻结 modified。 */
+  /** Last activity timestamp (epoch ms): /api/sessions uses it to fix the frozen modified of sidebar placeholder rows. */
   private lastActivityTs: number | null = null;
 
   private configDir: string;
-  /** app-server 长驻会话（feature zcode.transport=app-server 时懒建，跨轮复用）。 */
+  /** Long-lived app-server session (lazily created when feature zcode.transport=app-server; reused across turns). */
   private as: AppServerSession | null = null;
-  /** 宿主注入的 detachable 托管策略（agent-starter wrapper；absent = 历史直 spawn）。 */
+  /** Detachable-hosting strategy injected by the host (agent-starter wrapper; absent = plain spawn). */
   private agentStarter: ZcodeAgentStarterLike | undefined;
-  /** Core 恢复路径交来的活进程（wrapper 托管，pi-web 重启后 reattach）；absent = 非接管。 */
+  /** Live process handed over by the core recovery path (wrapper-hosted, reattached after a pi-web restart); absent = not adopted. */
   private attachedChild: ChildProcess | undefined;
-  /** 接管进程的 journal 重放字节数（SocketChild.replayBytes；0 = 无重放）。 */
+  /** Journal replay bytes of the adopted process (SocketChild.replayBytes; 0 = no replay). */
   private attachedReplayBytes = 0;
-  /** P2 协议委托：成员级启动包装（custom-agent 路径），优先于 extman spawn.* feature。 */
+  /** P2 protocol delegation: member-level launch wrapper (custom-agent path), takes precedence over extman spawn.* features. */
   launchOverride: LaunchOverride | undefined;
-  /** 已交给 zcode 服务端的 steer 输入镜像（只读：协议无撤回入口；steerQueued 入 / steerDrained 出）。 */
+  /** Mirror of steer inputs already handed to the zcode server (read-only: the protocol has no recall entry; steerQueued in / steerDrained out). */
   private steerMirror: Array<{ pendingInputId: string; input: string }> = [];
-  /** 任务列表快照（onTaskList 回调维护；taskList() 契约出口用。⚠ 刻意另名 taskListMirror，避免与同名方法字段撞名互覆）。 */
+  /** Task-list snapshot (maintained by the onTaskList callback; used by the taskList() contract outlet. ⚠ Deliberately named taskListMirror to avoid clobbering the same-named method). */
   private taskListMirror: TaskEntry[] = [];
-  /** start-plan 验证码：待前端求解的反向请求（requestId → resolver；appserver 层另有 180s 超时兜底）。 */
+  /** start-plan captcha: reverse requests pending frontend solving (requestId → resolver; the appserver layer also has a 180s timeout fallback). */
   private providerHeadersPending = new Map<string, (answer: { ok: true; captchaVerifyParam: string; region?: string } | { ok: false; errorMessage: string }) => void>();
-  /** captchaVerifyParam 缓存（providerId → param；TTL 5min——3007 再来即 captcha-retry 重跑 SDK）。 */
+  /** captchaVerifyParam cache (providerId → param; TTL 5min — a subsequent 3007 triggers captcha-retry to rerun the SDK). */
   private providerHeadersCache = new Map<string, { param: string; region?: string; at: number }>();
-  /** 验证码 SDK 三元组缓存（client/configs 拉取；TTL 1h）。 */
+  /** Captcha SDK triple cache (fetched from client/configs; TTL 1h). */
   private captchaConfigCache: { config: { sceneId: string; prefix: string; region: string }; at: number } | null = null;
-  /** abort 收口看门狗定时器（app-server 通道；session/stop 后限时未收口强杀兜底）。 */
+  /** Abort settling watchdog timer (app-server channel; force-kills as a fallback when session/stop doesn't settle within the time limit). */
   private abortWatchdog: ReturnType<typeof setTimeout> | null = null;
 
   constructor(id: string, cwd: string, configDir: string) {
@@ -416,42 +421,56 @@ class ZcodeHandle {
     this.configDir = configDir;
   }
 
-  /** 测试/恢复路径：直接设定真实 sess id（All Sessions 历史行复活）。 */
+  /** Test/recovery path: set the real sess id directly (All Sessions history-row revival). */
   setKnownSessionId(sid: string): void {
     this.sessId = sid;
   }
 
-  /** detachable 托管：宿主注入的 wrapper 策略（createSession options.agentStarter 透传）。 */
+  /** Detachable hosting: host-injected wrapper strategy (passed through from createSession options.agentStarter). */
   setAgentStarter(starter: ZcodeAgentStarterLike | undefined): void {
     this.agentStarter = starter;
   }
 
-  /** 接管路径：登记核心交来的活进程与 journal 重放预算（ensureAppServer 消费）。 */
+  /** Adopt path: register the live process + journal replay budget handed over by the core (consumed by ensureAppServer). */
   setAttachedProcess(child: ChildProcess, replayBytes: number): void {
     this.attachedChild = child;
     this.attachedReplayBytes = replayBytes;
   }
 
-  /** 接管预热：立即接线活进程 + 消费 journal 重放（运行态/收口不等用户打开会话）。 */
+  /** Adoption warm-up: wire the live process + consume the journal replay right away (running state/settling must not wait for the user to open the session). */
   async reattachNow(): Promise<void> {
     await this.ensureAppServer();
   }
 
   /**
-   * 历史回填（All Sessions 服务出口读取的落点）：IndexedMessage[] → liveHistory 形状。
-   * 结构化工具行（IndexedMessage.tool，opencode-family 携带）→ pi 原生形状：
-   *   assistant.toolCall 块 + toolResult 消息（按 toolCallId 配对）——前端 MessageView /
-   *   ToolCallBlock 按 pi 自家工具卡片渲染（工具名/输入预览/输出折叠），不再退化为 🛠 {json} 文本；
-   *   解析失败回退 🛠 文本行（交棒上下文兑底，与 session-manager 导入语义一致）。
-   * images → content image block（前端 MessageView 原生渲染）；
-   * assistant 消息带 model/provider——原样透传源库 modelID/providerID（不归一不改写），
-   * 消息上的模型标签渲染依赖这两字段。
+   * Anchor the external-sync watermark at seed time (adopt/restore paths).
+   * Without this the first idle getMessages anchors at the CURRENT rev — which is
+   * already past the events suppressed by the adopt replay gate — and the window
+   * between the db seed and the replay boundary would never reconcile into
+   * liveHistory. Anchoring at seed time makes the next idle sync see rev > anchor
+   * and rebuild from the store (the authoritative zcode db), healing that window.
+   */
+  anchorHistoryAtSourceRev(): void {
+    if (!this.sessId) return;
+    const rev = readZcodeSessionUpdatedMs(this.sessId);
+    if (rev !== null) this.historySeedRevMs = rev;
+  }
+
+  /**
+   * History backfill (landing point read by the All Sessions service outlet): IndexedMessage[] → liveHistory shape.
+   * Structured tool rows (IndexedMessage.tool, carried by the opencode family) → native pi shape:
+   *   assistant.toolCall blocks + toolResult messages (paired by toolCallId) — the frontend MessageView /
+   *   ToolCallBlock renders them as pi's own tool cards (tool name/input preview/collapsed output), no longer degrading to 🛠 {json} text;
+   *   parse failures fall back to 🛠 text lines (context handoff fallback, consistent with session-manager import semantics).
+   * images → content image blocks (rendered natively by the frontend MessageView);
+   * assistant messages carry model/provider — modelID/providerID passed through verbatim from the source store (no normalization, no rewriting);
+   * model label rendering on messages depends on these two fields.
    */
   seedHistory(messages: Array<{ role?: unknown; text?: unknown; model?: unknown; provider?: unknown; images?: Array<{ mime?: unknown; dataUrl?: unknown }> | unknown[]; tool?: unknown }>): void {
     const replay = createSeedToolReplay("zcode-tool");
     for (const m of messages) {
       const role = m.role === "assistant" ? "assistant" : "user";
-      // 结构化工具行优先（callID 缺席时合成稳定 id，仅用于前端结果配对）
+      // Structured tool rows take priority (a stable id is synthesized when callID is absent, only for frontend result pairing)
       const tool = role === "assistant"
         ? replay.entries(m.tool, {
           model: typeof m.model === "string" && m.model ? m.model : undefined,
@@ -473,7 +492,7 @@ class ZcodeHandle {
         if (!mMatch) continue;
         content.push({ type: "image", source: { type: "base64", media_type: mMatch[1], data: mMatch[2] } });
       }
-      // 消息级模型标签（仅 assistant；model/provider 原样透传源库字段，不归一不改写）
+      // Message-level model label (assistant only; model/provider passed through verbatim from the source store fields, no normalization or rewriting)
       const model = role === "assistant" && typeof m.model === "string" ? m.model : undefined;
       const provider = role === "assistant" && typeof m.provider === "string" ? m.provider : undefined;
       this.liveHistory.push({
@@ -485,11 +504,11 @@ class ZcodeHandle {
   }
 
   private emit(event: Record<string, unknown>): void {
-    // 用户可见活动（消息落定/增量/轮次收口）→ 记录活动时间；控制类事件（queue_update 等）不更新。
+    // User-visible activity (message finalized/delta/turn settled) → record activity time; control events (queue_update etc.) don't update it.
     if (event.type === "message_end" || event.type === "message_update" || event.type === "agent_end" || event.type === "agent_settled") {
       this.lastActivityTs = Date.now();
     }
-    // 轮次收口 → 清未决验证码请求（expire 帧让各端同步清卡；appserver 层的 180s 超时兜底 resolve）
+    // Turn settled → clear pending captcha requests (the expire frame lets all clients clear their cards; the appserver layer's 180s timeout resolves as a fallback)
     if (event.type === "agent_settled" && this.providerHeadersPending.size > 0) {
       for (const [requestId, resolve] of this.providerHeadersPending) {
         resolve({ ok: false, errorMessage: "轮次已收口，验证码请求失效" });
@@ -497,7 +516,13 @@ class ZcodeHandle {
       }
       this.providerHeadersPending.clear();
     }
-    // 逐监听器隔离（加固 A3）：一个订阅者抛错不得漏帧、不得沿流回调裸抛
+    // Adopted session: a settled turn advances the source db past the seed watermark —
+    // reconcile now so the replay-suppressed window between the db seed and the replay
+    // boundary lands in liveHistory (otherwise it waits for an unrelated external write).
+    if (event.type === "agent_settled" && this.attachedChild) {
+      void this.syncExternalHistoryIfChanged().catch(() => { /* fail-silent */ });
+    }
+    // Per-listener isolation (hardening A3): one subscriber throwing must not drop frames nor propagate raw exceptions along the stream
     for (const l of this.listeners) {
       try {
         l(event);
@@ -508,16 +533,16 @@ class ZcodeHandle {
   }
 
   /**
-   * 执行一轮（双通道分发，见文件头）：受理即发 agent_start（前端 spinner「等待模型」立刻出现）。
+   * Run one turn (dual-channel dispatch, see file header): emits agent_start upon acceptance (the frontend spinner "waiting for model" appears immediately).
    */
   private async runTurn(promptText: string, images?: TurnImage[]): Promise<string> {
     this.emit({ type: "agent_start" });
-    // 契约对齐 pi：prompt 指令受理即发 prompt_done（前端清 pending 标记，spinner 由
-    // agent_settled 收尾）。缺失时前端 rpcPromptPending 恒 true → settled 被守卫跳过 →
-    // 运行结束 spinner 永挂（2026-09-10 小屏 S6 验收实证）。
+    // Contract aligned with pi: prompt_done is emitted as soon as the prompt instruction is accepted (the frontend clears
+    // the pending flag; the spinner finishes on agent_settled). Without it the frontend rpcPromptPending stays true →
+    // settled is skipped by the guard → the spinner hangs forever after the run ends (proven in the 2026-09-10 small-screen S6 acceptance test).
     this.emit({ type: "prompt_done" });
-    // user 气泡落定（pi 同款 message_end{role:"user"}）：自动续轮无 optimistic 气泡，
-    // 手动发送的 optimistic 由前端 userMessageKey 去重（同文本替换不重复）
+    // User bubble finalized (pi-style message_end{role:"user"}): automatic follow-up turns have no optimistic bubble,
+    // manually sent optimistic bubbles are deduplicated by the frontend userMessageKey (same text replaces, not duplicates)
     this.emit({
       type: "message_end",
       message: {
@@ -532,9 +557,11 @@ class ZcodeHandle {
         timestamp: Date.now(),
       },
     });
-    // start-plan（ZCode 套餐）拦截：验证码只能桌面端产生、pi-web 不可驱动。当前模型为 start-plan 时
-    // 直接人话失败（含恢复的 start-plan 已知会话），不进 app-server 验证码 180s 黑洞 / oneshot 通道。
-    // 有 sessId = 已知/已存在会话（restore 复活或首轮后换绑）→ 用「start 加载的已知会话」专用文案。
+    // start-plan (ZCode plan) intercept: captcha can only be produced by the desktop app; pi-web cannot drive it. When the
+    // current model is start-plan, fail immediately with a plain-language message (including restored known start-plan sessions),
+    // without entering the app-server captcha 180s black hole / the oneshot channel.
+    // Having a sessId = known/pre-existing session (revived via restore, or rebound after the first turn) → use the
+    // "known session loaded via start-plan" dedicated copy.
     const gateRef = this.model?.id && parseModelRef(this.model.id) ? this.model.id : DEFAULT_MODEL_REF;
     if (isStartPlanChannel(gateRef.split("/")[0])) {
       this.turnFailed(this.sessId ? START_PLAN_UNSUPPORTED_KNOWN : START_PLAN_UNSUPPORTED);
@@ -542,12 +569,12 @@ class ZcodeHandle {
     }
     if (featureTransport() === "app-server") {
       try {
-        // 图片轮同样走 app-server（v4 attachment begin→chunk→commit + session/send attachments，
-        // 桌面端同款；2026-09-17 起 oneshot --attach 分流退役——oneshot 面不认 setModel 的会话模型，
-        // 是默认模型漂移/夜间免费窗口漏钱的口子）。
+        // Image turns also go through app-server (v4 attachment begin→chunk→commit + session/send attachments,
+        // same as desktop; since 2026-09-17 the oneshot --attach split path is retired — the oneshot surface ignores
+        // the session model set via setModel, an opening for default-model drift / leaking paid quota during nightly free windows).
         return await this.runTurnAppServer(promptText, images);
       } catch (e) {
-        // 传输层失败（spawn/rpc/进程退出）：abort 引发的中止归为 aborted，其余走 error 帧
+        // Transport-layer failure (spawn/rpc/process exit): aborts caused by abort() are classified as aborted, everything else goes through the error frame
         if (this.turnAbort.signal.aborted) {
           this.emit({ type: "agent_end" });
           this.emit({ type: "agent_settled", stopReason: "aborted" });
@@ -560,7 +587,7 @@ class ZcodeHandle {
     return this.runTurnOneshot(promptText, images);
   }
 
-  /** runtime + 凭据（双通道共用；各自带缓存；失败抛人话错误）。 */
+  /** Runtime + credentials (shared by both channels; each has its own cache; throws a human-readable error on failure). */
   private async resolveTurnRuntime(providerId: string): Promise<{
     runtime: Awaited<ReturnType<typeof resolveRuntime>>;
     cred: Awaited<ReturnType<typeof ensureCredential>>;
@@ -580,7 +607,7 @@ class ZcodeHandle {
     }
     try {
       cred = isStartPlanChannel(providerId)
-        // 桌面同款：套餐通道不换 key，直接用凭据库 zcodejwttoken（analysis §9.1）
+        // Same as desktop: plan channels don't exchange keys, they use the zcodejwttoken from the credential store directly (analysis §9.1)
         ? await ensureStartPlanCredential({ log })
         : await ensureCredential({
           providerId,
@@ -594,8 +621,8 @@ class ZcodeHandle {
     return { runtime, cred };
   }
 
-  /** 附件（图片 → 临时文件；oneshot --attach 通道用）。
-   *  返回 cleanup：caller 在本轮收口后调用（加固：曾用 Date.now 目录名且不清理——泄漏 + 同毫秒碰撞）。 */
+  /** Attachments (images → temp files; used by the oneshot --attach channel).
+   *  Returns cleanup: the caller invokes it after this turn settles (hardening: previously used Date.now dir names without cleanup — leak + same-millisecond collision). */
   private async writeAttachments(images: TurnImage[]): Promise<{ paths: string[]; cleanup: () => void }> {
     const { randomUUID } = await import("node:crypto");
     const { rmSync } = await import("node:fs") as typeof import("node:fs");
@@ -611,11 +638,11 @@ class ZcodeHandle {
     }
     return {
       paths: attachPaths,
-      cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* 清理失败不致命 */ } },
+      cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* cleanup failure is not fatal */ } },
     };
   }
 
-  /** 真实会话 id 捕获 → 换绑（session_backend_ready，同 CC 懒持久化模式；双通道共用）。 */
+  /** Real session id captured → rebind (session_backend_ready, same as the CC lazy-persistence pattern; shared by both channels). */
   private rebindSessionId(sid: string): void {
     if (this.sessId === sid) return;
     const oldId = this.id;
@@ -623,21 +650,21 @@ class ZcodeHandle {
     this.id = `zcode:${sid}`;
     this.emit({ type: "session_backend_ready", oldId, id: this.id });
     void renameExtModelState("zcode", oldId, this.id).then(() => this.persistModelState());
-    // 队列 sidecar 随 id 换绑（占位 id 随机，不迁移则换绑前排队的条目崩溃后不可恢复）
+    // Queue sidecar rebinds with the id (placeholder ids are random; without migration, entries queued before the rebind become unrecoverable after a crash)
     migrateQueueSidecar(queueStateDir, oldId, this.id, (m) => console.warn(m));
   }
 
-  /** app-server 事件出口：liveHistory 记账 + 透传前端。 */
+  /** app-server event outlet: liveHistory bookkeeping + pass-through to the frontend. */
   private onAppServerEvent(ev: Record<string, unknown>): void {
-    // D4：交互元语请求（plan 审批/提问卡）写进会话消息流（刷新可回放；决策在 respondInteraction 记录）
+    // D4: interaction primitive requests (plan approval/question cards) are written into the session message stream (replayable after refresh; decisions recorded in respondInteraction)
     if (ev.type === "interaction_request") {
       this.recordInteractionCustom(ev, "pending");
     }
     if (ev.type === "message_end" && ev.message && typeof ev.message === "object") {
       const msg = ev.message as { role?: string; stopReason?: string; content?: unknown; model?: string; errorMessage?: string };
       if (msg.role === "assistant") {
-        // 错误帧必须保留 stopReason/errorMessage——前端 getAssistantErrorMessage 靠这两字段
-        // 渲染红色错误条；丢失则「空回复、无任何提示」（2026-09-14 用户实测修复）。
+        // Error frames must keep stopReason/errorMessage — the frontend getAssistantErrorMessage relies on these two fields
+        // to render the red error bar; without them it shows "empty reply with no indication" (fixed 2026-09-14 after user testing).
         const errText = typeof msg.errorMessage === "string" && msg.errorMessage.trim()
           ? humanizeZcodeError(msg.errorMessage)
           : "";
@@ -656,8 +683,8 @@ class ZcodeHandle {
     this.emit(ev);
   }
 
-  /** turn.completed → usage。优先真实 provider usage（input/output/cache/total）；
-   *  usage 缺席时兜底 totalTokens=tokenCount（引擎投影，2026-09-07 探针实测新会话 ≈ 真值）。 */
+  /** turn.completed → usage. Real provider usage first (input/output/cache/total);
+   *  when usage is absent, fall back to totalTokens=tokenCount (engine projection; a 2026-09-07 probe showed new sessions ≈ the real value). */
   private usageFromTurnOutcome(outcome: TurnOutcome, modelRef: string): Record<string, unknown> {
     const out: Record<string, unknown> = { provider: "zcode", ...(modelRef ? { model: modelRef } : {}) };
     const u = outcome.usage;
@@ -675,10 +702,11 @@ class ZcodeHandle {
     return Object.keys(out).length > (modelRef ? 2 : 1) ? out : {};
   }
 
-  /** 上下文占用取数（getContextUsage 数据源）：usage.totalTokens（=input+output，引擎
-   *  contextUsed 同口径）→ usage.inputTokens(+output) → tokenCount 兜底。
-   *  ⚠ tokenCount 在引擎缺 usage baseline 时是 chars/4 字符估算（base64 图片/大文本全计入，
-   *  内容重的会话可达数百万）——曾直接拿它算百分比，大会话误显示 100%（2026-09-20 用户实测）。 */
+  /** Context usage source (getContextUsage data source): usage.totalTokens (=input+output, same
+   *  measure as the engine's contextUsed) → usage.inputTokens(+output) → tokenCount fallback.
+   *  ⚠ tokenCount is a chars/4 estimate when the engine lacks a usage baseline (base64 images/large text
+   *  all count; content-heavy sessions can reach millions) — it was once used directly for the percentage,
+   *  making large sessions wrongly show 100% (observed by a user 2026-09-20). */
   private contextTokensFromOutcome(outcome: TurnOutcome): number | null {
     const u = outcome.usage;
     if (u?.totalTokens !== undefined) return u.totalTokens;
@@ -686,10 +714,10 @@ class ZcodeHandle {
     return outcome.tokenCount ?? null;
   }
 
-  /** 会话累计用量（getUsageTotals 数据源；handle 存活期逐轮累加，重启归零）。 */
+  /** Session cumulative usage (getUsageTotals data source; accumulated per turn while the handle lives, resets on restart). */
   private usageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, turns: 0 };
 
-  /** 轮收口累计记账（真实 usage 优先；oneshot 传入的是宽松 Record，逐字段清洗，缺失/非法按 0 计）。 */
+  /** Per-turn settling accumulation (real usage first; oneshot passes a loose Record, sanitized field by field, missing/invalid counted as 0). */
   private accumulateUsage(u: TurnUsageSnapshot | Record<string, unknown> | undefined): void {
     const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     this.usageTotals.inputTokens += n(u?.inputTokens);
@@ -699,23 +727,39 @@ class ZcodeHandle {
     this.usageTotals.turns += 1;
   }
 
-  /** 确保 app-server 常驻通道就绪（按需 spawn + runtime/凭据解析；runTurn 与 fork 共用）。 */
-  private async ensureAppServer(): Promise<AppServerSession> {
-    if (this.as) return this.as;
+  /** Ensure the long-lived app-server channel is ready (spawn on demand + runtime/credential resolution; shared by runTurn and fork). */
+  /**
+   * Single-flight: reattachNow (eager adoption) and the first prompt can race into the
+   * builder — two concurrent constructions would wire TWO connections over the SAME
+   * facade child (double data listeners, double dispatch). Memoize the in-flight
+   * promise so the loser awaits the winner's session.
+   */
+  private asBuilding: Promise<AppServerSession> | null = null;
+
+  private ensureAppServer(): Promise<AppServerSession> {
+    if (this.as) return Promise.resolve(this.as);
+    if (this.asBuilding) return this.asBuilding;
+    this.asBuilding = this.buildAppServer()
+      .then((as) => { this.as = as; return as; })
+      .finally(() => { this.asBuilding = null; });
+    return this.asBuilding;
+  }
+
+  private async buildAppServer(): Promise<AppServerSession> {
     const modelRef = this.model?.id && parseModelRef(this.model.id) ? this.model.id : DEFAULT_MODEL_REF;
     const { providerId } = parseModelRef(modelRef)!;
     const { runtime, cred } = await this.resolveTurnRuntime(providerId);
-    // desktop 同款：ZCODE_BASE_URL=平台根 → 引擎拉 configs 读 proxyEndpoint.mapping，
-    // 动态路由 provider 直连请求到 ultra 网关 + 在 provider 域握手签名（与桌面完全一致）。
-    // 【3.17.2 起默认关】ultra 网关在独立 spawn 下对 api-key 型 personal registry provider
-    // 持续 server_error 重试循环（2026-11-07 真机实测；直连 open.bigmodel.cn 全链路通）。
-    // feature zcode.ultraGateway=true 可手动回到网关模式（ZCODE_BASE_URL=平台根，做 mapping）。
+    // Same as desktop: ZCODE_BASE_URL=platform root → the engine pulls configs and reads proxyEndpoint.mapping,
+    // dynamically routing provider requests to the ultra gateway + handshake signing on the provider domain (fully identical to desktop).
+    // [Off by default since 3.17.2] under an independent spawn, the ultra gateway keeps a server_error retry loop
+    // for api-key-type personal registry providers (verified on a real device 2026-11-07; direct connection to open.bigmodel.cn works end to end).
+    // feature zcode.ultraGateway=true manually returns to gateway mode (ZCODE_BASE_URL=platform root, with mapping).
     const gateway = featureBool("zcode.ultraGateway", false);
     const protoModels = buildZcodeCatalogRefs()
       .filter((m) => m.id.split("/")[0] === providerId)
       .map((m) => ({ modelId: m.id.split("/")[1], label: m.label, contextWindow: ZCODE_CONTEXT_WINDOW }));
-    // 3.17+ registry 模型注册：自建 personal provider config（合并桌面配置；providerId 用 wire 形态
-    // ——app-server setModel 的 model.providerId 即 wireProviderId（start-plan 带 builtin: 前缀））
+    // 3.17+ registry model registration: self-built personal provider config (merged with the desktop config; providerId in wire form
+    // — model.providerId in app-server setModel is wireProviderId (start-plan carries the builtin: prefix))
     const wireId = wireProviderId(providerId);
     const providerCfgFile = writeProviderConfigFile({
       cacheDir: join(dirname(this.configDir), "cache"),
@@ -735,23 +779,24 @@ class ZcodeHandle {
       personalProviderConfigFile: providerCfgFile,
       ...(gateway ? { baseURL: ZCODE_PLATFORM_BASE_URL } : {}),
     });
-    this.as = new AppServerSession({
+    const as = new AppServerSession({
       connection: new (await import("./zcode-appserver.ts")).ZcodeAppServerConnection({
         nodeBin: resolveNodeBin(),
         runtimePath: runtime.cjsPath,
         cwd: this.cwd,
         env,
         launchOverride: this.launchOverride,
-        // detachable 托管：wrapper 策略 + registry 键（新会话未落 sid 前用复合占位 id，
-        // 首轮 session_backend_ready 换绑后由核心 watchBackendRebind 迁移 registry 条目）
+        // Detachable hosting: wrapper strategy + registry key (new sessions use the composite
+        // provisional id until the native sid lands; the core's watchBackendRebind migrates
+        // the registry entry once session_backend_ready rebinds)
         ...(this.agentStarter ? { agentStarter: this.agentStarter, registryKey: this.sessId ?? this.id } : {}),
-        // 接管路径（pi-web 重启恢复）：活进程 + journal 重放预算，连接层只接线不 spawn
+        // Adopt path (pi-web restart recovery): live process + journal replay budget — the connection wires, never spawns
         ...(this.attachedChild ? { attachedChild: this.attachedChild, replayByteBudget: this.attachedReplayBytes } : {}),
         log: (m) => console.log(m),
       }),
       cwd: this.cwd,
       mode: this.desiredMode ?? featureMode(),
-      // start-plan 协议 ref 带 builtin: 前缀（触发 runtime-headers 反向请求；目录/状态文件仍用裸 id）
+      // The start-plan protocol ref carries the builtin: prefix (triggers the runtime-headers reverse request; catalog/state files still use the bare id)
       modelRef: `${wireProviderId(providerId)}/${modelRef.split("/")[1] ?? ""}`,
       sessId: this.sessId,
       provider: {
@@ -765,10 +810,13 @@ class ZcodeHandle {
       onEvent: (ev) => this.onAppServerEvent(ev),
       onSessionId: (sid) => this.rebindSessionId(sid),
       onSteerQueue: (items) => {
-        // 新增条目 → 聊天流落 user 气泡（steer 不走 runTurn；用户需要「已发出/已上屏」的确定感）
-        // 接管重放段除外：journal 重放的 steer 文本已随轮次持久化在源库，重发气泡即重复；
-        // 镜像登记照常（幂等），endReplay 后的 live steer 才发气泡。
-        const replaying = this.as?.replayActive() === true;
+        // New entries → drop a user bubble into the chat stream (steer doesn't go through runTurn; users need the assurance that it was "sent and shown")
+        // Except during the adopt replay segment: the journal's steer text is already persisted
+        // with the turn in the store — re-emitting the bubble would duplicate. Mirror registration
+        // stays (idempotent); only post-endReplay live steers emit bubbles.
+        // Use the local `as` reference (this.as is only assigned after the builder resolves —
+        // the replay gate is live during construction)
+        const replaying = as.replayActive() === true;
         const prevIds = new Set(this.lastSteerIds);
         for (const item of items) {
           if (!prevIds.has(item.pendingInputId)) {
@@ -779,43 +827,44 @@ class ZcodeHandle {
               });
             }
           }
-          this.q.registerSteer(item.pendingInputId, item.input); // 共享层镜像（幂等，跳过已知 id）
+          this.q.registerSteer(item.pendingInputId, item.input); // shared-layer mirror (idempotent, skips known ids)
         }
         this.lastSteerIds = items.map((s) => s.pendingInputId);
-        // 全量快照 diff：服务端已消费/丢弃的条目从镜像出队
+        // Full-snapshot diff: entries consumed/dropped by the server are dequeued from the mirror
         this.q.drainSteer([...prevIds].filter((id) => !items.some((s) => s.pendingInputId === id)));
       },
       onTaskList: (todos) => {
-        // appserver 层已做变化检测（JSON 对比），这里只透传广播
+        // The appserver layer already does change detection (JSON comparison); here we only pass through and broadcast
         this.taskListMirror = todos;
         this.emit({ type: "task_update", todos });
-        // 休眠兜底快照（每次更新全量覆写；sessId 未定时跳过——下轮更新会补写）
+        // Dormant-fallback snapshot (full overwrite on every update; skipped while sessId is unset — a later update writes it)
         if (this.sessId) persistTaskSnapshot(this.sessId, todos);
       },
     });
-    // 接管路径：立即接线 + 消费 journal 重放（不等首轮 prompt——拖到 prompt 才消费会让
-    // 运行中轮次的 agent_start(resumed) 延迟到用户打开会话，运行态/收口全迟到）。
+    // Adopt path: wire + consume the journal replay right away (not at the first prompt —
+    // deferring would delay the running turn's agent_start(resumed) until the user opens
+    // the session, leaving running state and settling late).
     if (this.attachedChild) {
-      await this.as.beginAdopted().catch((e) =>
-        console.warn("[aiti-zcode-agent] adopt 接线失败（下轮 prompt 经 ensureReady 重试）:", e instanceof Error ? e.message : String(e)));
+      await as.beginAdopted().catch((e) =>
+        console.warn("[aiti-zcode-agent] adopt wiring failed (retried via ensureReady on the next prompt):", e instanceof Error ? e.message : String(e)));
     }
-    return this.as;
+    return as;
   }
 
-  /** app-server 通道：长驻会话（跨轮复用；进程退出后下轮自动 respawn + resume）。 */
+  /** app-server channel: long-lived session (reused across turns; after a process exit the next turn automatically respawns + resumes). */
   private async runTurnAppServer(promptText: string, images?: TurnImage[]): Promise<string> {
     const modelRef = this.model?.id && parseModelRef(this.model.id) ? this.model.id : DEFAULT_MODEL_REF;
     const as = await this.ensureAppServer();
-    // spawn 后检查点：runtime/凭据解析（可能含 300MB 下载）+ spawn 期间已 abort → 安静收尾
-    //（进程已起但未发 prompt：闲置复用无害，看门狗强杀路径/下轮 prompt 兜底）
+    // Post-spawn checkpoint: runtime/credential resolution (possibly including a 300MB download) + aborted during spawn → settle quietly
+    // (process started but no prompt sent: idle reuse is harmless; the watchdog force-kill path / next prompt covers it)
     if (this.turnAbort.signal.aborted) {
       this.emit({ type: "agent_end" });
       this.emit({ type: "agent_settled", stopReason: "aborted" });
       return "aborted";
     }
 
-    // 全轮次（含图片轮）长驻流式：图片经 v4 attachment 上传后随 session/send 带 attachments
-    // （桌面端同款；运行中不会走到这里——prompt() 已分流 v4 steer / 本地队列）
+    // All turns (including image turns) use long-lived streaming: images are uploaded via v4 attachment and sent with session/send attachments
+    // (same as desktop; never reached while running — prompt() already routes to v4 steer / the local queue)
     const outcome = await as.prompt(promptText, images);
     this.lastUsage = this.usageFromTurnOutcome(outcome, modelRef);
     this.lastContextTokens = this.contextTokensFromOutcome(outcome);
@@ -825,17 +874,17 @@ class ZcodeHandle {
     return "end_turn";
   }
 
-  /** oneshot 通道：每轮单发进程（原有路径，兜底）。 */
+  /** oneshot channel: single-shot process per turn (original path, fallback). */
   private async runTurnOneshot(promptText: string, images?: TurnImage[]): Promise<string> {
     const modelRef = this.model?.id && parseModelRef(this.model.id) ? this.model.id : DEFAULT_MODEL_REF;
     const { providerId } = parseModelRef(modelRef)!;
     if (isStartPlanChannel(providerId)) {
-      // oneshot 无反向请求面（analysis §9.2：3007 直接失败）——套餐通道仅 app-server 传输可适配
+      // oneshot has no reverse-request surface (analysis §9.2: 3007 fails directly) — plan channels are only drivable via the app-server transport
       this.turnFailed("ZCode 套餐通道（start-plan）仅支持 app-server 传输通道（oneshot 无验证码反向请求面）。请在 扩展管理器 → aiti-zcode-agent → 功能管理 将 zcode.transport 设为 app-server（缺省即 app-server）。");
       return "error";
     }
     const { runtime, cred } = await this.resolveTurnRuntime(providerId);
-    // spawn 前检查点：runtime/凭据阶段（可能含 300MB 下载）中已 abort → 安静收尾
+    // Pre-spawn checkpoint: aborted during the runtime/credential phase (possibly including a 300MB download) → settle quietly
     if (this.turnAbort.signal.aborted) {
       this.emit({ type: "agent_end" });
       this.emit({ type: "agent_settled", stopReason: "aborted" });
@@ -879,7 +928,7 @@ class ZcodeHandle {
     });
     this.child = null;
 
-    // 用户主动 abort（SIGTERM）：不进错误帧，安静收尾
+    // User-initiated abort (SIGTERM): no error frame, settle quietly
     if (outcome.killed) {
       this.emit({ type: "agent_end" });
       this.emit({ type: "agent_settled", stopReason: "aborted" });
@@ -898,7 +947,7 @@ class ZcodeHandle {
       return "error";
     }
 
-    // 真实会话 id：首轮捕获 → 换绑（session_backend_ready，同 CC 懒持久化模式）
+    // Real session id: captured on the first turn → rebind (session_backend_ready, same as the CC lazy-persistence pattern)
     if (parsed?.sessionId) this.rebindSessionId(parsed.sessionId);
 
     // usage / context
@@ -907,7 +956,7 @@ class ZcodeHandle {
     this.lastContextTokens = typeof total === "number" ? total : null;
     this.accumulateUsage(parsed?.usage);
 
-    // 回答（一次性；--json 无增量流）
+    // Answer (one-shot; --json has no incremental stream)
     const text = parsed?.response ?? "";
     if (text) {
       this.liveHistory.push({ role: "assistant", content: [{ type: "text", text }] });
@@ -921,7 +970,7 @@ class ZcodeHandle {
     }
   }
 
-  /** 错误以 pi 词汇 assistant 消息（stopReason:"error"）送达前端（MessageView 红色 alert），并进 liveHistory。 */
+  /** Errors are delivered to the frontend as a pi-vocabulary assistant message (stopReason:"error", MessageView red alert) and pushed into liveHistory. */
   private turnFailed(errMsg: string): void {
     const humanized = humanizeZcodeError(errMsg);
     const errorMessage = {
@@ -942,14 +991,15 @@ class ZcodeHandle {
   async prompt(text: string, options?: {
     images?: TurnImage[];
     files?: Array<{ data: string; mimeType: string; filename?: string }>;
-    /** 运行中排队语义（core 透传）：steer=注入当前轮（原生 steer）；followUp=本地持有 settle 后续轮。缺省=steer（桌面端同款）。 */
+    /** Queueing semantics while running (passed through by core): steer=inject into the current turn (native steer); followUp=held locally for the next turn after settle. Default=steer (same as desktop). */
     streamingBehavior?: "steer" | "followUp";
   }): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-zcode-agent] session disposed");
     if (this.isRunning()) {
-      // 分流归共享层：followUp → 本地队列（带图片，可撤回）；steer/缺省 → app-server 原生注入
-      //（失败降级入队）；oneshot 无 steer → 自动排队。running 中 routePrompt 不会 dispatch。
-      // 接管的未收口轮次（as.turnActive）同样分流——steer 注入当前轮而非开新一轮。
+      // Routing belongs to the shared layer: followUp → local queue (with images, recallable); steer/default → native app-server injection
+      // (degrades to queueing on failure); oneshot has no steer → always queues. While running, routePrompt never dispatches.
+      // An adopted unsettled turn (as.turnActive) routes the same way — steer into the
+      // running turn instead of opening a new one.
       await this.q.routePrompt(text, { images: options?.images, streamingBehavior: options?.streamingBehavior });
       return;
     }
@@ -968,7 +1018,7 @@ class ZcodeHandle {
     try {
       await this.runTurn(text, options?.images);
     } catch (e) {
-      // runtime/凭据/下载层失败：abort 引发的中止归为 aborted，其余走 error 帧（前端可见，不静默）
+      // runtime/credential/download-layer failure: aborts caused by abort() are classified as aborted, everything else goes through the error frame (visible to the frontend, never silent)
       if (this.turnAbort.signal.aborted) {
         this.emit({ type: "agent_end" });
         this.emit({ type: "agent_settled", stopReason: "aborted" });
@@ -979,13 +1029,13 @@ class ZcodeHandle {
       this.running = false;
       this.disarmAbortWatchdog();
     }
-    // 排队续轮：微任务让 agent_settled 先到达前端（流式状态复位）再开新一轮（共享层幂等）
+    // Queued follow-up turn: a microtask lets agent_settled reach the frontend first (streaming state resets) before the next turn starts (shared-layer idempotent)
     this.q.scheduleDrain();
   }
 
-  /** app-server 原生 steer（共享层 steer 闭包）：运行中经 v4 网关注入当前轮（desktop 同款
-   *  sendText{requestedDelivery:"guide"}，下一模型/工具间隙 drain）。失败 throw → 共享层
-   *  降级入本地 followUp 队列（R9：消息不丢、不打断原轮、不产生双 settled）。 */
+  /** Native app-server steer (shared-layer steer closure): while running, injects into the current turn via the v4 gateway
+   *  (desktop-style sendText{requestedDelivery:"guide"}, drained at the next model/tool gap). Throws on failure → the shared
+   *  layer degrades into the local followUp queue (R9: message not lost, original turn not interrupted, no double settled). */
   private async steerViaAppServer(text: string): Promise<void> {
     if (!(featureTransport() === "app-server" && this.as && this.isRunning())) {
       throw new Error("steer unavailable (idle or oneshot transport)");
@@ -994,24 +1044,24 @@ class ZcodeHandle {
     await this.as.steerViaCommand(text);
   }
 
-  /** @capability steer —— 运行中注入当前轮（v4 原生 steer，desktop 同款）；空闲等同普通 prompt。
-   *  分流归共享层：oneshot/空闲走 dispatch（=prompt），注入失败降级入本地队列。 */
+  /** @capability steer — inject into the current turn while running (v4 native steer, same as desktop); when idle, same as a normal prompt.
+   *  Routing belongs to the shared layer: oneshot/idle goes through dispatch (=prompt), failed injection degrades into the local queue. */
   async steer(text: string): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-zcode-agent] session disposed");
     await this.q.routePrompt(text);
   }
 
-  /** @capability followUp —— 运行中入本地队列（settle 后自动续轮，可撤回）；空闲等同普通 prompt。 */
+  /** @capability followUp — enter the local queue while running (automatic next turn after settle, recallable); when idle, same as a normal prompt. */
   async followUp(text: string): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-zcode-agent] session disposed");
     await this.q.routePrompt(text, { streamingBehavior: "followUp" });
   }
 
   /**
-   * @capability queueManage —— queue keeper 队列操作原语（adapter 队列命令族转发至此）。
-   * 全 CRUD 归共享层：followUp 组（本地持有，带图片）move/convert/remove/recall/requeue/clear；
-   * steering 组（已交 v4 网关、待间隙 drain）：只读镜像——v4 队列项 id 与 steerQueued 的
-   * pendingInputId 尚无映射，撤回/重排暂不支持（stop 取消本轮连带清空）。
+   * @capability queueManage — queue keeper queue-operation primitives (the adapter's queue command family forwards here).
+   * Full CRUD belongs to the shared layer: followUp group (held locally, with images) move/convert/remove/recall/requeue/clear;
+   * steering group (already handed to the v4 gateway, waiting for a gap to drain): read-only mirror — there is no mapping yet
+   * between v4 queue item ids and steerQueued pendingInputId, so recall/reorder are not supported yet (stop cancels the turn and clears them).
    */
   queueManage = (req: {
     action: "list" | "clear" | "move" | "convert" | "remove" | "recall" | "requeue";
@@ -1024,10 +1074,10 @@ class ZcodeHandle {
   }) => this.q.queueManage(req);
 
   /**
-   * 任务列表快照（TodoWrite working plan 只读镜像；docs/aiti-zcode-agent-task-list-plan.md）。
-   * get_state 真实化数据源（handle-adapter 以方法存在性探测，同 queueManage 范式）；
-   * 协议无 todo 写方法 → 只读，无操作原语。
-   * 冷 handle 回落：复活未 prompt（镜像未种子）时读持久化快照——打开休眠会话即见列表。
+   * Task-list snapshot (read-only mirror of the TodoWrite working plan; docs/aiti-zcode-agent-task-list-plan.md).
+   * Real data source for get_state (the handle-adapter probes by method existence, same pattern as queueManage);
+   * the protocol has no todo write method → read-only, no operation primitives.
+   * Cold-handle fallback: when revived without a prompt yet (mirror not seeded), reads the persisted snapshot — opening a dormant session shows the list.
    */
   taskList = async (): Promise<{ todos: TaskEntry[] }> => {
     if (this.taskListMirror.length > 0) return { todos: this.taskListMirror.map((t) => ({ ...t })) };
@@ -1036,14 +1086,14 @@ class ZcodeHandle {
   };
 
   /**
-   * @capability respondInteraction —— 交互元语回填（zcode ExitPlanMode 审批 / AskUserQuestion 问题）。
-   * 寻址 interaction_request 事件里的 requestId；oneshot 通道无反向请求面（fail-loud）。
+   * @capability respondInteraction — interaction primitive answer backfill (zcode ExitPlanMode approval / AskUserQuestion questions).
+   * Addresses the requestId in interaction_request events; the oneshot channel has no reverse-request surface (fail-loud).
    */
   /**
-   * start-plan 验证码求解插槽（appserver `interaction/requestProviderRuntimeHeaders` 数据源）：
-   * 缓存命中（TTL 5min）直接回 param；否则 emit `provider_runtime_headers_request` 到前端
-   * （验证卡：无感优先/滑块兜底），等 `respondProviderHeaders` 回填。前端未实现（P2 前）→
-   * appserver 层 180s 超时 → {headersApplied:false} → 轮次人话失败。
+   * start-plan captcha solving slot (data source for the appserver's `interaction/requestProviderRuntimeHeaders`):
+   * a cache hit (TTL 5min) returns the param directly; otherwise emit `provider_runtime_headers_request` to the frontend
+   * (captcha card: invisible verification first, slider fallback) and wait for `respondProviderHeaders` to answer. Frontend
+   * not implemented (pre-P2) → the appserver layer's 180s timeout → {headersApplied:false} → the turn fails with a plain-language message.
    */
   private async solveProviderHeaders(req: { requestId: string; providerId: string; modelRef: string; reason: string }): Promise<
     { ok: true; captchaVerifyParam: string; region?: string } | { ok: false; errorMessage: string }
@@ -1052,7 +1102,7 @@ class ZcodeHandle {
     if (cached && Date.now() - cached.at < 5 * 60_000) {
       return { ok: true, captchaVerifyParam: cached.param, ...(cached.region ? { region: cached.region } : {}) };
     }
-    // SDK 初始化三元组（服务端 client/configs，1h 缓存）——前端验证卡 init 用；取不到直接人话失败
+    // SDK init triple (server client/configs, 1h cache) — used by the frontend captcha card init; failing to fetch fails immediately with a plain-language message
     let captchaConfig: { sceneId: string; prefix: string; region: string } | null = null;
     if (this.captchaConfigCache && Date.now() - this.captchaConfigCache.at < 3600_000) {
       captchaConfig = this.captchaConfigCache.config;
@@ -1089,13 +1139,13 @@ class ZcodeHandle {
     return answer;
   }
 
-  /** 验证卡应答入口（@capability respondProviderHeaders；超时/取消传 {error} 或 {cancel:true}）。 */
+  /** Captcha card answer entry (@capability respondProviderHeaders; timeout/cancellation pass {error} or {cancel:true}). */
   async respondProviderHeaders(requestId: string, answer: { captchaVerifyParam?: string; region?: string; error?: string; cancel?: boolean }): Promise<boolean> {
     const resolve = this.providerHeadersPending.get(requestId);
     if (!resolve) return false;
     const param = typeof answer.captchaVerifyParam === "string" ? answer.captchaVerifyParam.trim() : "";
-    // 防御：全空 payload（无 cancel/error/有效 param）多半是前端 SDK 回调取值失败（如签名不匹配），
-    // 不应解释为用户取消——拒绝命令、保持挂起（180s/收口兜底），留日志便于排查。
+    // Defensive: an all-empty payload (no cancel/error/valid param) most likely means the frontend SDK callback failed to read values (e.g. signature mismatch),
+    // and must not be interpreted as a user cancellation — reject the command, keep it pending (180s/settle fallback), log for troubleshooting.
     if (!answer.cancel && !answer.error && !param) {
       console.warn(`[aiti-zcode-agent] respond_provider_headers 收到空 payload（requestId=${requestId}）：验证参数缺失，保持挂起等超时/收口`);
       return false;
@@ -1119,7 +1169,7 @@ class ZcodeHandle {
       throw new Error("[aiti-zcode-agent] 交互回填仅 app-server 通道可用（oneshot 无反向请求面）");
     }
     const ok = await this.as.respondInteraction(requestId, answer);
-    // D4：决策写进会话消息流（accept/decline + 答案摘要）
+    // D4: decisions are written into the session message stream (accept/decline + answer summary)
     const pending = this.pendingInteractionMeta.get(requestId);
     this.recordInteractionCustom(
       { requestId, ...(pending ?? {}) },
@@ -1130,10 +1180,10 @@ class ZcodeHandle {
     return ok;
   }
 
-  /** 待决交互元数据（interaction_request → 简报），决策记录用（D4）。 */
+  /** Pending interaction metadata (interaction_request → brief), used for decision records (D4). */
   private pendingInteractionMeta = new Map<string, { kind?: string; toolName?: string; prompt?: string }>();
 
-  /** 交互请求/决策写进会话消息流（custom 消息；规范 §6 范式 / ACP 样板）。 */
+  /** Interaction requests/decisions written into the session message stream (custom messages; spec §6 pattern / ACP template). */
   private recordInteractionCustom(ev: Record<string, unknown>, decision: "pending" | "accept" | "decline", answer?: { answers?: Record<string, string | string[]>; message?: string }): void {
     const kind = String(ev.kind ?? "generic");
     const toolName = typeof ev.toolName === "string" ? ev.toolName : "";
@@ -1170,44 +1220,45 @@ class ZcodeHandle {
 
   async abort(): Promise<void> {
     if (!this.isRunning()) {
-      // 失步兜底：前端运行态与 handle 状态失步（如错误轮 settled 帧竞态丢失）时，
-      // 静默 return 会让停止按钮永久悬挂（实测：模型下架 -32031 错误轮后 UI 卡「停止」）。
-      // 补发一帧 aborted 收口让前端复位；幂等，真空闲时多一帧无害。
+      // Desync fallback: when the frontend running state desyncs from the handle state (e.g. the settled frame of an error turn lost in a race),
+      // returning silently would leave the stop button hanging forever (observed: UI stuck on "stop" after a -32031 error turn from a delisted model).
+      // Emit an extra aborted frame to settle and let the frontend reset; idempotent, harmless when truly idle.
       this.emit({ type: "agent_end" });
       this.emit({ type: "agent_settled", stopReason: "aborted" });
       return;
     }
     console.warn("[aiti-zcode-agent] abort: cancelling current turn");
-    // 人工中止标记先行置位：后续看门狗强杀引发的 waiter reject / runTurn 抛错归 aborted（非 error 帧）
+    // Set the manual-abort flag first: subsequent waiter rejects / runTurn throws caused by the watchdog force-kill are classified as aborted (not the error frame)
     try { this.turnAbort.abort(); } catch { /* already aborted */ }
-    // app-server：session/stop（桌面端同款；turn 以 cancelled 收口）。
-    // 看门狗先行 + stop fire-and-forget：abort() 立即返回，前端 stop 不再干等 RPC
-    //（session/stop 挂死时原最长 15s 超时 + 8s 看门狗 = 23s，实测慢感的主要来源）；
-    // 收口靠 turn.completed(cancelled) 自然到达（秒级）或看门狗限时强杀兜底。
+    // app-server: session/stop (same as desktop; the turn settles as cancelled).
+    // Watchdog first + fire-and-forget stop: abort() returns immediately, the frontend stop no longer waits on the RPC
+    // (previously a hung session/stop meant up to 15s timeout + 8s watchdog = 23s, the main source of the perceived slowness);
+    // settling relies on turn.completed(cancelled) arriving naturally (seconds) or the watchdog's timed force-kill fallback.
     if (featureTransport() === "app-server" && this.as) {
-      // 收口看门狗：zcode 端 turn 挂死时协议层 hadActivePrompt 失步、session/stop 是 no-op
-      //（实测 2026-09-09：turn 循环卡死后 stop 三连全部无效，用户只能重启整个 pi-web）——
-      // 限时未收口即强杀 app-server：进程退出 → onExit → failWaiters → 本轮 aborted 收口；
-      // 下轮 prompt 自动 respawn + session/resume（存储 WAL 即时持久化，无损）。
+      // Settling watchdog: when the zcode-side turn hangs, the protocol layer's hadActivePrompt desyncs and session/stop is a no-op
+      // (observed 2026-09-09: after the turn loop deadlocked, three consecutive stops all failed; the user could only restart the whole pi-web) —
+      // if not settled within the limit, force-kill the app-server: process exits → onExit → failWaiters → this turn settles as aborted;
+      // the next prompt automatically respawns + session/resume (the store is WAL-persisted immediately, lossless).
       this.armAbortWatchdog();
-      void this.as.stop(); // stop() 内部自带 catch 记日志，此处不再吞错
+      void this.as.stop(); // stop() catches and logs internally; no error swallowing here
       return;
     }
-    // oneshot：阶段二 SIGTERM 杀本轮子进程
+    // oneshot: phase two, SIGTERM kills this turn's child process
     if (this.child) {
       try { this.child.kill("SIGTERM"); } catch { /* already dead */ }
     }
   }
 
-  /** abort 收口看门狗（app-server 通道）：session/stop 后限时未收口 → 强杀连接进程兜底。 */
+  /** Abort settling watchdog (app-server channel): session/stop not settled within the time limit → force-kill the connection process as a fallback. */
   private armAbortWatchdog(): void {
     this.disarmAbortWatchdog();
     this.abortWatchdog = setTimeout(() => {
       this.abortWatchdog = null;
-      if (!this.isRunning()) return; // 已自然收口
+      if (!this.isRunning()) return; // already settled naturally
       console.warn(`[aiti-zcode-agent] abort 看门狗：session/stop 后 ${ZCODE_ABORT_WATCHDOG_MS / 1000}s 未收口（zcode 端 turn 挂死/失步），强杀 app-server 兜底`);
       try { this.as?.kill(); } catch { /* already dead */ }
-      // 接管的轮次（无本地 waiter 等待 runTurn 拒绝收口）：进程退出回调不会发 settled 帧，直接补发
+      // Adopted turn (no local waiter waiting for the runTurn rejection to settle): the exit
+      // callback never sends a settled frame — emit one directly.
       if (!this.running) {
         this.emit({ type: "agent_end" });
         this.emit({ type: "agent_settled", stopReason: "aborted" });
@@ -1223,32 +1274,34 @@ class ZcodeHandle {
   }
 
   /**
-   * session/fork 接线（SessionHandle.fork 契约；capability fork=true 才会被调）。
+   * session/fork wiring (SessionHandle.fork contract; only called when capability fork=true).
    *
-   * entryId = UI 消息列表里分支点消息的位置 id（"ext-N"，与 liveHistory 严格 1:1 对位：
-   * get_messages → normalizeHandleMessages 直传 + buildExternalPagedContext 绝对索引）；
-   * 分支点 = 被编辑/分叉消息的上一条 assistant 消息。""（或解析不出 user 前缀）= 根重建
-   * （编辑首条消息场景）。
+   * entryId = the position id of the branch-point message in the UI message list ("ext-N", in strict 1:1 correspondence
+   * with liveHistory: get_messages → normalizeHandleMessages pass-through + buildExternalPagedContext absolute indexing);
+   * the branch point = the assistant message preceding the edited/branched message. "" (or an unparseable user prefix) = root rebuild
+   * (editing the first message).
    *
-   * 两种语义（opts.reset 区分，pi-web handle-adapter 透传）：
-   *  - reset（「编辑从此处」）：fork 子会话后 handle 换绑到子会话（rebindSessionId →
-   *    session_backend_ready，宿主注册表/站位/队列 sidecar 全链路换绑），就地续跑——
-   *    等价 pi 的 navigate_tree 回退。zcode 无 truncate，fork-at-turn 是唯一协议面；
-   *    首条消息场景 fork 会带上原消息，故走「丢弃当前 app-server + 下轮全新 create」。
-   *  - 非 reset（消息「分支」按钮）：纯 fork，当前会话不动，返回子会话复合 id 供前端跳转。
+   * Two semantics (distinguished by opts.reset, passed through by the pi-web handle-adapter):
+   *  - reset ("edit from here"): after forking the child session, the handle rebinds to it (rebindSessionId →
+   *    session_backend_ready, host registry/placeholder/queue sidecar all rebind across the chain) and continues in place —
+   *    equivalent to pi's navigate_tree rollback. zcode has no truncate, so fork-at-turn is the only protocol surface;
+   *    forking at the first message would carry the original message along, hence "discard the current app-server + fresh create next turn".
+   *  - non-reset (message "branch" button): pure fork; the current session is untouched, and the child session's composite id
+   *    is returned for the frontend to jump to.
    *
-   * fork-at-turn 目标解析（zcode e8i）：turnIndex 按 user 消息序计数，目标=该轮 assistant
-   * 回复；子会话历史含该回复、不含其后消息。已知局限：steer 注入的 user 气泡若服务端
-   * 未持久化为独立 user 行，turnIndex 计数会偏移（e8i 解析失败会显式报错，不会静默错位）。
-   * 文件回滚：fork 自带 zcode checkpoint 语义（分支点后快照回退），无需 git-trace 门介入。
+   * fork-at-turn target resolution (zcode e8i): turnIndex counts by user message order, target = that turn's assistant
+   * reply; the child session's history includes that reply but nothing after it. Known limitation: if a steer-injected user
+   * bubble was not persisted by the server as a separate user row, the turnIndex count shifts (e8i parse failure raises
+   * explicitly, never silently misaligns).
+   * File rollback: fork carries zcode checkpoint semantics (snapshot rollback after the branch point), no git-trace gate needed.
    */
   async fork(entryId: string, opts?: { reset?: boolean }): Promise<{ cancelled: boolean; newSessionFile?: string }> {
     if (featureTransport() !== "app-server") throw new Error("当前通道不支持分叉/编辑从此处（仅 app-server 常驻传输）");
     if (this.running) throw new Error("运行中不允许分叉（zcode 限制）：请先停止当前轮");
     const reset = opts?.reset === true;
 
-    // 根重建仅认显式空分支点（编辑首条消息，MessageView 无上一条 assistant → leafId=null）。
-    // entryId 非空但解析失败/越界 → 显式报错，绝不静默降级根重建（那会丢弃当前视图全部历史）。
+    // Root rebuild only accepts an explicitly empty branch point (editing the first message; MessageView has no preceding assistant → leafId=null).
+    // Non-empty entryId that fails to parse / is out of bounds → raise explicitly, never silently degrade to a root rebuild (that would discard the entire history in the current view).
     if (reset && entryId === "") {
       await this.resetToForkPoint();
       return { cancelled: false };
@@ -1264,19 +1317,20 @@ class ZcodeHandle {
     const as = await this.ensureAppServer();
     const forkedSid = await as.forkFromTurn(turnIndex);
     if (reset) {
-      // 编辑从此处：换绑到子会话 + 历史重建为分支点前缀（fork-at-turn 后子会话即该前缀）
+      // Edit from here: rebind to the child session + rebuild history as the branch-point prefix (after fork-at-turn the child session is exactly that prefix)
       await this.resetToForkPoint(forkedSid);
       return { cancelled: false, newSessionFile: this.id };
     }
-    // 分支按钮：当前会话原样不动；子会话交给前端按复合 id 打开（冷 resume 恢复路径）
+    // Branch button: the current session stays untouched; the child session is handed to the frontend to open by composite id (cold resume recovery path)
     return { cancelled: false, newSessionFile: `zcode:${forkedSid}` };
   }
 
   /**
-   * 就地切换到分支点状态：丢当前 app-server 通道（旧进程里的旧会话已持久化，进程无
-   * 保留价值）→ 下轮 prompt 以新 sid resume / 全新 create。历史同步重建：forkedSid
-   * 给定 = 从源存储回放子会话（分支点前缀全量）；缺省 = 清空（根重建，等下轮 create）。
-   * 注意不能走 syncExternalHistoryIfChanged——锚点清 0 后它首轮只锚定不回放。
+   * Switch in place to the branch-point state: drop the current app-server channel (the old session in the old process is
+   * already persisted, the process is not worth keeping) → the next prompt resumes with the new sid / creates fresh. History
+   * rebuilt in sync: with forkedSid given = replay the child session from the source store (full branch-point prefix); without
+   * = clear (root rebuild, waiting for the next create).
+   * Note this must not go through syncExternalHistoryIfChanged — after the anchor is cleared to 0 it only anchors on the first run without replaying.
    */
   private async resetToForkPoint(forkedSid?: string): Promise<void> {
     if (this.as) {
@@ -1286,8 +1340,8 @@ class ZcodeHandle {
     if (forkedSid) {
       this.rebindSessionId(forkedSid);
     } else {
-      // 根重建：清掉真实 sid——下轮 prompt 走 session/create 全新建会话（而非 resume 旧会话），
-      // create 返回新 id 时 onSessionId → rebindSessionId 完成换绑。
+      // Root rebuild: clear the real sid — the next prompt goes through session/create to build a brand-new session (rather than resuming the old one);
+      // when create returns the new id, onSessionId → rebindSessionId completes the rebind.
       this.sessId = undefined;
     }
     this.liveHistory = [];
@@ -1299,21 +1353,21 @@ class ZcodeHandle {
           this.seedHistory(parsed.messages as never[]);
         }
         const rev = readZcodeSessionUpdatedMs(this.sessId!);
-        if (rev !== null) this.historySeedRevMs = rev; // 锚定当前水位（后续外部写入仍可感知）
-      } catch { /* 回放失败不阻断 fork（fail-silent，getMessages 时 sync 会再试） */ }
+        if (rev !== null) this.historySeedRevMs = rev; // anchor the current watermark (later external writes are still detectable)
+      } catch { /* replay failure does not block the fork (fail-silent; sync retries on getMessages) */ }
     }
   }
 
   /**
-   * UI 位置 id（"ext-N"）→ zcode turnIndex：统计 liveHistory[0..=N] 里 user 消息数 K，
-   * 分支点轮号 = K-1（分支点是某轮的 assistant 回复，该轮的 user 消息计入前缀）。
-   * 与 pi-web EXTERNAL_ENTRY_ID_PREFIX（"ext-"）硬约定；解析失败/越界返回 null。
+   * UI position id ("ext-N") → zcode turnIndex: count the user messages in liveHistory[0..=N] as K,
+   * branch-point turn number = K-1 (the branch point is some turn's assistant reply; that turn's user message counts into the prefix).
+   * Hard contract with pi-web EXTERNAL_ENTRY_ID_PREFIX ("ext-"); parse failure / out of bounds returns null.
    */
   private turnIndexForBranchPoint(entryId: string): number | null {
     if (typeof entryId !== "string" || !entryId.startsWith("ext-")) return null;
     const idx = Number(entryId.slice(4));
     if (!Number.isInteger(idx) || idx < 0) return null;
-    if (idx >= this.liveHistory.length) return null; // 越界（UI 快照晚于 handle 重建）→ 显式报错而非静默错位
+    if (idx >= this.liveHistory.length) return null; // out of bounds (UI snapshot newer than the handle rebuild) → raise explicitly rather than silently misaligning
     let users = 0;
     for (let i = 0; i <= idx; i++) {
       const m = this.liveHistory[i] as { role?: unknown } | undefined;
@@ -1334,9 +1388,10 @@ class ZcodeHandle {
     this.disarmAbortWatchdog();
     this.q.dispose();
     this.listeners.clear();
-    // wrapper 托管进程（SocketChild facade）：只断开连接不杀进程——pi-web 重启/升级、
-    // 扩展 reload、recycle 换 handle 后 agent 与运行中轮次原样存活，下次打开经 registry
-    // 重新 adopt（kill 是核心 idle governor/托管切换/删除会话的显式决策，不走这里）。
+    // Wrapper-hosted process (SocketChild facade): disconnect only, never kill — across a
+    // pi-web restart/upgrade, extension reload or recycle re-handle, the agent and its
+    // running turn survive untouched; the next open re-adopts via the registry (killing is
+    // the core's explicit decision — idle governor, hosting switch, session deletion — not ours).
     const facade = this.as?.detachedChild();
     if (facade?.detachable === true && typeof facade.release === "function") {
       this.as?.detachDispose();
@@ -1354,8 +1409,8 @@ class ZcodeHandle {
   }
 
   isRunning(): boolean {
-    // 接管路径：pi-web 重启时正在跑的轮次在 adopt 后继续（as.turnActive），
-    // 直到 live 的 turn.completed 到达（finishTurn 归位）。
+    // Adopt path: a turn that was running at the pi-web restart keeps going after adoption
+    // (as.turnActive) until the live turn.completed arrives (finishTurn settles it).
     return this.running || this.as?.turnActive === true;
   }
 
@@ -1363,13 +1418,13 @@ class ZcodeHandle {
     return this.model;
   }
 
-  /** 切换模型：app-server 即时生效（session/setModel，桌面端同款）；oneshot 下轮 spawn 生效。id 必须是 "provider/model" ref。 */
+  /** Switch model: app-server takes effect immediately (session/setModel, same as desktop); oneshot takes effect on the next spawned turn. id must be a "provider/model" ref. */
   async setModel(model: { id: string; provider: string }): Promise<boolean> {
     const parsed = parseModelRef(model.id);
     if (!parsed) {
       throw new Error(`[aiti-zcode-agent] 非法模型 ref "${model.id}"（需为 bigmodel/<model> 或 zai/<model>）`);
     }
-    // 切到 start-plan → 人话拒绝（验证码只能桌面端产生、pi-web 不可驱动）；从 start-plan 切走不拦。
+    // Switching to start-plan → reject with a plain-language message (captcha only from the desktop app; pi-web cannot drive it); switching away from start-plan is not intercepted.
     if (isStartPlanChannel(parsed.providerId)) {
       throw new Error(START_PLAN_UNSUPPORTED);
     }
@@ -1386,8 +1441,8 @@ class ZcodeHandle {
   }
 
   /**
-   * 切换权限模式：app-server 即时生效（session/setMode，桌面端同款）；oneshot 存 desiredMode 下轮 spawn 生效。
-   * UI 标准五档 → zcode mode 映射：default→build、acceptEdits→edit、bypassPermissions→yolo；dontAsk 无对应档 fail-loud。
+   * Switch permission mode: app-server takes effect immediately (session/setMode, same as desktop); oneshot stores desiredMode and takes effect on the next spawned turn.
+   * UI standard five levels → zcode mode mapping: default→build, acceptEdits→edit, bypassPermissions→yolo; dontAsk has no counterpart and fails loud.
    */
   async setPermissionMode(mode: string): Promise<boolean> {
     const MODE_MAP: Record<string, typeof ZCODE_MODES[number]> = {
@@ -1412,7 +1467,7 @@ class ZcodeHandle {
     return zcodeCatalog(this.model);
   }
 
-  /** 临时模型状态文件（启动/切换/换绑时写：selected + 目录快照）。 */
+  /** Temporary model state file (written on start/switch/rebind: selected + catalog snapshot). */
   persistModelState(): void {
     void this.getAvailableModels().then((models) =>
       writeExtModelState({
@@ -1440,21 +1495,21 @@ class ZcodeHandle {
     if (!this.lastUsage) return undefined;
     const tokens = this.lastContextTokens;
     return {
-      // 无值/零值 → percent null（前端显示「?」空轨）——绝不拿缺失数据编 100%
+      // Missing/zero value → percent null (frontend shows an empty "?" track) — never fabricate 100% from missing data
       percent: tokens !== null && tokens > 0 ? Math.min(100, (tokens / ZCODE_CONTEXT_WINDOW) * 100) : null,
       contextWindow: ZCODE_CONTEXT_WINDOW,
       tokens,
     };
   }
 
-  /** @capability getUsageTotals —— 会话累计用量（宿主 get_session_stats 真实口径）。
-   *  此前未实现：统计面板 Token 区恒显 0/0/0（宿主兜底），与 context 行自相矛盾。 */
+  /** @capability getUsageTotals — session cumulative usage (the real measure for the host's get_session_stats).
+   *  Previously unimplemented: the stats panel Token area always showed 0/0/0 (host fallback), contradicting the context row. */
   getUsageTotals() {
     return { ...this.usageTotals };
   }
 
-  /** All Sessions 服务出口读取（唯一权威实现 = session-manager AgentAdapter 实时 parse）。
-   *  与 createZcodeSession 复活回放共用同一出口；缺席 fail-silent。 */
+  /** All Sessions service outlet read (the single authoritative implementation = session-manager AgentAdapter live parse).
+   *  Shares the same outlet as the createZcodeSession revival replay; fails silently when absent. */
   private parseSessionSvc(): Promise<{ meta?: Record<string, unknown>; messages?: unknown[] } | null> {
     if (!this.sessId) return Promise.resolve(null);
     const reg = (globalThis as any).__piWebExt;
@@ -1462,46 +1517,48 @@ class ZcodeHandle {
     return typeof svc?.parseSession === "function" ? svc.parseSession(`zcode:${this.sessId}`) : Promise.resolve(null);
   }
 
-  /** getMessages 前置的「外部写入感知」（2026-09-15 用户实测「点击会话不加载最新内容」）。
+  /** Pre-getMessages "external write awareness" (2026-09-15 user report: "clicking a session doesn't load the latest content").
    *
-   * 根因：openExternalSession 对存活 handle 直接复用（不重建），get_messages 返回的是
-   * handle 内存 liveHistory——它只含 handle 建立时刻的源快照 + 本 handle 自己驱动的轮次；
-   * zcode 桌面端/CLI 在 handle 存活期间往同一会话写入的新消息不会推给本 handle
-   * （不同 app-server 进程、无共享订阅），于是复用打开时消息停在旧位置（列表却实时）。
+   * Root cause: openExternalSession reuses a live handle as-is (no rebuild), so get_messages returns the handle's
+   * in-memory liveHistory — it only holds the source snapshot from when the handle was created + the turns this handle
+   * drove itself; new messages the zcode desktop/CLI writes into the same session while the handle lives are never pushed
+   * to this handle (different app-server processes, no shared subscription), so on reuse-open messages stay at the old position (while the list is live).
    *
-   * 修法：handle 空闲时探测源 db 会话 time_updated（一次轻量 WAL 只读 SELECT），
-   * 水位超过上次回填锚点 → 经 session-manager 服务出口从源重读全量历史重建 liveHistory。
-   * 运行中跳过（实时流在推，重建会打断 streaming）；水位不变零开销；读失败 fail-silent。 */
+   * Fix: when the handle is idle, probe the source db session's time_updated (one lightweight WAL read-only SELECT);
+   * if the watermark passed the last backfill anchor → re-read the full history from the source via the session-manager
+   * service outlet and rebuild liveHistory. Skipped while running (the live stream is pushing; a rebuild would break
+   * streaming); zero cost when the watermark is unchanged; fail-silent on read failure. */
   private async syncExternalHistoryIfChanged(): Promise<void> {
-    // 运行中跳过（实时流在推，重建会打断 streaming；接管未收口轮次 as.turnActive 同样算运行中）
+    // Skip while running (live stream is pushing; a rebuild would break streaming; an adopted
+    // unsettled turn counts as running too)
     if (this.isRunning() || !this.sessId || !this.sessId.startsWith("sess_")) return;
     if (this.historySyncInflight) { await this.historySyncInflight; return; }
     const task = (async () => {
       try {
         const rev = readZcodeSessionUpdatedMs(this.sessId!);
-        if (rev === null) return; // db 不可读（缺存储/写锁瞬间）→ 跳过，下轮再试
-        if (this.historySeedRevMs === 0) { this.historySeedRevMs = rev; return; } // 首轮锚定（handle 建立时 seed 的即当时最新）
-        if (rev <= this.historySeedRevMs) return; // 无外部推进
+        if (rev === null) return; // db unreadable (missing store / write-lock moment) → skip, retry next turn
+        if (this.historySeedRevMs === 0) { this.historySeedRevMs = rev; return; } // anchor on the first run (the seed taken at handle creation was the latest then)
+        if (rev <= this.historySeedRevMs) return; // no external advancement
         const parsed = await this.parseSessionSvc();
         if (parsed?.messages?.length) {
           this.liveHistory = [];
           this.seedHistory(parsed.messages as never[]);
         }
         this.historySeedRevMs = rev;
-      } catch { /* fail-silent：读失败不动 liveHistory */ }
+      } catch { /* fail-silent: on read failure leave liveHistory untouched */ }
     })();
     this.historySyncInflight = task;
     try { await task; } finally { if (this.historySyncInflight === task) this.historySyncInflight = null; }
   }
 
-  /** 内存对话日志（本 handle 生命周期内的全部轮次；返回前先补外部写入同步，见
-   *  syncExternalHistoryIfChanged——保证「点击会话」读到的是源库最新而非 handle 旧快照）。 */
+  /** In-memory conversation log (all turns within this handle's lifetime; before returning, first catch up on external
+   *  writes via syncExternalHistoryIfChanged — ensuring "clicking a session" reads the source store's latest, not the handle's stale snapshot). */
   async getMessages(): Promise<unknown[]> {
     await this.syncExternalHistoryIfChanged();
     return [...this.liveHistory];
   }
 
-  /** 最后活动时间（epoch ms；无活动返回 undefined）。供 /api/sessions 修正占位行 modified。 */
+  /** Last activity time (epoch ms; returns undefined when there was no activity). Used by /api/sessions to fix placeholder-row modified. */
   getLastActivity(): number | undefined {
     return this.lastActivityTs ?? undefined;
   }
@@ -1512,28 +1569,29 @@ class ZcodeHandle {
 // ============================================================================
 
 let counter = 0;
-/** 受控登录 API（startup 里挂载；/login/* 命中返回 Response，其余 null 放行）。 */
+/** Controlled-login API (mounted in startup; returns a Response when /login/* matches, null otherwise to pass through). */
 let loginApi: ((req: Request, ctx: { path: string[]; method: string; searchParams: URLSearchParams }) => Promise<Response | null>) | null = null;
-/** 受控登录控制器引用（shutdown 时终止进行中的登录进程）。 */
+/** Controlled-login controller reference (terminates an in-flight login process at shutdown). */
 let loginCtl: { dispose(): void } | null = null;
 
 /**
- * 会话 recycle API（2026-09-10）：把存量 handle 升级到当前扩展代码，无需重启 pi-web 进程。
+ * Session recycle API (2026-09-10): upgrades existing handles to the current extension code without restarting the pi-web process.
  *
- * 背景：扩展热重载只换模块，core handle store（globalThis.__sessionHandles）里已存在的
- * handle 实例继续跑老代码——部署新逻辑后老会话不生效（steer v4 化时实测咬人）。
+ * Background: extension hot-reload only swaps modules; handle instances already in the core handle store
+ * (globalThis.__sessionHandles) keep running the old code — after deploying new logic, old sessions don't pick it up
+ * (bit us in practice during the steer v4 migration).
  *
- *   GET  /session/recycle               → 存量 zcode 会话清单（id/running/alive）
- *   POST /session/recycle {id, force?}  → 空闲校验（运行中需 force:true，会打断当前轮）
- *       → dispose 旧 handle → 自 fetch POST /api/session-backends（loopback 恒过门禁）
- *       → core 复活分支建新 handle（当前代码）→ putHandle 覆盖 + watcher/站位全接线。
- *   new- 占位会话（无真实 sid）仅 dispose——前端下次访问按需重建全新会话。
+ *   GET  /session/recycle               → list of existing zcode sessions (id/running/alive)
+ *   POST /session/recycle {id, force?}  → idle check (running sessions need force:true, which interrupts the current turn)
+ *       → dispose the old handle → self-fetch POST /api/session-backends (loopback always passes the gate)
+ *       → the core revival branch builds a new handle (current code) → putHandle overwrite + watcher/placeholder full wiring.
+ *   new- placeholder sessions (no real sid) are only disposed — the frontend rebuilds a fresh session on demand at next access.
  */
 type RecycleHandleLike = { id: string; isRunning(): boolean; alive(): boolean; dispose(): unknown; cwd?: string };
 
 function recycleSelfBase(req: Request): string {
-  // 服务端绑定 127.0.0.1（unit ExecStart --hostname 127.0.0.1）；端口在 argv（--port），
-  // 不在 env。请求本身来自 loopback 时直接用其 origin；经 nginx 域名来的回退 argv 解析。
+  // The server binds 127.0.0.1 (unit ExecStart --hostname 127.0.0.1); the port is in argv (--port),
+  // not in env. When the request itself comes from loopback, use its origin directly; requests arriving via an nginx domain fall back to argv parsing.
   try {
     const u = new URL(req.url);
     if (u.hostname === "127.0.0.1" || u.hostname === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname)) {
@@ -1556,7 +1614,7 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
   }
   if (req.method !== "POST") return Response.json({ error: "method not allowed" }, { status: 405 });
   let body: { id?: unknown; force?: unknown } = {};
-  try { body = await req.json() as typeof body; } catch { /* 空体按缺省 */ }
+  try { body = await req.json() as typeof body; } catch { /* empty body treated as defaults */ }
   const id = typeof body.id === "string" ? body.id : "";
   if (!id.startsWith("zcode:")) return Response.json({ error: "id 必须是 zcode: 复合 id" }, { status: 400 });
   const old = store?.get(id);
@@ -1569,7 +1627,7 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
   }
   const realSid = id.startsWith("zcode:sess_") ? id.slice("zcode:".length) : "";
   const cwd = typeof (old as { cwd?: string }).cwd === "string" ? (old as { cwd?: string }).cwd : "";
-  try { await old.dispose(); } catch { /* 已死容错 */ }
+  try { await old.dispose(); } catch { /* tolerate already-dead */ }
   if (!realSid) {
     return Response.json({ recycled: true, recreated: false, id, note: "占位会话已释放（未发过消息的空会话），前端下次访问按需重建" });
   }
@@ -1598,7 +1656,7 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
   }
 }
 
-/** 套餐状态缓存（60s；force=1 绕过；本地文件读取，失败 10s 退避）。 */
+/** Plan status cache (60s; force=1 bypasses; local file read, 10s backoff on failure). */
 let quotaCache: { at: number; ttl: number; value: Record<string, unknown> } | null = null;
 const QUOTA_TTL_MS = 60_000;
 const QUOTA_ERROR_TTL_MS = 10_000;
@@ -1646,12 +1704,12 @@ export default {
   id: "aiti-zcode-agent",
   name: "ZCode CLI",
   icon: "icons/cpu.svg",
-  // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
-  // 静态插入点声明（与 client registerItems 的 id 一一对应）
-  // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明 ui ——
-  // 服务端 /login/* 与 .agent 描述符保留（manager 代理消费）。
-  // client（2026-09-16 起）：sessionRequestCard 插槽的 provider_headers 验证码卡——
-  // 「agent 扩展自带专属能力 UI」（去核化方案 docs/pi-web-agent-capability-ui-ext-plan.md §3.2）。
+  // Controlled-login unified dialog (zero-build native h() client; the two files under client/ are copied at deploy)
+  // Static insertion point declarations (one-to-one with the client registerItems ids)
+  // Login UI was unified into aiti-agent-manager (the controlled-login dialog retired, 2026-09-13): ui is no longer declared —
+  // the server /login/* routes and the .agent descriptor remain (consumed by the manager proxy).
+  // client (since 2026-09-16): the provider_headers captcha card of the sessionRequestCard slot —
+  // "agent extensions carry their own capability UI" (de-core plan docs/pi-web-agent-capability-ui-ext-plan.md §3.2).
   client: "dist/aiti-zcode-cards.mjs",
 
   features: [
@@ -1772,14 +1830,14 @@ export default {
       };
     }) {
       hostFeatures = (ctx as any)?.features ?? null;
-      captureSpawnEnvFeatures((ctx as any)?.features ?? null); // D1：spawn.env feature 捕获（否则 spawnEnvList 恒空）
-      hostSvc = (ctx as any)?.services ?? null; // DI 方案 P1
+      captureSpawnEnvFeatures((ctx as any)?.features ?? null); // D1: capture the spawn.env feature (otherwise spawnEnvList stays empty)
+      hostSvc = (ctx as any)?.services ?? null; // DI plan P1
       try { mkdirSync(ctx.configDir, { recursive: true }); } catch { /* exists */ }
       const configDir = ctx.configDir;
-      // 队列崩溃恢复 sidecar 根（<stateDir>/queues/<sessionId>.json；docs/aiti-remote-queue-and-sidecar-plan.md §3）
+      // Queue crash-recovery sidecar root (<stateDir>/queues/<sessionId>.json; docs/aiti-remote-queue-and-sidecar-plan.md §3)
       queueStateDir = (ctx as { stateDir?: string }).stateDir ?? join(configDir, "state");
       try { mkdirSync(join(queueStateDir, "queues"), { recursive: true }); } catch { /* exists */ }
-      // 任务列表快照根 + 休眠兜底服务（core state 路由休眠分支通用扫描消费；服务注册失败不阻断启动）
+      // Task-list snapshot root + dormant fallback service (consumed by the core state router's dormant-branch generic scan; service registration failure does not block startup)
       taskListDir = join(queueStateDir, "task-lists");
       try { mkdirSync(taskListDir, { recursive: true }); } catch { /* exists */ }
       try {
@@ -1787,17 +1845,17 @@ export default {
           "aiti-zcode-agent.sessionDormantState",
           readTaskSnapshot,
         );
-      } catch { /* 服务面缺席（如单测桩）→ 休眠兜底降级为无数据 */ }
-      // lazy migrate（数据分层双保险）：旧根级 runtime//apps/（AppImage 与解压运行时，可再下载）→ cache/
-      // 三目录对称：configDir = <extRoot>/config，旧根级/缓存均在 <extRoot> 下 = dirname(configDir)
+      } catch { /* service surface absent (e.g. unit-test stubs) → dormant fallback degrades to no data */ }
+      // lazy migrate (data-layering double insurance): old root-level runtime/apps/ (AppImage and extracted runtime, re-downloadable) → cache/
+      // Three-dir symmetry: configDir = <extRoot>/config; old root-level/cache both live under <extRoot> = dirname(configDir)
       const extRoot = dirname(configDir);
       quotaCacheDir = join(extRoot, "cache");
       for (const rel of ["runtime", "apps"]) {
         const from = join(extRoot, rel), to = join(extRoot, "cache", rel);
-        try { if (existsSync(from) && !existsSync(to)) { mkdirSync(join(to, ".."), { recursive: true }); renameSync(from, to); } } catch { /* 下次重试 */ }
+        try { if (existsSync(from) && !existsSync(to)) { mkdirSync(join(to, ".."), { recursive: true }); renameSync(from, to); } } catch { /* retry next time */ }
       }
-      // 受控登录（工具条 🔑）：spawn 官方 `login --no-browser --json`，URL 交前端，
-      // 凭据落盘/换 key 全官方；成功后预热 ensureCredential（login 只落 z.ai 通道 token）
+      // Controlled login (toolbar 🔑): spawns the official `login --no-browser --json`, hands the URL to the frontend;
+      // credential persistence/key exchange are all official; on success, warms up ensureCredential (login only lands the z.ai channel token)
       const login = createControlledLogin({
         driver: zcodeLoginDriver,
         configDir,
@@ -1818,9 +1876,9 @@ export default {
       });
       loginApi = mountControlledLoginApi(login);
       loginCtl = login;
-      // createSession 主体（provider 与 P2 launch 服务共用：复活/种子模型/状态文件全链路一致）
-      // detachable：options.agentStarter（wrapper spawn）与 options.attached（重启后 adopt 活进程）
-      // 由宿主 withAgentStarter/attachDetachedSession 注入，原样透传给 handle。
+      // createSession body (shared by the provider and the P2 launch service: revival/seed model/state file identical across the chain)
+      // detachable: options.agentStarter (wrapper spawn) and options.attached (adopt the live process after restart)
+      // are injected by the host's withAgentStarter/attachDetachedSession and passed through verbatim to the handle.
       const createZcodeSession = async (
         options: {
           sessionId?: string;
@@ -1834,14 +1892,14 @@ export default {
         launchOverride?: LaunchOverride,
       ): Promise<ZcodeHandle> => {
           const rawSid = options.sessionId ?? "";
-          // All Sessions 历史行复活：composite id "zcode:sess_xxx" → sid 即真实 zcode 会话 id
+          // All Sessions history-row revival: composite id "zcode:sess_xxx" → sid is the real zcode session id
           const isRealSid = rawSid.startsWith("sess_");
           const id = rawSid ? `zcode:${rawSid}` : `zcode:new-${++counter}-${Date.now()}`;
 
-          // ★ 复活路径先读 zcode 会话存储：cwd 必须以会话原 directory 为准——
-          //   upsert/resume 的 workspace 与会话原 workspace 不一致会导致
-          //   provider 注入无效 + restoreWarning(-32031) 拒 send（实测）。
-          //   URL ?session= 恢复路径的 options.cwd 常为空 → 不能落 process.cwd()。
+          // ★ The revival path reads the zcode session store first: cwd must follow the session's original directory —
+          //   an upsert/resume workspace differing from the session's original workspace causes
+          //   provider injection to be ineffective + restoreWarning(-32031) refusing sends (observed).
+          //   The URL ?session= recovery path often has an empty options.cwd → must not fall back to process.cwd().
           let restoredParsed: { meta?: { cwd?: string; model?: string }; messages?: unknown[] } | null = null;
           const parseSessionSvc = (): Promise<{ meta?: { cwd?: string; model?: string }; messages?: unknown[] } | null> => {
             const reg = (globalThis as any).__piWebExt;
@@ -1851,13 +1909,14 @@ export default {
           if (isRealSid) {
             try {
               restoredParsed = await parseSessionSvc();
-            } catch { /* 回放失败不阻断接管（fail-silent） */ }
+            } catch { /* replay failure does not block adoption (fail-silent) */ }
           }
           const restoredCwd = typeof restoredParsed?.meta?.cwd === "string" && restoredParsed.meta.cwd.trim() ? restoredParsed.meta.cwd : "";
           const handle = new ZcodeHandle(id, restoredCwd || options.cwd || options.attached?.cwd || process.cwd(), configDir);
           handle.launchOverride = launchOverride;
-          // detachable 托管接线：wrapper 策略随 handle 走（首轮 prompt 懒 spawn 时用）；
-          // 接管路径另存活进程 + journal 重放预算（SocketChild.replayBytes，字节门控历史/live 边界）。
+          // Detachable-hosting wiring: the wrapper strategy rides with the handle (used by
+          // the lazy spawn at the first prompt); the adopt path additionally carries the live
+          // process + journal replay budget (SocketChild.replayBytes, byte-gated history/live boundary).
           handle.setAgentStarter(options.agentStarter);
           if (options.attached) {
             const facade = options.attached.child as unknown as { replayBytes?: unknown } | null;
@@ -1867,12 +1926,12 @@ export default {
             );
           }
 
-          // 种子模型：显式指定 > 同会话状态恢复（用户上次在本会话切过，通道校验）> 会话回放真实模型
-          // > 该 agent 上次使用（per-agent last used）> feature/套餐通道默认（优先级递减）
-          const planChannel = detectPlanProvider(); // null = 探测不出（仅日志展示用；校验统一走模块级 channelUsable）
+          // Seed model: explicit > same-session state restore (the user last switched within this session, with channel validation) > real model from session replay
+          // > this agent's last used (per-agent last used) > feature/plan-channel default (priority descending)
+          const planChannel = detectPlanProvider(); // null = undetectable (for log display only; validation always goes through the module-level channelUsable)
           if (typeof options.model?.id === "string" && options.model.id && parseModelRef(options.model.id)) {
-            // 显式选择 start-plan → 人话拒绝（验证码只能桌面端产生、pi-web 不可驱动）；
-            // 不静默回落——用户点击即应被告知，而非无感换模型。
+            // Explicitly selecting start-plan → reject with a plain-language message (captcha only from the desktop app; pi-web cannot drive it);
+            // no silent fallback — the user should be told at click time, not have the model swapped invisibly.
             if (isStartPlanChannel(options.model.id.split("/")[0])) {
               throw new Error(START_PLAN_UNSUPPORTED);
             }
@@ -1890,14 +1949,16 @@ export default {
           }
           if (isRealSid) {
             handle.setKnownSessionId(rawSid);
-            // 历史回放（cwd 已在上方读取）
+            // History replay (cwd was read above)
             if (restoredParsed) {
               if (restoredParsed.messages?.length) handle.seedHistory(restoredParsed.messages as never[]);
-              // 会话真实模型恢复（CC 同款 restore 语义：初始化不广播，选择器直接展示）：
-              // 最近一条 assistant 的 provider/model ref；仅在无更优先来源时生效。
-              // start-plan 会话照常恢复原模型（用户感知其为「start 加载的已知会话」，发消息时人话拦截）；
-              // 其余死通道（套餐失效的 coding-plan 等）走 channelUsable 通道级校验回落 last-used/默认，
-              // 避免种出 429/1113 死模型（2026-09-15 收紧）。
+              // Anchor the watermark at seed time (adopt paths rely on it: see anchorHistoryAtSourceRev)
+              handle.anchorHistoryAtSourceRev();
+              // Real session model restore (CC-style restore semantics: no broadcast at init, the selector shows it directly):
+              // the provider/model ref of the latest assistant message; only applied when no higher-priority source exists.
+              // start-plan sessions restore their original model as usual (the user sees them as "known sessions loaded via start",
+              // intercepted with a plain-language message on send); other dead channels (expired coding-plan etc.) go through the
+              // channelUsable channel-level check and fall back to last-used/default, avoiding seeding 429/1113 dead models (tightened 2026-09-15).
               if (!handle.model && typeof restoredParsed.meta?.model === "string" && parseModelRef(restoredParsed.meta.model)) {
                 const pid = restoredParsed.meta.model.split("/")[0];
                 if (isStartPlanChannel(pid) || channelUsable(pid)) {
@@ -1912,11 +1973,12 @@ export default {
           }
           if (!handle.model) handle.model = { id: seedModelRef(), provider: "zcode" };
           handle.persistModelState();
-          // 接管路径：立即接线活进程 + 消费 journal 重放（fail-soft——runtime/凭据解析失败
-          // 不阻断打开，下轮 prompt 的 ensureAppServer/ensureReady 会重试）。
+          // Adopt path: wire the live process + consume the journal replay right away
+          // (fail-soft — a runtime/credential resolution failure must not block opening;
+          // the next prompt's ensureAppServer/ensureReady retries).
           if (options.attached) {
             void handle.reattachNow().catch((e) =>
-              console.warn("[aiti-zcode-agent] adopt 预热失败（prompt 时重试）:", e instanceof Error ? e.message : String(e)));
+              console.warn("[aiti-zcode-agent] adopt warm-up failed (retried on prompt):", e instanceof Error ? e.message : String(e)));
           }
           return handle;
       };
@@ -1925,17 +1987,19 @@ export default {
         label: "ZCode CLI (智谱)",
         agentKey: "zcode",
         maxCapabilities: zcodeCapabilities(),
-        // detachable 托管 opt-in（getter：跟随传输通道——仅 app-server 长驻通道可跨重启；
-        // oneshot 每轮单发进程无进程可保，宿主读该字段时动态取值）。
-        // 生效面：badge 跨重启选项/默认 nextStartMode、宿主 withAgentStarter 注入、
-        // 重启后 attachDetachedSession 按 agentKey 找回本 provider。
+        // Detachable-hosting opt-in (getter: follows the transport — only the long-lived
+        // app-server channel can cross restarts; oneshot spawns a fresh process per turn so
+        // there is nothing to keep, and the host reads this field dynamically).
+        // Effect: the badge's survives-restart option + default nextStartMode, host-side
+        // withAgentStarter injection, and post-restart attachDetachedSession finding this
+        // provider by agentKey.
         get detachable() { return featureTransport() === "app-server"; },
-        // 静态目录（新建页选后端时供选择器；无会话即可取）——上次使用的模型置顶，
-        // 前端默认选中它（列表首项），新建会话即默认该 agent 上次使用的模型。
+        // Static catalog (feeds the selector when picking a backend on the new-session page; available without any session) —
+        // last-used model first; the frontend selects it by default (first list item), so new sessions default to this agent's last-used model.
         listModels: async () => zcodeCatalog(await lastUsedModelRef()),
         createSession: (options) => createZcodeSession(options as Parameters<typeof createZcodeSession>[0]),
       });
-      // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家
+      // Agent descriptor: for dynamic discovery by the agent management surface (aiti-agent-manager) — the manager hard-codes no backend
       ctx.services?.provide?.("aiti-zcode-agent.agent", {
         agent: "zcode",
         label: "ZCode CLI (智谱)",
@@ -1950,7 +2014,7 @@ export default {
           { key: "zcode-credentials", label: "桌面端凭据（加密）", path: join(c.home, ".zcode", "v2", "credentials.json") },
         ],
       });
-      // P2 协议委托：launch 服务（provider 同链路：复活/种子模型/状态文件）
+      // P2 protocol delegation: launch service (same chain as the provider: revival/seed model/state file)
       ctx.services?.provide?.("aiti-zcode-agent.launch", {
         agentKey: "zcode",
         capabilities: zcodeCapabilities(),
@@ -1960,12 +2024,12 @@ export default {
       console.log(`[aiti-zcode-agent] registered: ${lastKey} (configDir: ${configDir})`);
     },
 
-    /** 受控登录 API（/login/*）+ 会话 recycle（/session/recycle，存量 handle 升级到当前代码）。 */
+    /** Controlled-login API (/login/*) + session recycle (/session/recycle, upgrades existing handles to the current code). */
     async api(req: Request, ctx: { path: string[]; method: string; searchParams: URLSearchParams }) {
       const recycled = await recycleApi(req, ctx);
       if (recycled) return recycled;
       // Account quota view (live coding-plan numbers first, plan-status fallback)
-      // 注意：必须在受控登录层之前——controlled-login 对未知 /login/* 返回 404 Response 会吞路由
+      // Note: must come before the controlled-login layer — controlled-login swallows the route by returning a 404 Response for unknown /login/* paths
       if (ctx.path[0] === "login" && ctx.path[1] === "quota" && ctx.method === "GET") {
         return quotaView(ctx.searchParams?.get("force") === "1");
       }
@@ -1974,7 +2038,7 @@ export default {
       return null;
     },
 
-    /** 扩展停卸/reload：终止进行中的登录进程（状态文件留档，下次 status reconcile 为 failed）。 */
+    /** Extension unload/reload: terminates an in-flight login process (the state file is kept; the next status reconcile marks it failed). */
     shutdown() {
       loginCtl?.dispose();
       loginCtl = null;

@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-zcode-agent
 
-> 智谱 ZCode（桌面端内嵌 CLI runtime）驱动 —— app-server 长驻（默认，流式/工具卡/steer/附件）+ oneshot 兜底双通道，接入 All Sessions，合规吃 GLM 编程套餐
+> 智谱 ZCode（桌面端内嵌 CLI runtime）驱动 —— app-server 长驻（默认，流式/工具卡/steer/附件）+ oneshot 兜底双通道，接入 All Sessions，合规吃 GLM 编程套餐；支持跨重启托管（detachable）：pi-web 重启/升级不打断 agent 与运行中的轮次
 
 [English](./README.md) · 简体中文
 

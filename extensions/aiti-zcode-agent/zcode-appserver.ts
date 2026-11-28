@@ -1,63 +1,83 @@
 /**
- * zcode-appserver —— ZCode Protocol v1 长驻客户端（`zcode.cjs app-server` stdio NDJSON）。
+ * zcode-appserver — ZCode Protocol v1 persistent client (`zcode.cjs app-server` over stdio NDJSON).
  *
- * 驱动方式与 ZCode 桌面端一致（docs/zcode-desktop-cli-agent-analysis.md §7，2026-09-07 源码逆向 + 直连 E2E）：
+ * Driven the same way as the ZCode desktop app (docs/zcode-desktop-cli-agent-analysis.md §7, 2026-09-07 source reverse-engineering + direct-connect E2E):
  *   spawn app-server → session/create|resume → session/subscribe{deliveryKind:"desktop-continuous"}
- *   → session/send（异步受理）→ session/event 通知流
- *   ⚠ 运行中 steer 不走 session/send（v1 路径实测只入 runtime 延迟队列且不投递，2026-09-10 探针），
- *   走 desktop 同款 v4/command sendText{requestedDelivery:"guide"}（见 steerViaCommand）。
+ *   → session/send (accepted asynchronously) → session/event notification stream
+ *   ⚠ Mid-run steer does not go through session/send (probe 2026-09-10: the v1 path only lands in the runtime deferred queue and never delivers),
+ *   it uses the desktop-style v4/command sendText{requestedDelivery:"guide"} (see steerViaCommand).
  *
- * 事件映射（桌面端消费形态 → pi-web wire）：
- *   model.streaming text_*     → message_update text_start/delta/end（打字机）
+ * Event mapping (desktop consumption shape → pi-web wire):
+ *   model.streaming text_*     → message_update text_start/delta/end (typewriter)
  *   model.streaming reasoning_*→ message_update thinking_start/delta/end
  *   model.streaming tool_input_* / tool_call → message_update toolcall_start/delta/end
- *   tool.updated scheduled/started → tool_execution_start（此前封口当前流式消息段）
- *   tool.updated progress      → tool_execution_update（stdoutTail → partialResult 文本）
- *   tool.updated result/error  → tool_execution_end + message_end{role:"toolResult"}（工具结果卡）
- *   tool.updated (TodoWrite 族) → onTaskList 任务列表镜像（桌面端同款派生，协议无专门 todo 事件）
- *   turn.completed / failed    → 流式消息封口 message_end{assistant} + agent_end + agent_settled
+ *   tool.updated scheduled/started → tool_execution_start (closes the current streaming message segment first)
+ *   tool.updated progress      → tool_execution_update (stdoutTail → partialResult text)
+ *   tool.updated result/error  → tool_execution_end + message_end{role:"toolResult"} (tool result card)
+ *   tool.updated (TodoWrite family) → onTaskList task-list mirror (desktop-style derivation; no dedicated todo event in the protocol)
+ *   turn.completed / failed    → streaming message close message_end{assistant} + agent_end + agent_settled
  *
- * 反向请求（server→client，必须应答）：session/requestRuntimePreferences（桌面端同款应答）、
- *   interaction/requestPermission（backend 语义自动放行）、interaction/requestUserInput（★ 交互元语桥接）。
+ * Reverse requests (server→client, must be answered): session/requestRuntimePreferences (desktop-style answer),
+ *   interaction/requestPermission (auto-allow, backend semantics), interaction/requestUserInput (★ interaction-primitive bridging).
  *
- * 交互元语（2026-09-10，协议逆向 + 会话记录实证）：
- *   zcode 的「问题模式 / plan 审批」由两个工具发起，均经 interaction/requestUserInput 反向请求决策：
- *   - AskUserQuestion（kind=ask_user）：questions=[{question,header,multiSelect,options}] →
- *     应答 {action:"accept",content:{answers:{<question文本>:<label|label[]>}}}；拒绝 → deny。
- *   - ExitPlanMode（kind=plan_approval，schema.interaction="plan_approval"）：plan 全文在 input.plan →
- *     批准应答 {action:"accept",content:{answer:"approve"}}；带反馈拒绝应答
- *     {action:"accept",content:{answer:"<反馈>"}}（zcode 端归一为 deny+reason=反馈，agent 收到继续改方案）；
- *     直接拒绝 {action:"decline"}。
- *   桥接方式：emit interaction_request 事件给 pi-web 前端（统一审批/问题卡），用户作答经
- *   respondInteraction() 回填；zcode 端无总超时（reannounce 重发同 requestId，handler 幂等），
- *   turn 收口/ dispose 时未决请求一律 decline + interaction_expired 清理。
- *   权限类（interaction/requestPermission）保持自动放行（backend 语义，应用户 yolo 要求）。
+ * Interaction primitives (2026-09-10, protocol reverse-engineering + session-record evidence):
+ *   zcode's "question mode / plan approval" is initiated by two tools, both decided through the interaction/requestUserInput reverse request:
+ *   - AskUserQuestion (kind=ask_user): questions=[{question,header,multiSelect,options}] →
+ *     answer {action:"accept",content:{answers:{<question text>:<label|label[]>}}}; refusal → deny.
+ *   - ExitPlanMode (kind=plan_approval, schema.interaction="plan_approval"): full plan text in input.plan →
+ *     approval answer {action:"accept",content:{answer:"approve"}}; rejection-with-feedback answers
+ *     {action:"accept",content:{answer:"<feedback>"}} (zcode normalizes to deny+reason=feedback; the agent keeps refining the plan);
+ *     direct rejection {action:"decline"}.
+ *   Bridging: emit an interaction_request event to the pi-web frontend (unified approval/question cards); the user's answer comes back via
+ *   respondInteraction(); zcode has no overall timeout (reannounce re-sends share the requestId; the handler is idempotent),
+ *   and on turn settle/dispose all pending requests are declined + cleaned up with interaction_expired.
+ *   Permission requests (interaction/requestPermission) keep auto-allow (backend semantics, per the user's yolo requirement).
  *
  *
- * 进程模型：一个连接一个 app-server 子进程；进程退出 → waiter 拒绝 + 标记失效，
- *   下一轮 prompt 重新 spawn + session/resume（sess_xxx 持久于 ~/.zcode，跨进程复活）。
+ * Process model: one app-server child process per connection; process exit → waiters rejected + marked invalid,
+ *   the next prompt re-spawns + session/resume (sess_xxx persists under ~/.zcode, revives across processes).
+ *   Detachable hosting (2026-12): the child can be launched under the host's wrapper
+ *   (systemd-run) and survives a pi-web restart; on reopen the live process is adopted
+ *   and the wrapper journal replay (byte-budget gated) restores the scene — beginAdopted/endReplay.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-// P1' 启动包装（docs/aiti-custom-agent-plan.md）：launch 解析走共享层
+import { StringDecoder } from "node:string_decoder";
+// P1' launch wrapping (docs/aiti-custom-agent-plan.md): launch resolution goes through the shared layer
 import { spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
-// 任务列表（TodoWrite 族工具事件派生）解析/更新语义走共享层（权威源 _shared/task-list.ts）
+// Task list (TodoWrite-family tool event derivation) parse/update semantics live in the shared layer (authoritative source _shared/task-list.ts)
 import { createTaskListMirror, type TaskEntry } from "@aiti-ai/ext-shared/task-list";
+
+/** Detachable-hosting strategy injected by the host (agent-starter wrapper; absent = plain spawn). */
+export interface ZcodeAgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** 图片附件（与 index.ts 侧 TurnImage 结构同形；data 为无 data: 前缀的 base64）。 */
+/** Image attachment (same shape as index.ts's TurnImage; data is base64 without the data: prefix). */
 export interface TurnImageLike { data: string; mimeType: string; filename?: string }
 
-/** app-server 启动重试参数：send 受理前的启动段（spawn→upsert→resume→subscribe）传输层中断时清理重拉。 */
+/** app-server startup retry params: cleans up and re-pulls when the pre-send startup phase (spawn→upsert→resume→subscribe) hits a transport-layer interruption. */
 const STARTUP_ATTEMPTS = 3;
 const STARTUP_BACKOFF_MS = 1200;
 
 type JsonRecord = Record<string, unknown>;
 type Listener = (event: JsonRecord) => void;
 
-/** 桌面端同款 runtime preferences 应答（probe 实测可通过；modelContextBudgetStrategy 取 CLI 默认 preflight-v1）。 */
+/** Desktop-style runtime preferences answer (probe-verified to pass; modelContextBudgetStrategy takes the CLI default preflight-v1). */
 export const RUNTIME_PREFERENCES_ANSWER: JsonRecord = {
   nativeSearchEnhancementsEnabled: true,
   memoryEnabled: false,
@@ -65,19 +85,19 @@ export const RUNTIME_PREFERENCES_ANSWER: JsonRecord = {
   modelContextBudgetStrategy: "preflight-v1",
 };
 
-/** "bigmodel/GLM-5.3" → {providerId, modelId}（session/create|setModel 的 model 字段）；非法返回 null。 */
+/** "bigmodel/GLM-5.3" → {providerId, modelId} (the model field of session/create|setModel); returns null when invalid. */
 export function toProtocolModel(modelRef: string): { providerId: string; modelId: string } | null {
   const i = modelRef.indexOf("/");
   if (i <= 0 || i === modelRef.length - 1) return null;
   return { providerId: modelRef.slice(0, i), modelId: modelRef.slice(i + 1) };
 }
 
-/** 3.17+ object 形态 setModel 声明了 reasoningLevel 档位的模型必带 options.reasoningLevel
- *  （缺省 -32603 "Reasoning level is required"；personal provider config 的模型卡声明
- *  disabled/enabled 两档）。GLM-5 系 agent 走 enabled（思考开，桌面同款）。 */
+/** 3.17+ object-form setModel: models that declare a reasoningLevel tier must carry options.reasoningLevel
+ *  (otherwise -32603 "Reasoning level is required"; the personal provider config's model card declares
+ *  the disabled/enabled tiers). GLM-5 series agents use enabled (thinking on, desktop-style). */
 const ZCODE_REASONING_LEVEL = "enabled";
 
-/** UI 五档权限模式 → ZCode mode 枚举（plan/build/edit/yolo/auto）。 */
+/** UI five-level permission mode → ZCode mode enum (plan/build/edit/yolo/auto). */
 export function toProtocolMode(mode: string | undefined): string | undefined {
   switch (mode) {
     case "plan": return "plan";
@@ -89,7 +109,7 @@ export function toProtocolMode(mode: string | undefined): string | undefined {
 }
 
 // ============================================================================
-// 连接层：一个 app-server 子进程 + NDJSON 编解码 + 双向 RPC
+// Connection layer: one app-server child process + NDJSON codec + bidirectional RPC
 // ============================================================================
 
 export class ZcodeAppServerConnection {
@@ -105,7 +125,7 @@ export class ZcodeAppServerConnection {
   private reverse = new Map<string, (params: JsonRecord) => unknown | Promise<unknown>>();
   private notificationListeners = new Set<(method: string, params: JsonRecord) => void>();
   private exitListeners = new Set<(info: { code: number | null; signal: string | null }) => void>();
-  /** app-server stderr 最近 8KB 环形缓冲（exit≠0 / spawn 失败时落盘用，替代原先的 stderr 全丢弃）。 */
+  /** app-server stderr last-8KB ring buffer (persisted on non-zero exit / spawn failure, replacing the previous full stderr discard). */
   private stderrTail = "";
 
   private opts: {
@@ -113,10 +133,25 @@ export class ZcodeAppServerConnection {
     runtimePath: string;
     cwd: string;
     env: Record<string, string>;
-    /** P2 协议委托：成员级启动包装（custom-agent 路径），优先于 extman spawn.* feature。 */
+    /** P2 protocol delegation: member-level launch wrapping (custom-agent path), takes precedence over the extman spawn.* feature. */
     launchOverride?: LaunchOverride;
+    /** Injected by the pi-web core (detachable hosting); absent = plain spawn. */
+    agentStarter?: ZcodeAgentStarterLike;
+    /** Registry key for the detached wrapper (native sess id, or the provisional composite id pre-bind). */
+    registryKey?: string;
+    /** Core recovery: adopt this live wrapper-hosted process instead of spawning. */
+    attachedChild?: ChildProcess;
+    /** Journal bytes the wrapper replayed into the adopted child's stdio (see SocketChild.replayBytes). */
+    replayByteBudget?: number;
     log?: (msg: string) => void;
   };
+
+  /** Assigned post-construction (the session owns the replay boundary; see AppServerSession.beginAdopted). */
+  onReplayDrained: (() => void) | null = null;
+
+  private replayBudget: number;
+  private replaySeen = 0;
+  private replayDoneFired = false;
 
   constructor(opts: {
     nodeBin: string;
@@ -124,18 +159,52 @@ export class ZcodeAppServerConnection {
     cwd: string;
     env: Record<string, string>;
     launchOverride?: LaunchOverride;
+    agentStarter?: ZcodeAgentStarterLike;
+    registryKey?: string;
+    attachedChild?: ChildProcess;
+    replayByteBudget?: number;
     log?: (msg: string) => void;
   }) {
     this.opts = opts;
+    this.replayBudget = opts.replayByteBudget ?? 0;
   }
 
   isAlive(): boolean {
     return !this.exited && this.child !== null;
   }
 
-  start(): void {
+  /** True while the connection hosts an adopted wrapper process (dispose = release, never kill). */
+  isAdopted(): boolean {
+    return this.opts.attachedChild !== undefined;
+  }
+
+  /** Journal replay byte budget (0 = none); consumed by actual stdout+stderr bytes here. */
+  replayBudgetBytes(): number {
+    return this.replayBudget;
+  }
+
+  /**
+   * Adopted process died (crash / superseded by another instance): drop the adopt
+   * constraint so the next start() spawns normally (still through the wrapper
+   * strategy when present) — keeps the stock "process exit → next prompt respawn +
+   * session/resume" resilience instead of wedging the retry loop on a dead facade.
+   */
+  clearAdopted(): void {
+    this.opts.attachedChild = undefined;
+    this.replayBudget = 0;
+    this.replayDoneFired = true;
+  }
+
+  async start(): Promise<void> {
     if (this.isAlive()) return;
-    // extman spawn.command/spawn.argsPrefix 启动包装，缺省 = 行为不变；P2 launchOverride 优先
+    // Adopted path (pi-web restart recovery): the process is hosted by the wrapper —
+    // wire it, never spawn.
+    if (this.opts.attachedChild) {
+      this.wireChild(this.opts.attachedChild);
+      this.opts.log?.(`[aiti-zcode-agent] app-server adopted (pid ${this.opts.attachedChild.pid ?? "?"}, replay ${this.replayBudget}B)`);
+      return;
+    }
+    // extman spawn.command/spawn.argsPrefix launch wrapping; default = unchanged behavior; P2 launchOverride takes precedence
     const ov = this.opts.launchOverride;
     const launch = resolveCliLaunch({
       defaultCommand: this.opts.nodeBin,
@@ -148,38 +217,72 @@ export class ZcodeAppServerConnection {
       cwd: this.opts.cwd,
       warn: (m) => console.log(`[aiti-zcode-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-      cwd: this.opts.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
+    // Detachable hosting: host-injected wrapper strategy (systemd-run launches the
+    // pi-web wrapper; the agent survives pi-web restarts and is re-adopted via the
+    // registry); absent = plain spawn.
+    const child = this.opts.agentStarter
+      ? await this.opts.agentStarter.spawn(launch.command, launch.args, {
+        cwd: this.opts.cwd,
+        env: launch.env as Record<string, string>,
+        agentKey: "zcode",
+        sessionId: this.opts.registryKey || "",
+      })
+      : spawn(launch.command, launch.args, {
+        cwd: this.opts.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: launch.env,
+      });
+    this.wireChild(child);
+  }
+
+  /** Wire a child (shared by spawn and adopt): feed stdout byte-wise + replay budget accounting. */
+  private wireChild(child: ChildProcess): void {
     this.child = child;
     this.exited = false;
     this.buffer = "";
     this.stderrTail = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => this.feed(chunk));
-    // 三个流必须挂 error 监听（加固 A2）：ECONNRESET/EPIPE 无监听器会崩宿主进程。
+    // No setEncoding: the replay budget counts bytes (stdout+stderr combined), and
+    // both the facade PassThrough and multibyte chars split across chunks need raw
+    // Buffer + StringDecoder (hardening A1 pattern).
+    const dec = new StringDecoder("utf8");
+    const countBytes = (n: number): void => {
+      if (this.replayDoneFired || this.replayBudget <= 0) return;
+      this.replaySeen += n;
+      if (this.replaySeen >= this.replayBudget) {
+        this.replayDoneFired = true;
+        this.onReplayDrained?.();
+      }
+    };
+    child.stdout?.on("data", (chunk: Buffer) => {
+      // Feed the protocol layer first, count after: the budget-completing chunk is
+      // still dispatched inside the replay gate (the drain callback fires endReplay
+      // synchronously; counting first would let this chunk slip through as "live"
+      // and re-emit history).
+      this.feed(dec.write(chunk));
+      countBytes(chunk.length);
+    });
+    // All three streams must have error listeners (hardening A2): ECONNRESET/EPIPE without a listener crashes the host process.
     child.stdout?.on("error", (err: Error) => {
-      // stdout 是协议流，断即死：exit 流程 failAllPending
+      // stdout is the protocol stream; broken = dead: the exit path runs failAllPending
       this.opts.log?.(`[aiti-zcode-agent] app-server stdout error: ${err.message}`);
-      try { child.kill("SIGKILL"); } catch { /* 已退出 */ }
+      try { child.kill("SIGKILL"); } catch { /* already exited */ }
     });
     child.stderr?.on("error", (err: Error) => this.opts.log?.(`[aiti-zcode-agent] app-server stderr error: ${err.message}`));
     child.stdin?.on("error", (err: Error) => this.opts.log?.(`[aiti-zcode-agent] app-server stdin error: ${err.message}`));
     child.stderr?.on("data", (chunk: Buffer | string) => {
+      countBytes(typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length);
       this.stderrTail = (this.stderrTail + chunk.toString()).slice(-8192);
       if (process.env.AITI_ZCODE_DEBUG_STDERR) {
         process.stderr.write(`[aiti-zcode-agent][app-server] ${chunk.toString()}`);
       }
     });
     child.once("exit", (code, signal) => {
-      // 代际检查：reset/重拉后旧子进程的迟到退出不得覆盖新子进程状态
+      // Generation check: a late exit from a stale child after reset/respawn must not overwrite the new child's state
       if (this.child !== child) return;
       this.exited = true;
       this.child = null;
       const reason = `app-server 进程退出（code=${code}${signal ? ` signal=${signal}` : ""}）`;
-      // stderr 落盘：异常退出（非零码 / SIGKILL 等强杀信号）才记；dispose 的 SIGTERM 正常收尾不刷屏
+      // Persist stderr only on abnormal exit (non-zero code / hard-kill signals like SIGKILL); dispose's normal SIGTERM shutdown stays quiet
       const abnormal = (code !== null && code !== 0) || (signal != null && signal !== "SIGTERM" && signal !== "SIGINT");
       if (abnormal) {
         this.opts.log?.(`[aiti-zcode-agent] ${reason}\n--- app-server stderr tail ---\n${this.stderrTail || "(empty)"}\n--- end ---`);
@@ -195,15 +298,20 @@ export class ZcodeAppServerConnection {
       this.failAllPending(new Error(`app-server 进程启动失败: ${err.message}`));
       for (const fn of [...this.exitListeners]) fn({ code: null, signal: null });
     });
-    this.opts.log?.(`[aiti-zcode-agent] app-server spawned (pid ${child.pid})`);
+    this.opts.log?.(`[aiti-zcode-agent] app-server ${child === this.opts.attachedChild ? "adopted" : "spawned"} (pid ${child.pid})`);
   }
 
-  /** 最近一次子进程 stderr（尾部 8KB；启动失败时随错误上抛落盘，替代原先的 stderr 全丢弃）。 */
+  /** Latest child stderr (last 8KB; attached to the error on startup failure and surfaced, replacing the previous full stderr discard). */
   get stderrTailText(): string {
     return this.stderrTail;
   }
 
-  /** 注册 server→client 反向请求处理器（必须应答；未注册的方法不回，server 端超时自决）。 */
+  /** Current child process (facade or plain spawn; null before start). */
+  childProcess(): ChildProcess | null {
+    return this.child;
+  }
+
+  /** Registers a server→client reverse-request handler (must answer; unregistered methods get no reply and the server times out on its own). */
   handleReverseRequest(method: string, handler: (params: JsonRecord) => unknown | Promise<unknown>): void {
     this.reverse.set(method, handler);
   }
@@ -242,13 +350,29 @@ export class ZcodeAppServerConnection {
     try { this.child?.kill(signal); } catch { /* already dead */ }
   }
 
+  /**
+   * Drop the local connection without killing the agent (dispose semantics for a
+   * wrapper-hosted facade; SocketChild.release only tears down the socket — the
+   * process stays in the wrapper). Plain children have no release surface → kill
+   * as fallback (callers should not reach this on a non-wrapper child: the handle
+   * branches on facade.detachable first).
+   */
+  release(): void {
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void } | null;
+    if (facade?.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      return;
+    }
+    this.kill();
+  }
+
   private write(obj: JsonRecord): void {
     const stdin = this.child?.stdin;
     if (!stdin?.writable) return;
     try {
       stdin.write(JSON.stringify(obj) + "\n");
     } catch {
-      // 写失败（子进程刚死）：exit 事件会收尾 failAllPending
+      // Write failed (child just died): the exit event finishes with failAllPending
     }
   }
 
@@ -286,9 +410,9 @@ export class ZcodeAppServerConnection {
     if (typeof msg.method !== "string") return;
     const params = (msg.params ?? {}) as JsonRecord;
     if (id !== undefined) {
-      // 反向请求：异步执行 handler 并应答（同 id 回 {id, result|error}）
+      // Reverse request: run the handler asynchronously and answer (reply with the same id: {id, result|error})
       const handler = this.reverse.get(msg.method);
-      if (!handler) return; // 桌面端对未知反查容忍不答（probe 实测 requestOfficialMcpAuthHeaders 不答可继续）
+      if (!handler) return; // the desktop tolerates unanswered unknown reverse requests (probe confirmed requestOfficialMcpAuthHeaders may go unanswered)
       void Promise.resolve()
         .then(() => handler(params))
         .then((result) => this.write({ id, result: result ?? {} }))
@@ -308,13 +432,13 @@ export class ZcodeAppServerConnection {
 }
 
 // ============================================================================
-// 会话层：一个 zcode 会话（create/resume/subscribe/send/stop/setModel/setMode）
-// + session/event → pi 事件状态机（桌面端同款消费形态）
+// Session layer: one zcode session (create/resume/subscribe/send/stop/setModel/setMode)
+// + session/event → pi event state machine (desktop-style consumption shape)
 // ============================================================================
 
-/** turn.completed 的 usage（真实 provider 口径；无字段 = 服务端未报该项）。
- *  ⚠ tokenCount 在引擎缺 baseline 时是 chars/4 字符估算（把 base64 图片/大文本全算进去，
- *  内容重的会话可达数百万）——上下文占用必须优先取这里的真实 usage，tokenCount 只兜底。 */
+/** usage from turn.completed (real provider figures; missing field = the server did not report it).
+ *  ⚠ tokenCount is a chars/4 character estimate when the engine lacks a baseline (base64 images/large text are counted in full;
+ *  content-heavy sessions can reach millions) — context usage must preferentially take the real usage here, tokenCount is only a fallback. */
 export interface TurnUsageSnapshot {
   inputTokens?: number;
   outputTokens?: number;
@@ -327,16 +451,16 @@ export interface TurnUsageSnapshot {
 export interface TurnOutcome {
   cancelled: boolean;
   errorMessage?: string;
-  /** turn.completed 的 tokenCount（引擎投影；有 usage 时 ≈ totalTokens，缺 baseline 时为字符估算）。 */
+  /** tokenCount from turn.completed (engine projection; ≈ totalTokens when usage exists, a character estimate without baseline). */
   tokenCount?: number | null;
-  /** turn.completed 的 usage（真实 provider 用量；上下文占用/统计面板的权威来源）。 */
+  /** usage from turn.completed (real provider usage; authoritative source for context usage / usage panels). */
   usage?: TurnUsageSnapshot;
   durationMs?: number | null;
   cacheReadTokens?: number | null;
   resultType?: string;
 }
 
-/** turn.completed payload.usage → 快照（schema 是 t.unknown()，逐字段宽数值提取）。 */
+/** turn.completed payload.usage → snapshot (schema is t.unknown(); field-by-field wide-number extraction). */
 function parseUsageSnapshot(v: unknown): TurnUsageSnapshot | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
   const p = v as JsonRecord;
@@ -356,7 +480,7 @@ function parseUsageSnapshot(v: unknown): TurnUsageSnapshot | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** interaction/requestUserInput 反向请求 params（runtime 0.16.5 schema 摘要）。 */
+/** interaction/requestUserInput reverse-request params (runtime 0.16.5 schema summary). */
 interface UserInputRequestParams {
   requestId?: unknown;
   toolName?: unknown;
@@ -367,72 +491,72 @@ interface UserInputRequestParams {
   schema?: unknown;
 }
 
-/** 用户对交互请求的回答（pi-web InteractionAnswer 同构，避免跨包类型依赖）。 */
+/** The user's answer to an interaction request (same shape as pi-web InteractionAnswer, avoids a cross-package type dependency). */
 export interface InteractionAnswerInput {
   action: "accept" | "decline";
   answers?: Record<string, string | string[]>;
   message?: string;
 }
 
-/** 挂起中的交互请求：共享 promise（reannounce 重发复用）+ 事件负载 + resolver。 */
+/** Pending interaction request: shared promise (reused across reannounce re-sends) + event payload + resolver. */
 interface PendingInteraction {
   kind: "plan_approval" | "ask_user" | "generic";
   requestId: string;
   promise: Promise<JsonRecord>;
   resolve: (answer: JsonRecord) => void;
-  /** interaction_request 事件负载（reannounce 重发时原样重新 emit）。 */
+  /** interaction_request event payload (re-emitted as-is on reannounce re-sends). */
   event: JsonRecord;
 }
 
-/** plan 审批问题的固定答案值（zcode 常量，runtime 逆向实测：approve 才是真批准）。 */
+/** Fixed answer value for plan-approval questions (zcode constant; runtime reverse-engineering confirmed "approve" is the real approval). */
 const PLAN_APPROVE_ANSWER = "approve";
 
 export interface AppServerSessionOpts {
   connection: ZcodeAppServerConnection;
   cwd: string;
-  /** create 时的权限模式（UI 五档或 zcode 档名均可，内部归一）。 */
+  /** Permission mode at create time (either a UI five-level name or a zcode mode name; normalized internally). */
   mode?: string;
-  /** create 时的模型 ref（"provider/model"）。 */
+  /** Model ref at create time ("provider/model"). */
   modelRef?: string;
-  /** 已知 zcode 会话 id → 走 session/resume（All Sessions 复活 / 进程重启复活）。 */
+  /** Known zcode session id → use session/resume (revival from All Sessions / after a process restart). */
   sessId?: string;
   /**
-   * provider 注入（桌面端同款 workspace/upsertModelProvider 通道）：凭据与模型目录
-   * 纯内存注册（apiKey inline → 内存 secrets，不落 config.json）。resume 场景必需——
-   * 服务端恢复会话时校验历史模型在 provider registry 中，缺席则设 restoreWarning（-32031 拒 send）。
-   * 同时用于构造 runtimeModel（resume/send 携带 → 服务端 xse 路径直接应用模型并清 restoreWarning，
-   * 2026-09-09 实测：upsert 后 resume 仍会触发 deferred_model_adapter（restoreWarning）的会话，
-   * 必须带 runtimeModel 才能绕开 -32031；详见 docs/zcode-desktop-cli-agent-analysis.md §7.3.1）。
+   * Provider injection (desktop-style workspace/upsertModelProvider channel): credentials and model catalog
+   * registered purely in memory (apiKey inline → in-memory secrets, never written to config.json). Required for resume —
+   * when restoring a session the server validates that the historical model is in the provider registry; if absent it sets restoreWarning (-32031 rejects send).
+   * Also used to build runtimeModel (carried on resume/send → the server's xse path applies the model directly and clears restoreWarning;
+   * measured 2026-09-09: even after upsert, resume can still hit the deferred_model_adapter (restoreWarning) path on some sessions,
+   * and only carrying runtimeModel bypasses -32031; see docs/zcode-desktop-cli-agent-analysis.md §7.3.1).
    */
   provider?: {
     providerId: string;
     baseURL: string;
     apiKey: string;
     models: Array<{ modelId: string; label?: string; contextWindow?: number }>;
-    /** 随 provider 提交的额外请求头（start-plan 验证码回填：`x-aliyun-captcha-verify-param` 等；analysis §9）。 */
+    /** Extra request headers submitted with the provider (start-plan captcha backfill: `x-aliyun-captcha-verify-param` etc.; analysis §9). */
     headers?: Record<string, string>;
   };
   log?: (msg: string) => void;
-  /** pi 事件出口（message_*、tool_*、agent_*）。 */
+  /** pi event outlet (message_*, tool_*, agent_*). */
   onEvent: (ev: JsonRecord) => void;
-  /** zcode 真实会话 id 捕获（首轮 create 后回调一次）。 */
+  /** Captures the real zcode session id (called once after the first create). */
   onSessionId?: (sid: string) => void;
-  /** 服务端 steer 队列镜像变化（已交给 zcode、尚未 drain 的输入；全量快照）。 */
+  /** Server steer-queue mirror changes (inputs handed to zcode but not yet drained; full snapshot). */
   onSteerQueue?: (items: Array<{ pendingInputId: string; input: string }>) => void;
-  /** 任务列表镜像变化（TodoWrite working plan 只读；全量快照，跨轮持续）。 */
+  /** Task-list mirror changes (read-only TodoWrite working plan; full snapshot, persists across turns). */
   onTaskList?: (todos: TaskEntry[]) => void;
   /**
-   * start-plan 验证码求解器插槽（`interaction/requestProviderRuntimeHeaders` 反向请求的数据源）。
-   * 返回 {captchaVerifyParam, region?} → 内部以 provider headers 重 upsert 后应答 {headersApplied:true}；
-   * 返回 {ok:false, errorMessage?} 或超时/未配置 → 应答 {headersApplied:false, errorMessage}（轮次人话失败）。
-   * 缺省 = 不配置求解器（start-plan 通道轮次将以「验证码求解器未配置」失败）。
+   * start-plan captcha solver slot (data source for the `interaction/requestProviderRuntimeHeaders` reverse request).
+   * Returning {captchaVerifyParam, region?} → internally re-upserts with provider headers, then answers {headersApplied:true};
+   * returning {ok:false, errorMessage?} or timing out / being unconfigured → answers {headersApplied:false, errorMessage} (turn fails with a human-readable message).
+   * Absent = no solver configured (start-plan channel turns fail with "captcha solver not configured").
    */
   onProviderHeadersRequest?: (req: { requestId: string; providerId: string; modelRef: string; reason: string }) => Promise<
     { ok: true; captchaVerifyParam: string; region?: string } | { ok: false; errorMessage: string }
   >;
 }
 
-/** 等待验证码求解的时限（覆盖无感 + 用户滑块；超时按 headersApplied:false 收口）。 */
+/** Time limit for waiting on captcha solving (covers the silent + user-slider modes; timeout settles as headersApplied:false). */
 const PROVIDER_HEADERS_WAIT_MS = 180_000;
 
 type StreamBlock = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; toolCallId: string; toolName: string; input: JsonRecord };
@@ -441,49 +565,60 @@ interface WaiterEntry { resolve: (o: TurnOutcome) => void; reject: (e: Error) =>
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 // ----------------------------------------------------------------------------
-// 任务列表派生（TodoWrite working plan 只读镜像）——解析/更新语义已上收共享层
-// @aiti-ai/ext-shared/task-list（CC 族各家共用；测试 _shared/task-list.test.mjs）。
-// 本文件只保留出口：工具事件 → mirror.fromToolEvent，resume 快照 → mirror.seed。
+// Task-list derivation (read-only TodoWrite working plan mirror) — parse/update semantics moved up into the shared layer
+// @aiti-ai/ext-shared/task-list (shared across the CC family; tests in _shared/task-list.test.mjs).
+// This file keeps only the outlets: tool events → mirror.fromToolEvent, resume snapshot → mirror.seed.
 // ----------------------------------------------------------------------------
 
 export class AppServerSession {
-  /** 真实 zcode 会话 id（sess_xxx）。 */
+  /** Real zcode session id (sess_xxx). */
   zcodeSid: string | null;
   private ready = false;
   private subscribed = false;
   private opts: AppServerSessionOpts;
   private conn: ZcodeAppServerConnection;
   private turnWaiters = new Set<WaiterEntry>();
-  /** 服务端 steer 队列镜像（turn.steerQueued 入 / steerDrained·steerDiscarded 出）。 */
+  /** Server steer-queue mirror (turn.steerQueued in / steerDrained·steerDiscarded out). */
   private steerQueue: Array<{ pendingInputId: string; input: string }> = [];
-  /** 任务列表镜像（TodoWrite 族工具事件派生 + resume 快照种子；跨轮持续，finishTurn 不清空）。 */
+  /** Task-list mirror (derived from TodoWrite-family tool events + resume snapshot seed; persists across turns, finishTurn does not clear it). */
   private tasks = createTaskListMirror((todos) => this.opts.onTaskList?.(todos));
-  /** v4 steer 命令序号（commandId 唯一性）。 */
+  /** v4 steer command sequence number (commandId uniqueness). */
   private v4SteerSeq = 0;
   private wired = false;
   private offNotification: (() => void) | null = null;
   private offExit: (() => void) | null = null;
-  /** dispose 置位：ensureReady 的重拉循环见到即停（不再 respawn 子进程）。 */
+  /** Set by dispose: the ensureReady retry loop stops as soon as it sees this (no more child respawn). */
   private disposedFlag = false;
-  /** 挂起中的交互元语请求（interaction_request 已 emit，等用户作答；requestId 寻址）。 */
+  /** Pending interaction-primitive requests (interaction_request emitted, waiting for the user's answer; addressed by requestId). */
   private pendingInteractions = new Map<string, PendingInteraction>();
-  /** 当前轮已收口（turn.completed/failed 已处理）：此后到达的反向请求不再挂起，直接 decline（防泄漏）。 */
+  /** Current turn has settled (turn.completed/failed handled): reverse requests arriving afterwards are no longer pended and get declined directly (leak prevention). */
   private turnSettled = true;
+  // ---- Detachable hosting (wrapper-hosted process survives pi-web restarts; journal replay recovery) ----
+  /** Replay in progress: journal-replayed session/events never re-emit (already persisted
+   *  in the store/frontend; re-emitting would duplicate). Only in-memory mirrors advance
+   *  (steer queue/task list/turn state); the byte budget draining flips this to live. */
+  private replaying = false;
+  /** endReplay idempotence guard (the connection callback and beginAdopted can both trigger it). */
+  private replayDone = true;
+  /** A turn is still unsettled inside the adopted process (journal shows streaming/tool without
+   *  turn.completed; live turn.completed clears it). Consumed by handle.isRunning() — a turn
+   *  that was running across the restart keeps its running state and settles normally. */
+  turnActive = false;
 
-  // ---- 流式状态机（一次开一条 assistant 消息；桌面端同款粒度）----
+  // ---- Streaming state machine (one assistant message open at a time; desktop-style granularity) ----
   private stream: {
     assistantMessageId: string;
     blocks: StreamBlock[];
-    /** 显式 partId → contentIndex。 */
+    /** Explicit partId → contentIndex. */
     index: Map<string, number>;
     acc: Map<number, { kind: "text"; text: string } | { kind: "thinking"; thinking: string } | { kind: "tool"; rawInput: string; toolCallId: string; toolName: string }>;
-    /** toolCallId → contentIndex（真机 wire 的 tool 帧可能不带 partId，靠 callId 定位）。 */
+    /** toolCallId → contentIndex (real-device wire tool frames may lack partId; located by callId). */
     toolByCallId: Map<string, number>;
-    /** 无 partId 时按 kind 隐式续块（真机 wire 无 *_start 起始帧也能落块）。 */
+    /** Without partId, implicitly continue a block by kind (the real-device wire can lack *_start opening frames and still land blocks). */
     implicit: { text?: number; reasoning?: number; tool?: number };
   } | null = null;
   private seenToolStarts = new Set<string>();
-  /** toolCallId → toolName（跨流式/事件帧反查；result 帧可能不带 toolName）。 */
+  /** toolCallId → toolName (reverse lookup across streaming/event frames; result frames may lack toolName). */
   private toolNameByCallId = new Map<string, string>();
 
   constructor(opts: AppServerSessionOpts) {
@@ -497,31 +632,109 @@ export class AppServerSession {
   }
 
   private emit(ev: JsonRecord): void {
+    if (this.replaying) return; // journal replay segment: advance mirrors only, never re-emit history
     this.opts.onEvent(ev);
   }
 
   // ------------------------------------------------------------------
-  // 生命周期
+  // Lifecycle
   // ------------------------------------------------------------------
 
-  /** 确保 app-server 进程 + 会话 + 订阅就绪（prompt 前调用；幂等）。 */
+  /**
+   * Adopt path (pi-web restart recovery: adopt the live wrapper-hosted process): skips
+   * create/resume/subscribe (the old connection never dropped — the wrapper holds the
+   * app-server's stdio, so the subscription and any running turn are still alive), flags
+   * ready, opens the replay gate and wires the facade to consume the journal replay; the
+   * byte budget draining (onReplayDrained → endReplay) flips it to live. Later prompts
+   * short-circuit on ready in ensureReady — the startup sequence never re-runs.
+   */
+  async beginAdopted(): Promise<void> {
+    if (this.ready) return;
+    const budget = this.conn.replayBudgetBytes();
+    this.replayDone = false;
+    this.replaying = budget > 0;
+    // Treat an unsettled turn as "running" from the first moment of adoption (reverse
+    // requests answerable, isRunning true); a turn.completed/failed in the journal
+    // settles it via finishTurn.
+    this.turnSettled = false;
+    this.wire();
+    await this.conn.start(); // adopted: wire only, no spawn
+    // Adopted = ready (the session and its subscription are alive in the old process):
+    // later prompts short-circuit on ready in ensureReady and the startup sequence never
+    // re-runs; stop/setModel/setMode depend on this flag too.
+    this.ready = true;
+    this.subscribed = true;
+    if (!this.replaying) this.endReplay(); // no replay (empty journal / plain adopt) → straight to live
+  }
+
+  /** Replay budget drained (connection byte accounting): flip to live + flush mirror finals. Connection-callback driven; idempotent. */
+  endReplay(): void {
+    if (this.replayDone) return;
+    // Flush the steer mirror final state BEFORE clearing the gate: the handle's
+    // onSteerQueue callback checks replayActive() to suppress user bubbles for
+    // replayed steer items (the text is already persisted with the turn in the
+    // store); force=true bypasses the gate while keeping replayActive() true.
+    this.notifySteerQueue(true);
+    this.replayDone = true;
+    this.replaying = false;
+    // Interactions still unanswered (registered during replay but their emit was gated):
+    // re-emit the cards so the user can answer; the server-side reannounce (≤10s) also
+    // re-sends the same requestId — double coverage, both idempotent.
+    for (const [, pending] of this.pendingInteractions) this.emit(pending.event);
+    if (this.turnActive) {
+      // A turn was still running at adoption: agent_start(resumed) puts the frontend in
+      // streaming state (same contract as qoder); the live turn.completed settles via
+      // finishTurn.
+      this.emit({ type: "agent_start", resumed: true });
+    }
+  }
+
+  /** Whether the replay is still in progress (the handle gates steer bubbles etc. on this). */
+  replayActive(): boolean {
+    return this.replaying;
+  }
+
+  /** The wrapper facade behind the current child (SocketChild; null when not wrapper-hosted). Handle dispose branches on this. */
+  detachedChild(): (ChildProcess & { detachable?: unknown; release?: () => void }) | null {
+    const child = this.conn.childProcess();
+    if (!child) return null;
+    const facade = child as ChildProcess & { detachable?: unknown; release?: () => void };
+    return facade.detachable === true && typeof facade.release === "function" ? facade : null;
+  }
+
+  /** Ensures the app-server process + session + subscription are ready (called before prompt; idempotent). */
   async ensureReady(): Promise<void> {
     if (this.ready) return;
     this.wire();
-    // 正确拉起：进程被 kill / 启动秒退后，内存遗留已由 exit 回调复位（ready/subscribed、
-    // 重新 start 重清 buffer/stderrTail），这里完整重走 spawn→upsert→resume→subscribe 恢复常态——
-    // 替代原先把「app-server 进程未运行」直接抛给用户卡死会话。重试只覆盖 send 受理前的启动段；
-    // send 已受理后的进程退出仍由 onExit → failWaiters 拒绝本轮，下轮 prompt 走到这里重拉。
+    // Proper bring-up: after the process is killed / exits instantly, in-memory leftovers were reset by the exit callback
+    // (ready/subscribed; re-running start re-clears buffer/stderrTail); fully re-walk spawn→upsert→resume→subscribe here to recover —
+    // replacing the old behavior of throwing "app-server process not running" straight at the user and wedging the session. Retries cover only the pre-send startup phase;
+    // a process exit after send was accepted still rejects the turn via onExit → failWaiters; the next prompt re-pulls from here.
     for (let attempt = 1; attempt <= STARTUP_ATTEMPTS; attempt++) {
       try {
-        if (!this.conn.isAlive()) this.conn.start();
+        if (!this.conn.isAlive()) {
+          // Adopted process died (crash / superseded): drop the adopt constraint, degrade to a normal spawn+resume
+          if (this.conn.isAdopted()) {
+            this.conn.clearAdopted();
+            this.replayDone = true;
+            this.replaying = false;
+          }
+          await this.conn.start();
+        }
+        // Adopted connection (wrapper-hosted live process): the session and subscription
+        // are alive in the old process — never re-run create/resume/subscribe (it would
+        // fork/split the session); a failed start retry simply re-wires.
+        if (this.conn.isAdopted() && !this.ready) {
+          await this.beginAdopted();
+          return;
+        }
         await this.ensureProtocolReady();
         this.ready = true;
         return;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const transportDown = /进程退出|进程未运行|启动失败|连接复位/.test(msg);
-        if (!transportDown) throw e; // 业务错误原样抛（如 -32031 历史模型校验拒 send）
+        if (!transportDown) throw e; // business errors rethrow as-is (e.g. -32031 historical-model validation rejecting send)
         if (attempt >= STARTUP_ATTEMPTS || this.disposedFlag) {
           throw new Error(`app-server 启动失败（已重试 ${attempt} 次）：${msg}；stderr: ${this.conn.stderrTailText || "(empty)"}`);
         }
@@ -531,20 +744,20 @@ export class AppServerSession {
     }
   }
 
-  /** 启动序列（ensureReady 的可重试主体）：provider 注入 → create|resume → subscribe。 */
+  /** Startup sequence (ensureReady's retryable body): provider injection → create|resume → subscribe. */
   private async ensureProtocolReady(): Promise<void> {
-    // provider 注入（桌面端同款）：在 create/resume 之前——resume 校验历史模型在
-    // provider registry 中，缺席触发 restoreWarning（-32031 拒 send，实测）
+    // Provider injection (desktop-style): before create/resume — resume validates that the historical
+    // model is in the provider registry; absence triggers restoreWarning (-32031 rejects send, measured)
     if (this.opts.provider) {
       await this.upsertProvider();
     }
     if (!this.zcodeSid) {
-      // 注：create 不带 model 参数——显式 model 会触发「persist model selection → config.json」
-      // 报 -32603（真机验证）。ZCODE_MODEL env 只有 --prompt/oneshot 面认（判别探针实测生效），
-      // app-server 面不读 env：create 的默认模型 = workspace 注册表首个可用模型（upsert 后即
-      // bigmodel-coding-plan/GLM-5.3，桌面注册表序；runtime 侧 zcode_protocol.session_model 体系）。
-      // 所以 create 后、首轮 send 前必须 setModel 对齐所选模型，否则新会话从首轮起就跑在
-      // runtime 默认模型上（夜间免费窗口只认 Flash）。
+      // Note: create carries no model param — an explicit model triggers "persist model selection → config.json"
+      // failing with -32603 (verified on a real device). The ZCODE_MODEL env is only honored on the --prompt/oneshot
+      // surface (probe-verified); the app-server surface does not read env: create's default model = the first available
+      // model in the workspace registry (after upsert that is bigmodel-coding-plan/GLM-5.3, desktop registry order;
+      // runtime-side zcode_protocol.session_model system). So setModel must align the chosen model after create and
+      // before the first send, or the new session runs on the runtime default model from turn one (the nightly free window only accepts Flash).
       const snap = await this.conn.request<JsonRecord>("session/create", {
         workspace: { workspacePath: this.opts.cwd, workspaceKey: this.opts.cwd },
         persistence: "immediate",
@@ -555,21 +768,21 @@ export class AppServerSession {
       this.zcodeSid = sid;
       this.opts.onSessionId?.(sid);
       this.log(`[aiti-zcode-agent] app-server session created: ${sid}`);
-      // 无条件对齐模型（所选即所得，无显式/隐式之分）；persistAsWorkspaceLastUsed:false 与
-      // resume 分支同款（persist 会 -32603）。失败不阻断启动：本轮回落 runtime 默认模型，
-      // 下轮 resume 仍带 runtimeModel 再对齐。
+      // Align the model unconditionally (what you select is what you get, no explicit/implicit distinction);
+      // persistAsWorkspaceLastUsed:false, same as the resume branch (persist would fail with -32603). Failure does not block startup: this turn
+      // falls back to the runtime default model, and the next resume re-aligns by carrying runtimeModel again.
       const createModel = this.opts.modelRef ? toProtocolModel(this.opts.modelRef) : null;
       if (createModel) {
         await this.setModelCompat(createModel, false).catch((e) =>
           this.log(`[aiti-zcode-agent] create 后 setModel 失败（本轮用 runtime 默认模型）: ${e instanceof Error ? e.message : String(e)}`));
       }
     } else if (!this.subscribed) {
-      // 跨进程复活：sess_xxx 持久于 ~/.zcode，resume 后重放历史。
-      // 带 runtimeModel —— 服务端 xse 路径直接应用当前模型并清 restoreWarning；
-      // 不带时历史模型若不在 catalog（env-only 通道常见）会设 restoreWarning → send 被 -32031 拒（2026-09-09 实测）。
+      // Cross-process revival: sess_xxx persists under ~/.zcode; resume replays history.
+      // With runtimeModel — the server's xse path applies the current model directly and clears restoreWarning;
+      // without it, a historical model missing from the catalog (common on the env-only channel) sets restoreWarning → send is rejected with -32031 (measured 2026-09-09).
       const runtimeModel = this.buildRuntimeModel();
-      // 3.17+ 移除 resume 的 runtimeModel 键（strict schema 拒 unknown key 直接 -32603）
-      // → 先带（旧 CLI 绕 -32031 restoreWarning 必需），命中 ZodError 形态失败再不带重试。
+      // 3.17+ removed the runtimeModel key from resume (strict schema rejects unknown keys with -32603)
+      // → send it first (required for old CLIs to bypass the -32031 restoreWarning); on a ZodError-shaped failure retry without it.
       let resumedWithoutRuntimeModel = false;
       const resumed = await this.conn.request<JsonRecord>("session/resume", {
         sessionId: this.zcodeSid,
@@ -581,14 +794,14 @@ export class AppServerSession {
         resumedWithoutRuntimeModel = true;
         return this.conn.request<JsonRecord>("session/resume", { sessionId: this.zcodeSid }, { timeoutMs: 120_000 });
       });
-      // resume 响应即快照同构（真机实证含 todos）→ 任务列表种子（跨进程复活/刷新恢复）
+      // The resume response is snapshot-shaped (confirmed to include todos on a real device) → task-list seed (cross-process revival / refresh recovery)
       this.seedTaskListFromSnapshot(resumed?.todos);
       if (!runtimeModel || resumedWithoutRuntimeModel) {
-        // 无 provider 信息（runtimeModel 构造不出 → 旧 CLI setModel 兜底）或 3.17+ 重试路径（
-        // runtimeModel 通道已废 → 显式 setModel 对齐模型，配套 personal provider config 的 registry 注册）
+        // No provider info (runtimeModel cannot be built → old-CLI setModel fallback) or the 3.17+ retry path (
+        // runtimeModel channel retired → explicit setModel aligns the model, paired with personal provider config registry registration)
         const model = this.opts.modelRef ? toProtocolModel(this.opts.modelRef) : null;
         if (model) {
-          // persistAsWorkspaceLastUsed:false —— env-only 模式无 config.json，持久化会报错（真机验证）
+          // persistAsWorkspaceLastUsed:false — env-only mode has no config.json; persisting would error (verified on a real device)
           await this.setModelCompat(model, false).catch((e) =>
             this.log(`[aiti-zcode-agent] resume 后 setModel 失败（不影响本轮）: ${e instanceof Error ? e.message : String(e)}`));
         }
@@ -615,20 +828,23 @@ export class AppServerSession {
     });
     this.conn.handleReverseRequest("interaction/requestUserInput", (p) => this.onUserInputRequest(p));
     this.conn.handleReverseRequest("interaction/requestProviderRuntimeHeaders", (p) => this.onProviderHeadersRequest(p));
+    // Replay budget drained → flip the session to live (endReplay; never fires for non-adopt / no-budget connections)
+    this.conn.onReplayDrained = () => this.endReplay();
     this.offNotification = this.conn.onNotification((method, params) => {
       if (method === "session/event") this.onSessionEvent(params);
     });
     this.offExit = this.conn.onExit(() => {
       this.ready = false;
       this.subscribed = false;
+      this.turnActive = false;
       this.failWaiters(new Error("app-server 进程退出，本轮中断"));
     });
   }
 
   /**
-   * provider 注入（桌面端同款 workspace/upsertModelProvider）：凭据与模型目录纯内存注册。
-   * `headers` 供 start-plan 验证码回填（`x-aliyun-captcha-verify-param` 等）——桌面端同机制
-   * （解验后带 headers 重 upsert，providerRevision 前进，CLI 请求即携带）。
+   * Provider injection (desktop-style workspace/upsertModelProvider): credentials and model catalog registered purely in memory.
+   * `headers` serves start-plan captcha backfill (`x-aliyun-captcha-verify-param` etc.) — same mechanism as desktop
+   * (after solving, re-upsert with headers; providerRevision advances and CLI requests then carry them).
    */
   private async upsertProvider(headers?: Record<string, string>): Promise<void> {
     const p = this.opts.provider;
@@ -648,17 +864,17 @@ export class AppServerSession {
       },
     }, { timeoutMs: 30_000 }).catch((e) => {
       const msg = e instanceof Error ? e.message : String(e);
-      // 3.17+ 已移除该 RPC（-32601 Method not found）→ 常态静默（personal provider config 接管模型注册）
+      // 3.17+ removed this RPC (-32601 Method not found) → stay silent in that case (personal provider config takes over model registration)
       if (/Method not found/i.test(msg)) return;
       this.log(`[aiti-zcode-agent] upsertModelProvider 失败（继续，env 通道兜底）: ${msg}`);
     });
   }
 
   /**
-   * `interaction/requestProviderRuntimeHeaders`（start-plan 验证码协议，analysis §9.2）：
-   * 调求解器取 captchaVerifyParam → 带 headers 重 upsert provider → 应答 `{headersApplied:true}`；
-   * 未配置求解器 / 求解失败 / 超时 → `{headersApplied:false, errorMessage}`（result schema 是 strict zod，
-   * 只允许 headersApplied/errorMessage/providerRevision 三键）。
+   * `interaction/requestProviderRuntimeHeaders` (start-plan captcha protocol, analysis §9.2):
+   * call the solver for captchaVerifyParam → re-upsert the provider with headers → answer `{headersApplied:true}`;
+   * solver unconfigured / solving failed / timed out → `{headersApplied:false, errorMessage}` (the result schema is strict zod,
+   * allowing only the three keys headersApplied/errorMessage/providerRevision).
    */
   private async onProviderHeadersRequest(p: JsonRecord): Promise<JsonRecord> {
     const requestId = String(p.requestId ?? "");
@@ -676,7 +892,7 @@ export class AppServerSession {
           waitTimer = setTimeout(() => resolve({ ok: false, errorMessage: `等待验证码求解超时（${PROVIDER_HEADERS_WAIT_MS / 1000}s）` }), PROVIDER_HEADERS_WAIT_MS);
         }),
       ]);
-      clearTimeout(waitTimer); // race 输者不再拖着事件循环（测试进程退出依赖此项）
+      clearTimeout(waitTimer); // the race loser no longer holds the event loop (test process exit depends on this)
       if (!answer.ok) {
         this.log(`[aiti-zcode-agent] provider headers 求解失败（${reason}）: ${answer.errorMessage}`);
         return { headersApplied: false, errorMessage: answer.errorMessage };
@@ -692,10 +908,10 @@ export class AppServerSession {
   }
 
   /**
-   * setModel 双版本兼容发送：先裸发（旧 CLI 3.16- 无 options 即成功）；命中
-   * "Reasoning level is required"（3.17+ registry 模型声明档位）再补 options 重试。
-   * 注意 options 挂在 model 对象内（Nl = {providerId, modelId, options?}），不是请求顶层。
-   * 反向顺序（先带 options）在旧 CLI 上会被 strict schema 拒 unknown key，不可取。
+   * setModel dual-version compatible send: send bare first (old CLIs ≤3.16 succeed without options); on hitting
+   * "Reasoning level is required" (3.17+ registry models declare a tier) retry with options added.
+   * Note options lives inside the model object (Nl = {providerId, modelId, options?}), not at the request top level.
+   * The reverse order (options first) gets rejected by strict schema on old CLIs as an unknown key — do not use it.
    */
   private async setModelCompat(model: { providerId: string; modelId: string }, persistAsWorkspaceLastUsed: boolean): Promise<void> {
     const base = { sessionId: this.zcodeSid, model, persistAsWorkspaceLastUsed };
@@ -713,7 +929,7 @@ export class AppServerSession {
     }, { timeoutMs: 30_000 });
   }
 
-  /** 存储被外部改动（如 oneshot --attach 轮次写入同一会话）后，强制下次冷 resume 重读历史。 */
+  /** After the store is modified externally (e.g. oneshot --attach turns writing to the same session), forces the next cold resume to re-read history. */
   async refreshFromStorage(): Promise<void> {
     if (!this.ready || !this.zcodeSid || !this.conn.isAlive()) return;
     await this.conn.request("session/close", { sessionId: this.zcodeSid }, { timeoutMs: 15_000 }).catch(() => {});
@@ -721,18 +937,18 @@ export class AppServerSession {
     this.subscribed = false;
   }
 
-  /** 热切模型（session/setModel，桌面端同款即时生效；不落 config.json —— env-only 合规约束）。 */
+  /** Hot-switch model (session/setModel, desktop-style immediate effect; never written to config.json — env-only compliance constraint). */
   async setModel(modelRef: string): Promise<void> {
     const model = toProtocolModel(modelRef);
     if (!model) throw new Error(`非法模型 ref "${modelRef}"`);
-    if (!this.ready || !this.zcodeSid) return; // 未就绪：仅记录，create/resume 时生效
+    if (!this.ready || !this.zcodeSid) return; // not ready: recorded only, takes effect at create/resume
     await this.setModelCompat(model, false);
   }
 
   /**
-   * 构造 runtimeModel（v1 协议 `session/resume` / `session/send` 的 runtimeModel 字段）：
-   * 携带后服务端走 xse 路径直接应用模型 + 清 restoreWarning（-32031 拒 send 的唯一出口，2026-09-09 实测）。
-   * 无 provider 或 modelRef 时返回 undefined（调用方回退原路径）。
+   * Builds runtimeModel (the runtimeModel field of v1 `session/resume` / `session/send`): carrying it makes the
+   * server's xse path apply the model directly + clear restoreWarning (the only way out of a -32031 send rejection, measured 2026-09-09).
+   * Returns undefined when provider or modelRef is missing (the caller falls back to the original path).
    */
   private buildRuntimeModel(): JsonRecord | undefined {
     const { provider, modelRef } = this.opts;
@@ -757,7 +973,7 @@ export class AppServerSession {
     };
   }
 
-  /** 热切权限模式（session/setMode，即时生效）。 */
+  /** Hot-switch permission mode (session/setMode, immediate effect). */
   async setMode(mode: string): Promise<void> {
     const m = toProtocolMode(mode);
     if (!m) return;
@@ -765,27 +981,30 @@ export class AppServerSession {
     await this.conn.request("session/setMode", { sessionId: this.zcodeSid, mode: m }, { timeoutMs: 30_000 });
   }
 
-  /** abort：session/stop（桌面端同款）；turn 以 resultType=cancelled 收口。
-   *  超时从 15s 缩到 5s：abort() 已 fire-and-forget 调本方法，RPC 不快回即视为失步，
-   *  由 abort 看门狗（6s 上限）强杀兜底——不再让 stop 卡满 15s。 */
+  /** abort: session/stop (desktop-style); the turn settles with resultType=cancelled.
+   *  Timeout shrunk from 15s to 5s: abort() already calls this fire-and-forget, so a non-quick RPC reply counts as desync,
+   *  with the abort watchdog (6s cap) hard-kill as the backstop — stop no longer blocks the full 15s. */
   async stop(): Promise<void> {
-    if (!this.ready || !this.zcodeSid || this.turnWaiters.size === 0) return;
+    // An adopted unsettled turn (its waiters died with the old instance) also goes through
+    // session/stop instead of silently no-op'ing (otherwise abort would fall through to the
+    // 6s watchdog hard-kill and waste a graceful cancel).
+    if (!this.ready || !this.zcodeSid || (this.turnWaiters.size === 0 && !this.turnActive)) return;
     await this.conn.request("session/stop", { sessionId: this.zcodeSid }, { timeoutMs: 5_000 })
       .catch((e) => this.log(`[aiti-zcode-agent] session/stop 失败（abort 看门狗将兜底）: ${e instanceof Error ? e.message : String(e)}`));
   }
 
-  /** abort 看门狗强杀入口：SIGTERM 杀 app-server 子进程 → onExit → failWaiters 收口本轮。
-   *  兜底场景：zcode 端 turn 挂死且协议层 hadActivePrompt 失步，session/stop 永远 no-op（2026-09-09 实测）。 */
+  /** abort watchdog hard-kill entry: SIGTERM kills the app-server child → onExit → failWaiters settles the turn.
+   *  Backstop scenario: the zcode-side turn is wedged and the protocol layer's hadActivePrompt is desynced, so session/stop is a permanent no-op (measured 2026-09-09). */
   kill(): void {
     this.conn.kill();
   }
 
   /**
-   * session/fork（桌面端同款）：从第 turnIndex 轮（0-based，按 user 消息计）的 assistant
-   * 回复处分叉出子会话——子会话历史 = 该回复及之前全部，之后的文件快照按 zcode 自有
-   * checkpoint 语义回退。服务端限制：prompt 运行中拒绝（"Cannot fork while a prompt is
-   * running"，映射为人话上抛）。分叉不本会话就地生效——调用方拿 forkedSessionId 自行
-   * 重建通道（dispose 本 session → 下轮 prompt 以新 sid resume）。
+   * session/fork (desktop-style): forks a child session from the assistant reply of turn turnIndex
+   * (0-based, counted by user messages) — child history = that reply and everything before it; file snapshots
+   * after it roll back per zcode's own checkpoint semantics. Server restriction: rejected while a prompt
+   * is running ("Cannot fork while a prompt is running", mapped to a plain-language error on rethrow). The fork does not
+   * take effect in this session in place — the caller rebuilds the channel itself (dispose this session → next prompt resumes with the new sid).
    */
   async forkFromTurn(turnIndex: number): Promise<string> {
     if (!this.zcodeSid) throw new Error("fork unavailable (zcode session not established)");
@@ -807,10 +1026,10 @@ export class AppServerSession {
   }
 
   /**
-   * v4/command sendText{requestedDelivery:"guide"} —— desktop 同款 steer（2026-09-10 协议逆向 + 真机实测）：
-   * 运行中注入当前轮，runtime 在下一模型/工具间隙 drain（turn.steerDrained 出队），模型同轮即答。
-   * 空闲调用会被 v4 网关拒绝（sessionNotFound / FK）——仅 running 时调用；任何非 accepted
-   * ack 都 throw → 共享层 R9 降级本地 followUp 队列（消息不丢）。
+   * v4/command sendText{requestedDelivery:"guide"} — desktop-style steer (2026-09-10 protocol reverse-engineering + real-device test):
+   * injects into the running turn; the runtime drains it at the next model/tool gap (turn.steerDrained dequeues) and the model answers in the same turn.
+   * Idle calls are rejected by the v4 gateway (sessionNotFound / FK) — call only while running; any non-accepted
+   * ack throws → the shared layer R9 degrades to a local followUp queue (no message loss).
    */
   async steerViaCommand(text: string): Promise<void> {
     if (!this.ready || !this.zcodeSid) throw new Error("steer unavailable (app-server not ready)");
@@ -829,17 +1048,19 @@ export class AppServerSession {
   }
 
   /**
-   * 发一轮（空闲调用；运行中由 handle 队列层拦截，不走到这）。resolve 于本轮收口。
-   * 带图时随 send 内联 attachments——v1 面的形状是 {kind:"image",dataBase64,mimeType,filename,sizeBytes}
-   * （runtime SLi 映射；缺 dataBase64 会被静默过滤掉图，桌面 v4 面的 {ref,...} 形状在本面不适用）。
+   * Sends one turn (idle calls only; while running the handle queue layer intercepts and never reaches here). Resolves when the turn settles.
+   * With images, attachments are inlined in send — the v1 surface shape is {kind:"image",dataBase64,mimeType,filename,sizeBytes}
+   * (runtime SLi mapping; missing dataBase64 silently drops the image; the desktop v4 {ref,...} shape does not apply on this surface).
    */
   async prompt(content: string, images?: TurnImageLike[]): Promise<TurnOutcome> {
     await this.ensureReady();
     this.turnSettled = false;
+    this.turnActive = true;
     const outcome = this.registerWaiter();
     const sessionId = this.zcodeSid;
     if (!sessionId) {
       this.turnWaiters.delete(outcome.entry);
+      this.turnActive = false;
       throw new Error("session/send unavailable (no sessionId)");
     }
     const attachments = images?.length
@@ -856,9 +1077,10 @@ export class AppServerSession {
       await this.conn.request("session/send", sendParams, { timeoutMs: 20_000 });
     } catch (e) {
       this.turnWaiters.delete(outcome.entry);
+      this.turnActive = false;
       const err = e instanceof Error ? e : new Error(String(e));
-      // -32031（历史模型在校验时不在 registry，restoreWarning 拒 send）：带 runtimeModel 重发一次——
-      // 服务端走 xse 路径应用模型并清 restoreWarning（resume 已带 runtimeModel 时理论不到这，双保险；2026-09-09 实测双向可行）
+      // -32031 (historical model missing from the registry at validation time, restoreWarning rejects send): resend once with runtimeModel —
+      // the server's xse path applies the model and clears restoreWarning (theoretically unreachable when resume already carried runtimeModel; double insurance; measured 2026-09-09, works both ways)
       const rm = this.buildRuntimeModel();
       if (err.message.includes("-32031") && rm) {
         this.log(`[aiti-zcode-agent] send 遇 -32031（历史模型不可用），携带 runtimeModel 重试`);
@@ -893,25 +1115,44 @@ export class AppServerSession {
     this.wired = false;
   }
 
+  /**
+   * Detach dispose (dispose semantics for a wrapper-hosted process): drop the local
+   * connection only — never session/close, never kill. The agent and its running turn
+   * survive a pi-web restart/upgrade untouched; the next open re-adopts via the registry.
+   * Pending interactions stay pending (the server is still waiting; replay/reannounce
+   * restores them after re-adoption).
+   */
+  detachDispose(): void {
+    this.disposedFlag = true;
+    this.ready = false;
+    this.failWaiters(new Error("session detached"));
+    this.offNotification?.();
+    this.offExit?.();
+    this.offNotification = null;
+    this.offExit = null;
+    this.wired = false;
+    this.conn.release();
+  }
+
   // ------------------------------------------------------------------
-  // 交互元语桥接（interaction/requestUserInput → pi-web 前端审批/问题卡）
+  // Interaction-primitive bridging (interaction/requestUserInput → pi-web frontend approval/question cards)
   // ------------------------------------------------------------------
 
   /**
-   * interaction/requestUserInput 反向请求入口（wire 注册；reannounce 重发同 requestId → 幂等）。
-   * zcode 端无总超时（持续 reannounce 直到应答/turn 结束），挂起等 respondInteraction。
+   * interaction/requestUserInput reverse-request entry (registered on the wire; reannounce re-sends share the requestId → idempotent).
+   * zcode has no overall timeout (it keeps reannouncing until answered / the turn ends), so stay pending awaiting respondInteraction.
    */
   private onUserInputRequest(p: UserInputRequestParams): Promise<JsonRecord> | JsonRecord {
     const requestId = typeof p.requestId === "string" && p.requestId ? p.requestId : "";
     if (!requestId) return { action: "decline", reason: "missing requestId" };
-    // 幂等：reannounce 重发（同 requestId）→ 返回同一挂起 promise，并重新 emit 事件
-    // （前端 SSE 重连/刷新后卡片丢失，靠 ≤10s 一次的 reannounce 重发把卡片带回来）
+    // Idempotent: a reannounce re-send (same requestId) → return the same pending promise and re-emit the event
+    // (cards lost after a frontend SSE reconnect/refresh are brought back by the ≤10s reannounce re-sends)
     const existing = this.pendingInteractions.get(requestId);
     if (existing) {
       this.emit(existing.event);
       return existing.promise;
     }
-    // turn 已收口（反向请求与收口帧竞态到达）：不挂起不 emit，直接 decline（否则永远无人应答）
+    // Turn already settled (the reverse request raced with the settle frame): do not pend or emit, decline directly (otherwise nobody would ever answer)
     if (this.turnSettled) return { action: "decline", reason: "turn already ended" };
 
     const schema = (p.schema ?? {}) as JsonRecord;
@@ -921,7 +1162,7 @@ export class AppServerSession {
         : toolName === "AskUserQuestion" ? "ask_user"
           : "generic";
 
-    // 事件负载：plan 全文 / 问题组归一化（options 只留 label/description）
+    // Event payload: full plan text / normalized question group (options keep only label/description)
     const input = (p.input ?? {}) as JsonRecord;
     const plan = typeof input.plan === "string" ? input.plan : "";
     const questions = normalizeQuestions(p.questions);
@@ -945,20 +1186,20 @@ export class AppServerSession {
   }
 
   /**
-   * 用户作答回填（pi-web handle.respondInteraction 落点）。
-   * 返回 false = 请求不存在/已失效（turn 收口清理、未知 id）。
+   * Feeds back the user's answer (landing point of pi-web handle.respondInteraction).
+   * Returns false = request missing/expired (cleared at turn settle, or unknown id).
    */
   respondInteraction(requestId: string, answer: InteractionAnswerInput): boolean {
     const pending = this.pendingInteractions.get(requestId);
     if (!pending) return false;
     this.pendingInteractions.delete(requestId);
     pending.resolve(buildUserInputAnswer(pending.kind, answer));
-    // 广播失效帧：多端（多标签页）同步清卡
+    // Broadcast the invalidation frame: multi-client (multi-tab) card clearing in sync
     this.emit({ type: "interaction_expired", requestId, reason: "resolved" });
     return true;
   }
 
-  /** turn 收口 / dispose：未决交互一律 decline（zcode 端 agent 收到拒绝继续/收尾），并广播失效帧。 */
+  /** Turn settle / dispose: all pending interactions get declined (the zcode-side agent continues/wraps up on rejection), and invalidation frames are broadcast. */
   private failPendingInteractions(reason: string): void {
     for (const [requestId, pending] of this.pendingInteractions) {
       pending.resolve({ action: "decline", reason });
@@ -968,7 +1209,7 @@ export class AppServerSession {
   }
 
   // ------------------------------------------------------------------
-  // 轮次等待
+  // Turn waiting
   // ------------------------------------------------------------------
 
   private registerWaiter(): { promise: Promise<TurnOutcome>; entry: WaiterEntry } {
@@ -985,16 +1226,17 @@ export class AppServerSession {
     this.turnWaiters.clear();
   }
 
-  private notifySteerQueue(): void {
+  private notifySteerQueue(force = false): void {
+    if (this.replaying && !force) return; // gated during replay: the mirror array still advances; the callback final state flushes at endReplay
     this.opts.onSteerQueue?.(this.steerQueue.map((s) => ({ ...s })));
   }
 
-  /** TodoWrite 族工具事件派生（input 优先、output 兜底；共享层去重后回调）。 */
+  /** TodoWrite-family tool event derivation (input first, output as fallback; the shared layer dedupes before callback). */
   private maybeUpdateTaskList(toolName: string, ...values: unknown[]): void {
     this.tasks.fromToolEvent(toolName, ...values);
   }
 
-  /** resume 快照种子（`todos` wire 同构；防御式逐条解析，空/失败静默保持现状）。 */
+  /** Resume snapshot seed (same shape as the `todos` wire; defensive per-entry parsing, empty/failure silently keeps the current state). */
   private seedTaskListFromSnapshot(raw: unknown): void {
     this.tasks.seed(raw);
   }
@@ -1003,6 +1245,7 @@ export class AppServerSession {
     this.closeStream();
     this.seenToolStarts.clear();
     this.turnSettled = true;
+    this.turnActive = false;
     this.failPendingInteractions("turn ended");
     if (this.steerQueue.length > 0) {
       this.steerQueue = [];
@@ -1031,14 +1274,18 @@ export class AppServerSession {
   }
 
   // ------------------------------------------------------------------
-  // session/event → pi 事件
+  // session/event → pi events
   // ------------------------------------------------------------------
 
   private onSessionEvent(env: JsonRecord): void {
-    // 防御过滤：单连接单会话设计下恒等；防未来共享连接时串扰
+    // Defensive filter: always equal under the one-connection-one-session design; guards against cross-talk if a connection is ever shared
     if (this.zcodeSid && typeof env.sessionId === "string" && env.sessionId && env.sessionId !== this.zcodeSid) return;
     const type = env.type;
     const p = (env.payload ?? {}) as JsonRecord;
+    // Turn-activity surface (the adopted path's running-state signal: activity without a
+    // completion frame in the journal = an unsettled turn; prompt() sets it idempotently
+    // on the normal path). Completion frames settle it via finishTurn.
+    if (type === "model.streaming" || type === "tool.updated" || type === "turn.steerQueued") this.turnActive = true;
     switch (type) {
       case "model.streaming": this.onModelStreaming(p); break;
       case "tool.updated": this.onToolUpdated(p); break;
@@ -1077,19 +1324,19 @@ export class AppServerSession {
         }
         break;
       }
-      default: break; // session.updated / titleUpdated / steer* / usage 等：P1 不消费
+      default: break; // session.updated / titleUpdated / steer* / usage etc.: not consumed in P1
     }
   }
 
-  // ---- model.streaming → pi text/thinking/toolcall 三线 ----
-  // 真机 wire（2026-09-07 实测）：帧可能不带 partId、可能缺 *_start 起始帧、tool 帧靠 toolCallId
-  // 定位 —— 桌面端同款「追加 + 容忍缺失」：显式 partId 优先，无则按 kind 隐式续块；
-  // 缺 assistantMessageId 的帧视为「延续当前消息」。
+  // ---- model.streaming → pi text/thinking/toolcall three streams ----
+  // Real-device wire (measured 2026-09-07): frames may lack partId, may miss the *_start opening frame, and tool frames
+  // locate by toolCallId — desktop-style "append + tolerate gaps": explicit partId first, otherwise implicitly continue a block by kind;
+  // frames missing assistantMessageId count as "continue the current message".
 
   private onModelStreaming(p: JsonRecord): void {
     const kind = String(p.kind ?? "");
     const partId = typeof p.partId === "string" && p.partId ? p.partId : null;
-    // 缺 assistantMessageId → 延续当前开着的消息（真机部分帧不带）
+    // Missing assistantMessageId → continue the currently open message (some real-device frames omit it)
     const assistantMessageId = typeof p.assistantMessageId === "string" && p.assistantMessageId
       ? p.assistantMessageId
       : this.stream?.assistantMessageId ?? "assistant";
@@ -1098,7 +1345,7 @@ export class AppServerSession {
       case "reasoning_start":
       case "tool_input_start": {
         this.ensureOpen(assistantMessageId);
-        // 显式 partId 已映射 → 幂等；否则建块（ensureBlock 内发 *_start）
+        // Explicit partId already mapped → idempotent; otherwise create a block (ensureBlock emits *_start)
         if (partId && this.streamIndex(partId) !== null) break;
         this.ensureBlock(kind === "text_start" ? "text" : kind === "reasoning_start" ? "reasoning" : "tool", partId, p);
         break;
@@ -1138,7 +1385,7 @@ export class AppServerSession {
         break;
       }
       case "tool_input_end":
-        break; // 等待 tool_call（arguments 定型）
+        break; // wait for tool_call (arguments finalized)
       case "tool_call": {
         if (!this.stream) break;
         const callId = String(p.toolCallId ?? "");
@@ -1153,13 +1400,13 @@ export class AppServerSession {
           contentIndex: idx,
           toolCall: { id: acc.toolCallId, name: block?.type === "toolCall" ? block.toolName : acc.toolName, arguments: block?.type === "toolCall" ? block.input : {} },
         });
-        // 流式输入定型的第一时间派生任务列表（真机 wire：scheduled 事件的 input 会被
-        // 剥掉——inputOmitted/inputRef:"model_stream"（runtime wLi），此帧是唯一带全量
-        // 参数的实时源）
+        // Derive the task list the moment streaming input finalizes (real-device wire: the scheduled event's input
+        // gets stripped — inputOmitted/inputRef:"model_stream" (runtime wLi); this frame is the only real-time
+        // source carrying full parameters)
         this.maybeUpdateTaskList(acc.toolName, block?.type === "toolCall" ? block.input : acc.rawInput);
         break;
       }
-      default: break; // start/finish/error：控制帧，不映射
+      default: break; // start/finish/error: control frames, not mapped
     }
   }
 
@@ -1179,7 +1426,7 @@ export class AppServerSession {
     }
   }
 
-  /** delta/end 帧定位块：显式 partId → 隐式指针/toolCallId；块缺失时自动建块（含 *_start 发射）。 */
+  /** Locates the block for delta/end frames: explicit partId → implicit pointer/toolCallId; auto-creates the block when missing (including *_start emission). */
   private locateBlock(kind: string, partId: string | null, p: JsonRecord): number | null {
     if (!this.stream) return null;
     if (partId) {
@@ -1202,12 +1449,12 @@ export class AppServerSession {
     return implicit ?? this.ensureBlock(isText ? "text" : "reasoning", null, p);
   }
 
-  /** 建新块（占位 + acc 播种 + 隐式指针/toolCallId 登记 + 对应 *_start 发射）。partId 已映射时返回 null。 */
+  /** Creates a new block (placeholder + acc seeding + implicit pointer/toolCallId registration + corresponding *_start emission). Returns null when partId is already mapped. */
   private ensureBlock(kind: "text" | "reasoning" | "tool", partId: string | null, p: JsonRecord): number | null {
     const s = this.stream!;
     if (partId && s.index.has(partId)) return null;
     const idx = s.blocks.length;
-    s.blocks.push({ type: "text", text: "" }); // 占位，下方立即覆写
+    s.blocks.push({ type: "text", text: "" }); // placeholder, overwritten right below
     if (partId) s.index.set(partId, idx);
     if (kind === "text") {
       s.blocks[idx] = { type: "text", text: "" };
@@ -1240,12 +1487,12 @@ export class AppServerSession {
     this.emit({ type: "message_update", assistantMessageEvent });
   }
 
-  /** 封口当前流式 assistant 消息（message_end + 最终 content 块）。 */
+  /** Closes the current streaming assistant message (message_end + final content blocks). */
   private closeStream(): void {
     const s = this.stream;
     if (!s) return;
     this.stream = null;
-    // 最终块从 acc 取终值（增量累积在 acc；blocks 只定顺序/类型）
+    // Final blocks take their values from acc (deltas accumulate in acc; blocks only define order/type)
     const content: StreamBlock[] = [];
     for (let i = 0; i < s.blocks.length; i++) {
       const block = s.blocks[i];
@@ -1255,7 +1502,7 @@ export class AppServerSession {
       else if (block.type === "thinking") content.push({ type: "thinking", thinking: acc?.kind === "thinking" ? acc.thinking : block.thinking });
       else if (block.type === "toolCall") content.push({ ...block });
     }
-    // 全空（无有效文本/思考/工具块）不落空泡
+    // Fully empty (no meaningful text/thinking/tool block) emits no empty bubble
     const meaningful = content.some((b) =>
       b.type === "toolCall"
       || (b.type === "thinking" && b.thinking.length > 0)
@@ -1272,7 +1519,7 @@ export class AppServerSession {
     });
   }
 
-  // ---- tool.updated：执行面事件 + 工具结果卡 ----
+  // ---- tool.updated: execution-surface events + tool result cards ----
 
   private onToolUpdated(p: JsonRecord): void {
     const kind = String(p.kind ?? "");
@@ -1284,9 +1531,9 @@ export class AppServerSession {
         if (!toolCallId || this.seenToolStarts.has(toolCallId)) break;
         this.seenToolStarts.add(toolCallId);
         if (toolName) this.toolNameByCallId.set(toolCallId, toolName);
-        // TodoWrite 族：input 已带全量任务列表（真机 wire 常被剥 input——见 tool_call 帧兜底）
+        // TodoWrite family: input already carries the full task list (the real-device wire often strips input — see the tool_call frame fallback)
         this.maybeUpdateTaskList(toolName, p.input);
-        // pi 原生时序：工具执行前封口当前流式消息段（assistant 消息含 toolCall 块）
+        // pi-native ordering: close the current streaming message segment before tool execution (the assistant message contains the toolCall block)
         this.closeStream();
         this.emit({ type: "tool_execution_start", toolCallId, toolName });
         break;
@@ -1304,8 +1551,8 @@ export class AppServerSession {
       }
       case "result": {
         const result = (p.result ?? {}) as JsonRecord;
-        // MCP todo_write/update_plan 变体的列表可能在 output（桌面 CPt 兜底路）；
-        // toolName 缺帧时按 callId 反查（流式/tool 帧登记）
+        // MCP todo_write/update_plan variants may carry the list in output (desktop CPt fallback path);
+        // when the frame lacks toolName, reverse-lookup by callId (registered from streaming/tool frames)
         this.maybeUpdateTaskList(toolName || this.toolNameByCallId.get(toolCallId) || "", result.output, result.content);
         const output = typeof result.output === "string" && result.output
           ? result.output
@@ -1340,7 +1587,7 @@ export class AppServerSession {
         });
         break;
       }
-      default: break; // batch/raw：不映射
+      default: break; // batch/raw: not mapped
     }
   }
 }
@@ -1357,8 +1604,8 @@ function parseJsonInput(raw: string): JsonRecord {
 }
 
 /**
- * 反向请求 questions → 事件负载归一化（防御式：非法条目跳过）。
- * question 文本是答案寻址键（zcode 端 ONi 按 input.questions[].question 匹配 answers），必须原样保留。
+ * Reverse-request questions → normalized event payload (defensive: invalid entries are skipped).
+ * The question text is the answer addressing key (zcode-side ONi matches answers by input.questions[].question) and must be preserved verbatim.
  */
 function normalizeQuestions(raw: unknown): Array<{
   header?: string;
@@ -1394,12 +1641,12 @@ function normalizeQuestions(raw: unknown): Array<{
 }
 
 /**
- * 用户回答 → zcode 应答帧（runtime 0.16.5 逆向契约，实测语义见文件头注释）：
- * - plan_approval：批准 = accept+answer:"approve"；带反馈 = accept+answer:"<反馈>"（zcode 归一为 deny+reason，agent 继续改方案）；直接拒绝 = decline。
- * - ask_user：accept+answers（key=问题文本，值=label 或 label[]）；前端「附加说明」文本经
- *   answer.message 传入 → annotations（每道已答题挂 {notes}——zcode 契约的自由文本注记，
- *   schema: annotations: Record<问题文本,{notes?}>，随 tool result 回给模型）；拒绝 = decline。
- * - generic：accept 空 content / decline。
+ * User answer → zcode answer frame (runtime 0.16.5 reverse-engineered contract; measured semantics in the file-header comment):
+ * - plan_approval: approve = accept+answer:"approve"; with feedback = accept+answer:"<feedback>" (zcode normalizes to deny+reason, agent keeps refining); direct rejection = decline.
+ * - ask_user: accept+answers (key = question text, value = label or label[]); the frontend "additional notes" text goes through
+ *   answer.message → annotations (each answered question gets {notes} — free-text annotation per the zcode contract,
+ *   schema: annotations: Record<question text,{notes?}>, returned to the model with the tool result); rejection = decline.
+ * - generic: accept with empty content / decline.
  */
 function buildUserInputAnswer(kind: PendingInteraction["kind"], answer: InteractionAnswerInput): JsonRecord {
   if (answer.action !== "accept") {

@@ -47,6 +47,16 @@ export type SocketChildOptions = {
   agentKey?: string;
   spawnfile?: string;
   spawnargs?: string[];
+  /**
+   * Journal bytes replayed at handshake (hello.journalBytes; stdout+stderr
+   * combined). Protocol-bridging backends (NDJSON RPC) use it as a byte-exact
+   * budget: every stdout/stderr byte up to this count is history — count what
+   * `data` delivers and gate live processing once the budget is consumed.
+   * Unlike REPLAY_END_EVENT this is not timing-sensitive: the event fires
+   * before the replayed chunks are delivered through the PassThrough, while
+   * the budget travels with the bytes themselves.
+   */
+  replayBytes?: number;
 };
 
 /**
@@ -66,6 +76,8 @@ export class SocketChild extends EventEmitter {
   readonly agentKey?: string;
   readonly spawnfile: string;
   readonly spawnargs: string[];
+  /** Journal bytes that were replayed at handshake (0 = fresh spawn / no wrapper). */
+  readonly replayBytes: number;
 
   readonly stdin: Writable;
   readonly stdout: PassThrough;
@@ -98,6 +110,7 @@ export class SocketChild extends EventEmitter {
     this.agentKey = options.agentKey;
     this.spawnfile = options.spawnfile ?? "";
     this.spawnargs = options.spawnargs ?? [];
+    this.replayBytes = options.replayBytes ?? 0;
 
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();

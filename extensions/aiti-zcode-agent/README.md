@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-zcode-agent
 
-> Driven by Zhipu ZCode (CLI runtime embedded in the desktop AppImage) — dual-channel resident app-server (default, streaming/tool cards/steer/attachments) + oneshot fallback, plugged into All Sessions, consuming the GLM coding plan compliantly
+> Driven by Zhipu ZCode (CLI runtime embedded in the desktop AppImage) — dual-channel resident app-server (default, streaming/tool cards/steer/attachments) + oneshot fallback, plugged into All Sessions, consuming the GLM coding plan compliantly. Survives-restart (detachable) hosting: a pi-web restart/upgrade never interrupts the agent or its running turn
 
 English · [简体中文](./README.zh-CN.md)
 
