@@ -7,6 +7,9 @@
  *   management /api/v1/status + /api/v1/reload → bridge WS register →
  *   type=acp project spawns OUR connector → named pipe/UDS → aiti-channels ACP
  *   server → real pi session → reply flows back through the bridge.
+ * Second chain (when the ACP server exposes a TCP endpoint): type=piweb
+ *   native — cc-connect dials tcp://127.0.0.1:<port> directly, no connector
+ *   subprocess anywhere (the Windows-native piweb chain).
  *
  * Prerequisites (missing pieces skip cleanly, never hard-fail):
  *   - managed cc-connect bin (or CC_CONNECT_BIN override)
@@ -50,9 +53,13 @@ const BRIDGE_PORT = MGMT_PORT + 1;
 const TOKEN = "cc-e2e-" + Date.now();
 const auth = { authorization: `Bearer ${TOKEN}` };
 
-// connector + ACP endpoint (deployed layout); ACP leg skipped when unreachable
+// connector + ACP endpoint (deployed layout); ACP leg skipped when unreachable.
+// acpStatus.socket is the PRIMARY endpoint (tcp:// on Windows / when TCP is
+// explicitly enabled) — the connector is a plain Node client, so it always
+// dials the legacy pipe/unix endpoint from j.endpoints instead.
 const extBin = join(homedir(), ".pi", "web", "extensions", "aiti-channels", "bin", "aiti-acp-connector.mjs");
 let acpPipe = "";
+let acpTcp = ""; // tcp://127.0.0.1:<port> when the server has a TCP listener
 if (!NO_ACP && existsSync(extBin)) {
   try {
     const devPort = process.env.AITI_DEV_PORT || "3001"; // sanitized default; machines set the real port
@@ -64,7 +71,13 @@ if (!NO_ACP && existsSync(extBin)) {
         j = await r.json();
       } catch { await new Promise((r2) => setTimeout(r2, 1000)); } // transient: dev reload/compile window
     }
-    if ((j.listening || j.endpointAlive) && j.socket) acpPipe = j.socket;
+    const eps = Array.isArray(j?.endpoints) ? j.endpoints : [];
+    const legacy = eps.find((e) => e.transport === "pipe" || e.transport === "unix");
+    const tcp = eps.find((e) => e.transport === "tcp");
+    const usable = (e) => e && (e.listening || e.endpointAlive);
+    if (legacy && usable(legacy) && legacy.socket) acpPipe = legacy.socket;
+    else if (!eps.length && (j.listening || j.endpointAlive) && j.socket) acpPipe = j.socket; // pre-endpoints-array server build
+    if (tcp && usable(tcp) && tcp.socket) acpTcp = tcp.socket;
   } catch { /* dev instance down → ACP leg skips */ }
 }
 
@@ -176,6 +189,102 @@ try {
   } catch { /* already gone */ }
   await sleep(700);
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* locked on win — temp anyway */ }
+}
+
+console.log(`\n==== cc-connect e2e：${pass} pass / ${fail} fail / ${skip} skip ====【first chain】`);
+
+// ───────────────────────────────────────────────────────────────────────
+// Second chain: type=piweb NATIVE over TCP (no connector subprocess).
+// Runs whenever the live ACP server exposes a tcp:// endpoint — always on
+// Windows, on POSIX when AITI_ACP_TCP_PORT / instance acpTcpPort is set.
+// ───────────────────────────────────────────────────────────────────────
+if (!NO_ACP && acpTcp) {
+  const dir2 = mkdtempSync(join(tmpdir(), "cc-e2e-tcp-"));
+  const cfg2 = join(dir2, "cc-connect.toml");
+  const MGMT2 = MGMT_PORT + 3, BRIDGE2 = MGMT_PORT + 4;
+  const toml2 = renderConfig({
+    dataDir: join(dir2, "ccdata"),
+    language: "zh",
+    management: { enabled: true, port: MGMT2, token: TOKEN },
+    bridge: { enabled: true, port: BRIDGE2, token: TOKEN },
+    acp: { connector: extBin, socketPath: acpTcp }, // native branch uses the primary (tcp) endpoint
+    projects: [{
+      name: "acpchat",
+      agent: "piweb",
+      piwebNative: true,
+      work_dir: workDir,
+      platforms: [{ type: "telegram", fields: { token: "123456789:AAExx-dummy-token-not-real" } }],
+    }],
+  });
+  writeFileSync(cfg2, toml2);
+  const child2 = spawn(bin, ["-config", cfg2], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let log2 = "";
+  child2.stdout.on("data", (d) => { log2 += d; });
+  child2.stderr.on("data", (d) => { log2 += d; });
+  try {
+    let up2 = false;
+    for (let i = 0; i < 30 && !up2; i++) {
+      await sleep(500);
+      try { up2 = (await fetch(`http://127.0.0.1:${MGMT2}/api/v1/status`, { headers: auth, signal: AbortSignal.timeout(2000) })).ok; } catch { /* starting */ }
+    }
+    ok("native chain: management up", up2, up2 ? "" : log2.slice(-200));
+    const ws2 = new WebSocket(`ws://127.0.0.1:${BRIDGE2}/bridge/ws?token=${TOKEN}`);
+    // phase 1: register and wait for ack (message before ack would be dropped)
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("register timeout")), 10000);
+      ws2.onopen = () => ws2.send(JSON.stringify({ type: "register", platform: "web", capabilities: ["text"], metadata: { version: "e2e" } }));
+      ws2.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data); } catch { return; }
+        if (m.type === "register_ack") { clearTimeout(t); resolve(); }
+      };
+      ws2.onerror = () => { clearTimeout(t); reject(new Error("ws error")); };
+    });
+    // phase 2: send + collect the streamed reply
+    const reply2 = await new Promise((resolve) => {
+      let buf = "";
+      const t = setTimeout(() => resolve(""), 90000);
+      ws2.onmessage = (e) => {
+        let m; try { m = JSON.parse(e.data); } catch { return; }
+        if (m.type === "ping" || m.type === "ping_request") { ws2.send(JSON.stringify({ type: "pong", ts: Date.now() })); return; }
+        if (m.type === "reply_stream") { buf += m.delta || ""; if (m.done) { clearTimeout(t); resolve(buf); } }
+        else if (m.type === "reply") { clearTimeout(t); resolve(m.content || ""); }
+        else if (m.type === "error") { clearTimeout(t); resolve(""); console.error("    bridge2 error:", m.code, m.message); }
+      };
+      ws2.send(JSON.stringify({ type: "message", msg_id: `web-tcp-${Date.now()}`, session_key: `web:e2e-tcp:${Date.now() % 1000}`, user_id: "web-e2e", user_name: "E2E", content: "只回四个字：TCP通", reply_ctx: "web:e2e:2", project: "acpchat" }));
+    });
+    ok("native TCP chain: real pi session replied (no connector)", reply2.trim().length > 0, JSON.stringify(reply2.trim().slice(0, 40)));
+    ws2.close();
+
+    // assert the chain spawned no aiti-acp-connector subprocess
+    const connectorProcs = await (async () => {
+      try {
+        if (platform() === "win32") {
+          const out = execFileSync("powershell", ["-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match 'aiti-acp-connector'} | Select-Object -ExpandProperty ProcessId"], { encoding: "utf8", timeout: 10000 });
+          return out.split(/\s+/).filter(Boolean).length;
+        }
+        const out = execFileSync("pgrep", ["-af", "aiti-acp-connector"], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }).trim();
+        return out ? out.split("\n").filter((l) => !l.includes("pgrep")).length : 0;
+      } catch (e) {
+        if (e?.status === 1) return 0; // pgrep exit 1 = no match
+        return -1; // listing genuinely unavailable
+      }
+    })();
+    if (connectorProcs < 0) skipIt("no connector subprocess", "process listing unavailable");
+    else ok("native TCP chain: zero connector subprocesses", connectorProcs === 0, `${connectorProcs} found`);
+  } catch (e) {
+    fail++;
+    console.error(`  ❌ native chain aborted: ${e.message}`);
+  } finally {
+    try {
+      if (platform() === "win32") execFileSync("taskkill", ["/PID", String(child2.pid), "/T", "/F"], { stdio: "ignore", timeout: 8000 });
+      else child2.kill();
+    } catch { /* already gone */ }
+    await sleep(500);
+    try { rmSync(dir2, { recursive: true, force: true }); } catch { /* temp anyway */ }
+  }
+} else if (!NO_ACP) {
+  skipIt("native TCP chain (type=piweb over tcp://)", acpTcp ? "disabled" : "no TCP endpoint (set AITI_ACP_TCP_PORT / instance acpTcpPort; default-on on Windows)");
 }
 
 console.log(`\n==== cc-connect e2e：${pass} pass / ${fail} fail / ${skip} skip ====`);

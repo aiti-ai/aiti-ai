@@ -29,13 +29,23 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir, platform } from "node:os";
 import { createHash } from "node:crypto";
-import { getDataDir } from "./manager.ts";
 import * as bridge from "./acp-bridge.ts";
 
 export const ACP_PROTOCOL_VERSION = 1;
 export const ACP_AGENT_INFO = { name: "aiti-piweb", title: "AITI Agent (pi-web)", version: bridge.ACP_BRIDGE_VERSION };
 
 const IS_WIN = platform() === "win32";
+
+/** dataDir channel of our own: pi-web hot reload can leave index.ts and this
+ *  module holding DIFFERENT lib/manager.ts evaluations (module-level
+ *  _dataDir state invisible across copies), which silently sent path and
+ *  registry resolution to fallbacks. index.ts calls setDataDir() at load;
+ *  before that the conventional cache layout applies. */
+let _dataDir = "";
+export function setDataDir(d: string) { _dataDir = d || ""; }
+function dataDir(): string {
+  return _dataDir || path.join(homedir(), ".pi", "web", "data", "aiti-channels", "cache");
+}
 
 /** 连接器稳定路径：部署后固定在 prod 扩展目录（config.toml cmd 用；cc-connect 与 dev/prod 共享） */
 export function connectorBin(): string {
@@ -53,15 +63,79 @@ export function connectorBin(): string {
  */
 export function acpSocketPath(instanceId: string): string {
   if (IS_WIN) {
-    const dataDir = getDataDir() || path.join(homedir(), ".pi", "web", "data", "aiti-channels", "cache");
-    const tag = createHash("sha1").update(dataDir.toLowerCase()).digest("hex").slice(0, 8);
+    const tag = createHash("sha1").update(dataDir().toLowerCase()).digest("hex").slice(0, 8);
     return `\\\\.\\pipe\\aiti-channels-acp-${tag}-${instanceId}`;
   }
-  return path.join(getDataDir() || path.join(homedir(), ".pi", "web", "data", "aiti-channels", "config"), "acp", `${instanceId}.sock`);
+  return path.join(dataDir(), "acp", `${instanceId}.sock`);
 }
 
 function isNamedPipe(p: string): boolean {
   return p.startsWith("\\\\.\\pipe\\");
+}
+
+// ---------------------------------------------------------------------------
+// Transport endpoints: legacy pipe/unix plus TCP (Windows native piweb chain)
+// ---------------------------------------------------------------------------
+
+/** One ACP transport endpoint. `socket` is what a client dials: a filesystem
+ *  path (unix), a `\\.\pipe\...` name (pipe), or `tcp://host:port` (tcp). */
+export type AcpTransport = "unix" | "pipe" | "tcp";
+export type AcpEndpoint = { transport: AcpTransport; socket: string; port?: number };
+
+/** TCP listen port resolution order (see cc-connect-acp-tcp-transport-plan.md §3):
+ *  1. instance config `acpTcpPort` (instances.json, set via the instance save API)
+ *  2. env AITI_ACP_TCP_PORT (test/ops override for this pi-web process)
+ *  3. derived: stable hash of the instance id into 29000-29999
+ * On POSIX the derived port does NOT enable TCP by itself (unix stays the
+ * default there); on Windows TCP is always on — it is the native piweb
+ * transport, listening alongside the named pipe. */
+export function acpTcpPort(instanceId: string): number | null {
+  try {
+    // registry read straight from disk — no manager import (module-instance
+    // duplication under hot reload makes its module state unreliable here)
+    const raw = fs.readFileSync(path.join(dataDir(), "instances.json"), "utf8");
+    const list = JSON.parse(raw);
+    const inst = (Array.isArray(list) ? list : []).find((i: { id?: string; acpTcpPort?: number }) => i?.id === instanceId);
+    if (inst && Number.isFinite(inst.acpTcpPort) && Number(inst.acpTcpPort) > 0) return Number(inst.acpTcpPort);
+  } catch { /* registry unreadable → fall through */ }
+  const env = Number(process.env.AITI_ACP_TCP_PORT);
+  if (Number.isFinite(env) && env > 0) return env;
+  if (!IS_WIN) return null;
+  return 29000 + (createHash("sha1").update(instanceId).digest().readUInt32BE(0) % 10000);
+}
+
+function tcpEndpoint(instanceId: string, port: number): AcpEndpoint {
+  return { transport: "tcp", socket: `tcp://127.0.0.1:${port}`, port };
+}
+
+/** All endpoints this instance should serve. The legacy pipe/unix endpoint
+ *  always stays (connector fallback + type=acp chain keep working); TCP is
+ *  added on Windows (native chain) and wherever a port is explicitly set. */
+export function acpEndpoints(instanceId: string): AcpEndpoint[] {
+  const eps: AcpEndpoint[] = [{ transport: IS_WIN ? "pipe" : "unix", socket: acpSocketPath(instanceId) }];
+  const port = acpTcpPort(instanceId);
+  if (port) eps.push(tcpEndpoint(instanceId, port));
+  return eps;
+}
+
+/** Primary endpoint: what config-gen hands to the native piweb chain. TCP when
+ *  present (Windows / explicitly configured), else the legacy path. */
+export function primaryEndpoint(instanceId: string): AcpEndpoint {
+  const eps = acpEndpoints(instanceId);
+  return eps.find((e) => e.transport === "tcp") ?? eps[0];
+}
+
+/** Dial an endpoint for the liveness probe (transport-aware). */
+function probeConnect(ep: AcpEndpoint): Promise<boolean> {
+  return new Promise((resolve) => {
+    const c = ep.transport === "tcp"
+      ? net.connect({ host: "127.0.0.1", port: ep.port })
+      : net.connect(ep.socket);
+    const done = (v: boolean) => { try { c.destroy(); } catch { /* ignore */ } resolve(v); };
+    c.once("connect", () => done(true));
+    c.once("error", () => done(false));
+    setTimeout(() => done(false), 500);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -262,38 +336,32 @@ function promptText(blocks: unknown): string {
 
 const RT_KEY = "__aitiChannelsAcpServers";
 
-type ServerState = { servers: Map<string, net.Server> };
+/** One live listener: the endpoint it serves plus its net.Server. */
+type ListenerHandle = { ep: AcpEndpoint; server: net.Server };
+type ServerState = { servers: Map<string, ListenerHandle[]> };
 
 function servers(): ServerState {
   const g = globalThis as Record<string, unknown>;
-  if (!g[RT_KEY]) g[RT_KEY] = { servers: new Map<string, net.Server>() };
+  if (!g[RT_KEY]) g[RT_KEY] = { servers: new Map<string, ListenerHandle[]>() };
   return g[RT_KEY] as ServerState;
 }
 
-export async function startAcpServer(instanceId: string): Promise<{ ok: boolean; socket: string; already?: boolean; error?: string }> {
-  const sockPath = acpSocketPath(instanceId);
+/** Legacy (pipe/unix) listener: same liveness semantics as before — a live
+ *  pipe held by another process is a hard double-start error; a stale unix
+ *  file is removed. Reuses the in-memory server for the reload race. */
+async function listenLegacy(instanceId: string, ep: AcpEndpoint): Promise<ListenerHandle> {
+  const sockPath = ep.socket;
   const pipe = isNamedPipe(sockPath);
-  const existing = servers().servers.get(instanceId);
-  if (existing && existing.listening) return { ok: true, socket: sockPath, already: true };
-
-  // 残留端点：试连一次，活的（理论上不可能——同进程 map 已查）才复用，死文件清掉。
-  // 命名管无「残留文件」概念（server 关即消失）：管仍活着 = 被其他进程占用（同 dataDir
-  // 双启动），**显式报错**而非静默 already——静默会让面板 listening:false 且日志零输出，
-  // 正是 dataDir 摘要引入前双实例互踩的表象。
-  const alive = await new Promise<boolean>((resolve) => {
-    const c = net.connect(sockPath, () => { c.destroy(); resolve(true); });
-    c.on("error", () => resolve(false));
-    setTimeout(() => { c.destroy(); resolve(false); }, 500);
-  });
+  const alive = await probeConnect(ep);
   if (alive) {
-    if (pipe) throw new Error(`ACP 端点已被其他进程占用：${sockPath}（同实例双 pi-web 进程在跑？先停另一个）`);
-    return { ok: true, socket: sockPath, already: true };
+    if (pipe) throw new Error(`ACP endpoint already held by another process: ${sockPath} (another pi-web process serving the same instance? stop it first)`);
+    // unix: alive but not owned in-process — another pi-web on a shared dataDir
+    return { ep, server: null as unknown as net.Server };
   }
   if (!pipe) {
     fs.mkdirSync(path.dirname(sockPath), { recursive: true });
-    try { fs.unlinkSync(sockPath); } catch { /* 不存在/非文件——忽略 */ }
+    try { fs.unlinkSync(sockPath); } catch { /* absent or not a file */ }
   }
-
   const server = net.createServer((conn) => new AcpConnection(instanceId, conn));
   // Reload race: shutdown's server.close() releases the pipe/file name asynchronously,
   // so an immediate listen() hits EADDRINUSE while the old handle is still draining —
@@ -310,18 +378,81 @@ export async function startAcpServer(instanceId: string): Promise<{ ok: boolean;
     };
     tryListen(1);
   });
-  servers().servers.set(instanceId, server);
-  console.log(`[aiti-channels][acp] server 监听 ${sockPath}（实例 ${instanceId}${pipe ? "，命名管" : ""}）`);
-  return { ok: true, socket: sockPath };
+  return { ep, server };
+}
+
+/** TCP listener on 127.0.0.1 only — the ACP protocol surface has no auth, so
+ *  the port must never be exposed beyond loopback (same constraint as the
+ *  cc-connect api_addr patch). An explicitly configured port that is taken is
+ *  a hard error; a derived port colliding with anything increments up to 10
+ *  times (probe says alive, or bind hits EADDRINUSE). */
+async function listenTcp(instanceId: string, want: AcpEndpoint, explicit: boolean): Promise<ListenerHandle> {
+  let port = want.port!;
+  for (let attempt = 0; attempt <= (explicit ? 5 : 10); attempt++) {
+    const ep = tcpEndpoint(instanceId, port);
+    if (await probeConnect(ep)) {
+      if (explicit) throw new Error(`ACP TCP port ${port} already served by another process (acpTcpPort explicit — pick another port)`);
+      port += 1;
+      continue;
+    }
+    const server = net.createServer((conn) => new AcpConnection(instanceId, conn));
+    const bound = await new Promise<string | null>((resolve) => {
+      server.once("error", (e: NodeJS.ErrnoException) => resolve(e.code || "error"));
+      server.listen({ host: "127.0.0.1", port }, () => resolve(null));
+    });
+    if (!bound) return { ep, server };
+    if (explicit && attempt >= 5) throw new Error(`ACP TCP port ${port} unavailable: ${bound} (acpTcpPort explicit — pick another port)`);
+    try { server.close(); } catch { /* not open */ }
+    port += 1;
+  }
+  throw new Error(`ACP TCP: no free port near ${want.port} (tried +${explicit ? 5 : 10})`);
+}
+
+/** Start (or reconcile) all endpoints for one instance. Safe to call again
+ *  after a config change: already-listening transports are left untouched,
+ *  missing ones (e.g. TCP enabled later without a pi-web restart) start here. */
+export async function startAcpServer(instanceId: string): Promise<{ ok: boolean; socket: string; already?: boolean; error?: string }> {
+  const eps = acpEndpoints(instanceId);
+  const primary = eps.find((e) => e.transport === "tcp") ?? eps[0];
+  const existing = (servers().servers.get(instanceId) ?? []).filter((h) => h.server && h.server.listening);
+  const have = new Set(existing.map((h) => h.ep.transport));
+  const wasComplete = eps.every((e) => have.has(e.transport));
+  if (wasComplete) return { ok: true, socket: primary.socket, already: true };
+
+  const handles: ListenerHandle[] = [...existing];
+  const errors: string[] = [];
+  for (const ep of eps) {
+    if (have.has(ep.transport)) continue;
+    try {
+      const h = ep.transport === "tcp"
+        ? await listenTcp(instanceId, ep, Boolean(acpTcpPort(instanceId)))
+        : await listenLegacy(instanceId, ep);
+      if (h.server) handles.push(h);
+    } catch (e) {
+      errors.push(`${ep.transport}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  servers().servers.set(instanceId, handles);
+  const served = handles.map((h) => h.ep.socket).join(" + ");
+  const primaryServed = handles.find((h) => h.ep.transport === primary.transport) ?? handles[0];
+  if (errors.length) {
+    console.error(`[aiti-channels][acp] server partial start (instance ${instanceId}): ${errors.join("; ")}`);
+    if (!handles.length) throw new Error(errors.join("; "));
+    return { ok: true, socket: primaryServed?.ep.socket ?? primary.socket, already: wasComplete, error: errors.join("; ") };
+  }
+  console.log(`[aiti-channels][acp] server listening ${served} (instance ${instanceId})`);
+  return { ok: true, socket: primary.socket, already: wasComplete };
 }
 
 export function stopAcpServer(instanceId: string): boolean {
-  const server = servers().servers.get(instanceId);
-  if (!server) return false;
+  const handles = servers().servers.get(instanceId);
+  if (!handles) return false;
   servers().servers.delete(instanceId);
-  try { server.close(); } catch { /* 尽力 */ }
+  for (const h of handles) {
+    try { h.server.close(); } catch { /* best effort */ }
+  }
   if (!isNamedPipe(acpSocketPath(instanceId))) {
-    try { fs.unlinkSync(acpSocketPath(instanceId)); } catch { /* 尽力 */ }
+    try { fs.unlinkSync(acpSocketPath(instanceId)); } catch { /* best effort */ }
   }
   return true;
 }
@@ -330,27 +461,42 @@ export function stopAllAcpServers() {
   for (const id of [...servers().servers.keys()]) stopAcpServer(id);
 }
 
-/** 端点试连（跨进程可见）：本进程没监听但端点活着 = 另一 pi-web 实例在服务同一共享
- *  dataDir 的实例（155 机 PI_WEB_DATA_DIR 双实例共享是既定部署形态）。 */
-function endpointAlive(sockPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const c = net.connect(sockPath, () => { c.destroy(); resolve(true); });
-    c.on("error", () => resolve(false));
-    setTimeout(() => { c.destroy(); resolve(false); }, 500);
-  });
+/** Cross-process endpoint probe for status: alive while this process is not
+ *  listening = another pi-web instance serves the same shared dataDir (the
+ *  155-box PI_WEB_DATA_DIR dual-instance shape). */
+function endpointAlive(ep: AcpEndpoint): Promise<boolean> {
+  return probeConnect(ep);
 }
 
 export async function acpStatus(instanceId: string) {
-  const server = servers().servers.get(instanceId);
-  const listening = !!(server && server.listening);
-  const socket = acpSocketPath(instanceId);
-  const endpointAliveOk = listening ? true : await endpointAlive(socket);
+  const handles = servers().servers.get(instanceId) ?? [];
+  const eps = acpEndpoints(instanceId);
+  const primary = eps.find((e) => e.transport === "tcp") ?? eps[0];
+  const endpoints = [];
+  for (const ep of eps) {
+    const h = handles.find((x) => x.ep.transport === ep.transport);
+    const listening = !!(h && h.server && h.server.listening);
+    const alive = listening ? true : await endpointAlive(ep);
+    endpoints.push({
+      transport: ep.transport,
+      socket: ep.socket,
+      port: ep.port,
+      listening,
+      endpointAlive: alive,
+      ownedByOther: !listening && alive,
+    });
+  }
+  const primaryEntry = endpoints.find((e) => e.transport === primary.transport)!;
   return {
-    listening,
-    /** 本进程未监听但端点存活（另一实例持有）——共享 dataDir 双实例部署的正常形态 */
-    endpointAlive: endpointAliveOk,
-    ownedByOther: !listening && endpointAliveOk,
-    socket,
+    listening: primaryEntry.listening,
+    /** this process not listening but endpoint alive (held by another instance) */
+    endpointAlive: primaryEntry.endpointAlive,
+    ownedByOther: primaryEntry.ownedByOther,
+    /** primary endpoint — tcp://127.0.0.1:<port> when TCP is on, else the legacy path */
+    socket: primary.socket,
+    transport: primary.transport,
+    port: primary.port ?? null,
+    endpoints,
     connector: connectorBin(),
     connectorExists: fs.existsSync(connectorBin()),
     sessions: bridge.listSessions().map((s) => ({

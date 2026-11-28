@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONNECTOR = path.resolve(TESTS_DIR, "..", "bin", "aiti-acp-connector.mjs");
-const SOCK = process.argv[2] || path.join(os.homedir(), ".pi", "web", "data", "aiti-channels", "config", "acp", "default.sock");
+const SOCK = process.argv[2] || path.join(os.homedir(), ".pi", "web", "data", "aiti-channels", "cache", "acp", "default.sock");
 const CWD = path.join(os.homedir(), "workspace", "atest");
 
 const proc = spawn(process.execPath, [CONNECTOR, "--socket", SOCK], { stdio: ["pipe", "pipe", "pipe"] });

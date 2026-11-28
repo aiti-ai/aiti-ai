@@ -5,9 +5,10 @@
  * 验证：initialize → session/new（建 pi-web 真会话）→ session/prompt（流式回流 + stopReason）
  * 全程不依赖 cc-connect / IM 凭证，直接证明 ACP server + 桥接 + pi 会话链路。
  *
- * 用法：node tests/acp-socket-smoke.mjs [socketPath] [cwd]
- *   socketPath 缺省 = ~/.pi/web/data/aiti-channels/acp/default.sock
- *   cwd 缺省 = ~/workspace/atest（须存在）
+ * Usage: node tests/acp-socket-smoke.mjs [socketPath] [cwd]
+ *   socketPath default = ~/.pi/web/data/aiti-channels/cache/acp/default.sock
+ *   (or ACP_SOCK env); tcp://127.0.0.1:<port> selects the TCP transport
+ *   cwd default = ~/workspace/atest (must exist)
  *
  * 退出码：0=全绿；1=失败。
  *
@@ -26,10 +27,14 @@ function normalizeWinPipe(p) {
   if (!/^\\\\/.test(p) && !p.includes("\\") && !p.includes("/")) return "\\\\.\\pipe\\" + p; // 纯管名
   return p;
 }
-const SOCK = normalizeWinPipe(process.env.ACP_SOCK || process.argv[2] || "") || path.join(os.homedir(), ".pi", "web", "data", "aiti-channels", "config", "acp", "default.sock");
+const SOCK = normalizeWinPipe(process.env.ACP_SOCK || process.argv[2] || "") || path.join(os.homedir(), ".pi", "web", "data", "aiti-channels", "cache", "acp", "default.sock");
 const cwd = process.argv[3] || path.join(os.homedir(), "workspace", "atest");
 
-const sock = net.connect(SOCK);
+// TCP transport: ACP_SOCK=tcp://127.0.0.1:<port> (or a tcp:// argv) — the
+// Windows-native transport; works on POSIX too when the server has a TCP
+// listener (AITI_ACP_TCP_PORT / instance acpTcpPort)
+const TCP = /^tcp:\/\/([^:/]+):(\d+)$/.exec(SOCK);
+const sock = TCP ? net.connect({ host: TCP[1], port: Number(TCP[2]) }) : net.connect(SOCK);
 let buf = "", nextId = 1;
 const pending = new Map();
 let sessionId = null;

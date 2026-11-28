@@ -694,6 +694,9 @@ export default {
       // 数据分层（config/state/cache）：运行态（pid/socket/日志/acp/实例注册表）→ cache；
       // msg-log（历史）→ state/（见 lib/manager.ts）；存量迁移由一次性脚本负责（不背包袱）。
       m.setDataDir(cacheRoot);
+      // keep acp-server path/registry resolution on the same dataDir even when
+      // hot reload splits the manager module into per-importer copies
+      acp.setDataDir(cacheRoot);
       // P3：ACP server 随 pi-web 常驻（每实例一个 Unix socket；cc-connect 连接器连这里）。
       // globalThis 单例——reload 复用已有 server，socket 不中断。
       void acp.ensureAll(m.listInstances().map((i: any) => i.id));
@@ -772,9 +775,13 @@ export default {
         const dataDir = String(b.dataDir || "");
         if (!dataDir) return json({ ok: false, error: "需要 dataDir（cc-connect 数据目录）" }, 400);
         const config = String(b.config || path.join(m.getDataDir(), "instances", id, "config.toml"));
-        m.saveInstance({ id, name, config, dataDir });
+        // acpTcpPort: optional fixed ACP TCP port; 0/empty clears the override
+        const tcpRaw = Number(b.acpTcpPort);
+        const acpTcpPort = Number.isFinite(tcpRaw) && tcpRaw > 0 ? tcpRaw : undefined;
+        const prev = m.listInstances().find((i: any) => i.id === id);
+        m.saveInstance({ id, name, config, dataDir, ...(prev?.bin ? { bin: prev.bin } : {}), ...(prev?.logFile ? { logFile: prev.logFile } : {}), ...(acpTcpPort ? { acpTcpPort } : {}) });
         void acp.ensureAll([id]);
-        return json({ ok: true, instance: { id, name, config, dataDir } });
+        return json({ ok: true, instance: { id, name, config, dataDir, ...(acpTcpPort ? { acpTcpPort } : {}) } });
       }
 
       // 配置生成（表单 → 写 config.toml，不手动编辑文件）
@@ -787,7 +794,7 @@ export default {
             logLevel: b.logLevel || "info",
             management: b.management === false ? undefined : { enabled: true, port: Number(b.management?.port) || 9820, token: b.management?.token || randomUUID().replace(/-/g, "").slice(0, 24) },
             bridge: b.bridge === false ? undefined : { enabled: true, port: Number(b.bridge?.port) || 9810, token: b.bridge?.token || (b.management?.token || randomUUID().replace(/-/g, "").slice(0, 24)) },
-            acp: { connector: acp.connectorBin(), socketPath: acp.acpSocketPath(instId) },
+            acp: { connector: acp.connectorBin(), socketPath: acp.primaryEndpoint(instId).socket, connectorSocket: acp.acpSocketPath(instId) },
             projects: Array.isArray(b.projects) ? b.projects.map((x: any) => ({
               name: String(x.name || ""),
               agent: x.agent || "piweb",

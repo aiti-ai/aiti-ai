@@ -519,13 +519,18 @@ export type ChannelInstance = {
   dataDir: string;  // cc-connect data dir（socket/log 隔离）
   bin?: string;
   logFile?: string; // 缺省 <dataDir>/cc-connect.log
+  /** Optional fixed ACP TCP port (see acp-server.acpTcpPort; unset = derived
+   *  on Windows, TCP off on POSIX). Persisted in instances.json. */
+  acpTcpPort?: number;
 };
 
 function instancesFile(): string {
   return path.join(getDataDir(), "instances.json");
 }
 
-/** 实例列表：默认实例（现有 ~/.config/cc-connect.toml）+ 用户自建实例。 */
+/** Instance list: the default instance (existing ~/.config/cc-connect.toml)
+ *  plus user-created ones. A stored default entry in instances.json (e.g. an
+ *  acpTcpPort override) merges into the default instance. */
 export function listInstances(): ChannelInstance[] {
   const def: ChannelInstance = {
     id: "default",
@@ -536,7 +541,10 @@ export function listInstances(): ChannelInstance[] {
   try {
     const raw = fs.readFileSync(instancesFile(), "utf8");
     const list = JSON.parse(raw);
-    return [def, ...(Array.isArray(list) ? list : [])];
+    const stored = Array.isArray(list) ? list : [];
+    const defOverride = stored.find((i: ChannelInstance) => i.id === "default");
+    if (defOverride) Object.assign(def, { ...defOverride, id: "default", name: defOverride.name || def.name });
+    return [def, ...stored.filter((i: ChannelInstance) => i.id !== "default")];
   } catch {
     return [def];
   }
@@ -546,16 +554,36 @@ export function resolveInstance(id: string): ChannelInstance | null {
   return listInstances().find((i) => i.id === id) || null;
 }
 
+/** Raw registry file entries (no default-instance merge). */
+function storedInstances(): ChannelInstance[] {
+  try {
+    const list = JSON.parse(fs.readFileSync(instancesFile(), "utf8"));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
 export function saveInstance(inst: ChannelInstance) {
-  const list = listInstances().filter((i) => i.id !== "default");
-  const idx = list.findIndex((i) => i.id === inst.id);
-  if (idx >= 0) list[idx] = inst; else list.push(inst);
+  // operate on the RAW file list — listInstances() merges the default entry,
+  // writing that merged view back would resurrect/duplicate it; drop only the
+  // entry being saved (a stored default override must survive other saves)
+  const list = storedInstances().filter((i) => i.id !== inst.id);
+  if (inst.id === "default") {
+    // default exists outside the registry file; store only the override fields
+    const defOnly: ChannelInstance = { id: "default", name: inst.name, config: inst.config, dataDir: inst.dataDir };
+    if (Number.isFinite(inst.acpTcpPort) && Number(inst.acpTcpPort) > 0) defOnly.acpTcpPort = Number(inst.acpTcpPort);
+    list.unshift(defOnly);
+  } else {
+    list.push(inst);
+  }
   fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(instancesFile(), JSON.stringify(list, null, 2));
 }
 
 export function deleteInstance(id: string) {
-  const list = listInstances().filter((i) => i.id !== "default" && i.id !== id);
+  // raw file list: keeps a stored default override intact
+  const list = storedInstances().filter((i) => i.id !== id);
   fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(instancesFile(), JSON.stringify(list, null, 2));
 }
