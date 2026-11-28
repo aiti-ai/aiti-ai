@@ -1,0 +1,78 @@
+name: Purge Release Artifacts (emergency redact)
+
+# Emergency tool: remove published container artifacts whose layers carry
+# internal values (security redact). Pairs with unpublish-versions.yml.
+# - Docker Hub: deletes tags matching the prefix list under aitiai/pi-web
+#   (login via DOCKERHUB_USERNAME/DOCKERHUB_TOKEN, same secrets as publish-docker.yml)
+# - GHCR: deletes package versions whose tags match, under org container aiti-ai
+#   (GITHUB_TOKEN with packages:write)
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_tags:
+        description: "Comma-separated Docker Hub tags to delete (exact names)"
+        required: true
+        type: string
+      ghcr_tag_contains:
+        description: "Delete GHCR versions whose tag list contains this substring"
+        required: false
+        default: "0.19.0-aiti"
+
+jobs:
+  docker-hub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete Docker Hub tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -e
+          JWT=$(curl -s -X POST "https://hub.docker.com/v2/users/login/" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"$DOCKERHUB_USERNAME\",\"password\":\"$DOCKERHUB_TOKEN\"}" | jq -r .token)
+          [ -n "$JWT" ] && [ "$JWT" != "null" ] || { echo "::error::Docker Hub login failed"; exit 1; }
+          IFS=',' read -ra TAGS <<< "${{ inputs.docker_tags }}"
+          for tag in "${TAGS[@]}"; do
+            tag="$(echo "$tag" | xargs)"
+            [ -z "$tag" ] && continue
+            code=$(curl -s -o /tmp/dh.out -w '%{http_code}' -X DELETE \
+              -H "Authorization: JWT $JWT" \
+              "https://hub.docker.com/v2/repositories/aitiai/pi-web/tags/$tag/")
+            echo "$tag -> $code"
+            [ "$code" = "200" ] || [ "$code" = "204" ] || { echo "::error::delete failed for $tag"; rc=1; }
+          done
+          exit ${rc:-0}
+
+  ghcr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - name: Delete matching GHCR package versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MATCH: ${{ inputs.ghcr_tag_contains }}
+        run: |
+          set -e
+          # list all versions, delete the ones whose tag list contains MATCH
+          page=1
+          deleted=0
+          while : ; do
+            resp=$(gh api -X GET "/orgs/aiti-ai/packages/container/aiti-ai/versions" \
+              -f per_page=100 -F page=$page)
+            count=$(echo "$resp" | jq 'length')
+            [ "$count" -gt 0 ] || break
+            ids=$(echo "$resp" | jq -c --arg m "$MATCH" \
+              '.[] | select((.metadata.container.tags // []) | any(test($m))) | .id')
+            for id in $ids; do
+              echo "delete ghcr version $id"
+              gh api -X DELETE "/orgs/aiti-ai/packages/container/aiti-ai/versions/$id" && deleted=$((deleted+1))
+            done
+            page=$((page+1))
+            [ $page -gt 10 ] && break
+          done
+          echo "deleted $deleted GHCR versions"
