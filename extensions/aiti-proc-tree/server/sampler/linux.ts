@@ -34,7 +34,6 @@ export interface ProcDetail {
   envText?: string;
   etimeMs?: number | null;
   fdCount?: number | null;
-  ports?: string[];
 }
 
 const CLK_TCK = 100;
@@ -89,7 +88,8 @@ export async function scanRaw(): Promise<Map<number, RawProc>> {
 /**
  * Global TCP LISTEN table from /proc/net/tcp + tcp6: Map<socket inode, "addr:port">.
  * Two small kernel files; parsing is pure (core.ts) and stays well under a
- * millisecond even with thousands of sockets.
+ * millisecond even with thousands of sockets. Read on demand (listen endpoint),
+ * never per sampling tick.
  */
 export async function readListenTable(): Promise<Map<string, string>> {
   const texts = await Promise.all([
@@ -97,6 +97,40 @@ export async function readListenTable(): Promise<Map<string, string>> {
     readFile("/proc/net/tcp6", "utf8").catch(() => ""),
   ]);
   return core.parseProcNetListen(texts);
+}
+
+/**
+ * On-demand LISTEN lookup for one pid (detail drawer endpoint, not the
+ * sampling loop): scan /proc/<pid>/fd socket inodes and intersect with the
+ * global listen table. Other-user pids fail at readdir here — reported as a
+ * note instead of ports, same visibility boundary as ps/lsof.
+ */
+export async function listenPortsFor(
+  pid: number,
+  listenMap?: Map<string, string>,
+): Promise<{ ports: string[]; note?: string }> {
+  const lm = listenMap && listenMap.size ? listenMap : await readListenTable();
+  try {
+    const fds = await readdir("/proc/" + pid + "/fd");
+    const links = await Promise.all(
+      fds.map((f) => readlink("/proc/" + pid + "/fd/" + f).catch(() => "")),
+    );
+    const inodes = new Set<string>();
+    for (const l of links) {
+      const m = /^socket:\[(\d+)\]$/.exec(l);
+      if (m) inodes.add(m[1]);
+    }
+    const ports: string[] = [];
+    for (const ino of inodes) {
+      const entry = lm.get(ino);
+      if (entry && !ports.includes(entry)) ports.push(entry);
+    }
+    ports.sort((a, b) => core.portOf(a) - core.portOf(b));
+    return { ports };
+  } catch (e: any) {
+    if (e && e.code === "ENOENT") return { ports: [] }; // pid vanished — nothing to report
+    return { ports: [], note: "fd inspection denied (other user or kernel hardening)" };
+  }
 }
 
 /** Port number of an "addr:port" entry (NaN when unparsable). */
@@ -108,10 +142,7 @@ export async function startMs(p: RawProc): Promise<number> {
 }
 
 /** Phase B: one process detail. `withEnv` is opt-in (ownership markers only). */
-export async function readDetail(
-  pid: number,
-  opts: { withEnv?: boolean; listenMap?: Map<string, string> } = {},
-): Promise<ProcDetail> {
+export async function readDetail(pid: number, opts: { withEnv?: boolean } = {}): Promise<ProcDetail> {
   const d: ProcDetail = {};
   try {
     const status = await readFile("/proc/" + pid + "/status", "utf8");
@@ -164,27 +195,7 @@ export async function readDetail(
     }
   } catch { /* ignore */ }
   try {
-    const fds = await readdir("/proc/" + pid + "/fd");
-    d.fdCount = fds.length;
-    // Same readdir pass doubles as the LISTEN lookup: readlink each fd, keep
-    // socket inodes, intersect with the global listen table. Other-user pids
-    // fail at readdir above and simply carry no ports (same visibility as ps).
-    if (opts.listenMap && opts.listenMap.size) {
-      const links = await Promise.all(
-        fds.map((f) => readlink("/proc/" + pid + "/fd/" + f).catch(() => "")),
-      );
-      const inodes = new Set<string>();
-      for (const l of links) {
-        const m = /^socket:\[(\d+)\]$/.exec(l);
-        if (m) inodes.add(m[1]);
-      }
-      const ports: string[] = [];
-      for (const ino of inodes) {
-        const entry = opts.listenMap.get(ino);
-        if (entry && !ports.includes(entry)) ports.push(entry);
-      }
-      if (ports.length) d.ports = ports.sort((a, b) => portNum(a) - portNum(b));
-    }
+    d.fdCount = (await readdir("/proc/" + pid + "/fd")).length;
   } catch {
     d.fdCount = null;
   }

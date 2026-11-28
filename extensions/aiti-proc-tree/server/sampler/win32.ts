@@ -148,18 +148,21 @@ export function procStart(pid: number): number | null {
 /**
  * TCP LISTEN sockets by pid: one async `netstat -ano` call (spawn, no
  * event-loop blocking; the state column stays English even on localized
- * Windows). Fails soft: an empty map just means no port badges.
+ * Windows). Never throws — failures come back as a note so the drawer can
+ * tell the user why ports are missing.
  */
-export async function listenByPid(): Promise<Map<number, string[]>> {
+export async function listenByPid(): Promise<{ map: Map<number, string[]>; note?: string }> {
   try {
     const { stdout } = await exec("netstat", ["-ano", "-p", "tcp"], {
       maxBuffer: 8 * 1024 * 1024,
       timeout: 10000,
       windowsHide: true,
     });
-    return core.parseNetstatAno(String(stdout || ""));
-  } catch {
-    return new Map();
+    return { map: core.parseNetstatAno(String(stdout || "")) };
+  } catch (e: any) {
+    if (e && e.code === "ENOENT") return { map: new Map(), note: "netstat not found" };
+    if (e && (e.killed || e.signal === "SIGTERM")) return { map: new Map(), note: "netstat timed out (10s)" };
+    return { map: new Map(), note: "netstat failed: " + String((e && (e.message || e.code)) || e).slice(0, 80) };
   }
 }
 

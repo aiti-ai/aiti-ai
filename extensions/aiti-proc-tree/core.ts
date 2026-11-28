@@ -579,7 +579,6 @@ export function buildTree(opts) {
       cpu,
       mem: d.mem == null ? null : d.mem,
       etimeMs: d.etimeMs == null ? null : d.etimeMs,
-      ports: Array.isArray(d.ports) && d.ports.length ? d.ports.slice(0, 8) : undefined,
       cmd: d.cmd || undefined,
       canKill: !protectedReason,
       protectedReason,
