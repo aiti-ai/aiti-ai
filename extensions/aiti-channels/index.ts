@@ -15,6 +15,8 @@ import * as manager from "./lib/manager.js";
 import * as installer from "./lib/installer.js";
 import { renderConfig } from "./lib/config-gen.js";
 import { readConfigFile } from "./lib/config.js";
+import { readCardModes, setCardMode } from "./lib/bot-edit.js";
+import * as chatRelay from "./lib/chat-relay.js";
 import * as acp from "./lib/acp-server.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -26,6 +28,38 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   status,
   headers: { "content-type": "application/json", "cache-control": "no-store" },
 });
+
+// ---- management API proxy helper (v2 full-capability surface) ----
+// Root-path allowlist: anything else must NOT leak through to the cc-connect port.
+const MGMT_ALLOW = ["status", "restart", "reload", "config", "settings", "agents", "projects", "providers", "cron", "skills", "bridge", "setup"];
+
+function mgmtBase(mOpts: { config?: string }): { port: number; token: string } | null {
+  const cfg = readConfigFile(mOpts.config || manager.DEFAULTS.config);
+  const mgmt = cfg?.management;
+  if (!mgmt?.port) return null;
+  return { port: Number(mgmt.port) || 9820, token: String(mgmt.token || "") };
+}
+
+/** Proxy one call to the instance management API (Bearer injected server-side;
+ *  the client never sees the token). Returns parsed body + HTTP status. */
+async function mgmtApi(mOpts: { config?: string }, method: string, apiPath: string, body?: unknown, timeoutMs = 30000): Promise<{ status: number; data: any; error?: string }> {
+  const base = mgmtBase(mOpts);
+  if (!base) return { status: 0, data: null, error: "实例 config 缺 [management]（端口未知）" };
+  try {
+    const r = await fetch(`http://127.0.0.1:${base.port}/api/v1/${apiPath}`, {
+      method,
+      headers: { "content-type": "application/json", ...(base.token ? { authorization: `Bearer ${base.token}` } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await r.text();
+    let data: any = text;
+    try { data = JSON.parse(text); } catch { /* keep raw (GET /config is TOML text) */ }
+    return { status: r.status, data };
+  } catch (e: any) {
+    return { status: 0, data: null, error: `实例 management 不可达（未运行？）：${e.message}` };
+  }
+}
 
 function parseBody(req: Request): Promise<Record<string, any>> {
   return req.json().catch(() => ({}));
@@ -78,7 +112,11 @@ export default {
     // aiti-float dock: three-face registration (floating / left block / right tab); ids match the client.
     sidebarExplorerDock: [{ id: "panel", label: "i18n:it.aiti-channels-panel.label", icon: "message-circle" }],
     rightFileDock: [{ id: "panel", label: "i18n:it.aiti-channels-panel.label" }],
-    dialogs: [{ id: "aiti-channels-panel", label: "i18n:it.aiti-channels-panel.label" }],
+    dialogs: [
+      { id: "aiti-channels-panel", label: "i18n:it.aiti-channels-panel.label" },
+      { id: "aiti-channels-remote", label: "i18n:it.aiti-channels-remote.label", hideOnMobile: true },
+      { id: "aiti-channels-bots", label: "i18n:it.aiti-channels-bots.label" },
+    ],
     i18n: {
       en: {
       "自重启": "Auto-restart",
@@ -165,7 +203,7 @@ export default {
       "分配失败：": "Allocation failed: ",
       "创建失败：": "Create failed: ",
       "删除": "Delete",
-      "原版": "original",
+      "原版": "Original admin",
       "发消息": "Send message",
       "发送失败：": "Send failed: ",
       "启动": "Start",
@@ -242,6 +280,8 @@ export default {
         "feat.tool.aiti-im-send.desc": "Sends text/files to IM channels like DingTalk/Feishu/WeCom via the cc-connect socket API",
         "feat.agentTools.enabled.desc": "Injects aiti-im-* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "it.aiti-channels-panel.label": "IM channels & cc-connect manager",
+        "it.aiti-channels-remote.label": "Mobile remote control",
+        "it.aiti-channels-bots.label": "Bot management",
         "ext.displayName": "IM Channels",
         "feat.behavior.proxy-bridge": "cc-connect hosting",
         "feat.behavior.embed-ui": "Embed admin UI",
@@ -253,6 +293,230 @@ export default {
         "channels.title": "IM Channels & cc-connect",
         "channels.open": "IM Channels",
         "channels.close": "Close",
+        "新建项目": "New project",
+        "使用流程：新建项目 → 接平台（机器人 tab 扫码/Token）→ 聊天/会话交互": "Flow: new project → connect a platform (scan/token in Bots) → chat/sessions",
+        "需要项目名": "project name required",
+        "项目已创建（reload 热应用）": "Project created (hot-applied via reload)",
+        "首个平台（可选——之后也可在机器人 tab 扫码/填 token 接入）": "First platform (optional — can also be added later via Bots scan/token)",
+        "work_dir（工作目录，可后补）": "work_dir (can be filled later)",
+        "创建项目（add-platform + reload 热应用）": "Create project (add-platform + reload hot-apply)",
+        "扫码接入更顺：到 机器人 tab 新建机器人": "Scanning is smoother: create a bot in the Bots tab",
+        "暂无项目 — 点右上「新建项目」，或到 机器人 tab 扫码直建": "No projects — click \"New project\" above, or scan-to-create in the Bots tab",
+        "config 当前实际项目": "Projects currently in config.toml",
+        "上方表单只用于【整份重新生成】config.toml（批量初始化场景）；日常单个项目的增改请走 项目 tab（新建/详情）或 机器人 tab（扫码/Token 接平台）——它们经 cc-connect 官方 API 增量写入并热应用，不覆盖整份配置。": "The form above is only for REGENERATING the whole config.toml (bulk bootstrap); for day-to-day single-project changes use the Projects tab (new/detail) or the Bots tab (scan/token) — they write incrementally through cc-connect's official API and hot-apply, never overwriting the whole file.",
+        "去项目 tab 管理单个项目 →": "Manage a single project in the Projects tab →",
+        "使用流程：① 安装/启动实例 → ② 项目 tab「新建项目」→ ③ 机器人 tab 扫码/Token 接平台 → ④ 聊天 tab 实时对话、会话 tab 管理。单个项目增改走 项目/机器人 tab；整份批量配置走 配置 tab。": "Flow: ① install/start the instance → ② \"New project\" in Projects → ③ connect a platform (scan/token) in Bots → ④ chat live in Chat, manage sessions in Sessions. Single-project changes live in Projects/Bots; whole-file bulk config lives in Config.",
+        "ilink 网关长轮询（ilinkai.weixin.qq.com）· 非官方通道建议小号专用": "ilink gateway long-polling (ilinkai.weixin.qq.com) · unofficial channel, a burner account is recommended",
+        "飞书开放平台官方 device flow · WS 长连接免公网": "Feishu Open Platform official device flow · WS long connection, no public IP",
+        "Lark 开放平台（device flow 自动识别切换）· WS 长连接": "Lark Open Platform (device flow auto-detects the domain) · WS long connection",
+        "@BotFather 建 bot · Bot API long-polling（国内需代理）": "create a bot via @BotFather · Bot API long-polling (proxy needed in CN)",
+        "钉钉开放平台 · Stream 模式免公网": "DingTalk Open Platform · Stream mode, no public IP",
+        "Developer Portal · Gateway WS": "Developer Portal · Gateway WS",
+        "Socket Mode 免公网": "Socket Mode, no public IP",
+        "自建 NapCat/Lagrange 正向 WS": "self-hosted NapCat/Lagrange forward WS",
+        "QQ 开放平台": "QQ Open Platform",
+        "管理后台建应用 · 回调模式需公网": "admin console app · callback mode needs a public endpoint",
+        "Messaging API · 需公网 webhook": "Messaging API · public webhook required",
+        "homeserver bot 账号 access_token": "homeserver bot account access_token",
+        "developer.webex.com · WebSocket": "developer.webex.com · WebSocket",
+        "WPS 开放平台": "WPS Open Platform",
+        "内测通道": "closed-beta channel",
+        "service account + pubsub": "service account + pubsub",
+        "微博开放平台": "Weibo Open Platform",
+        "扫码确认页将显示 OpenClaw 字样——本通道走 ilink 网关，与开源项目 OpenClaw 的微信插件（openclaw-weixin）同一网关，属预期行为，不是点错了。": "The scan confirm page will show OpenClaw wording — this channel uses the ilink gateway, the same one as the OpenClaw openclaw-weixin plugin; expected behavior, not a mis-click.",
+        "语言（en/zh/zh-TW/ja/es/ko/ru）": "Language (en/zh/zh-TW/ja/es/ko/ru)",
+        "日志级别": "Log level",
+        "空闲超时（分钟）": "Idle timeout (min)",
+        "显示思考消息": "Show thinking messages",
+        "思考消息最大长度": "Thinking max length",
+        "显示工具消息": "Show tool messages",
+        "工具消息最大长度": "Tool messages max length",
+        "流式预览": "Stream preview",
+        "流式预览间隔（ms）": "Stream preview interval (ms)",
+        "限流：最大消息数": "Rate limit: max messages",
+        "限流：窗口（秒）": "Rate limit: window (s)",
+        "附件发送": "Attachment sending",
+        "钉钉": "DingTalk",
+        "微信": "WeChat",
+        "飞书 · 中国": "Feishu (CN)",
+        "Lark · 全球": "Lark (Global)",
+        "Telegram": "Telegram",
+        "QQ（OneBot）": "QQ (OneBot)",
+        "QQ 机器人": "QQ Bot",
+        "企业微信": "WeCom",
+        "WPS 协作": "WPS Docs",
+        "WPS 协作空间": "WPS AgentSpace",
+        "腾讯元宝": "Tencent Yuanbao",
+        "微博": "Weibo",
+        "更多渠道（token / 表单接入，同一「新建机器人」向导）": "More channels (token/form via the same new-bot wizard)",
+        "最新": "latest:",
+        "当前": "Installed:",
+        "active": "active",
+        "api_key 需自填": "api_key must be filled in",
+        "Bridge 已连接": "Bridge connected",
+        "Bridge 未连接": "Bridge not connected",
+        "Bridge 适配器（/bridge/adapters）": "Bridge adapters (/bridge/adapters)",
+        "cron 表达式（当前": "cron expression (current ",
+        "cwd": "cwd",
+        "pause": "pause",
+        "paused": "paused",
+        "prompt（定时投给 agent 的内容）": "prompt (sent to the agent on schedule)",
+        "resume": "resume",
+        "run": "run",
+        "work_dir（bot ↔ 项目一一对应）": "work_dir (bot ↔ project 1:1)",
+        "二维码生成中…": "Generating QR…",
+        "从预设填充：": "Prefill from preset:",
+        "使用 Bot Channel": "Use Bot Channel",
+        "保存修改": "Save changes",
+        "全局": "Global",
+        "全局设置（/settings）": "Global settings (/settings)",
+        "关联机器人": "Link bot",
+        "关闭": "Close",
+        "创建": "Create",
+        "创建（add-platform，重启后生效）": "Create (add-platform; applies after restart)",
+        "创建全局 Provider": "Create global provider",
+        "删": "Del",
+        "删除全局 Provider": "Delete global provider",
+        "删除机器人": "Delete bot",
+        "🗑 删除机器人": "🗑 Delete bot",
+        "删除该定时任务？": "Delete this cron job?",
+        "删除项目": "Delete project",
+        "删除项目（含全部平台与会话映射）": "Delete the project (all platforms and session mappings)",
+        "加载历史…": "Loading history…",
+        "危险区": "Danger zone",
+        "去配置": "Configure",
+        "发消息到": "Send to",
+        "名称（如 deepseek）": "Name (e.g. deepseek)",
+        "启用": "Enabled",
+        "复制链接": "Copy link",
+        "多工作区绑定（/workspaces）": "Workspace bindings (/workspaces)",
+        "定时任务": "Cron jobs",
+        "对方输入中…": "typing…",
+        "工作目录 work_dir（缺省当前工作区）": "work_dir (defaults to the current workspace)",
+        "已从预设填充": "Prefilled from preset",
+        "已创建": "Created",
+        "已删除": "Deleted",
+        "已删除（重启实例生效）": "Deleted (applies after instance restart)",
+        "已就绪": "Ready",
+        "已恢复": "Resumed",
+        "已暂停": "Paused",
+        "已激活": "Activated",
+        "已移除": "Removed",
+        "已绑定": "Bound",
+        "已装": "installed",
+        "已解绑": "Unbound",
+        "已触发": "Triggered",
+        "常规设置（PATCH /projects/{name}）": "General settings (PATCH /projects/{name})",
+        "微信扫码登录 ilink 网关（确认页显示 OpenClaw 字样属预期）——重新扫码可换号。": "WeChat scan signs in via the ilink gateway (OpenClaw wording on the confirm page is expected) — rescan to switch accounts.",
+        "心跳 Heartbeat": "Heartbeat",
+        "心跳间隔（分钟）": "Heartbeat interval (min)",
+        "手机扫码连接": "Scan to connect",
+        "打开手机访问卡（service-tunnels）": "Open the phone access card (service-tunnels)",
+        "扫码并创建": "Scan & create",
+        "扫码并确认": "and confirm",
+        "扫码或在手机上打开链接，即可远程控制当前工作区。": "Scan or open the link on your phone to control this workspace remotely.",
+        "扫码或复制链接": "scan or copy the link",
+        "扫码直建": "scan-to-create",
+        "技能 Skills": "Skills",
+        "技能市场预设（/skills/presets）": "Skill catalog presets (/skills/presets)",
+        "把外部聊天工具接入 aiti 机器人（每个机器人 = 一个 cc-connect 项目）。": "Connect external chat tools to your aiti bots (each bot = one cc-connect project).",
+        "授权成功，正在保存凭据并建项目…": "Authorized — saving credentials and creating the project…",
+        "搜索预设…": "Search presets…",
+        "收起": "Collapse",
+        "新建": "New",
+        "新建全局": "New global",
+        "新建机器人": "New bot",
+        "（无 bridge 适配器连接）": "(no bridge adapters connected)",
+        "无会话——发一条消息即建（bridge:web-admin 模式）": "No sessions — sending a message creates one (bridge:web-admin mode)",
+        "（无可选模型——先在 Providers 配置）": "(no models — configure Providers first)",
+        "（无已装技能）": "(no installed skills)",
+        "无法扫码？在手机上打开链接": "Cannot scan? Open the link on your phone",
+        "（无项目级 Provider）": "(no project providers)",
+        "暂无定时任务（cc-connect /cron）": "No cron jobs (cc-connect /cron)",
+        "暂无机器人 — 点「新建机器人」开始": "No bots yet — click “New bot” to start",
+        "暂无项目（先在机器人/配置创建）": "No projects yet (create one in Bots/Config first)",
+        "未绑定": "Unbound",
+        "（未设置，用实例缺省）": "(not set; instance default applies)",
+        "未配置": "Not configured",
+        "机器人": "Bots",
+        "机器人名称（=cc-connect 项目名）": "Bot name (= cc-connect project name)",
+        "机器人回复颗粒度": "Reply granularity",
+        "机器人已创建（restart-cc 重启实例后连上平台）": "Bot created (restart-cc to connect the platform)",
+        "机器人管理": "Bot management",
+        "标准回复": "Standard",
+        "模型（/projects/{name}/models）": "Models (/projects/{name}/models)",
+        "模型已切换": "Model switched",
+        "模型提供方 Providers": "Model providers",
+        "正在获取二维码…": "Fetching QR code…",
+        "此平台暂只支持标准回复（card_mode=legacy）。": "This platform only supports standard replies (card_mode=legacy).",
+        "流式卡片": "Streaming card",
+        "渠道来源：各渠道经 cc-connect 官方通道接入；微信扫码页 OpenClaw 字样 = ilink 网关与 OpenClaw 插件同源，属预期行为。": "Channel sources: all channels connect via cc-connect through official platform APIs; the OpenClaw wording on the WeChat scan page = the ilink gateway shared with the OpenClaw plugin — expected behavior.",
+        "激活": "Activate",
+        "用": "Scan with",
+        "用手机相机扫码，在手机上打开这个工作区（登录后接管当前会话）。": "Scan with your phone camera to open this workspace on mobile (sign in to take over the current session).",
+        "确认删除机器人": "Confirm bot deletion",
+        "确认删除项目": "Confirm project deletion",
+        "移动端远程控制": "Mobile remote control",
+        "移除这个机器人（DELETE project，重启实例生效）。": "Remove this bot (DELETE project; applies after instance restart).",
+        "移除项目 Provider": "Remove project provider",
+        "等待手机确认…（device flow 轮询，间隔由服务端下发）": "Waiting for phone confirmation… (device-flow polling, interval from the server)",
+        "等待扫码确认…": "Waiting for scan confirmation…",
+        "精选": "Featured",
+        "绑定": "Bind",
+        "编辑": "Edit",
+        "网页管理会话（bridge:web-admin）": "Web-admin session (bridge:web-admin)",
+        "聊天": "Chat",
+        "表达式": "Expr",
+        "表达式已更新": "Expression updated",
+        "解绑": "Unbind",
+        "设置已保存": "Settings saved",
+        "连接聊天 Bot，适合更长时间的移动端访问。": "Connect a chat bot for longer-running mobile access.",
+        "选择左侧会话，或直接在下方发消息（默认网页管理会话）": "Pick a session on the left, or just type below (defaults to the web-admin session)",
+        "重新扫码": "Rescan",
+        "间隔": "Interval",
+        "间隔已更新": "Interval updated",
+        "需要名称": "name required",
+        "需要 项目 + cron + prompt": "project + cron + prompt required",
+        "项目级": "Per-project",
+        "项目访问范围": "Project access scope",
+        "项目详情": "Project detail",
+        "预设": "presets",
+        "预设目录": "preset catalog",
+        "飞书/Lark 官方 device flow——重新扫码可换应用。": "Feishu/Lark official device flow — rescan to switch apps.",
+        "飞书/Lark 支持基于 Card JSON 2.0 的流式卡片，工具调用只显示折叠摘要。": "Feishu/Lark supports streaming cards (Card JSON 2.0); tool calls show as collapsed summaries.",
+        "默认模型": "Default model",
+        "Bot 会话": "Bot sessions",
+        "connected": "connected",
+        "degraded": "degraded",
+        "Providers": "Providers",
+        "Skills": "Skills",
+        "下载器：justget（多源竞速分块下载） —": "downloader: justget (multi-source racing chunked download) — ",
+        "会话已删除": "Session deleted",
+        "保存失败": "Save failed",
+        "保存失败：": "Save failed: ",
+        "删除会话": "Delete session",
+        "删除失败": "Delete failed",
+        "删除失败：": "Delete failed: ",
+        "· 可更新": " · update available",
+        "安装位置：": " install location: ",
+        "定时": "Cron",
+        "（实例未运行，无健康数据）": "(instance down; no health data)",
+        "已保存 allow_from（": "Saved allow_from (",
+        "· 已是最新": " · already latest",
+        "已连平台": "Connected platforms",
+        "平台": "Platforms",
+        "收起管理": "Hide manage",
+        "无法扫码？打开授权页": "Cannot scan? Open the authorize page",
+        "最近会话": "Recent sessions",
+        "渠道接入（钉钉/飞书/微信…）在 cc-connect 配置 [projects] 的 platforms 里定义（app_id/secret/bot 等）。健康/白名单经 management API 实时读取，出站发消息走 socket API，接入细节见原版管理台 🖥️。": "Channels (DingTalk/Feishu/WeChat…) are defined under [projects].platforms in the cc-connect config (app_id/secret/bot etc.). Health/allowlist are read live via the management API; outbound goes through the socket API; see the original admin UI 🖥️ for integration details.",
+        "白名单": "Allowlist",
+        "白名单 allow_from": "allow_from",
+        "空=不限，逗号分隔": "empty = unrestricted; comma separated",
+        "管理": "Manage",
+        "系统": "System",
+        "运行时长": "Uptime",
+        "项目（": "Projects (",
+        "项目：": "Projects: ",
       },
       "zh-CN": {
       "自重启": "自重启",
@@ -411,6 +675,8 @@ export default {
       "（可手填凭证）": "（可手填凭证）",
       "）到托管目录，sudo 可用时已同步系统 bin": "）到托管目录，sudo 可用时已同步系统 bin",
         "it.aiti-channels-panel.label": "IM 渠道与 cc-connect 管理",
+        "it.aiti-channels-remote.label": "移动端远程控制",
+        "it.aiti-channels-bots.label": "机器人管理",
         "ext.displayName": "IM 渠道",        "channels.app.title": "aiti-channels：cc-connect 托管 + IM 渠道 + 管理台嵌入",
         "channels.title": "IM 渠道与 cc-connect",
         "channels.open": "IM 渠道",
@@ -544,29 +810,189 @@ export default {
         } catch (e: any) { return json({ ok: false, error: "配置生成失败：" + e.message }, 500); }
       }
 
-      // 扫码授权代理：转发到实例 management API 的官方 setup 向导（feishu/weixin）。
-      // 前端不直连 cc-connect 端口/token——经本代理带 token 转发；save 不代代（凭证自动回填
-      // 我们的 config-gen 表单，配置生成仍归 config-gen，避免两边写同一 config 打架）。
+      // Scan-to-create proxy (v2): feishu/lark/weixin — begin|poll|save passthrough.
+      // lark shares cc-connect's /setup/feishu/* endpoints (one official device-flow
+      // entry; poll auto-detects the lark domain via tenant_brand); save routes by
+      // body.platform_type (feishu/lark -> feishu/save, weixin -> weixin/save). The
+      // config write belongs to cc-connect's save itself (aiti-channels only forwards
+      // and hints reload/restart — never write the same config from both sides).
       if (action === "setup" && req.method === "POST") {
         const platform = String(p[1] || "");
-        const op = String(p[2] || ""); // begin | poll
-        if (!"feishu weixin".includes(platform) || !["begin", "poll"].includes(op)) return json({ ok: false, error: "不支持的平台/操作" }, 400);
-        const cfg = readConfigFile(mOpts.config || manager.DEFAULTS.config);
-        const port = (cfg && cfg.management && cfg.management.port) || 9820;
-        const token = (cfg && cfg.management && cfg.management.token) || "";
-        const body = await parseBody(req);
+        const op = String(p[2] || ""); // begin | poll | save
+        const supported = platform === "feishu" || platform === "lark" || platform === "weixin";
+        if (!supported || !["begin", "poll", "save"].includes(op)) return json({ ok: false, error: "不支持的平台/操作" }, 400);
+        const body = await req.json().catch(() => ({}));
+        // save routes by the platform that owns the credentials (lark also saves via feishu/save, distinguished by platform_type)
+        const ccPlatform = platform === "weixin" ? "weixin" : "feishu";
+        const st = await m.probe(mOpts);
+        if (!st.running) return json({ ok: false, error: "实例未运行：先启动实例再扫码/保存（或手填凭证走完整面板）" }, 409);
+        const r = await mgmtApi(mOpts, "POST", `setup/${ccPlatform}/${op}`, body, 60000);
+        if (r.status === 0) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: r.status >= 200 && r.status < 300, status: r.status, data: r.data });
+      }
+
+      // ---- v2 full-capability management proxy (GET/POST/PATCH/DELETE all pass; root allowlist) ----
+      // /api/extensions/aiti-channels/mgmt/<cc-connect api/v1 path>?instance=<id>
+      if (action === "mgmt") {
+        const sub = p.slice(1).filter(Boolean).join("/");
+        const root = sub.split("/")[0];
+        if (!MGMT_ALLOW.includes(root)) return json({ ok: false, error: `mgmt path not allowed: ${root}` }, 403);
+        if (!sub) return json({ ok: false, error: "mgmt path required" }, 400);
+        const method = (ctx.method || "GET").toUpperCase();
+        // strip our own routing params (?instance=) before proxying
+        const fwd = new URLSearchParams(ctx.searchParams);
+        fwd.delete("instance");
+        const qs = fwd.toString();
+        const body = ["GET", "HEAD"].includes(method) ? undefined : await req.text().catch(() => undefined);
+        const r = await mgmtApi(mOpts, method, sub + (qs ? `?${qs}` : ""), body === undefined || body === "" ? undefined : body);
+        if (r.status === 0) return json({ ok: false, error: r.error }, 502);
+        return new Response(typeof r.data === "string" ? r.data : JSON.stringify(r.data), {
+          status: r.status,
+          headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+      }
+
+      // ---- v2 bots aggregate API (bot-management data plane; secrets never leave the host) ----
+      // GET bots: projects × config (card_mode/work_dir) -> ZCode-style bot list
+      if (action === "bots" && req.method === "GET") {
+        const st = await m.probe(mOpts);
+        const cfg = st.cfg || {};
+        const modes = readCardModes((() => { try { return fs.existsSync(mOpts.config) ? fs.readFileSync(mOpts.config, "utf8") : ""; } catch { return ""; } })());
+        const projCfg: any[] = Array.isArray(cfg.projects) ? cfg.projects : [];
+        const r = await mgmtApi(mOpts, "GET", "projects");
+        const mgmtPayload = r.data?.data || r.data || {}; // cc-connect mgmtJSON wraps in {data}
+        const projects: any[] = r.status === 200 && Array.isArray(mgmtPayload.projects) ? mgmtPayload.projects : [];
+        return json({
+          ok: true,
+          instance: instId,
+          running: !!st.running,
+          version: st.version || null,
+          mgmtReachable: r.status === 200,
+          bots: projects.map((pj: any) => {
+            const pc = projCfg.find((x: any) => x.name === pj.name) || {};
+            return {
+              name: pj.name,
+              agent_type: pj.agent_type || pc.agent || null,
+              platforms: pj.platforms || [],
+              sessions_count: pj.sessions_count ?? null,
+              heartbeat_enabled: !!pj.heartbeat_enabled,
+              bound: (pj.platforms || []).length > 0,
+              card_mode: modes.byProject[pj.name] || modes.global || "legacy",
+              work_dir: (pc.agentOptions && pc.agentOptions.work_dir) || pc.work_dir || null,
+              allow_from: pc.allow_from || null,
+            };
+          }),
+          // config-only projects (visible even when the instance is down / old cc-connect without mgmt)
+          configOnly: r.status !== 200 ? projCfg.map((pc: any) => ({
+            name: pc.name, agent_type: pc.agent || null, platforms: (pc.platforms || []).map((y: any) => y.type),
+            sessions_count: null, heartbeat_enabled: false, bound: (pc.platforms || []).length > 0,
+            card_mode: modes.byProject[pc.name] || modes.global || "legacy", work_dir: (pc.agentOptions && pc.agentOptions.work_dir) || pc.work_dir || null, allow_from: pc.allow_from || null,
+          })) : [],
+          mgmtError: r.status === 0 ? r.error : null,
+        });
+      }
+
+      // POST bot-create-token: token/form platforms -> cc-connect add-platform (brand-new projects allowed, config-only)
+      if (action === "bot-create-token" && req.method === "POST") {
+        const b = await parseBody(req);
+        const project = String(b.project || "").trim();
+        const type = String(b.type || "").trim();
+        if (!project || !type) return json({ ok: false, error: "需要 project + type" }, 400);
+        const st = await m.probe(mOpts);
+        if (!st.running) return json({ ok: false, error: "实例未运行：先启动实例（add-platform 需要 management API）" }, 409);
+        const r = await mgmtApi(mOpts, "POST", `projects/${encodeURIComponent(project)}/add-platform`, {
+          type,
+          options: b.options && typeof b.options === "object" ? b.options : {},
+          work_dir: b.work_dir ? String(b.work_dir) : undefined,
+          agent_type: b.agent_type ? String(b.agent_type) : undefined,
+        }, 30000);
+        if (r.status === 0) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: r.status >= 200 && r.status < 300, status: r.status, data: r.data });
+      }
+
+      // POST bot-delete: removes the bot (= DELETE project; bot <-> project is 1:1)
+      if (action === "bot-delete" && req.method === "POST") {
+        const b = await parseBody(req);
+        const project = String(b.project || "").trim();
+        if (!project) return json({ ok: false, error: "需要 project" }, 400);
+        const st = await m.probe(mOpts);
+        if (!st.running) return json({ ok: false, error: "实例未运行：先启动实例" }, 409);
+        const r = await mgmtApi(mOpts, "DELETE", `projects/${encodeURIComponent(project)}`);
+        if (r.status === 0) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: r.status >= 200 && r.status < 300, status: r.status, data: r.data });
+      }
+
+      // POST bot-update：PATCH /projects/{name}（work_dir/agent_type/language/platform_allow_from…）
+      if (action === "bot-update" && req.method === "POST") {
+        const b = await parseBody(req);
+        const project = String(b.project || "").trim();
+        const patch = b.patch && typeof b.patch === "object" ? b.patch : null;
+        if (!project || !patch) return json({ ok: false, error: "需要 project + patch" }, 400);
+        const st = await m.probe(mOpts);
+        if (!st.running) return json({ ok: false, error: "实例未运行：先启动实例" }, 409);
+        const r = await mgmtApi(mOpts, "PATCH", `projects/${encodeURIComponent(project)}`, patch);
+        if (r.status === 0) return json({ ok: false, error: r.error }, 502);
+        return json({ ok: r.status >= 200 && r.status < 300, status: r.status, data: r.data });
+      }
+
+      // POST bot-cardmode: reply granularity (card_mode legacy|rich; the ONLY local TOML-edit scenario)
+      if (action === "bot-cardmode" && req.method === "POST") {
+        const b = await parseBody(req);
+        const mode = String(b.mode || "") === "rich" ? "rich" : "legacy";
+        const project = b.project ? String(b.project) : null;
+        const cfgPath = mOpts.config || manager.DEFAULTS.config;
+        let raw = "";
+        try { raw = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, "utf8") : ""; } catch (e: any) { return json({ ok: false, error: "读 config 失败：" + e.message }, 500); }
+        if (!raw) return json({ ok: false, error: "config.toml 不存在：先在面板创建实例配置" }, 409);
         try {
-          const r = await fetch(`http://127.0.0.1:${port}/api/v1/setup/${platform}/${op}`, {
-            method: "POST",
-            headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(20000),
-          });
-          const d = await r.json().catch(() => ({}));
-          return json({ ok: r.ok, status: r.status, data: d });
-        } catch (e: any) {
-          return json({ ok: false, error: `实例未运行或 management(${port}) 不可达：先启动实例再扫码，或手填凭证` }, 502);
-        }
+          const r = setCardMode(raw, mode as "legacy" | "rich", project);
+          fs.copyFileSync(cfgPath, cfgPath + ".bak-" + Date.now());
+          fs.writeFileSync(cfgPath, r.raw, "utf8");
+        } catch (e: any) { return json({ ok: false, error: e.message }, 400); }
+        // hot-apply (reload reads the config back; on failure hint restart)
+        const rl = await mgmtApi(mOpts, "POST", "reload", {}, 15000);
+        return json({
+          ok: true,
+          scope: project ? `project:${project}` : "global",
+          note: rl.status === 200 ? "card_mode 已写入并热应用（reload）" : "card_mode 已写入 config；reload 失败（实例未运行？），重启实例后生效",
+          reload: rl.status,
+        });
+      }
+
+      // GET bot-meta: dynamic platform/agent list + cc-connect version (drives the scan/form wizards)
+      if (action === "bot-meta" && req.method === "GET") {
+        const st = await m.probe(mOpts);
+        const r = st.running ? await mgmtApi(mOpts, "GET", "agents") : { status: 0, data: null, error: "instance not running" };
+        const payload = r.data?.data || r.data || {}; // cc-connect mgmtJSON wraps in {data}
+        const agents = Array.isArray(payload.agents) ? payload.agents : [];
+        const platforms = Array.isArray(payload.platforms) ? payload.platforms : [];
+        return json({
+          ok: true,
+          instance: instId,
+          version: st.version || null,
+          running: !!st.running,
+          agents, platforms,
+          mgmtReachable: r.status === 200,
+          mgmtError: r.status === 0 ? r.error : null,
+        });
+      }
+
+      // ---- v2 Chat (P2): Bridge WS relay — the same-origin equivalent of the native admin's live chat view) ----
+      // GET chat-relay-status: bridge availability + relay connection state (token never leaves the host)
+      if (action === "chat-relay-status") {
+        const info = chatRelay.bridgeInfo(mOpts);
+        return json({ ok: true, instance: instId, bridge: { enabled: info.enabled, port: info.port, path: info.path }, relay: chatRelay.relayStatus(instId) });
+      }
+      // GET chat-stream?project=: SSE downlink (bridge frames, filtered by project; sink removed on disconnect)
+      if (action === "chat-stream") {
+        const project = ctx.searchParams.get("project");
+        return chatRelay.sseChat(instId, mOpts, project);
+      }
+      // POST chat-send {project, session_key?, content}: send via the bridge WS (web-admin session pattern)
+      if (action === "chat-send" && req.method === "POST") {
+        const b = await parseBody(req);
+        const r = chatRelay.sendChat(instId, mOpts, { project: String(b.project || ""), sessionKey: String(b.session_key || ""), content: String(b.content || "") });
+        return json(r, r.ok ? 200 : 502);
       }
 
       // ACP server（P3：pi-web 作为 agent 后端）状态：监听/socket/连接器/桥接会话

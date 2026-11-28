@@ -74,13 +74,17 @@ export const PLATFORM_SCHEMAS: PlatformSchema[] = [
     ],
   },
   {
-    type: "wechat", label: "微信（ilinkai）", wizard: "weixin",
+    // cc-connect registers this platform as "weixin" (platform/weixin/weixin.go:23);
+    // the old "wechat" type produced configs cc-connect could not start (fixed 2026-11-28).
+    type: "weixin", label: "微信（ilink）", wizard: "weixin",
     guide: {
       steps: [
-        "微信通道走 ilinkai bot 协议，需要已有微信 bot token（扫码向导待接，暂手填）",
-        "填入 token 后启动实例；白名单建议必填，避免陌生人触发",
+        "推荐：直接点下方「📱扫码授权」，微信扫码确认登录后自动回填 token",
+        "注意：扫码确认页会显示 OpenClaw 字样——本通道走 ilink 网关（ilinkai.weixin.qq.com），与开源项目 OpenClaw 的微信插件（openclaw-weixin）同一网关，属预期行为",
+        "手动方式：填已有微信 bot token（OpenClaw 拿到的 token 亦可直接复用）",
+        "白名单建议必填，避免陌生人触发",
       ],
-      note: "个人微信 bot 属非官方通道，建议小号专用",
+      note: "个人微信 bot 属非官方通道（ilink 网关长轮询），建议小号专用",
     },
     fields: [
       { key: "token", label: "Token", required: true, secret: true, ph: "微信 bot token（可扫码授权自动获取）" },

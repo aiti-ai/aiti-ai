@@ -10,7 +10,8 @@
  */
 import { __setCtx } from "./host-shim";
 import { CHANNELS_KEY, ChannelsPanelSlot, ChannelsDockLeft, ChannelsDockRight, setupNavMediaQuery, openFromToolbar } from "./channels-app";
-import { declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { RemoteDialogSlot, BotsDialogSlot } from "./bots";
+import { declareDockZones, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 
 export default function register(ctx: Record<string, unknown>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
@@ -29,7 +30,11 @@ export default function register(ctx: Record<string, unknown>) {
       onClick: () => openFromToolbar(),
     },
   }]);
-  ctx.registerItems?.("dialogs", [{ id: "aiti-channels-panel", render: ChannelsPanelSlot }]);
+  ctx.registerItems?.("dialogs", [
+    { id: "aiti-channels-panel", render: ChannelsPanelSlot },
+    { id: "aiti-channels-remote", render: RemoteDialogSlot },
+    { id: "aiti-channels-bots", render: BotsDialogSlot },
+  ]);
   ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ChannelsDockRight, meta: { title: "i18n:it.aiti-channels-panel.label", icon: "icons/message-circle.svg" } }]);
   ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ChannelsDockLeft, meta: { title: "i18n:it.aiti-channels-panel.label", icon: "message-circle", priority: 3 } }]);
 }
