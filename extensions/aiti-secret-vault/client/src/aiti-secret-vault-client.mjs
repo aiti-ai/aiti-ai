@@ -58,6 +58,117 @@ var btn = function (bg, color) { return { padding: "4px 10px", borderRadius: 6, 
 var inputStyle = { padding: "5px 8px", borderRadius: 6, fontSize: 12.5, border: "1px solid var(--border,#ddd)",
   background: "var(--bg)", color: "var(--text)", width: "100%", boxSizing: "border-box" };
 var tdStyle = { padding: "4px 8px", borderBottom: "1px solid var(--border,#eee)", verticalAlign: "top", fontSize: 11.5 };
+var thStyle = { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border,#ddd)", color: "var(--text-muted)", fontWeight: 600 };
+var thSortStyle = Object.assign({}, thStyle, { cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" });
+
+/** Local-time "YYYY-MM-DD HH:mm" from an ISO string; missing/invalid stays empty. */
+function fmtTime(v) {
+  if (!v) return "";
+  var d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  var p = function (n) { return (n < 10 ? "0" : "") + n; };
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+/** Clickable sortable header cell (▲/▼ arrow, ↕ hint when inactive). */
+function SortTh(props) {
+  var active = props.sort.key === props.col;
+  var arrow = active ? (props.sort.dir === "asc" ? "▲" : "▼") : "↕";
+  return h("th", { key: props.col, onClick: function () { props.onSort(props.col); }, title: t("sv.sort.title"), style: thSortStyle },
+    props.label,
+    h("span", { style: { fontSize: 9, marginLeft: 3, opacity: active ? 0.95 : 0.4 } }, arrow));
+}
+/** New column: take the column's default direction (time columns sort desc first). */
+function flipSort(s, col) {
+  if (s.key === col) return { key: col, dir: s.dir === "asc" ? "desc" : "asc" };
+  return { key: col, dir: col === "updated" ? "desc" : "asc" };
+}
+/** Sort rows by a getter map; empty values always sink to the bottom. */
+function sortRows(rows, sort, getters) {
+  var get = getters[sort.key];
+  if (!get) return rows;
+  var dir = sort.dir === "asc" ? 1 : -1;
+  return rows.slice().sort(function (a, b) {
+    var va = get(a), vb = get(b);
+    var ea = va == null || va === "", eb = vb == null || vb === "";
+    if (ea || eb) return ea && eb ? 0 : (ea ? 1 : -1);
+    var d = typeof va === "number" && typeof vb === "number"
+      ? va - vb
+      : String(va).localeCompare(String(vb), undefined, { sensitivity: "base", numeric: true });
+    return d * dir;
+  });
+}
+
+// Reveal dialog — a native top-layer <dialog> (showModal) so it always stacks
+// above the float panel and every z-index tier below it; backdrop click / Esc
+// / close button all dismiss it.
+function revealDialog(data, flash) {
+  var dlg = document.createElement("dialog");
+  function done() {
+    try { dlg.close(); } catch (e) {}
+    try { dlg.remove(); } catch (e) {}
+  }
+  dlg.style.cssText = "padding:0;border:none;background:transparent;color:var(--text,#1a1a1a);margin:auto;";
+  dlg.addEventListener("cancel", function (e) { e.preventDefault(); done(); });
+  dlg.addEventListener("click", function (e) { if (e.target === dlg) done(); });
+
+  var box = document.createElement("div");
+  Object.assign(box.style, { padding: "16px 18px", fontFamily: "inherit", fontSize: 13, color: "var(--text,#e8e8ec)",
+    background: "var(--bg-panel,#1c1c20)", border: "1px solid var(--border,#3a3a42)", borderRadius: 12,
+    boxShadow: "0 18px 50px rgba(0,0,0,.35)", maxWidth: "min(640px, 92vw)", minWidth: "min(420px, 92vw)" });
+
+  var head = document.createElement("div");
+  head.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;";
+  var title = document.createElement("div");
+  title.textContent = t("sv.reveal.title") + " · " + data.alias;
+  title.style.cssText = "font-size:15px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;";
+  head.appendChild(title);
+  if (data.weak) {
+    var w = document.createElement("span");
+    w.textContent = "⚠ " + t("sv.weak");
+    w.style.cssText = "color:var(--danger,#ef4444);font-size:12px;font-weight:600;white-space:nowrap;";
+    head.appendChild(w);
+  }
+  var x = document.createElement("button");
+  x.textContent = "×";
+  x.setAttribute("aria-label", t("sv.close"));
+  x.style.cssText = "background:none;border:none;cursor:pointer;font-size:18px;line-height:1;color:var(--text-muted,#9a9aa4);padding:2px 6px;";
+  x.addEventListener("click", done);
+  head.appendChild(x);
+  box.appendChild(head);
+
+  var hint = document.createElement("div");
+  hint.textContent = t("sv.reveal.hint");
+  hint.style.cssText = "color:var(--text-muted,#9a9aa4);font-size:11.5px;margin-bottom:10px;line-height:1.5;";
+  box.appendChild(hint);
+
+  var code = document.createElement("code");
+  code.textContent = String(data.value);
+  code.style.cssText = "display:block;font-family:var(--font-mono,ui-monospace,monospace);font-size:12.5px;word-break:break-all;white-space:pre-wrap;" +
+    "background:var(--bg-hover,#2a2a30);border:1px solid var(--border,#3a3a42);border-radius:8px;padding:10px 12px;max-height:40vh;overflow:auto;";
+  box.appendChild(code);
+
+  var mkBtn = function (label, primary, on) {
+    var b = document.createElement("button");
+    b.textContent = label;
+    b.style.cssText = "padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;" +
+      (primary ? "background:var(--accent,#4f8ef7);border:1px solid transparent;color:#fff;font-weight:600;"
+               : "background:var(--bg-hover,#2a2a30);border:1px solid var(--border,#3a3a42);color:var(--text,#e8e8ec);");
+    b.addEventListener("click", on);
+    return b;
+  };
+  var foot = document.createElement("div");
+  foot.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:12px;";
+  foot.appendChild(mkBtn(t("sv.copy"), false, function () {
+    try { navigator.clipboard.writeText(String(data.value)); if (flash) flash("ok", t("sv.copied")); } catch (e) {}
+  }));
+  foot.appendChild(mkBtn(t("sv.close"), true, done));
+  box.appendChild(foot);
+
+  dlg.appendChild(box);
+  document.body.appendChild(dlg);
+  try { dlg.showModal(); } catch (e) { try { dlg.show(); } catch (e2) { done(); } }
+}
 
 function useFlash() {
   var s = useState(null);
@@ -73,7 +184,7 @@ function VaultTab(props) {
   var [tags, setTags] = useState("");
   var [value, setValue] = useState("");
   var [project, setProject] = useState(false);
-  var [revealed, setRevealed] = useState(null);
+  var [sort, setSort] = useState({ key: "updated", dir: "desc" });
   var [pendingDelete, setPendingDelete] = useState("");
   var [busy, setBusy] = useState(false);
   var [targetMode, setTargetMode] = useState(st.mode || "keyfile");
@@ -97,7 +208,7 @@ function VaultTab(props) {
   function reveal(a) {
     fetch(API("/entries/" + encodeURIComponent(a) + "/reveal"), { method: "POST" })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d.ok) setRevealed({ alias: d.alias, value: d.value, weak: d.weak }); else fl("err", t("sv.failed") + " " + (d.error || "")); });
+      .then(function (d) { if (d.ok) revealDialog(d, fl); else fl("err", t("sv.failed") + " " + (d.error || "")); });
   }
   function remove(a) {
     if (pendingDelete !== a) { setPendingDelete(a); return; }
@@ -106,7 +217,6 @@ function VaultTab(props) {
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) { fl("err", t("sv.failed") + " " + (d.error || "")); return; }
-        setRevealed(null);
         fl("ok", t("sv.removed") + " · " + a);
         props.reload();
       });
@@ -160,40 +270,61 @@ function VaultTab(props) {
       h("span", { style: { flex: 1 } }),
       h("button", { style: btn("var(--accent,#2563eb)", "#fff"), onClick: save, disabled: busy }, t("sv.add"))));
 
-  var revealedBox = revealed ? h("div", { style: { marginTop: 8, padding: 8, border: "1px solid var(--border,#ddd)", borderRadius: 8,
-    background: "color-mix(in srgb, var(--warning,#f59e0b) 10%, transparent)" } },
-    h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-      h("code", { style: { flex: 1, fontSize: 12, wordBreak: "break-all" } }, revealed.alias + " = " + revealed.value),
-      revealed.weak ? h("span", { style: { color: "var(--danger,#ef4444)", fontSize: 11.5 } }, "⚠ " + t("sv.weak")) : null,
-      h("button", { style: btn("var(--bg)"), onClick: function () { try { navigator.clipboard.writeText(revealed.value); fl("ok", t("sv.copied")); } catch (e) {} } }, t("sv.copy")),
-      h("button", { style: btn("var(--bg)"), onClick: function () { setRevealed(null); } }, t("sv.hide")))) : null;
+  // Time cell: updated is always shown (lastUsedAt alone used to leave rows
+  // blank); full created/updated/used history lives in the tooltip.
+  function timeCell(e) {
+    var tip = t("sv.created") + " " + (fmtTime(e.createdAt) || "-") + "\n" + t("sv.updated") + " " + (fmtTime(e.updatedAt) || "-");
+    if (e.lastUsedAt) tip += "\n" + t("sv.used") + " " + fmtTime(e.lastUsedAt) + (e.lastUsedSession ? " · " + String(e.lastUsedSession).slice(0, 8) : "");
+    return h("td", { style: tdStyle, title: tip },
+      h("div", null, fmtTime(e.updatedAt) || "—"),
+      e.lastUsedAt ? h("div", { style: { fontSize: 10, color: "var(--text-muted)" } }, "↗ " + t("sv.used") + " " + fmtTime(e.lastUsedAt)) : null);
+  }
+
+  var vaultGetters = {
+    alias: function (e) { return e.alias || ""; },
+    desc: function (e) { return e.desc || ""; },
+    tags: function (e) { return (e.tags || []).join(", "); },
+    version: function (e) { return Number(e.version) || 0; },
+    // latest activity wins: max(updatedAt, lastUsedAt), ISO strings compare lexically
+    updated: function (e) {
+      var cands = [e.updatedAt, e.lastUsedAt].filter(Boolean).sort();
+      return cands.length ? cands[cands.length - 1] : "";
+    },
+  };
+  function toggleSort(col) { setSort(function (s) { return flipSort(s, col); }); }
+  var sorted = sortRows(entries, sort, vaultGetters);
 
   var rows = entries.length === 0
     ? h("div", { style: { padding: "18px 0", textAlign: "center", color: "var(--text-muted)" } }, t("sv.empty"))
     : h("table", { style: { width: "100%", borderCollapse: "collapse", marginTop: 8 } },
-        h("thead", null, h("tr", null, [t("sv.alias"), t("sv.desc"), t("sv.tags"), "v", t("sv.updated"), ""].map(function (x) {
-          return h("th", { key: x, style: { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border,#ddd)", color: "var(--text-muted)", fontWeight: 600 } }, x);
-        }))),
-        h("tbody", null, entries.map(function (e) {
+        h("thead", null, h("tr", null,
+          SortTh({ col: "alias", label: t("sv.alias"), sort: sort, onSort: toggleSort }),
+          SortTh({ col: "desc", label: t("sv.desc"), sort: sort, onSort: toggleSort }),
+          SortTh({ col: "tags", label: t("sv.tags"), sort: sort, onSort: toggleSort }),
+          SortTh({ col: "version", label: "v", sort: sort, onSort: toggleSort }),
+          SortTh({ col: "updated", label: t("sv.updated"), sort: sort, onSort: toggleSort }),
+          h("th", { key: "_act", style: thStyle }, ""))),
+        h("tbody", null, sorted.map(function (e) {
           return h("tr", { key: e.scope + ":" + e.alias },
             h("td", { style: tdStyle }, h("b", null, e.alias), e.scope === "project" ? h("span", { style: { color: "var(--text-muted)" } }, " [" + t("sv.project") + "]") : null,
               e.weak ? h("span", { style: { color: "var(--danger,#ef4444)", marginLeft: 6 } }, "⚠ " + t("sv.weak")) : null),
             h("td", { style: tdStyle }, e.desc || ""),
             h("td", { style: tdStyle }, (e.tags || []).join(", ")),
             h("td", { style: tdStyle }, String(e.version)),
-            h("td", { style: tdStyle }, e.lastUsedAt ? t("sv.updated") + " " + String(e.lastUsedAt).slice(0, 16).replace("T", " ") : ""),
+            timeCell(e),
             h("td", { style: Object.assign({}, tdStyle, { whiteSpace: "nowrap" }) },
               h("button", { style: Object.assign({}, btn("var(--bg)"), { marginRight: 4 }), onClick: function () { reveal(e.alias); } }, t("sv.reveal")),
               h("button", { style: btn(pendingDelete === e.alias ? "var(--danger,#ef4444)" : "var(--bg)", pendingDelete === e.alias ? "#fff" : undefined), onClick: function () { remove(e.alias); } },
                 pendingDelete === e.alias ? t("sv.deleteConfirm") : t("sv.delete"))));
         })));
 
-  return h("div", null, statusLine, modeRow, form, revealedBox, rows,
+  return h("div", null, statusLine, modeRow, form, rows,
     h("div", { style: { marginTop: 10, fontSize: 11, color: "var(--text-muted)" } }, t("sv.hint")));
 }
 
 function SessionsTab(props) {
   var sessions = props.sessions || {};
+  var [sort, setSort] = useState({ key: "updated", dir: "desc" });
   // Only sessions that actually have an alias mounted: empty historical
   // records are noise (every session writes one on startup).
   var ids = Object.keys(sessions).filter(function (id) {
@@ -205,26 +336,46 @@ function SessionsTab(props) {
       h("div", null, t("sv.session.empty")),
       h("div", { style: { fontSize: 11, marginTop: 6 } }, t("sv.session.retention")));
   }
+  // Materialize rows first so every column (including the title fallback
+  // chain) can be sorted by clicking the header.
+  var rows = ids.map(function (id) {
+    var s = sessions[id] || {};
+    var meta = (props.names && props.names[id]) || {};
+    var first = meta.firstMessage ? String(meta.firstMessage).replace(/\s+/g, " ").trim().slice(0, 80) : "";
+    var title = s.name || meta.name || first || id.slice(0, 8);
+    return { id: id, title: title, cwd: s.cwd || "", landing: s.landing || "",
+      mounted: (s.mounted || []).join(", "), updatedAt: s.updatedAt || "" };
+  });
+  var sessGetters = {
+    session: function (r) { return r.title; },
+    cwd: function (r) { return r.cwd; },
+    landing: function (r) { return r.landing; },
+    mounted: function (r) { return r.mounted; },
+    updated: function (r) { return r.updatedAt; },
+  };
+  function toggleSort(col) { setSort(function (s) { return flipSort(s, col); }); }
+  var sorted = sortRows(rows, sort, sessGetters);
   return h("table", { style: { width: "100%", borderCollapse: "collapse", marginTop: 4 } },
-    h("thead", null, h("tr", null, ["session", "cwd", t("sv.session.landing"), t("sv.session.mounted"), t("sv.updated"), ""].map(function (x) {
-      return h("th", { key: x, style: { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border,#ddd)", color: "var(--text-muted)", fontWeight: 600 } }, x);
-    }))),
-    h("tbody", null, ids.map(function (id) {
-      var s = sessions[id] || {};
-      var meta = (props.names && props.names[id]) || {};
-      var first = meta.firstMessage ? String(meta.firstMessage).replace(/\s+/g, " ").trim().slice(0, 80) : "";
-      var title = s.name || meta.name || first || id.slice(0, 8);
-      var openIt = function (e) { if (e) e.stopPropagation(); if (props.onOpen) props.onOpen(s, id); };
-      return h("tr", { key: id, onClick: openIt, style: { cursor: "pointer" }, title: id },
+    h("thead", null, h("tr", null,
+      SortTh({ col: "session", label: "session", sort: sort, onSort: toggleSort }),
+      SortTh({ col: "cwd", label: "cwd", sort: sort, onSort: toggleSort }),
+      SortTh({ col: "landing", label: t("sv.session.landing"), sort: sort, onSort: toggleSort }),
+      SortTh({ col: "mounted", label: t("sv.session.mounted"), sort: sort, onSort: toggleSort }),
+      SortTh({ col: "updated", label: t("sv.updated"), sort: sort, onSort: toggleSort }),
+      h("th", { key: "_act", style: thStyle }, ""))),
+    h("tbody", null, sorted.map(function (r) {
+      var s = sessions[r.id] || {};
+      var openIt = function (e) { if (e) e.stopPropagation(); if (props.onOpen) props.onOpen(s, r.id); };
+      return h("tr", { key: r.id, onClick: openIt, style: { cursor: "pointer" }, title: r.id },
         h("td", { style: Object.assign({}, tdStyle, { fontFamily: "inherit" }) },
-          h("div", { style: { fontWeight: 600 } }, title),
-          h("div", { style: { fontFamily: "monospace", fontSize: 10.5, color: "var(--text-muted)" } }, id.slice(0, 8))),
-        h("td", { style: Object.assign({}, tdStyle, { maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }), title: s.cwd }, s.cwd || ""),
-        h("td", { style: tdStyle }, s.landing || ""),
-        h("td", { style: tdStyle }, (s.mounted || []).join(", ")),
-        h("td", { style: tdStyle }, s.updatedAt ? String(s.updatedAt).slice(0, 16).replace("T", " ") : ""),
+          h("div", { style: { fontWeight: 600 } }, r.title),
+          h("div", { style: { fontFamily: "monospace", fontSize: 10.5, color: "var(--text-muted)" } }, r.id.slice(0, 8))),
+        h("td", { style: Object.assign({}, tdStyle, { maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }), title: r.cwd }, r.cwd),
+        h("td", { style: tdStyle }, r.landing),
+        h("td", { style: tdStyle }, r.mounted),
+        h("td", { style: tdStyle, title: r.updatedAt || "" }, fmtTime(r.updatedAt) || "—"),
         h("td", { style: Object.assign({}, tdStyle, { whiteSpace: "nowrap" }) },
-          h("button", { style: btn("var(--bg)"), onClick: openIt, title: id }, t("sv.open"))));
+          h("button", { style: btn("var(--bg)"), onClick: openIt, title: r.id }, t("sv.open"))));
     })),
     h("tfoot", null, h("tr", null, h("td", { colSpan: 6, style: { padding: "8px", fontSize: 11, color: "var(--text-muted)" } }, t("sv.session.retention")))));
 }
