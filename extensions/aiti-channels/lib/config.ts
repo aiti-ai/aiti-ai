@@ -26,6 +26,9 @@ export type CcProject = {
 export type CcConfig = {
   path: string;
   raw: string;
+  /** Top-level api_addr (cc-connect api_addr patch): TCP listen addr of the internal
+   *  API server, e.g. "127.0.0.1:9375". Empty = unix socket (unreachable on Windows). */
+  apiAddr: string;
   management: { enabled: boolean; port: number; token: string };
   bridge: { enabled: boolean; port: number; token: string; path: string };
   logLevel: string;
@@ -48,6 +51,7 @@ function parseScalar(v: string): string | number | boolean {
 
 export function parseConfig(raw: string): Omit<CcConfig, "path" | "raw"> {
   const cfg = {
+    apiAddr: "",
     management: { enabled: false, port: 9820, token: "" },
     bridge: { enabled: false, port: 9810, token: "", path: "/bridge/ws" },
     logLevel: "info",
@@ -68,6 +72,13 @@ export function parseConfig(raw: string): Omit<CcConfig, "path" | "raw"> {
   for (const rawLine of lines) {
     const line = rawLine.split("#")[0].trim();
     if (!line) continue;
+
+    // 顶层键（section === ""）：api_addr = "..."（cc-connect api_addr patch）
+    if (section === "") {
+      const m = /^api_addr\s*=\s*(.+)$/.exec(line);
+      if (m) { cfg.apiAddr = String(parseScalar(m[1])); continue; }
+      if (/^\[/.test(line)) { /* 落到下方段头处理 */ }
+    }
 
     if (line.startsWith("[[")) {
       const name = line.slice(2, -2).trim();

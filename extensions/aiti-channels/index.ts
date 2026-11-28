@@ -613,11 +613,13 @@ export default {
         let sessionKey = String(b.session_key || "");
         const message = String(b.message || "");
         const filePath = b.filePath ? String(b.filePath) : undefined;
+        // cc-connect api_addr patch：实例配置 api_addr → 出站走 TCP（Windows 可达通道）
+        const ccApiAddr = readConfigFile(mOpts.config || manager.DEFAULTS.config)?.apiAddr || undefined;
         if (!project || !message) return json({ ok: false, error: "需要 project + message" }, 400);
         // session_key 留空 → 自动取该项目第一个活跃会话（与 aiti-im-send 工具一致）
         if (!sessionKey) {
           try {
-            const r = await m.listSessions(mOpts.sock);
+            const r = await m.listSessions(mOpts.sock, ccApiAddr);
             const raw: any = r.data;
             const sessions: any[] = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.sessions) ? raw.sessions : []);
             const hit = sessions.find((s: any) => s.project === project) || sessions[0];
@@ -626,7 +628,7 @@ export default {
         }
         if (!sessionKey) return json({ ok: false, error: "无活跃会话可自动选择，请先给目标机器人发消息激活会话（或用 aiti-im-list 拿 session_key）" }, 400);
         try {
-          const r = await m.sendMessage({ project, sessionKey, message, filePath, fileName: b.fileName ? String(b.fileName) : undefined, mimeType: b.mimeType ? String(b.mimeType) : undefined, sock: mOpts.sock });
+          const r = await m.sendMessage({ project, sessionKey, message, filePath, fileName: b.fileName ? String(b.fileName) : undefined, mimeType: b.mimeType ? String(b.mimeType) : undefined, sock: mOpts.sock, tcpAddr: ccApiAddr });
           const ok = r.data && (r.data as any).status === "ok";
           m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath || null, result: ok ? "ok" : "error", detail: r });
           return json({ ok: true, socket: r, logged: true });
@@ -725,11 +727,13 @@ export default {
         // agent 工具默认作用在默认实例
         const defInst = m.resolveInstance("default");
         const defOpts = m.optsFor(defInst || { id: "default", name: "默认", config: manager.DEFAULTS.config, dataDir: "" });
+        // cc-connect api_addr patch：默认实例配置 api_addr → 出站 TCP（Windows 可达通道）
+        const defApiAddr = readConfigFile(defOpts.config || manager.DEFAULTS.config)?.apiAddr || undefined;
 
         // 取活跃会话（socket /sessions；返回 null/空时给 [] ）
         const fetchSessions = async (): Promise<any[]> => {
           try {
-            const r = await m.listSessions(defOpts.sock);
+            const r = await m.listSessions(defOpts.sock, defApiAddr);
             const raw = r.data;
             if (Array.isArray(raw)) return raw;
             if (raw && Array.isArray(raw.sessions)) return raw.sessions;
@@ -800,7 +804,7 @@ export default {
                     return JSON.stringify({ ok: false, error: "无活跃会话可自动选择，请先用 aiti-im-list 拿 session_key" });
                   }
                 }
-                const r = await m.sendMessage({ project, sessionKey: sessionKey, message, filePath, sock: defOpts.sock });
+                const r = await m.sendMessage({ project, sessionKey: sessionKey, message, filePath, sock: defOpts.sock, tcpAddr: defApiAddr });
                 const ok = r.data && (r.data as any).status === "ok";
                 m.writeMsgLog(mOpts, { project, session_key: sessionKey, message, file: filePath || null, result: ok ? "ok" : "error", detail: r });
                 return JSON.stringify({ ok, project, session_key: sessionKey, file: filePath || null, socket: r, logged: true });

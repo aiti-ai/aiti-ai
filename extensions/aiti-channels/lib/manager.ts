@@ -162,10 +162,47 @@ function socketRequest<T = any>(
   apiPath: string,
   body?: unknown,
   timeoutMs = 10000,
+  /** cc-connect api_addr patch: TCP listen addr ("127.0.0.1:9375") — dials host:port
+   *  instead of the unix/pipe socketPath. Set from config api_addr (Windows reachable). */
+  tcpAddr?: string,
 ): Promise<{ status: number; data: T }> {
   return new Promise((resolve, reject) => {
+    // cc-connect api_addr patch（2026-11-28）：api_addr 配置时走 TCP——Windows 上
+    // AF_UNIX 管名 libuv 拨不通（见 2026-09-18 实测），TCP 是我们 patch 进上游的可达通道。
+    if (tcpAddr) {
+      const at = tcpAddr.lastIndexOf(":");
+      const host = at > 0 ? tcpAddr.slice(0, at) : "127.0.0.1";
+      const port = Number(at > 0 ? tcpAddr.slice(at + 1) : 0) || 0;
+      const bodyStr = body === undefined ? null : JSON.stringify(body);
+      const req = http.request(
+        {
+          host,
+          port,
+          path: apiPath,
+          method,
+          timeout: timeoutMs,
+          headers: bodyStr ? { "content-type": "application/json", "content-length": Buffer.byteLength(bodyStr) } : {},
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            let data = text as unknown as T;
+            try { data = JSON.parse(text); } catch { /* keep raw */ }
+            resolve({ status: res.statusCode || 0, data });
+          });
+        },
+      );
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("tcp api 请求超时")); });
+      if (bodyStr) req.write(bodyStr);
+      req.end();
+      return;
+    }
     // Windows 已知缺口（2026-09-18 真机实测 v1.5.0）：上游 api 只监听 AF_UNIX，Node/libuv 拨不通
-    // （EACCES；libuv 的 socketPath 在 win 是命名管语义），且无 api_addr/TCP 开关。待上游或走 bridge WS 逆向。
+    // （EACCES；libuv 的 socketPath 在 win 是命名管语义）。已通过 api_addr patch（cc-connect win-api-addr
+    // 分支）解锁 TCP 通道——配置 api_addr 后走上方 TCP 分支。
     if (!fs.existsSync(sockPath)) return reject(new Error(`api.sock 不存在：${sockPath}${IS_WIN ? "（Windows：cc-connect api 仅 AF_UNIX，Node 无法连接——已知缺口，见 windows-compat 方案 §6.1）" : ""}`));
     const bodyStr = body === undefined ? null : JSON.stringify(body);
     const req = http.request(
@@ -182,6 +219,7 @@ function socketRequest<T = any>(
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
           let data = text as unknown as T;
+          try { data = JSON.parse(text); } catch { /* keep raw */ }
           try { data = JSON.parse(text); } catch { /* keep raw */ }
           resolve({ status: res.statusCode || 0, data });
         });
@@ -203,8 +241,9 @@ export type SendOptions = {
   mimeType?: string;
 };
 
-/** 发消息（文本/文件）。filePath 存在时按文件发送（读 base64 → FileAttachment JSON）。 */
-export async function sendMessage(opts: SendOptions & { sock?: string }): Promise<any> {
+/** 发消息（文本/文件）。filePath 存在时按文件发送（读 base64 → FileAttachment JSON）。
+ *  tcpAddr = config api_addr（cc-connect api_addr patch）→ TCP 通道（Windows 可达）。 */
+export async function sendMessage(opts: SendOptions & { sock?: string; tcpAddr?: string }): Promise<any> {
   const sock = opts.sock || DEFAULTS.sock;
   const body: any = { project: opts.project, session_key: opts.sessionKey, message: opts.message };
   if (opts.filePath && fs.existsSync(opts.filePath)) {
@@ -215,11 +254,11 @@ export async function sendMessage(opts: SendOptions & { sock?: string }): Promis
       Data: data,
     };
   }
-  return socketRequest(sock, "POST", "/send", body);
+  return socketRequest(sock, "POST", "/send", body, 10000, opts.tcpAddr);
 }
 
-export async function listSessions(sock?: string): Promise<any> {
-  return socketRequest(sock || DEFAULTS.sock, "GET", "/sessions");
+export async function listSessions(sock?: string, tcpAddr?: string): Promise<any> {
+  return socketRequest(sock || DEFAULTS.sock, "GET", "/sessions", undefined, 10000, tcpAddr);
 }
 
 // ---------- 托管（start / stop / restart） ----------

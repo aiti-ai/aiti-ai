@@ -36,6 +36,9 @@ export type ConfigForm = {
   dataDir: string;
   language?: string;
   logLevel?: string;
+  /** cc-connect api_addr patch: TCP listen addr for the internal API server
+   *  (e.g. "127.0.0.1:9375") — the reachable transport on Windows. Empty = unix socket. */
+  apiAddr?: string;
   management?: { enabled: boolean; port: number; token?: string };
   bridge?: { enabled: boolean; port: number; token?: string };
   projects: ProjectForm[];
@@ -50,6 +53,7 @@ const has = (s?: string) => s !== undefined && s !== "";
 export function renderConfig(form: ConfigForm): string {
   const L: string[] = [];
   L.push(`data_dir = ${tq(form.dataDir || "")}`);
+  if (has(form.apiAddr)) L.push(`api_addr = ${tq(form.apiAddr)}`); // cc-connect api_addr patch：TCP 传输（Windows 可达）
   L.push(`language = ${tq(form.language || "zh")}`);
   L.push("");
   // AITI 统一行为：外部 agent 新启动即带 aiti MCP 工具直连浏览器桥——

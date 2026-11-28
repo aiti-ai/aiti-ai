@@ -70,8 +70,12 @@ if (!NO_ACP && existsSync(extBin)) {
 
 const workDir = mkdtempSync(join(tmpdir(), "cc-e2e-work-"));
 writeFileSync(join(workDir, "readme.txt"), "cc-connect e2e workspace\n");
+// api_addr patch: TCP transport for the internal API server — the outbound
+// (aiti-im-send) channel on Windows, previously impossible (AF_UNIX).
+const API_PORT = BRIDGE_PORT + 1;
 const toml = renderConfig({
   dataDir: join(dir, "ccdata"),
+  apiAddr: `127.0.0.1:${API_PORT}`,
   language: "zh",
   management: { enabled: true, port: MGMT_PORT, token: TOKEN },
   bridge: { enabled: true, port: BRIDGE_PORT, token: TOKEN },
@@ -140,6 +144,23 @@ try {
       wsSend({ type: "message", msg_id: `web-${Date.now()}`, session_key: `web:e2e:${Date.now() % 1000}`, user_id: "web-e2e", user_name: "E2E", content: "只回四个字：链路通", reply_ctx: "web:e2e:1", project: "acpchat" });
     });
     ok("ACP loop: real pi session replied via bridge", replyText.trim().length > 0, JSON.stringify(replyText.trim().slice(0, 40)));
+
+    // ⑤ outbound via TCP api (api_addr patch) — the channel that was IMPOSSIBLE on
+    // Windows before the patch (AF_UNIX, libuv can't dial). /send into the session
+    // the ACP loop just created proves the outbound gap is closed end-to-end.
+    const apiBase = `http://127.0.0.1:${API_PORT}`;
+    const sessList = await (await fetch(`${apiBase}/sessions`, { signal: AbortSignal.timeout(10000) })).json();
+    const sess = (Array.isArray(sessList) ? sessList : sessList?.sessions || []).find((x) => x.project === "acpchat");
+    ok("TCP api /sessions lists the session", !!sess, sess ? `session_key=${String(sess.session_key || sess.id).slice(0, 30)}` : JSON.stringify(sessList).slice(0, 80));
+    if (sess) {
+      const sendRes = await (await fetch(`${apiBase}/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: "acpchat", session_key: sess.session_key || sess.id, message: "只回三个字：出站通" }),
+        signal: AbortSignal.timeout(90000),
+      })).json();
+      ok("TCP api /send outbound", sendRes?.status === "ok", JSON.stringify(sendRes).slice(0, 60));
+    }
   }
   ws.close();
 } catch (e) {
