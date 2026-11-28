@@ -37,6 +37,14 @@ export function extSvc<T = unknown>(key: string): T | undefined {
   return (getCtx() as any)?.getExtService?.(key) as T | undefined;
 }
 
+/** Lazy-load v2: explicitly materialize another extension's client (aiti-git-review etc.
+ *  load on demand — their services register only after the client loads, so materialize
+ *  before any cross-extension call. Old hosts without the channel → undefined. */
+export function extEnsureMaterialized(id: string): Promise<boolean> | undefined {
+  const r = (getCtx() as any)?.ensureMaterialized?.(id);
+  return r instanceof Promise ? r : undefined;
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = getCtx() as any;

@@ -5,7 +5,7 @@
  * （薄壳）动态 import 本模块——开页不再代价（服务端批量包外置本 chunk）。
  * 依赖方向：panels → common（严禁 common/shell 反向静态 import 本文件）。
  */
-import { useState, useEffect, useRef, apiUrl, t, extSvc, appendText, openFile } from "./host-shim";
+import { useState, useEffect, useRef, apiUrl, t, extSvc, extEnsureMaterialized, appendText, openFile } from "./host-shim";
 import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
 import { buildVersionMention, resolveDiffLineInfo } from "./version-mention.ts";
 import {
@@ -608,7 +608,28 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
     if (r && r.ok) load();
     else (window as any).alert((r && r.error) || "撤销回撤失败");
   }
-  function viewDiff(op: any, store?: any, files?: string[]) {
+  // ── Unified git-review opener. aiti-git-review is a lazy extension (ui.clientImmediately:false):
+  // its "aiti-git-review.open" service and __aitiGitReviewOpen global only exist after its client
+  // materializes for the first time. Materialize it deterministically via the host first (idempotent),
+  // then take the opener; fall back to the URL deep link only when still unavailable (very old hosts).
+  // Previously the deep link fired immediately = full page reload, and after reload nobody consumed
+  // the params (git-review still not materialized) → "Diff click does nothing but reloads the page"
+  // (user-reported 2026-11-28; same fix as aiti-folder openGitReview 2026-11-24).
+  async function openInGitReview(payload: Record<string, unknown>): Promise<void> {
+    const takeOpener = () => extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen;
+    let opener = takeOpener();
+    if (typeof opener !== "function") {
+      try { await extEnsureMaterialized("aiti-git-review"); } catch { /* old host without the channel — keep deep-link fallback */ }
+      opener = takeOpener();
+    }
+    if (typeof opener === "function") { try { opener(payload); return; } catch { /* materialized but call failed — deep-link fallback */ } }
+    // URL deep link (its client consumes params via applyOpen on mount; arrays serialize as JSON)
+    const q = new URLSearchParams(location.search);
+    for (const [k, v] of Object.entries(payload)) q.set(k, Array.isArray(v) ? JSON.stringify(v) : String(v));
+    location.href = location.pathname + "?" + q.toString();
+  }
+
+  async function viewDiff(op: any, store?: any, files?: string[]) {
     // 打开 aiti-git-review 的 trace 任务（§6.2/6.3）：优先全局开启器，未挂载则 URL 深链
     // 跨仓 op：优先选「before 窗口内实际有变更」的仓——before=null 基线仓计数再大也不是增量，且无 base 打不开任务
     const stores = op.stores || [];
@@ -620,12 +641,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
     const sid = op.sessionId || sessionId || getSessionId();
     const payload: any = { source: "trace", storeRoot: s.root, sessionId: sid, base: s.before, target: s.after };
     if (files && files.length) payload.files = files;
-    const opener = extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen; // DI 方案 P2 双轨
-    if (typeof opener === "function") { opener(payload); return; }
-    // git-review 客户端未就绪：URL 深链（其客户端挂载时自动 applyOpen；数组序列化为 JSON）
-    const q = new URLSearchParams(location.search);
-    for (const [k, v] of Object.entries(payload)) q.set(k, Array.isArray(v) ? JSON.stringify(v) : String(v));
-    location.href = location.pathname + "?" + q.toString();
+    await openInGitReview(payload);
   }
 
   // prompt（组）范围评审：keys = 选中 msgSeq 组；范围 = 最小~最大组（含中间连续组，台账分支追加式）
@@ -633,7 +649,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
     const stores = op.stores || [];
     return stores.find((x: any) => x.before && x.after && x.before !== x.after) || stores[0] || null;
   }
-  function reviewGroups(keys: string[], groups: Record<string, any[]>) {
+  async function reviewGroups(keys: string[], groups: Record<string, any[]>) {
     const nums = keys.map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
     if (!nums.length) return;
     const first = String(nums[0]); const last = String(nums[nums.length - 1]);
@@ -646,11 +662,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
     const sid = opsA[0]?.sessionId || sessionId || getSessionId();
     const label = nums.length === 1 ? ("prompt #" + first) : ("prompt #" + first + " - #" + last + "（含中间连续组）");
     const payload: any = { source: "trace", storeRoot: a0.root || bN.root, sessionId: sid, base, target: bN.after, label };
-    const opener = extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen; // DI 方案 P2 双轨
-    if (typeof opener === "function") { opener(payload); return; }
-    const q = new URLSearchParams(location.search);
-    for (const [k, v] of Object.entries(payload)) q.set(k, String(v));
-    location.href = location.pathname + "?" + q.toString();
+    await openInGitReview(payload);
   }
   function toggleSelGroup(k: string) { setSelGroups((s0) => (s0.includes(k) ? s0.filter((x) => x !== k) : [...s0, k])); }
 
@@ -669,15 +681,10 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
   }
   function toggleFile(k: string) { setExpandedFiles((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k])); }
   // 总览「在评审中打开完整 diff」（§2）：文件级区间（服务端解析的 store base/target）→ git-review
-  function viewRangeDiff(f: any, st: any) {
+  async function viewRangeDiff(f: any, st: any) {
     const label = (ovMultiRoot ? repoBase(f.root) + "/" : "") + f.path;
     const payload: any = { source: "trace", storeRoot: f.root, sessionId: sessionId || getSessionId(), base: st.base, target: st.target, label, files: [f.path] };
-    const opener = extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen; // DI 方案 P2 双轨
-    if (typeof opener === "function") { opener(payload); return; }
-    // git-review 客户端未就绪：URL 深链（files 序列化为 JSON，其客户端挂载时自动 applyOpen）
-    const q = new URLSearchParams(location.search);
-    for (const [k, v] of Object.entries(payload)) q.set(k, Array.isArray(v) ? JSON.stringify(v) : String(v));
-    location.href = location.pathname + "?" + q.toString();
+    await openInGitReview(payload);
   }
 
   // dock 头工具条 v3：仅左栏区块 face 注册命令（刷新 = 重拉变更总览/时间线）
