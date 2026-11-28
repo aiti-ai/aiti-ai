@@ -55,8 +55,15 @@ const extBin = join(homedir(), ".pi", "web", "extensions", "aiti-channels", "bin
 let acpPipe = "";
 if (!NO_ACP && existsSync(extBin)) {
   try {
-    const r = await fetch("http://127.0.0.1:3001/wdev/api/extensions/aiti-channels/acp-status?instance=default", { signal: AbortSignal.timeout(5000) });
-    const j = await r.json();
+    const devPort = process.env.AITI_DEV_PORT || "3001"; // sanitized default; machines set the real port
+    const devBase = "/" + String(process.env.AITI_DEV_BASE_PATH || "dev").replace(/^[/]+/, ""); // convention: value is slash-free, consumer adds it
+    let j = null;
+    for (let attempt = 0; attempt < 3 && !j; attempt++) {
+      try {
+        const r = await fetch(`http://127.0.0.1:${devPort}${devBase}/api/extensions/aiti-channels/acp-status?instance=default`, { signal: AbortSignal.timeout(5000) });
+        j = await r.json();
+      } catch { await new Promise((r2) => setTimeout(r2, 1000)); } // transient: dev reload/compile window
+    }
     if ((j.listening || j.endpointAlive) && j.socket) acpPipe = j.socket;
   } catch { /* dev instance down → ACP leg skips */ }
 }
