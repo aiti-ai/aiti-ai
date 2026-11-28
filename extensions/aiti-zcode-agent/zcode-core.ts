@@ -541,6 +541,147 @@ export function planQuotaView(
   };
 }
 
+// ============================================================================
+// Account quota (coding-plan channel): live numeric quota via quota/limit
+// ============================================================================
+
+/** coding-plan quota endpoints per provider family (desktop BigModelUsageQuotaProvider parity, 2026-11-28 asar). */
+export const QUOTA_LIMIT_URL: Record<string, string> = {
+  bigmodel: "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+  zai: "https://api.z.ai/api/monitor/usage/quota/limit",
+};
+
+/**
+ * Read the per-channel API key previously written by writeProviderConfigFile
+ * (<cacheDir>/provider-config/<channel>.json → config.providerConfigRules.providerRules[].config.access.apiKey).
+ * Returns null when the file is absent or the channel entry has no key — callers fall back gracefully.
+ */
+export function readProviderConfigApiKey(cacheDir: string, channel: string): string | null {
+  const file = join(cacheDir, "provider-config", `${channel.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+  try {
+    const j = JSON.parse(readFileSync(file, "utf8")) as {
+      config?: {
+        providerConfigRules?: {
+          providerRules?: Array<{ providerId?: unknown; config?: { access?: { apiKey?: unknown } } }>;
+        };
+      };
+    };
+    for (const rule of j.config?.providerConfigRules?.providerRules ?? []) {
+      if (rule?.providerId !== channel) continue;
+      const key = rule?.config?.access?.apiKey;
+      return typeof key === "string" && key.trim() ? key.trim() : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** GET quota/limit payload (15s timeout via withFetchTimeout; injectable fetchImpl for tests). */
+export async function fetchCodingPlanQuotaLimit(
+  apiKey: string,
+  family: string,
+  f: FetchImpl = fetch,
+): Promise<Record<string, unknown>> {
+  f = withFetchTimeout(f);
+  const res = await f(QUOTA_LIMIT_URL[family] ?? QUOTA_LIMIT_URL.bigmodel, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) throw new Error(`quota/limit HTTP ${res.status}`);
+  return (await res.json()) as Record<string, unknown>;
+}
+
+/** Thousands separator, ≤2 decimals (display strings only). */
+function fmtQuotaNum(n: number): string {
+  return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(n);
+}
+
+type QuotaLimitBucket = {
+  type?: unknown;
+  unit?: unknown;
+  number?: unknown;
+  percentage?: unknown;
+  usage?: unknown;
+  currentValue?: unknown;
+  remaining?: unknown;
+  nextResetTime?: unknown;
+};
+
+/**
+ * quota/limit payload → agent-manager quota view (unified display contract, qoder quotaFromUsage shape).
+ * Bucket semantics verified against desktop 4.0.0 UI selectors (IB(limits,type,unit,number)):
+ *   TOKENS_LIMIT unit=3 number=5 → five-hour window; TOKENS_LIMIT unit=6 → weekly window;
+ *   TIME_LIMIT unit=5 number=1 → monthly credits (usage=total / currentValue=used / remaining).
+ * display lists token windows (worst first) + monthly remaining; remaining/total/unit carry the
+ * monthly credits for the consumer's numeric fallback. Pure function (no IO), for unit tests.
+ */
+export function quotaLimitToQuotaView(payload: Record<string, unknown>, now = Date.now()): Record<string, unknown> {
+  const data = payload?.data as { limits?: unknown; level?: unknown } | undefined;
+  const buckets: QuotaLimitBucket[] = Array.isArray(data?.limits) ? (data.limits as QuotaLimitBucket[]) : [];
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const labelOf = (b: QuotaLimitBucket): string => {
+    if (b.type === "TOKENS_LIMIT") {
+      const u = num(b.unit);
+      return u === 3 ? "5小时窗口" : u === 6 ? "周窗口" : `窗口 unit=${u ?? "?"}`;
+    }
+    return "月度额度";
+  };
+
+  if (!buckets.length) {
+    return { available: false, reason: "no-limits", note: "quota/limit 响应无 limits 数据", packages: [], fetchedAt: now };
+  }
+
+  const packages = buckets.map((b) => {
+    const base: Record<string, unknown> = { name: labelOf(b) };
+    const used = num(b.currentValue);
+    const total = num(b.usage);
+    const remaining = num(b.remaining);
+    const pct = num(b.percentage);
+    const reset = num(b.nextResetTime);
+    if (used !== undefined) base.used = used;
+    if (total !== undefined) base.total = total;
+    if (remaining !== undefined) base.remaining = remaining;
+    if (pct !== undefined) base.usedPercent = pct;
+    if (reset !== undefined) base.nextResetTime = reset;
+    return base;
+  });
+
+  const tokenWindows = buckets.filter((b) => b.type === "TOKENS_LIMIT" && num(b.percentage) !== undefined);
+  let worst: { pct: number; reset?: number } | null = null;
+  for (const b of tokenWindows) {
+    const pct = num(b.percentage) ?? 0;
+    if (!worst || pct > worst.pct) worst = { pct, reset: num(b.nextResetTime) };
+  }
+  const monthly = buckets.find((b) => b.type === "TIME_LIMIT");
+  const level = typeof data?.level === "string" && data.level.trim() ? data.level.trim() : null;
+
+  const parts = tokenWindows
+    .slice()
+    .sort((a, b) => (num(b.percentage) ?? 0) - (num(a.percentage) ?? 0))
+    .map((b) => `${labelOf(b)}已用 ${fmtQuotaNum(num(b.percentage) ?? 0)}%`);
+  const monthlyRemaining = monthly ? num(monthly.remaining) : undefined;
+  if (monthlyRemaining !== undefined) parts.push(`月度额度剩余 ${fmtQuotaNum(monthlyRemaining)} 次`);
+
+  const view: Record<string, unknown> = {
+    available: true,
+    display: parts.length ? `额度 ${parts.join(" · ")}` : "额度",
+    unit: "次",
+    packages,
+    fetchedAt: now,
+  };
+  if (worst) {
+    view.usedPercent = worst.pct;
+    if (worst.reset !== undefined) view.expiresAt = worst.reset;
+  }
+  if (monthlyRemaining !== undefined) {
+    view.remaining = monthlyRemaining;
+    const monthlyTotal = monthly ? num(monthly.usage) : undefined;
+    if (monthlyTotal !== undefined) view.total = monthlyTotal;
+  }
+  if (level) view.note = `等级 ${level}`;
+  return view;
+}
+
 /**
  * 桌面端 provider 注册表（v2/config.json provider 段）：channel → baseURL + 模型 id 表。
  * 桌面端随版本/套餐自动维护（不写死端点与模型目录的权威来源）；读不到 → []。
