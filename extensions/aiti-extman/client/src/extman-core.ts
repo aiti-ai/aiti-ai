@@ -563,8 +563,6 @@ function tryDirectOpen(extId: string, slot: string, item: any) {
  *  物化前其注册条目 / services / 全局通道全部缺席，直接走旧链路只会落「定位不到」死胡同。
  *  旧宿主（无 ensureMaterialized）原样降级。 */
 export function openSlotItem(extId: string, slot: string, item: any, currentSession: any) {
-  const label = (item && (item.label || item.title || item.id)) || "";
-  const where = (item && item.where) || slot;
   const loader = ctxFull?.extLoaderState?.();
   if (extId && loader && !loader.materialized.includes(extId)) {
     void Promise.resolve(ctxFull?.ensureMaterialized?.(extId))
@@ -577,7 +575,8 @@ export function openSlotItem(extId: string, slot: string, item: any, currentSess
 
 function openSlotItemNow(extId: string, slot: string, item: any, currentSession: any) {
   const label = resolveItemLabel(extId, item);
-  const where = (item && item.where) || slot;
+  // where keys ("i18n:ext.slotWhere.*") belong to extman's own table; bare slot-name fallback stays as-is
+  const where = resolveExtItemText(SELF_ID, item && item.where) || slot;
 
   // 会话级插槽（chatInputTop / sessionRowActions 等）：无开关，是当前会话内的常驻 UI。
   // 打开 = 以当前会话为上下文，定位到功能实际位置（滚动 + 高亮），不再是死胡同提示。

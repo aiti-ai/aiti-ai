@@ -1651,7 +1651,8 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     // "i18n:<key>" labels resolve against the declaring extension's manifest ui.i18n
                     // (shared registry, primed at register; bare key until it lands — same as host)
                     const label = resolveExtItemText(id, (it.label || it.title || it.id) + "");
-                    const where = it.where || "";
+                    // where keys ("i18n:ext.slotWhere.*") belong to extman's own table — resolve via SELF_ID
+                    const where = resolveExtItemText(SELF_ID, it.where || "") || (it.where || "");
                     return (
                       <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         <span style={{ flex: 1, fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
