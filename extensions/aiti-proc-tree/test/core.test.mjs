@@ -153,7 +153,7 @@ test("parseNetstatAno keeps LISTENING rows with pids", () => {
     "", // localized header line must be ignored
     "  TCP    0.0.0.0:20341          0.0.0.0:0              LISTENING       1234",
     "  TCP    [::]:20341             [::]:0                 LISTENING       1234",
-    "  TCP    10.203.10.48:50000     140.82.121.6:443       ESTABLISHED     1234",
+    "  TCP    192.0.2.10:50000          192.0.2.20:443         ESTABLISHED     1234",
   ].join("\n");
   const m = core.parseNetstatAno(ns);
   assert.deepEqual(m.get(1234), ["0.0.0.0:20341", "[::]:20341"]);
