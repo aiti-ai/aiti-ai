@@ -68,8 +68,15 @@ test("saving and clearing the proxy changes the next fetch and preserves other s
   await writeFile(settingsPath, JSON.stringify({ theme: "dark" }));
   const origin = createServer((_req, res) => res.writeHead(200, { Connection: "close" }).end("ok"));
   const originUrl = await listen(t, origin);
+  // [fork] The fork's dispatcher forwards http:// origins as absolute-form proxy
+  // requests instead of a CONNECT tunnel (lib/http-dispatcher.ts keeps upstream's
+  // proxyTunnel off). The proxy therefore answers the forwarded request itself and
+  // the assertion counts forwarded requests rather than CONNECT targets.
   const targets = [];
-  const proxy = createServer();
+  const proxy = createServer((_req, res) => {
+    targets.push("forwarded");
+    res.writeHead(200, { Connection: "close" }).end("ok");
+  });
   proxy.on("connect", (req, socket) => {
     targets.push(req.url);
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -87,7 +94,7 @@ test("saving and clearing the proxy changes the next fetch and preserves other s
   assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), { theme: "dark", httpProxy: proxyUrl });
   const request = async () => assert.equal(await (await fetch(originUrl, { signal: AbortSignal.timeout(2_000) })).text(), "ok");
   await request();
-  assert.deepEqual(targets, [new URL(originUrl).host]);
+  assert.deepEqual(targets, ["forwarded"]);
 
   const off = await put({ enabled: false });
   assert.equal(off.status, 200);
