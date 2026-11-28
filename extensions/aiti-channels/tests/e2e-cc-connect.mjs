@@ -259,8 +259,9 @@ if (!NO_ACP && acpTcp) {
     const connectorProcs = await (async () => {
       try {
         if (platform() === "win32") {
+          // $PID exclusion: the query process's own command line contains the keyword
           const out = execFileSync("powershell", ["-NoProfile", "-Command",
-            "Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match 'aiti-acp-connector'} | Select-Object -ExpandProperty ProcessId"], { encoding: "utf8", timeout: 10000 });
+            "Get-CimInstance Win32_Process | Where-Object {$_.ProcessId -ne $PID -and $_.CommandLine -match 'aiti-acp-connector'} | Select-Object -ExpandProperty ProcessId"], { encoding: "utf8", timeout: 10000 });
           return out.split(/\s+/).filter(Boolean).length;
         }
         const out = execFileSync("pgrep", ["-af", "aiti-acp-connector"], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }).trim();
