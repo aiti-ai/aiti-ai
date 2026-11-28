@@ -24,6 +24,7 @@ import { createCopilotAdapter } from "./copilot.ts";
 import { createZedAdapter } from "./zed.ts";
 import { createClineFamilyAdapter } from "./cline.ts";
 import { createWindsurfAdapter } from "./windsurf.ts";
+import { createDevinCliAdapter } from "./devin-cli.ts";
 import { createZcodeAdapter } from "./zcode.ts";
 import { createCodebuddyAdapter } from "./codebuddy.ts";
 import { createGooseAdapter, createAmpAdapter, createFactoryAdapter } from "./simple-cli.ts";
@@ -60,6 +61,13 @@ export function builtinAdapters(): AgentAdapter[] {
     createAmpAdapter(),
     createFactoryAdapter(),
     createWindsurfAdapter(),
+    // Devin CLI (Cognition `devin` command, local db $XDG_DATA_HOME/devin/cli/sessions.db):
+    // id "devin" aligns with the aiti-acp-agent devin backend agentKey (open-live takeover
+    // goes through ACP session/load = true resume). The CLI keeps per-session locks —
+    // resuming while an old process still holds the lock fails with "already open in
+    // another process"; stop the old holder first. windsurf = Devin Desktop is a
+    // different store (~/.config/Devin); the labels tell them apart.
+    createDevinCliAdapter(),
     // ZCode（智谱桌面端内嵌 CLI）：id "zcode" 对齐 aiti-zcode-agent 后端（open-live 接管直通 --resume）；
     // 本 adapter 也是 zcode 会话的唯一读取实现（services.sessions 出口消费）
     createZcodeAdapter(),

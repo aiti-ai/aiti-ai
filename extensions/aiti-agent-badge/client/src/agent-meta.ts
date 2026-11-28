@@ -20,6 +20,7 @@ export const AGENT_META = {
   zcode: { short: "Zc", color: "#38bdf8" },
   codebuddy: { short: "Cb", color: "#0052d9" },
   dsh: { short: "Ds", color: "#f97316" },
+  devin: { short: "Dv", color: "#06b6d4" }, // Devin CLI (aiti-acp-agent devin backend)
   windsurf: { short: "Dv", color: "#06b6d4" },
   cline: { short: "Cl", color: "#f59e0b" },
   goose: { short: "Go", color: "#84cc16" },

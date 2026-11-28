@@ -31,7 +31,7 @@ interface AcpPayload {
 export function createWindsurfAdapter(): AgentAdapter {
   return {
     id: "windsurf", // Devin Desktop(原 Windsurf)——存储键沿用 windsurf 命名
-    label: "Devin",
+    label: "Devin Desktop",
     roots() {
       const r = ROOT();
       return existsSync(r) ? [r] : [];
