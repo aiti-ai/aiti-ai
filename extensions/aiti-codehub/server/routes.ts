@@ -562,6 +562,7 @@ export async function api(req: Request, ctx: { path?: string[]; searchParams?: U
       const refs = (Array.isArray(body.files) ? body.files : []) as Array<Record<string, unknown>>;
       const imageLines: string[] = [];
       const attachLines: string[] = [];
+      let md = String(body.text || "");
       let n = 0;
       for (const ref of refs) {
         if (!fp?.resolve) break;
@@ -582,12 +583,15 @@ export async function api(req: Request, ctx: { path?: string[]; searchParams?: U
           const fname = ref.kind === "image" ? `image-${n}${ext}` : `${n}-${base}`;
           writeFileSync(join(filesDir, fname), buf);
           const rel = `files/${fname}`;
-          if (ref.kind === "image") imageLines.push(`![${ref.name || `image ${n}`}](${rel})`);
-          else attachLines.push(`- [${ref.name || fname}](${rel})`);
+          if (ref.kind === "image") {
+            imageLines.push(`![${ref.name || `image ${n}`}](${rel})`);
+            // point the original (authenticated) URL at the local copy so the note is self-contained
+            const src = String(ref.src || "");
+            if (src && md.includes(src)) md = md.split(src).join(rel);
+          } else attachLines.push(`- [${ref.name || fname}](${rel})`);
         } catch { /* skip a failed download; the note still carries the text */ }
       }
 
-      let md = text;
       if (imageLines.length) md += `\n\n${imageLines.join("\n")}`;
       if (attachLines.length) md += `\n\n## Attachments\n${attachLines.join("\n")}`;
       const fname = `${title}.md`;

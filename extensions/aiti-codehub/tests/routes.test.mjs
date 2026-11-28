@@ -256,9 +256,9 @@ test("workspace note: persists text + proxied files under .codehub", async () =>
       cwd,
       id: "CEXP-1",
       title: "Fix login/flow",
-      text: "Please fix.\n\nhttps://example.org/issue/CEXP-1",
+      text: "Please fix.\n\nhttps://devops.example.com/file/f1\n\nhttps://example.org/issue/CEXP-1",
       files: [
-        { fileId: "f1", name: "image-1.png", kind: "image", workitemId: "CEXP-1" },
+        { fileId: "f1", name: "image-1.png", kind: "image", workitemId: "CEXP-1", src: "https://devops.example.com/file/f1" },
         { fileId: "f2", name: "spec.txt", kind: "attachment", workitemId: "CEXP-1" },
       ],
     });
@@ -268,6 +268,8 @@ test("workspace note: persists text + proxied files under .codehub", async () =>
     const note = readFileSync(join(cwd, ...data.relPath.split("/")), "utf8");
     assert.match(note, /Please fix/);
     assert.match(note, /!\[image-1\.png\]\(files\/image-1\.png\)/);
+    // original authenticated URL is rewritten to the local copy
+    assert.ok(!note.includes("https://devops.example.com/file/f1"));
     assert.match(note, /## Attachments/);
     assert.match(note, /\[spec\.txt\]\(files\/2-spec\.txt\)/);
     assert.equal(readFileSync(join(cwd, ".codehub", "fake", "CEXP-1", "files", "image-1.png")).toString(), "hello");

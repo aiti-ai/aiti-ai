@@ -190,19 +190,19 @@ export function DetailBody(p: { target: DetailTarget; onBack?: () => void }) {
 
     /* File mode when the body is long or carries images/attachments: persist into
      * the workspace (attachments downloaded alongside) and reference it via @path. */
-    const imgFileIds = (item.images || [])
-      .map((src) => fileIdentifierOf(src))
-      .filter((v): v is string => !!v);
+    const imgRefs = (item.images || [])
+      .map((src) => ({ src, fileId: fileIdentifierOf(src) }))
+      .filter((r): r is { src: string; fileId: string } => !!r.fileId);
     const attFiles = (item.attachments || []).map((a) => ({ fileId: a.id, name: a.name, kind: "attachment" }));
     const files = [
-      ...imgFileIds.map((fileId, i) => ({ fileId, name: `image-${i + 1}.png`, kind: "image" })),
+      ...imgRefs.map((r, i) => ({ fileId: r.fileId, src: r.src, name: `image-${i + 1}.png`, kind: "image" })),
       ...attFiles,
     ];
     const heavy = files.length > 0 || text.length > 1500;
     try {
       if (heavy) {
         setBusy("note");
-        const r = await fetch(apiUrl("/workspace/note"), {
+        const r = await fetch(apiUrl("/api/extensions/aiti-codehub/note"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
