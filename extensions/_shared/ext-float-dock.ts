@@ -5,10 +5,11 @@
  * useGate + 状态机小 API）——拆包扩展的薄壳 import lite，不连带本文件的 UI 层
  * （P1-3，方案 pi-web-eager-ext-split-plan.md §6）。
  *
- * 本文件保持历史导入面不变：re-export core（状态机）+ lite（hooks），未拆包扩展
- * 照旧 `import { usePresent, DockBody, ... } from "../../../_shared/ext-float-dock"`。
- * 红线（dock 方案 §3.5）：gate 是唯一渲染开关——扩展不得再以自有 state 直接
- * 控制浮窗/嵌入两 face 的显隐。
+ * Historical import surface kept intact: re-exports core (state machine) + lite (hooks);
+ * unpacked extensions keep importing the same way:
+ * `import { usePresent, DockBody, ... } from "@aiti-ai/ext-shared/ext-float-dock"`.
+ * Red line (dock plan §3.5): the gate is the only render switch — extensions must not
+ * toggle the two faces (float/embedded) with their own state.
  */
 import { useEffect, useState, createElement as h } from "react";
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "./popup-anchor";

@@ -1,23 +1,25 @@
 /**
- * _shared/reconcile-deps.mjs · 通知 pi-web 双实例对齐扩展共享依赖（各扩展 deploy.mjs 共用）
+ * _shared/reconcile-deps.mjs · notify the pi-web dual instances to reconcile extension shared deps (shared by every extension deploy.mjs)
  *
- * 背景：扩展运行时依赖统一装进共享根 <webRoot>/node_modules（jiti 从扩展目录向上解析
- * 自动命中；机制仿 pi 本体 npm: 包安装）。共享根的唯一写入方是 aiti-extman 的
- * shared-deps reconcile——deploy.mjs 拷完文件后 POST 本通知即可，不在部署脚本里跑 npm。
+ * Background: extension runtime deps are installed into the shared root <webRoot>/node_modules
+ * (jiti resolves upward from the extension dir and hits it automatically; mechanism modeled on
+ * pi core's npm: package install). The only writer of the shared root is aiti-extman's
+ * shared-deps reconcile — after deploy.mjs finishes copying, just POST this notification;
+ * no npm runs inside deploy scripts.
  *
- * 用法（与 reload-instances 同款：允许失败，永不 throw、不影响 deploy 退出码）：
- *   import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
- *   await notifyReconcile();               // 默认 "[deploy] " 前缀；建议在 reloadInstances() 之前调
+ * Usage (same contract as reload-instances: failures allowed, never throws, deploy exit code unaffected):
+ *   import { notifyReconcile } from "@aiti-ai/ext-shared/reconcile-deps";
+ *   await notifyReconcile();               // default "[deploy] " prefix; call before reloadInstances()
  *
- * 失败无害：extman 在下一次 install/remove/reconcile-deps 时会自愈对齐；双实例各自
- * reconcile 各自的 webRoot（~/.pi/web 与 ~/.pi/web-dev），互不相干。
+ * Failure is harmless: extman self-heals the alignment on the next install/remove/reconcile-deps;
+ * the dual instances each reconcile their own webRoot (~/.pi/web and ~/.pi/web-dev), independent of each other.
  */
 import { buildInstances } from "./reload-instances.mjs";
 
 export async function notifyReconcile(prefix = "[deploy] ") {
   for (const inst of buildInstances()) {
     if (inst.base === null) {
-      console.log(`${prefix}reconcile ${inst.name} 跳过：basePath 非法`);
+      console.log(`${prefix}reconcile ${inst.name} skipped: invalid basePath`);
       continue;
     }
     try {
@@ -29,13 +31,13 @@ export async function notifyReconcile(prefix = "[deploy] ") {
       const body = await r.json().catch(() => null);
       const err = body && body.deps && body.deps.error;
       if (r.ok && body && body.ok) {
-        console.log(`${prefix}reconcile ${inst.name} → ✓（${Object.keys(body.deps?.deps || {}).length} 个共享依赖）`);
+        console.log(`${prefix}reconcile ${inst.name} → ✓ (${Object.keys(body.deps?.deps || {}).length} shared deps)`);
       } else {
-        console.log(`${prefix}reconcile ${inst.name} → HTTP ${r.status} ⚠${err ? " " + err : "（extman 未就绪？下次安装时自动对齐）"}`);
+        console.log(`${prefix}reconcile ${inst.name} → HTTP ${r.status} ⚠${err ? " " + err : " (extman not ready? realigns on next install)"}`);
       }
     } catch (e) {
       const cause = e && e.cause ? String(e.cause.code || e.cause.message || e.cause) : String((e && e.message) || e);
-      console.log(`${prefix}reconcile ${inst.name} 不可达（${cause}）— 下次安装时自动对齐`);
+      console.log(`${prefix}reconcile ${inst.name} unreachable (${cause}) — realigns on next install`);
     }
   }
 }

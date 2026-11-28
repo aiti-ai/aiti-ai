@@ -15,7 +15,7 @@
  *     最近一次部署留下的产物，超窗才清理（磁盘不无限增长）。传 0 恢复立即删。
  *
  * 部署场景用法（替代「rmSync 整目录 + 全量重拷」）：
- *   import { syncDir } from "../../_shared/sync-dir.mjs";
+ *   import { syncDir } from "@aiti-ai/ext-shared/sync-dir";
  *   const st = syncDir(resolve(root, "dist"), resolve(dest, "dist"), { del: true });
  *   // st = { copied, skipped, deleted, kept }
  */
