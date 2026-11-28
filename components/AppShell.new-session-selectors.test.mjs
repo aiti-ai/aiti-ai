@@ -104,7 +104,8 @@ test("Workspace selector takeover: declared contract + native fallback, staged t
 
 test("the takeover stages like the native selector: setTarget → handleNewSessionWorkspaceChange", () => {
   const appShell = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
-  assert.match(appShell, /newSessionSvcRef = useRef\(\{ setCwd: \(_path: string\) => \{\}, setTarget: \(_path: string \| null\) => \{\} \}\)/);
+  // getCwd joined the stub later (codehub staging: extensions can ask for the staged/open cwd)
+  assert.match(appShell, /newSessionSvcRef = useRef\(\{ setCwd: \(_path: string\) => \{\}, setTarget: \(_path: string \| null\) => \{\}, getCwd: \(\): string \| null => null \}\)/);
   assert.match(appShell, /newSessionSvcRef\.current\.setTarget = \(path: string \| null\) => \{\n\s+handleNewSessionWorkspaceChange\(/);
   assert.match(appShell, /get setTarget\(\) \{ return newSessionSvcRef\.current\.setTarget; \}/);
   // setCwd keeps the immediate-move semantics for the upload flow

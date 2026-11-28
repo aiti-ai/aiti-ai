@@ -10,7 +10,6 @@ import {
   getRelativeFilePath,
   joinFilePath,
   normalizeFilePathSlashes,
-  encodeFilePathForApi,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import type { FileIndexEntry } from "@/lib/file-fuzzy";

@@ -68,7 +68,10 @@ test("a folder that fails to load reports why instead of staying blank", () => {
 });
 
 test("allowing a link sends the target the operator was shown", () => {
-  assert.match(source, /fetch\(apiUrl\(`\/api\/files\/\$\{encodeFilePathForApi\(linkPath\)\}\?type=allow-link`\), \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: JSON\.stringify\(\{ target \}\)/);
+  // The link path travels in the POST body under the reserved `link` segment: a catch-all
+  // path segment would put a local filesystem path into every access log that sees the
+  // request (fix 93ba39686) — only the non-path `type=allow-link` marker rides in the URL.
+  assert.match(source, /fetch\(apiUrl\("\/api\/files\/link\?type=allow-link"\), \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: JSON\.stringify\(\{ linkPath, target \}\)/);
   assert.match(source, /await allowOutsideLink\(node\.fullPath, pendingLinkTarget\);/);
   // A pending link is never listed: the server would only refuse it.
   assert.match(source, /if \(next && !loaded && !pendingLinkTarget\) loadChildren\(\);/);
