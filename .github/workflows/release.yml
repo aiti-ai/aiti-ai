@@ -144,8 +144,8 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
 
-      - name: Materialize _shared sibling copies (deploy.mjs parity — npm pack excludes _shared)
-        run: node scripts/materialize-shared.mjs
+      # (no materialize step: the publish tree is self-contained — extensions
+      #      resolve shared helpers via the @aiti-ai/ext-shared package)
 
       - name: npm pack (authoritative files filter)
         run: |
