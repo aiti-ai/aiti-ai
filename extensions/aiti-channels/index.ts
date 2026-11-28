@@ -1469,7 +1469,7 @@ export default {
           const b = await parseBody(req);
           const origin = String(b.origin || "").trim();
           if (origin) {
-            try { const u = new URL(origin); if (!/^https?:$/.test(u.protocol)) throw new Error("protocol"); } catch { return json({ ok: false, error: "origin 需为合法 http(s) URL（如 https://example.com:57442）" }, 400); }
+            try { const u = new URL(origin); if (!/^https?:$/.test(u.protocol)) throw new Error("protocol"); } catch { return json({ ok: false, error: "origin 需为合法 http(s) URL（如 https://pi.example.com:57442）" }, 400); }
           }
           writeSettings({ adminOrigin: origin || null });
           return json({ ok: true, adminOrigin: origin || null, note: origin ? "已设置显式管理台地址" : "已清除显式地址（回到自动推导）" });
