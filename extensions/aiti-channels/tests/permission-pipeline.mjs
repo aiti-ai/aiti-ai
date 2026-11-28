@@ -23,7 +23,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LIB_DIR = path.resolve(TESTS_DIR, "..", "lib");
-const DIST = fs.mkdtempSync(path.join(os.tmpdir(), "aiti-pipeline-dist-"));
+// emit INSIDE the extension tree so @aiti-ai/ext-shared resolves via aiti-ai/node_modules
+const DIST = path.join(import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url)), ".pipeline-dist");
+fs.rmSync(DIST, { recursive: true, force: true });
+fs.mkdirSync(DIST, { recursive: true });
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aiti-pipeline-data-"));
 const CWD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aiti-pipeline-cwd-"));
 
@@ -36,12 +39,14 @@ function check(name, cond, detail = "") {
 // ---------------------------------------------------------------------------
 // ① 编译 lib → DIST
 // ---------------------------------------------------------------------------
-const TSC = path.join(os.homedir(), "workspace", "pi-web", "node_modules", ".bin", "tsc");
+const TSC = path.join(os.homedir(), "workspace", "aiti-ai", "node_modules", ".bin", "tsc");
 try {
   execFileSync(TSC, [
     "--target", "es2022", "--module", "nodenext", "--moduleResolution", "nodenext",
-    // lib 内部互 import 用 .ts 后缀（strip-types/jiti 直解；emit 靠 5.7+ 的 rewrite
-    // 相对导入扩展名 → .js，nodenext 运行时才能解析）——tsc 需 ≥5.7（pi-web 锁 6.x）
+    // TS6: a repo tsconfig is ignored when files are listed — say so explicitly
+    "--ignoreConfig",
+    // lib-internal imports use the .ts suffix (strip-types/jiti resolve it directly; emit
+    // relies on 5.7+ rewriteRelativeImportExtensions so nodenext can resolve at runtime — tsc needs >=5.7, the repo pins 6.x)
     "--rewriteRelativeImportExtensions",
     "--outDir", DIST, "--rootDir", LIB_DIR, "--skipLibCheck",
     path.join(LIB_DIR, "acp-server.ts"),
@@ -67,6 +72,9 @@ const bridge = await import(pathToFileURL(path.join(DIST, "acp-bridge.js")));
 const server = await import(pathToFileURL(path.join(DIST, "acp-server.js")));
 
 manager.setDataDir(DATA_DIR);
+// acp-server owns its dataDir channel since the TCP batch (module-split guard) —
+// redirect it explicitly; manager.setDataDir alone no longer reaches it
+server.setDataDir(DATA_DIR);
 const started = await server.startAcpServer("t");
 const sockPath = started.socket;
 
@@ -502,11 +510,12 @@ console.log("\n▶ G1 双实例 ACP server 并存（同进程多 socket）");
   const sn7 = await Promise.race([c7.rpc("session/new", { cwd: CWD_DIR }), timeout(3000, "new-u2")]);
   check("第二实例照常建会话", typeof sn7.result?.sessionId === "string" && sn7.result.sessionId.length > 10, JSON.stringify(sn7));
   const st = server.acpStatus("t");
-  check("acpStatus 形状（listening/socket/sessions 数组）", st.listening === true && typeof st.socket === "string" && Array.isArray(st.sessions), JSON.stringify({ listening: st.listening, n: st.sessions?.length }));
-  const st2 = server.acpStatus("u2");
+  const stAwaited = await server.acpStatus("t");
+  check("acpStatus 形状（listening/socket/sessions 数组）", stAwaited.listening === true && typeof stAwaited.socket === "string" && Array.isArray(stAwaited.sessions), JSON.stringify({ listening: stAwaited.listening, n: stAwaited.sessions?.length }));
+  const st2 = await server.acpStatus("u2");
   check("双实例状态各自可见", st2.listening === true && st2.socket.includes("u2.sock"));
   server.stopAcpServer("u2");
-  check("stopAcpServer 收掉第二实例", server.acpStatus("u2").listening === false);
+  check("stopAcpServer 收掉第二实例", (await server.acpStatus("u2")).listening === false);
   c7.sock.destroy();
 }
 
@@ -592,7 +601,7 @@ console.log("\n▶ H1 startAcpServer 幂等：运行中再启 → already；stop
   const again = await server.startAcpServer("t");
   check("运行中重启 → ok+already", again.ok === true && again.already === true, JSON.stringify(again));
   server.stopAllAcpServers();
-  check("stopAll 后主实例停", server.acpStatus("t").listening === false);
+  check("stopAll 后主实例停", (await server.acpStatus("t")).listening === false);
   const rec = await server.startAcpServer("t");
   check("可重建（后续用例依赖）", rec.ok === true && !rec.already, JSON.stringify(rec));
 }
@@ -602,7 +611,7 @@ console.log("\n▶ H2 ensureAll 容错：含不存在实例 id 也不 throw");
   let threw = false;
   try { await server.ensureAll(["t", "ghost-instance"]); } catch { threw = true; }
   check("ensureAll 不抛（失败仅记日志）", threw === false);
-  check("存在的实例照常在监听", server.acpStatus("t").listening === true);
+  check("存在的实例照常在监听", (await server.acpStatus("t")).listening === true);
 }
 
 console.log("\n▶ H3 createSession cwd 不存在 → 明确报错");

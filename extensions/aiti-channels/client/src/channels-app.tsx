@@ -53,8 +53,7 @@ const state: Record<string, any> = {
 };
 const listeners = new Set<() => void>();
 function notify() { for (const l of listeners) l(); }
-/** exported: bots.tsx cross-view tab switches (openBotsNew) go through the same state machine */
-export function setState(patch: Record<string, unknown>) {
+function rawSetState(patch: Record<string, unknown>) {
   if ("open" in patch) {
     const { open, ...rest } = patch;
     // F1: toolbar open is a forced float — no dock states exist for this panel anymore
@@ -63,6 +62,13 @@ export function setState(patch: Record<string, unknown>) {
     if (Object.keys(patch).length === 0) return;
   }
   Object.assign(state, patch); notify();
+}
+
+/** exported: bots.tsx cross-view tab switches (openBotsNew) go through the same state machine,
+ *  with legacy v2 tab keys normalized onto the six-tab IA */
+export function setState(patch: Record<string, unknown>) {
+  if (typeof patch.tab === "string") patch = { ...patch, tab: normalizeTab(patch.tab) };
+  rawSetState(patch);
 }
 
 // lucide 图标 path（与系统内建线条图标同风格）
@@ -196,7 +202,7 @@ async function op(action: string, label: string) {
   } catch (e: any) { setState({ busy: false, error: `${label}${t("失败：")}` + e.message }); }
 }
 /** 触发 cc-connect reload（热应用）或 restart（自动重启） */
-async function ccAction(action: string, label: string) {
+export async function ccAction(action: string, label: string) {
   setState({ busy: true, error: null, msg: null });
   try {
     const r = await fetch(API(`/api/extensions/aiti-channels/${action}`), { method: "POST" });
@@ -217,50 +223,73 @@ async function ccAction(action: string, label: string) {
 // t() runs at RENDER time (a module-level const would evaluate before __setCtx,
 // leaving every nav label stuck on the raw zh key in any locale).
 function TABS(): [string, string, string][] {
+  // v3 IA: six tabs (plan §3.1). Install/Config/Log live inside System; Cron/
+  // Providers/Skills inside Automation; Sessions/MsgLog inside Chat; Projects/
+  // Channels content is absorbed by bot rows. "remote" stays reachable
+  // (overview card + renderTab) but is intentionally not in the nav.
   return [
     ["overview", "home", t("总览")],
-    ["install", "package", t("安装")],
     ["bots", "bot", t("机器人")],
-    ["remote", "phone", t("远程")],
-    ["config", "fileEdit", t("配置")],
-    ["projects", "folder", t("项目")],
-    ["channels", "plug", t("渠道")],
-    ["sessions", "msg", t("会话")],
-    ["chat", "msg", t("聊天")],
-    ["msglog", "scroll", t("消息")],
-    ["cron", "clock", t("定时")],
-    ["providers", "layers", t("Providers")],
-    ["skills", "wrench", t("Skills")],
+    ["chat", "msg", t("对话")],
+    ["automate", "clock", t("自动化")],
     ["system", "settings", t("系统")],
-    ["log", "list", t("日志")],
     ["original", "monitor", t("原版")],
   ];
+}
+
+/** Legacy tab keys (v2 15-tab IA) map onto the six-tab homes so stale state,
+ *  quick links and docs deep-links keep working. */
+const LEGACY_TAB: Record<string, string> = {
+  install: "system", config: "system", log: "system",
+  projects: "bots", channels: "bots",
+  sessions: "chat", msglog: "chat",
+  cron: "automate", providers: "automate", skills: "automate",
+};
+function normalizeTab(tab: string): string {
+  return LEGACY_TAB[tab] || tab;
 }
 
 // ---------- Tab 内容 ----------
 function renderTab() {
   switch (state.tab) {
     case "overview": return <TabOverview />;
-    case "install": return <TabInstall />;
     case "bots": return <TabBots instance={state.curInstance} />;
     case "remote": return <RemoteView />;
-    case "config": return <TabConfig />;
-    case "projects": return <TabProjects />;
-    case "channels": return <TabChannels />;
-    case "sessions": return <TabSessions />;
-    case "chat": return <TabChat instance={state.curInstance} projects={((state.status?.cfg?.projects) || []).map((p: any) => p.name)} />;
-    case "msglog": return <TabMsgLog />;
-    case "cron": return <TabCron instance={state.curInstance} />;
-    case "providers": return <TabProviders instance={state.curInstance} projects={((state.status?.cfg?.projects) || []).map((p: any) => p.name)} />;
-    case "skills": return <TabSkills instance={state.curInstance} />;
-    case "system": return <TabSystem instance={state.curInstance} />;
-    case "log": return <TabLog />;
+    case "chat": return <TabChatView />;
+    case "automate": return <TabAutomateView />;
+    case "system": return <TabSystemView />;
     case "original": return <TabOriginal />;
-    default: return null;
+    default: return <TabOverview />;
   }
 }
 
 // ---------- 🏠 总览 ----------
+
+/** State-driven onboarding (plan §3.2): the next step follows the instance's real
+ *  state — install → start → wizard (no bots) → channel diagnostics → ready
+ *  (phone QR + chat). Replaces the v2 static four-step copy. */
+function Onboarding({ running, installed, botCount, bound, connected }: { running: boolean; installed: boolean; botCount: number; bound: number; connected: string[] }) {
+  const step = !installed ? 0 : !running ? 1 : botCount === 0 ? 2 : bound === 0 ? 3 : 4;
+  const STEPS: Array<{ label: string; hint: string; cta: string; go: () => void }> = [
+    { label: t("安装实例"), hint: t("cc-connect 尚未安装——装好后才能托管 IM 渠道。"), cta: t("去安装"), go: () => setState({ tab: "system" }) },
+    { label: t("启动实例"), hint: t("实例已安装但未运行——启动后 IM 渠道才会连上。"), cta: t("启动"), go: () => { void ccAction("start", t("启动")); } },
+    { label: t("创建第一个机器人"), hint: t("向导五步：命名 → 选平台 → 凭据 → 生效 → 验证，全程不换 tab。"), cta: t("打开向导"), go: () => openWizard() },
+    { label: t("连接平台"), hint: t("机器人已建但还没有平台连上（绑定为 0）——去机器人 tab 完成扫码/绑定。"), cta: t("机器人诊断"), go: () => setState({ tab: "bots" }) },
+    { label: t("全就绪"), hint: t("手机扫码远程控制，或直接进对话。"), cta: t("手机接入"), go: () => setState({ tab: "remote" }) },
+  ];
+  const cur = STEPS[step];
+  return (
+    <div style={{ fontSize: 12, lineHeight: 1.8, background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#4f46e5" }}>{`${t("下一步")}（${step + 1}/5）`}</span>
+        <span style={{ fontWeight: 700 }}>{cur.label}</span>
+        <button style={{ ...btnStyle, marginLeft: "auto", background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} onClick={cur.go}>{cur.cta}</button>
+      </div>
+      <div style={{ fontSize: 11, color: C.muted }}>{cur.hint}</div>
+    </div>
+  );
+}
+
 function TabOverview() {
   const s = state.status || {};
   const running = !!s.running;
@@ -270,7 +299,7 @@ function TabOverview() {
   const inst = state.install || {};
   const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
   // Dashboard stat: bound bot count (bots aggregate; mgmt sessions_count sum when reachable)
-  const [botStat, setBotStat] = useState<{ count: number; sessions: number | null }>({ count: 0, sessions: null });
+  const [botStat, setBotStat] = useState<{ count: number; sessions: number | null; bound: number }>({ count: 0, sessions: null, bound: 0 });
   // Dashboard extras: uptime / connected platforms / recent sessions (mgmt /status + per-project sessions)
   const [dash, setDash] = useState<{ uptime: string | null; connected: string[]; recent: Array<{ project: string; name: string; updated_at: string }> }>({ uptime: null, connected: [], recent: [] });
   useEffect(() => {
@@ -282,7 +311,7 @@ function TabOverview() {
         if (!alive || !d.ok) return;
         const bots = [...(d.bots || []), ...(d.configOnly || [])];
         const sess = bots.reduce((n: number, b: any) => n + (typeof b.sessions_count === "number" ? b.sessions_count : 0), 0);
-        setBotStat({ count: bots.length, sessions: bots.some((b: any) => typeof b.sessions_count === "number") ? sess : null });
+        setBotStat({ count: bots.length, sessions: bots.some((b: any) => typeof b.sessions_count === "number") ? sess : null, bound: bots.filter((b: any) => b.bound).length });
       } catch { /* ignore */ }
       if (!running) return;
       try {
@@ -361,7 +390,7 @@ function TabOverview() {
       {/* 快捷入口 */}
       <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={sectionTitle}>{t("快捷操作")}</div>
-        <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.7 }}>{t("使用流程：① 安装/启动实例 → ② 项目 tab「新建项目」→ ③ 机器人 tab 扫码/Token 接平台 → ④ 聊天 tab 实时对话、会话 tab 管理。单个项目增改走 项目/机器人 tab；整份批量配置走 配置 tab。")}</div>
+        <Onboarding running={running} installed={!!(inst && (inst as any).currentVersion)} botCount={botStat.count} bound={botStat.bound} connected={dash.connected} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[["projects", "folder", t("新建项目")], ["bots", "bot", t("机器人管理")], ["chat", "msg", t("聊天")], ["sessions", "msg", t("发消息")], ["msglog", "scroll", t("消息日志")], ["config", "fileEdit", t("编辑配置")], ["original", "monitor", t("打开管理台")]].map(([k, icon, l]) =>
             <button key={k} style={{ ...btnStyle, flex: 1, minWidth: 100 }} onClick={() => setState({ tab: k })}>{l}</button>)}
@@ -950,7 +979,7 @@ function TabSessions() {
       {sessions.length === 0 && <div style={{ ...cardStyle, textAlign: "center", color: C.muted, fontSize: 12 }}>{t("无活跃会话（IM 里给机器人发消息激活）")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sessions.map((s: any, i: number) => (
-          <div key={`${s.project || ""}:${s.session_key || i}`} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
+          <div key={`${i}:${s.project || ""}:${s.session_key || ""}`} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}
             onClick={() => setState({ sendForm: { ...f, project: s.project || f.project, session_key: s.session_key || "" } })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{s.project || "-"}</span>
@@ -1044,6 +1073,59 @@ function TabOriginal() {
           ? <iframe src={url} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "1px solid var(--border, rgba(127,127,127,0.18))", borderRadius: 10 }} title={t("cc-connect 管理台")} allow="clipboard-write" />
           : <div style={{ padding: 40, textAlign: "center", color: C.muted }}>{t("管理台地址未就绪（需 cc-connect 启用 [management]）")}</div>}
       </div>
+    </div>
+  );
+}
+
+
+// ---------- v3 six-tab composite views (reuse components, no rewrites) ----------
+/** ③ Chat = live chat stream + session management (delete/outbound) + message log */
+function TabChatView() {
+  const projects: string[] = ((state.status?.cfg?.projects) || []).map((p: any) => p.name);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <TabChat instance={state.curInstance} projects={projects} />
+      <TabSessions />
+      <TabMsgLog />
+    </div>
+  );
+}
+
+/** ④ Automation = Cron + Providers + Skills (vertical stack, components reused as-is) */
+function TabAutomateView() {
+  const projects: string[] = ((state.status?.cfg?.projects) || []).map((p: any) => p.name);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <TabCron instance={state.curInstance} />
+      <TabProviders instance={state.curInstance} projects={projects} />
+      <TabSkills instance={state.curInstance} />
+    </div>
+  );
+}
+
+/** ⑤ System = install / settings / bulk config generation (with warnings) / instance log (segmented) */
+function TabSystemView() {
+  const [seg, setSeg] = useState<string>("install");
+  const SEGS: [string, string][] = [["install", t("安装")], ["settings", t("设置")], ["config", t("配置生成")], ["log", t("日志")]];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {SEGS.map(([k, label]) => (
+          <button key={k} onClick={() => setSeg(k)}
+            style={{ ...btnStyle, ...(seg === k ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>{label}</button>
+        ))}
+      </div>
+      {seg === "install" && <TabInstall />}
+      {seg === "settings" && <TabSystem instance={state.curInstance} />}
+      {seg === "config" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12, lineHeight: 1.7, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.35)", borderRadius: 10, padding: "10px 12px", color: "#92400e" }}>
+            {"⚠️ " + t("批量生成工具：整份重写 config.toml，会覆盖手工/向导做的修改。日常加机器人用机器人 tab 的向导；这里只用于多实例批量装机。")}
+          </div>
+          <TabConfig />
+        </div>
+      )}
+      {seg === "log" && <TabLog />}
     </div>
   );
 }

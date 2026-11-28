@@ -19,6 +19,7 @@ import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 import { qrDataUrl } from "./qr";
 import { buildDeepLink } from "../../lib/deep-link.ts";
 import { btnStyle, cardStyle, inp, sectionTitle, chip, setState as setStatePub, getHostSessionId } from "./channels-app";
+import { ProjectDetailPanel } from "./mgmt-tabs";
 
 const API = (p: string) => apiUrl(p);
 
@@ -155,12 +156,247 @@ function workDirOf(): string | undefined {
 /** Cross-view handoff: the remote view's Configure button switches to the bots tab
  *  with a preselected platform (consumed once on TabBots mount, then cleared). */
 let autoNewPlatform: string | null = null;
+/** "open the wizard with no platform preselected" (Onboarding step: no bots yet) */
+let wizardAutoOpen = false;
+export function openWizard() {
+  wizardAutoOpen = true;
+  autoNewPlatform = null;
+  setStatePub({ tab: "bots", open: true, error: null, msg: null });
+}
 export function openBotsNew(platform?: string) {
   autoNewPlatform = platform || null;
   // F2: the bots dialog is retired — switch the panel tab instead
   // (setState's open branch itself forces the float present)
   setStatePub({ tab: "bots", open: true, error: null, msg: null });
 }
+
+export type WizardPrefill = { platform?: string; skipPlatform?: boolean; project?: string; workDir?: string; agentType?: string };
+
+const WIZ_AGENTS = ["piweb", "claudecode", "codex", "cursor", "gemini", "opencode", "qoder"];
+
+/** Bot wizard — the single creation path (plan §3.2): basics → platform → credentials → apply → verify,
+ *  no tab switching; the apply action (reload vs restart) is driven by the creation
+ *  path, not guessed by the user. */
+function BotWizard({ instance, prefill, onDone, onClose }: { instance: string; prefill: WizardPrefill; onDone: () => void; onClose: () => void }) {
+  const [step, setStep] = useState(1);
+  const [base, setBase] = useState({ project: prefill.project || "", workDir: prefill.workDir || "", agentType: prefill.agentType || "piweb" });
+  const [platform, setPlatform] = useState<string | null>(prefill.platform || null);
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [apply, setApply] = useState<{ kind: "reload" | "restart"; done: boolean } | null>(null);
+  const [verify, setVerify] = useState<{ state: "" | "ok" | "warn" | "error"; detail: string } | null>(null);
+  // scan path: onDone fires after setup/save → the instance needs a restart to connect
+  const { wiz, setup, stop: stopWiz } = useScanWizard(instance, () => { onDone(); setApply({ kind: "restart", done: false }); setStep(4); });
+  const sch = platform ? platformSchema(platform) : null;
+  const scanning = platform ? SCAN_PLATFORMS.includes(platform) : false;
+
+  const createTokenBot = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(API(`/api/extensions/aiti-channels/bot-create-token?instance=${encodeURIComponent(instance)}`), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: base.project.trim(), type: platform, options: fields, work_dir: base.workDir.trim() || undefined, agent_type: base.agentType }),
+      });
+      const d = await r.json();
+      if (!d.ok && d.status !== 201) { setErr(d.error || `HTTP ${r.status}`); setBusy(false); return; }
+      // restart_required sits at different depths depending on the response wrapper
+      // (action json vs mgmt passthrough payload)
+      const rr = !!(d.restart_required ?? d.data?.restart_required ?? d.data?.data?.restart_required);
+      setApply({ kind: rr ? "restart" : "reload", done: false });
+      onDone();
+      setBusy(false);
+      setStep(4);
+    } catch (e: any) { setBusy(false); setErr(e.message); }
+  };
+
+  const doApply = async () => {
+    if (!apply) return;
+    setBusy(true); setErr(null);
+    try {
+      const action = apply.kind === "restart" ? "restart-cc" : "reload-cc";
+      const r = await fetch(API(`/api/extensions/aiti-channels/${action}?instance=${encodeURIComponent(instance)}`), { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) setErr(d.error || `HTTP ${r.status}`);
+      else { setApply({ ...apply, done: true }); setStep(5); }
+    } catch (e: any) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const sendTest = async () => {
+    setBusy(true); setVerify(null);
+    try {
+      const r = await fetch(API(`/api/extensions/aiti-channels/send?instance=${encodeURIComponent(instance)}`), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: base.project.trim(), message: t("你好，这是一条链路测试消息。") }),
+      });
+      const d = await r.json();
+      if (d.ok) setVerify({ state: "ok", detail: t("测试消息已发出（mgmt send）——去 IM 确认收到。") });
+      else if ((d.error || "").includes("无活跃会话")) setVerify({ state: "warn", detail: t("新项目还没有活跃会话：先在 IM 里给这个机器人发一条消息，会话激活后回来再发测试。") });
+      else setVerify({ state: "error", detail: d.error || `HTTP ${r.status}` });
+    } catch (e: any) { setVerify({ state: "error", detail: e.message }); }
+    setBusy(false);
+  };
+
+  const StepDot = ({ n, label }: { n: number; label: string }) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: step === n ? 700 : 500, color: step === n ? "#4f46e5" : "#6b7280" }}>
+      <span style={{ width: 16, height: 16, borderRadius: 8, background: step === n ? "#6366f1" : "rgba(127,127,127,0.15)", color: step === n ? "#fff" : "#6b7280", fontSize: 10, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span>
+      {label}
+    </span>
+  );
+
+  return (
+    <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 10, borderColor: "rgba(99,102,241,0.35)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={sectionTitle}>{t("机器人向导")}</div>
+        <div style={{ display: "flex", gap: 12, marginLeft: "auto", flexWrap: "wrap" }}>
+          <StepDot n={1} label={t("基础")} />
+          <StepDot n={2} label={t("平台")} />
+          <StepDot n={3} label={t("凭据")} />
+          <StepDot n={4} label={t("生效")} />
+          <StepDot n={5} label={t("验证")} />
+        </div>
+        <button style={{ ...btnStyle }} onClick={() => { stopWiz(); onClose(); }}>{t("取消")}</button>
+      </div>
+      {err && <div style={{ fontSize: 12, color: "#ea580c" }}>{t("Failed: ") + err}</div>}
+
+      {step === 1 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input placeholder={t("Bot name (= cc-connect project name)")} value={base.project} onChange={(e) => setBase({ ...base, project: e.target.value })} style={inp} />
+            <input placeholder={t("work_dir (defaults to the current workspace)")} value={base.workDir} onChange={(e) => setBase({ ...base, workDir: e.target.value })} style={inp} />
+            <select value={base.agentType} onChange={(e) => setBase({ ...base, agentType: e.target.value })} style={{ ...inp, flex: "0 0 170px", cursor: "pointer" }}>
+              {WIZ_AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+          <div style={{ fontSize: 11, color: "#6b7280" }}>{t("机器人名 = cc-connect 项目名（1:1）。work_dir 留空 = 当前工作区。")}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
+              disabled={!base.project.trim()}
+              onClick={() => setStep(prefill.skipPlatform ? 4 : 2)}>{prefill.skipPlatform ? t("下一步（纯项目，跳过平台）") : t("下一步：选平台")}</button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 11, color: "#6b7280" }}>{t("扫码直建（确认页显示 OpenClaw 字样属预期）")}：</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {SCAN_PLATFORMS.map((p) => (
+              <button key={p} onClick={() => { setPlatform(p); setStep(3); }}
+                style={{ ...btnStyle, ...(platform === p ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>
+                {pfIcon(p) + " " + pfName(p)}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>{t("Token 表单平台")}：</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {PLATFORM_SCHEMAS.filter((p) => !SCAN_PLATFORMS.includes(p.type)).map((p) => (
+              <button key={p.type} onClick={() => { setPlatform(p.type); setFields({}); setStep(3); }}
+                style={{ ...btnStyle, fontSize: 11, ...(platform === p.type ? { background: "rgba(99,102,241,0.14)", color: "#4f46e5", borderColor: "rgba(99,102,241,0.35)" } : {}) }}>
+                {pfIcon(p.type) + " " + pfName(p.type)}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={btnStyle} onClick={() => { setPlatform(null); setStep(4); }}>{t("跳过（纯项目创建）")}</button>
+            <button style={btnStyle} onClick={() => setStep(1)}>{t("上一步")}</button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && platform && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700 }}>{`${pfIcon(platform)} ${pfName(platform)}`}</div>
+          {platform === "weixin" && (
+            <div style={{ fontSize: 11, color: "#92400e", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: "7px 10px", lineHeight: 1.6 }}>
+              {"⚠️ " + t(OPENCLAW_NOTE)}
+            </div>
+          )}
+          {sch && (
+            <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.7 }}>
+              {sch.guide.steps.map((g, i) => <div key={i}>{`${i + 1}. ${g}`}</div>)}
+              {sch.guide.link && <div><a href={sch.guide.link.url} target="_blank" rel="noreferrer" style={{ color: "#6366f1" }}>{sch.guide.link.label} ↗</a></div>}
+            </div>
+          )}
+          {scanning ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
+                disabled={busy || wiz?.phase === "scanning"} onClick={() => void setup(platform, base.project.trim(), base.workDir.trim())}>
+                {wiz?.phase === "scanning" ? t("Waiting for scan confirmation…") : "📱 " + t("Scan & create")}
+              </button>
+              <button style={btnStyle} onClick={() => setStep(2)}>{t("上一步")}</button>
+            </div>
+          ) : (
+            <>
+              {sch && sch.fields.map((f) => (
+                <div key={f.key} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  <span style={{ fontSize: 10, color: "#6b7280" }}>{`${f.label}${f.required ? " *" : ""}`}</span>
+                  <input type={f.secret ? "password" : "text"} placeholder={f.ph || ""} value={fields[f.key] || ""}
+                    onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })} style={inp} />
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }}
+                  disabled={busy} onClick={() => void createTokenBot()}>{t("Create (add-platform; applies after restart)")}</button>
+                <button style={btnStyle} onClick={() => setStep(2)}>{t("上一步")}</button>
+              </div>
+            </>
+          )}
+          {/* scan live area */}
+          {wiz && wiz.phase !== "idle" && (
+            <div style={{ background: "var(--bg-hover, rgba(127,127,127,0.08))", borderRadius: 10, padding: 12, display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+              {wiz.qrImg && <img src={wiz.qrImg} alt="QR" width={150} height={150} style={{ borderRadius: 8, background: "#fff" }} />}
+              <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.8, flex: 1, minWidth: 200 }}>
+                {wiz.phase === "loading" && <span>{t("Fetching QR code…")}</span>}
+                {wiz.phase === "scanning" && <>
+                  <div>{`${t("Scan with")} ${pfName(wiz.platform)} ${t("and confirm")}`}</div>
+                  {wiz.fallbackUrl && <div><a href={wiz.fallbackUrl} target="_blank" rel="noreferrer" style={{ color: "#6366f1" }}>{t("Cannot scan? Open the link on your phone")}</a></div>}
+                </>}
+                {wiz.phase === "saving" && <div style={{ color: "#6366f1" }}>{t("Authorized — saving credentials and creating the project…")}</div>}
+                {wiz.phase === "error" && <div style={{ color: "#ea580c" }}>{t("Failed: ") + (wiz.err || "")}</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 4 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {!apply && <div style={{ fontSize: 12, color: "#6b7280" }}>{t("纯项目创建：项目写入 config 后需一次 reload 热应用。")}</div>}
+          {apply && <div style={{ fontSize: 12, color: "#16a34a" }}>{apply.done ? t("已生效。") : apply.kind === "restart" ? t("凭据已保存——需要重启实例让平台连上（restart_required）。") : t("项目已创建——reload 即可热应用。")}</div>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!apply && <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
+              onClick={() => setApply({ kind: "reload", done: false })}>{t("热应用 reload")}</button>}
+            {apply && !apply.done && <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
+              onClick={() => void doApply()}>{apply.kind === "restart" ? t("重启实例（restart-cc）") : t("热应用 reload")}</button>}
+            {apply && !apply.done && <button style={btnStyle} disabled={busy} onClick={() => setStep(5)}>{t("稍后手动生效")}</button>}
+            {apply?.done && <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} onClick={() => setStep(5)}>{t("下一步：验证")}</button>}
+            {step > 1 && <button style={btnStyle} onClick={() => setStep(1)}>{t("回到基础")}</button>}
+          </div>
+        </div>
+      )}
+
+      {step === 5 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>{t("验证步：向新项目发一条测试消息（mgmt send；新项目需先在 IM 里激活一次会话）。")}</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy}
+              onClick={() => void sendTest()}>{busy ? t("Sending…") : "📤 " + t("发测试消息")}</button>
+            <button style={btnStyle} onClick={() => { setStatePub({ tab: "chat" }); }}>{t("去对话 tab 实时看")}</button>
+            <button style={btnStyle} onClick={() => { stopWiz(); onClose(); }}>{t("完成")}</button>
+          </div>
+          {verify && (
+            <div style={{ fontSize: 12, lineHeight: 1.7, borderRadius: 8, padding: "8px 10px", color: verify.state === "ok" ? "#16a34a" : verify.state === "warn" ? "#92400e" : "#ea580c", background: verify.state === "ok" ? "rgba(34,197,94,0.1)" : verify.state === "warn" ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.08)", border: `1px solid ${verify.state === "ok" ? "rgba(34,197,94,0.3)" : verify.state === "warn" ? "rgba(245,158,11,0.3)" : "rgba(239,68,68,0.3)"}` }}>
+              {verify.detail}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 export function TabBots({ instance }: { instance: string }) {
   const preselect = autoNewPlatform; // consumed once per mount (remote-dialog Configure handoff)
@@ -171,10 +407,14 @@ export function TabBots({ instance }: { instance: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [creating, setCreating] = useState(!!preselect);
-  const [form, setForm] = useState<{ project: string; type: string; workDir: string; fields: Record<string, string> }>({ project: "", type: preselect || "telegram", workDir: "", fields: {} });
+  // wizard open state: platform preselect (remote view handoff) or a bare open
+  // (Onboarding "no bots yet"); prefill.skipPlatform = pure project creation
+  const [wizard, setWizard] = useState<WizardPrefill | null>(
+    preselect ? { platform: preselect } : wizardAutoOpen ? { skipPlatform: false } : null
+  );
+  wizardAutoOpen = false;
+  const [manageProj, setManageProj] = useState<string | null>(null);
   const { wiz, setup, stop: stopWiz } = useScanWizard(instance, () => { void reload(); });
-  const sch = platformSchema(form.type);
 
   const reload = async () => {
     try {
@@ -199,21 +439,9 @@ export function TabBots({ instance }: { instance: string }) {
     finally { setBusy(false); }
   };
 
-  const startCreate = (type: string) => {
-    setCreating(true); setSel(null);
-    setForm({ project: "", type, workDir: "", fields: {} });
-  };
-  const submitCreate = async () => {
-    if (!form.project.trim()) { setErr("bot name required"); return; }
-    const need = (sch?.fields || []).filter((f) => f.required && !form.fields[f.key]);
-    if (SCAN_PLATFORMS.includes(form.type)) {
-      // scan-to-create: save writes project+platform itself
-      await setup(form.type, form.project.trim(), form.workDir.trim());
-      return;
-    }
-    if (need.length) { setErr(`Missing required: ${need.map((f) => f.label).join(", ")}`); return; }
-    await call("bot-create-token", { project: form.project.trim(), type: form.type, options: form.fields, work_dir: form.workDir.trim() || undefined, agent_type: "piweb" });
-    setCreating(false);
+  const startCreate = (type?: string, opts?: { skipPlatform?: boolean }) => {
+    setSel(null); stopWiz();
+    setWizard(type ? { platform: type } : { skipPlatform: !!opts?.skipPlatform });
   };
 
   const granSupported = selBot ? selBot.platforms.some((p) => RICH_CARD_PLATFORMS.includes(p)) : false;
@@ -226,8 +454,9 @@ export function TabBots({ instance }: { instance: string }) {
         <span style={{ fontSize: 13, fontWeight: 700 }}>{t("Bots")}</span>
         <span style={chip("rgba(99,102,241,0.12)", "#6366f1")}>{`${meta.version || t("unknown")} · ${meta.running ? t("running") : t("not running")}`}</span>
         {!meta.mgmtReachable && meta.mgmtError && <span style={{ fontSize: 11, color: "#ea580c" }}>{meta.mgmtError}</span>}
-        <button style={{ ...btnStyle, marginLeft: "auto", color: "#4f46e5" }} onClick={() => startCreate("telegram")}>{"+ " + t("New bot")}</button>
-        <button style={{ ...btnStyle }} onClick={() => void reload()}>{t("Refresh")}</button>
+        <button style={{ ...btnStyle, marginLeft: "auto", color: "#4f46e5" }} onClick={() => startCreate("telegram")}>{"+ " + t("新建机器人")}</button>
+        <button style={{ ...btnStyle }} onClick={() => startCreate(undefined, { skipPlatform: true })}>{"+ " + t("纯项目")}</button>
+        <button style={{ ...btnStyle }} onClick={() => void reload()}>{t("刷新")}</button>
       </div>
 
       {/* bot list */}
@@ -243,77 +472,19 @@ export function TabBots({ instance }: { instance: string }) {
             <span style={chip("rgba(127,127,127,0.12)", "#6b7280")}>{b.card_mode}</span>
             {b.sessions_count != null && <span style={{ fontSize: 11, color: "#6b7280" }}>{`${t("Sessions")} ${b.sessions_count}`}</span>}
             <span style={{ marginLeft: "auto", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>{b.work_dir || ""}</span>
+            <button style={{ ...btnStyle, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); setManageProj(manageProj === b.name ? null : b.name); }}>{t("项目设置")}</button>
           </div>
         ))}
       </div>
+      {manageProj && <ProjectDetailPanel instance={instance} project={manageProj} onClose={() => setManageProj(null)} />}
 
-      {/* create / wizard */}
-      {creating && (
-        <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={sectionTitle}>{t("New bot")}</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, fields: {} })} style={{ ...inp, flex: "0 0 200px", cursor: "pointer" }}>
-              {PLATFORM_SCHEMAS.map((p) => <option key={p.type} value={p.type}>{`${pfIcon(p.type)} ${pfName(p.type)}${SCAN_PLATFORMS.includes(p.type) ? " · " + t("scan-to-create") : ""}`}</option>)}
-            </select>
-            <input placeholder={t("Bot name (= cc-connect project name)")} value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })} style={inp} />
-            <input placeholder={`${t("work_dir (defaults to the current workspace)")}`} value={form.workDir} onChange={(e) => setForm({ ...form, workDir: e.target.value })} style={inp} />
-          </div>
-          {/* channel source line + guide */}
-          <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.6 }}>
-            {"Channel: " + t(PLATFORM_SRC[form.type]?.src || sch?.note || "—")}
-          </div>
-          {form.type === "weixin" && (
-            <div style={{ fontSize: 11, color: "#92400e", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: "7px 10px", lineHeight: 1.6 }}>
-              {"⚠️ " + t(OPENCLAW_NOTE)}
-            </div>
-          )}
-          {sch && (
-            <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.7 }}>
-              {sch.guide.steps.map((s, i) => <div key={i}>{`${i + 1}. ${s}`}</div>)}
-              {sch.guide.link && <div><a href={sch.guide.link.url} target="_blank" rel="noreferrer" style={{ color: "#6366f1" }}>{sch.guide.link.label} ↗</a></div>}
-            </div>
-          )}
-          {/* credential fields (scan platforms keep the button instead) */}
-          {sch && !SCAN_PLATFORMS.includes(form.type) && sch.fields.map((f) => (
-            <div key={f.key} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ fontSize: 10, color: "#6b7280" }}>{`${f.label}${f.required ? " *" : ""}`}</span>
-              <input type={f.secret ? "password" : "text"} placeholder={f.ph || ""} value={form.fields[f.key] || ""}
-                onChange={(e) => setForm({ ...form, fields: { ...form.fields, [f.key]: e.target.value } })} style={inp} />
-            </div>
-          ))}
-          <div style={{ display: "flex", gap: 8 }}>
-            {SCAN_PLATFORMS.includes(form.type)
-              ? <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy || wiz?.phase === "scanning"} onClick={() => void submitCreate()}>{wiz?.phase === "scanning" ? t("Waiting for scan confirmation…") : "📱 " + t("Scan & create")}</button>
-              : <button style={{ ...btnStyle, background: "rgba(99,102,241,0.14)", color: "#4f46e5", border: "1px solid rgba(99,102,241,0.35)" }} disabled={busy} onClick={() => void submitCreate()}>{t("Create (add-platform; applies after restart)")}</button>}
-            <button style={btnStyle} onClick={() => { setCreating(false); stopWiz(); }}>{t("Cancel")}</button>
-          </div>
-          {/* wizard live area: QR + status */}
-          {wiz && wiz.phase !== "idle" && (
-            <div style={{ background: "var(--bg-hover, rgba(127,127,127,0.08))", borderRadius: 10, padding: 12, display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-              {wiz.qrImg && <img src={wiz.qrImg} alt="QR" width={160} height={160} style={{ borderRadius: 8, background: "#fff" }} />}
-              <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.8, flex: 1, minWidth: 200 }}>
-                {wiz.phase === "loading" && <span>{t("Fetching QR code…")}</span>}
-                {wiz.phase === "scanning" && <>
-                  <div>{`${t("Scan with")} ${pfName(wiz.platform)} ${t("and confirm")}`}</div>
-                  {wiz.fallbackUrl && <div><a href={wiz.fallbackUrl} target="_blank" rel="noreferrer" style={{ color: "#6366f1" }}>{t("Cannot scan? Open the link on your phone")}</a></div>}
-                  <div style={{ color: "#6366f1" }}>{t("Waiting for phone confirmation… (device-flow polling, interval from the server)")}</div>
-                </>}
-                {wiz.phase === "saving" && <div style={{ color: "#6366f1" }}>{t("Authorized — saving credentials and creating the project…")}</div>}
-                {wiz.phase === "done" && <div style={{ color: "#16a34a" }}>{t("Bot created (restart-cc to connect the platform)")}</div>}
-                {wiz.phase === "error" && <div style={{ color: "#ea580c" }}>{(t("Failed: ") + (wiz.err || ""))}</div>}
-                {wiz.platform === "weixin" && wiz.phase === "scanning" && (
-                  <div style={{ marginTop: 6, fontSize: 11, color: "#92400e", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: "6px 8px", lineHeight: 1.6 }}>
-                    {"⚠️ " + t(OPENCLAW_NOTE)}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+      {/* create / wizard — five steps, single creation path (plan §3.2) */}
+      {wizard && (
+        <BotWizard instance={instance} prefill={wizard} onDone={() => void reload()} onClose={() => { setWizard(null); stopWiz(); }} />
       )}
 
       {/* detail (selected bot) */}
-      {selBot && !creating && (
+      {selBot && !wizard && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {/* scan re-bind */}
           {selBot.platforms.some((p) => SCAN_PLATFORMS.includes(p)) && (
