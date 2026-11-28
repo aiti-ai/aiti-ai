@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-claude-code-agent",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Drives Claude Code CLI sessions — restores history rows from All Sessions (agentKey: claude); claude 2.1.318+ keyring credentials with a three-tier login-state adjudication",
   "displayNameI18n": {
     "en": "Claude Code Session Backend"

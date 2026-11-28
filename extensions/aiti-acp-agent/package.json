@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-acp-agent",
-  "version": "0.3.13",
+  "version": "0.3.15",
   "type": "module",
   "description": "A universal ACP driver — one adapter connects all Agent Client Protocol agents (25 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)",
   "displayNameI18n": {

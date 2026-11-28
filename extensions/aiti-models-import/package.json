@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-models-import",
-  "version": "0.1.15",
+  "version": "0.1.17",
   "description": "Imports model configs from other agents — scans codex / ZCode / OpenCode provider·model configs into drafts (first-launch dialog for a one-time import); persistence always goes through aiti-model-wizard saveBatch (undoable in one step), never writes models.json directly",
   "displayNameI18n": {
     "en": "Model Import"

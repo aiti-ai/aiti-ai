@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-helper",
-  "version": "0.5.15",
+  "version": "0.5.17",
   "type": "module",
   "description": "The one-sentence AI capability entry for all extensions — declarative AI help points (pi skills standard) + input/result preview/review-and-fill-back + streaming progress bus delivery + multi-turn follow-ups + history and background tasks + user-defined skills (config versioning has been split out as aiti-configs)",
   "displayNameI18n": {

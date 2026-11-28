@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-manager",
-  "version": "0.2.12",
+  "version": "0.2.14",
   "description": "Unified aggregation of external agent login states + login action proxying + multi-account profiles (backup/alias/one-click switch) + account quota display — implements no login protocol at all",
   "displayNameI18n": {
     "en": "Agent Manager"

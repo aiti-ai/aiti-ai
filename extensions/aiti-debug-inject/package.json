@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-debug-inject",
-  "version": "0.3.11",
+  "version": "0.3.13",
   "description": "Minimal remote-debug injection — injects another pi-web instance's debugger into this instance's pages; the service URL is a text feature in extman, off by default",
   "displayNameI18n": {
     "en": "Remote Debug Inject"

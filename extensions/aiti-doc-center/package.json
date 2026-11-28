@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-doc-center",
-  "version": "0.1.14",
+  "version": "0.1.16",
   "type": "module",
   "description": "workspace markdown collection/organization/search — FTS5 trigram Chinese full-text + tag seven-source two-layer + 📚 float dialog four views",
   "displayNameI18n": {

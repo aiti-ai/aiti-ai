@@ -15,7 +15,7 @@
   "descriptionI18n": {
     "zh-CN": "消息点击识别 —— 段落/标题/代码行点击 → 引用/复制/选项弹层 + 子句/行高亮"
   },
-  "version": "0.1.13",
+  "version": "0.1.14",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
   "contentHash": "6ca96a9c73e5aef9",

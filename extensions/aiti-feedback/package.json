@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-feedback",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "type": "module",
   "description": "User feedback — compose a sanitized report and open a prefilled GitHub issue",
   "displayNameI18n": {

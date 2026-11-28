@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-word-superdoc",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Online .docx editing (SuperDoc: ProseMirror bidirectional docx). The AGPL is isolated within this extension — don't install it and it's simply not there",
   "displayNameI18n": {
     "en": "Word Editor"

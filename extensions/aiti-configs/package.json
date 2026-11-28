@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-configs",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "type": "module",
   "description": "A safety net for configuration — when AI/humans or extension changes break the config, there is a commit to revert, a diff to inspect, one-click restore; if the system crashes, a command-line watchdog recovers without relying on the broken system itself",
   "displayNameI18n": {

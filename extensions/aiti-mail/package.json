@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-mail",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "type": "module",
   "description": "The general \"mail sending outlet\" inside pi-web — zero-dependency SMTP client + send log (node:sqlite) + management dialog (config/test/log)",
   "displayNameI18n": {

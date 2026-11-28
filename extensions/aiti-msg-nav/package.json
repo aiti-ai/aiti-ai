@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-nav",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "type": "module",
   "description": "A scroll navigation bar on the right side of the message area — to earliest / to latest / previous / next user input, one-click direct access; long-press \"to latest\" keeps the screen awake",
   "displayNameI18n": {

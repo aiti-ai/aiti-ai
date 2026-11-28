@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-proc-tree",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Child-process tree manager — list every process the pi-web ecosystem spawns (terminals, tunnels, subagents, external agents), with CPU/memory and subtree stop; samples only while the panel is open",
   "displayNameI18n": {
     "en": "Process Tree"

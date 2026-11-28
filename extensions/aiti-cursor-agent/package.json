@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cursor-agent",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Drives Cursor Agent CLI sessions (agentKey: cursor) — stream-json print mode + --resume multi-turn; Cursor IDE sessions parsed read-only",
   "displayNameI18n": {
     "en": "Cursor CLI Session Backend"

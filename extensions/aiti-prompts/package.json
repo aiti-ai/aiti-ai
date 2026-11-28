@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-prompts",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "type": "module",
   "description": "Prompt snippet collection — favorites/groups/session extraction/save-as-you-type",
   "displayNameI18n": {

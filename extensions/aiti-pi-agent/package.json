@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-pi-agent",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Spawns a pi --mode rpc child process as a session — the main path of the multi-agent frontend",
   "displayNameI18n": {
     "en": "pi Session Backend"

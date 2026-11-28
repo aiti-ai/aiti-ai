@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-queue-keeper",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "type": "module",
   "description": "Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.",
   "displayNameI18n": {

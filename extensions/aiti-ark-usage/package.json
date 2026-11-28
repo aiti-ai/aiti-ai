@@ -1,0 +1,33 @@
+{
+  "name": "@aiti-ai/aiti-ark-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Volcano Ark plan quota via the host usage-adapter channel — registers the ark-plan adapter (Coding Plan / Agent Plan windows from the control-plane OpenAPI, AK/SK signed) so pi sessions and the provider-usage overview light up",
+  "displayNameI18n": {
+    "en": "Ark Usage (Volcano Ark plan quota)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "火山方舟套餐余量——经宿主 usage 适配器通道注册 ark-plan 适配器（控制面 OpenAPI 查 Coding/Agent Plan 窗口，AK/SK 签名），点亮 pi 会话配额显示与 provider 总览"
+  },
+  "soul": "方舟余量，随手可见。",
+  "soulI18n": {
+    "en": "Your Ark plan balance, always in view."
+  },
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ark-usage"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
+  }
+}

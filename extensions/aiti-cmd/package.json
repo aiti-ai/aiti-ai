@@ -23,7 +23,7 @@
   "soulI18n": {
     "en": "Leave thinking to the brain; hand commands to the favorites."
   },
-  "version": "0.3.4",
+  "version": "0.3.6",
   "aitiConfigs": {
     "configFiles": [
       "commands.json",

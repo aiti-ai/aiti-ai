@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-session-cards",
-  "version": "0.1.15",
+  "version": "0.1.17",
   "description": "Session request card extension — full UI for interaction-primitive cards (zcode plan approval / AskUser / omp OAuth / generic fallback) and tool authorization cards",
   "displayNameI18n": {
     "en": "Session Request Cards (approval/Q&A/authorization)"

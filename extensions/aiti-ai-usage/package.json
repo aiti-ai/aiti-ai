@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-usage",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "AI token usage statistics — multi-dimensional reports by workspace/provider/model/key/time-slot, pivot over any dimension combination + sankey diagram + CSV export, event-driven with zero polling, standalone SQLite storage",

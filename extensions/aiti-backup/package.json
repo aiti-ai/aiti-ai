@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-backup",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Snapshot backup for large pi-web state data — hard-link incremental snapshots, out-of-process execution, crash-safe temp files, keepCount rotation. Complements aiti-configs, which versions small configs in git.",
   "displayNameI18n": {
     "en": "Data Backup (snapshots)"
