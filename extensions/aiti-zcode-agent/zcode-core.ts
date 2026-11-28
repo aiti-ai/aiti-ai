@@ -677,9 +677,67 @@ export function quotaLimitToQuotaView(payload: Record<string, unknown>, now = Da
     view.remaining = monthlyRemaining;
     const monthlyTotal = monthly ? num(monthly.usage) : undefined;
     if (monthlyTotal !== undefined) view.total = monthlyTotal;
+    const monthlyUsed = monthly ? num(monthly.currentValue) : undefined;
+    if (monthlyUsed !== undefined) view.used = monthlyUsed;
   }
-  if (level) view.note = `等级 ${level}`;
+  if (level) {
+    view.plan = level;
+    view.note = `等级 ${level}`;
+  }
   return view;
+}
+
+/**
+ * quota view → get_usage protocol snapshot (lib/ext/types.ts BackendUsageSnapshot) merged over
+ * the latest per-turn tokens. Token windows expose only a percentage upstream: remaining is
+ * expressed as the remaining share of the window (x/100) so consumers can render a bar; the
+ * monthly bucket keeps real counts. Returns null when the view carries no numeric quota
+ * (e.g. the plan-status fallback view) — callers then keep their tokens-only snapshot.
+ * Pure function (no IO), for unit tests.
+ */
+export function backendUsageFromQuotaView(
+  view: Record<string, unknown> | null | undefined,
+  base?: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!view || view.available !== true) return null;
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const packages = Array.isArray(view.packages) ? (view.packages as Array<Record<string, unknown>>) : [];
+  const hasNumbers = num(view.remaining) !== undefined
+    || num(view.usedPercent) !== undefined
+    || packages.some((p) => num(p.usedPercent) !== undefined || num(p.remaining) !== undefined);
+  if (!hasNumbers) return null;
+
+  const buckets = packages.map((p) => {
+    const pct = num(p.usedPercent);
+    const remaining = num(p.remaining) ?? (pct !== undefined ? Math.round(100 - pct) : undefined);
+    const isShareBucket = num(p.remaining) === undefined && pct !== undefined;
+    const total = num(p.total) ?? (isShareBucket ? 100 : undefined);
+    const used = num(p.used) ?? (isShareBucket ? pct : undefined);
+    const out: Record<string, unknown> = { name: p.name };
+    if (remaining !== undefined) out.remaining = remaining;
+    if (total !== undefined) out.total = total;
+    if (used !== undefined) out.used = used;
+    if (pct !== undefined) out.usedPercent = pct;
+    const reset = num(p.nextResetTime);
+    if (reset !== undefined) out.nextResetTime = reset;
+    return out;
+  });
+
+  const exhausted = buckets.some((b) => b.usedPercent === 100) || num(view.remaining) === 0;
+  const credits: Record<string, unknown> = { unit: typeof view.unit === "string" ? view.unit : "次" };
+  for (const key of ["remaining", "used", "usedPercent", "expiresAt"] as const) {
+    const v = num(view[key]);
+    if (v !== undefined) credits[key] = v;
+  }
+
+  return {
+    ...(base ?? {}),
+    provider: "zcode",
+    ...(typeof view.plan === "string" && view.plan ? { plan: view.plan } : {}),
+    credits,
+    buckets,
+    ...(exhausted ? { quotaExceeded: true } : {}),
+  };
 }
 
 /**

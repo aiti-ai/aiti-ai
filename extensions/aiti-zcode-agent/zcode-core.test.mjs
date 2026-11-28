@@ -983,8 +983,8 @@ test("handle wire: 首轮捕获 sessionId 换绑 + usage + 事件流 + resume �
   assert.ok(startIdx >= 0, "agent_start 受理即发");
   assert.ok(endIdx > startIdx && settleIdx > endIdx, "agent_end → agent_settled 顺序");
   assert.ok(events.some((e) => e.type === "agent_settled" && e.stopReason === "end_turn"));
-  // usage / context
-  const usage = handle.getUsage();
+  // usage / context（getUsage 现为 async：tokens + 账号额度合并；本测试环境无套餐缓存 → tokens-only）
+  const usage = await handle.getUsage();
   assert.equal(usage.inputTokens, 100);
   assert.equal(usage.provider, "zcode");
   const cu = handle.getContextUsage();
