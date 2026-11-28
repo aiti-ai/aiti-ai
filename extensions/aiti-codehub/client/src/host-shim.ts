@@ -124,11 +124,15 @@ export function sendChat(text: string, mode: "steer" | "followUp" = "followUp"):
   try { fn(text, mode); return true; } catch { return false; }
 }
 
-/** Prefill the composer through the host composer service (no send). */
+/** Prefill the composer through the host composer service (no send). The service
+ * is a capability query ("get(name)") per host-ui-contract — fields are not
+ * exposed as direct properties. */
 export function setComposer(text: string): boolean {
-  const svc = extSvc<{ setInputValue?: (t: string) => void; focusComposer?: () => void }>("pi-web.composer");
-  if (typeof svc?.setInputValue !== "function") return false;
-  try { svc.setInputValue(text); svc.focusComposer?.(); return true; } catch { return false; }
+  const svc = extSvc<{ get?: (name: string) => unknown }>("pi-web.composer");
+  const setInput = svc?.get?.("setInputValue") as ((t: string) => void) | undefined;
+  const focus = svc?.get?.("focusComposer") as (() => void) | undefined;
+  if (typeof setInput !== "function") return false;
+  try { setInput(text); focus?.(); return true; } catch { return false; }
 }
 
 /** Open a session through the host session service. */
@@ -137,12 +141,26 @@ export function openSession(id: string): void {
   try { svc?.open?.(id); } catch { /* ignore */ }
 }
 
-/** Current session cwd (authoritative host source, falling back to the page global). */
+/** Stage the fresh new-session composer for a cwd (the host New button's final action —
+ * no session is created until the user sends). Returns false on hosts without the service. */
+export function stageNewSession(cwd: string): boolean {
+  const svc = extSvc<{ setCwd?: (p: string) => void }>("pi-web.newSession");
+  if (typeof svc?.setCwd !== "function" || !cwd) return false;
+  try { svc.setCwd(cwd); return true; } catch { return false; }
+}
+
+/** Current session cwd (authoritative host source, falling back to the page global).
+ *  Also consults pi-web.newSession.getCwd: on the new-session welcome page there is no
+ *  open session, but a staged workspace cwd is already selected. */
 export function currentCwd(): string {
   try {
     const svc = extSvc<{ get?: () => { session?: { cwd?: string } | null } }>("pi-web.session");
     const cwd = svc?.get?.()?.session?.cwd;
     if (cwd) return cwd;
+  } catch { /* ignore */ }
+  try {
+    const staged = extSvc<{ getCwd?: () => string | null }>("pi-web.newSession")?.getCwd?.();
+    if (staged) return String(staged);
   } catch { /* ignore */ }
   try { return String((globalThis as any).__piWebCwd || ""); } catch { return ""; }
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { api } from "../server/routes.ts";
@@ -32,6 +32,11 @@ const fakeProvider = {
     },
   },
   httpFor: () => ({ baseUrl: "", req: async () => ({ data: {}, status: 200, headers: new Headers() }), json: async () => ({}) }),
+  fileProxy: {
+    allowedHosts: [],
+    pathPrefixes: ["/projex/api/workitem/file/"],
+    resolve: async () => ({ url: "data:text/plain;base64,aGVsbG8=", name: "spec.txt", contentType: "text/plain" }),
+  },
   workItems: {
     listScopes: async () => ({ items: [{ id: "o/r", name: "o/r", path: "o/r" }], page: 1, pageSize: 50, hasMore: false }),
     list: async (_cfg, _http, scope) => ({
@@ -240,6 +245,39 @@ test("instances: unknown platform, bad alias and account resolution", async () =
   const missing = await call("GET", ["code", "repos"], { provider: "fake", account: "nope" });
   assert.equal(missing.status, 404);
   assert.equal((await call("POST", ["instances", "delete"], {}, { instance: id })).data.removed, true);
+});
+
+test("workspace note: persists text + proxied files under .codehub", async () => {
+  await call("POST", ["config"], {}, { provider: "fake", token: "t-note" });
+  const cwd = mkdtempSync(join(tmpdir(), "codehub-note-"));
+  try {
+    const { status, data } = await call("POST", ["note"], {}, {
+      provider: "fake",
+      cwd,
+      id: "CEXP-1",
+      title: "Fix login/flow",
+      text: "Please fix.\n\nhttps://example.org/issue/CEXP-1",
+      files: [
+        { fileId: "f1", name: "image-1.png", kind: "image", workitemId: "CEXP-1" },
+        { fileId: "f2", name: "spec.txt", kind: "attachment", workitemId: "CEXP-1" },
+      ],
+    });
+    assert.equal(status, 200);
+    assert.equal(data.ok, true);
+    assert.match(data.relPath, /^\.codehub\/fake\/CEXP-1\/Fix login_flow\.md$/);
+    const note = readFileSync(join(cwd, ...data.relPath.split("/")), "utf8");
+    assert.match(note, /Please fix/);
+    assert.match(note, /!\[image-1\.png\]\(files\/image-1\.png\)/);
+    assert.match(note, /## Attachments/);
+    assert.match(note, /\[spec\.txt\]\(files\/2-spec\.txt\)/);
+    assert.equal(readFileSync(join(cwd, ".codehub", "fake", "CEXP-1", "files", "image-1.png")).toString(), "hello");
+    assert.equal(readFileSync(join(cwd, ".codehub", "fake", "CEXP-1", "files", "2-spec.txt")).toString(), "hello");
+    // missing cwd is rejected
+    const bad = await call("POST", ["note"], {}, { provider: "fake", cwd: "/nonexistent/dir", id: "x", title: "t", text: "", files: [] });
+    assert.equal(bad.status, 400);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("cleanup", () => {

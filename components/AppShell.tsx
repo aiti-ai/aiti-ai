@@ -3357,7 +3357,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   //    sidebar's startNewSessionIn (draft parking/restore + composer remount), without depending on
   //    sidebarControlRef (null while an extension takes over sidebarContent). Getter delegates to the
   //    latest closure (same ref pattern as hostUiRef); registers once on mount; absent on older hosts.
-  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {}, setTarget: (_path: string | null) => {} });
+  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {}, setTarget: (_path: string | null) => {}, getCwd: (): string | null => null });
   newSessionSvcRef.current.setCwd = (path: string) => {
     if (typeof path !== "string" || !path) return;
     const tempId = typeof crypto.randomUUID === "function"
@@ -3371,10 +3371,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   newSessionSvcRef.current.setTarget = (path: string | null) => {
     handleNewSessionWorkspaceChange(typeof path === "string" && path ? path : null);
   };
+  // Current staged/active cwd for extensions that target "the session the user is looking at":
+  // the welcome page's staged workspace wins, then the open session, then null.
+  newSessionSvcRef.current.getCwd = () => effectiveNewSessionCwd ?? selectedSession?.cwd ?? null;
   useEffect(() => {
     return registerExtClientService("pi-web", "pi-web.newSession", {
       get setCwd() { return newSessionSvcRef.current.setCwd; },
       get setTarget() { return newSessionSvcRef.current.setTarget; },
+      get getCwd() { return newSessionSvcRef.current.getCwd; },
     });
   }, []);
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {

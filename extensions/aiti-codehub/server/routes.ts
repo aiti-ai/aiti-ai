@@ -23,7 +23,7 @@ import { getRegistry, getStore, publish, runtime } from "./runtime.ts";
 import { issueBlobToken, resolveBlobToken } from "./blob-tokens.ts";
 import { findLocalClone } from "./local.ts";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { configView, recentScore } from "./store.ts";
 import { DEFAULT_TEMPLATES } from "./contract.ts";
 
@@ -532,6 +532,67 @@ export async function api(req: Request, ctx: { path?: string[]; searchParams?: U
       if (target.download) headers.set("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(target.path.split("/").pop() || "file")}`);
       else headers.set("content-disposition", "inline");
       return new Response(buf, { status: 200, headers });
+    }
+
+    /* ───────── workspace note: persist a work item (text + files) into the workspace so a
+     * fresh session can reference it via @path; downloads reuse the file-proxy resolver ───────── */
+    if (head === "note" && req.method === "POST") {
+      const body = await bodyJson(req);
+      const cwd = String(body.cwd || "");
+      if (!cwd || !isAbsolute(cwd) || !existsSync(cwd)) {
+        throw new ForgeHttpError("cwd is required and must exist", { status: 400, code: "bad_request" });
+      }
+      const inst = bind(String(body.provider || ""), typeof body.account === "string" ? body.account : undefined);
+      const provider = inst.adapter;
+      const fp = provider.fileProxy;
+      const safeSeg = (v: string, fallback: string) => {
+        const s = String(v || "").replace(/[\\/:*?"<>|\r\n\t]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 80);
+        return s || fallback;
+      };
+      const safeFile = (v: string) => String(v || "").replace(/[\\/:*?"<>|\r\n\t]+/g, "_").replace(/\s+/g, "_").slice(0, 120) || "file";
+      const id = safeSeg(String(body.id || ""), "item");
+      const alias = safeSeg(inst.alias || inst.id, "account");
+      const title = safeSeg(String(body.title || ""), id);
+      const text = String(body.text || "");
+      const dir = join(cwd, ".codehub", alias, id);
+      const filesDir = join(dir, "files");
+      mkdirSync(filesDir, { recursive: true });
+
+      const cfg = await cfgOf(inst, { refresh: true });
+      const refs = (Array.isArray(body.files) ? body.files : []) as Array<Record<string, unknown>>;
+      const imageLines: string[] = [];
+      const attachLines: string[] = [];
+      let n = 0;
+      for (const ref of refs) {
+        if (!fp?.resolve) break;
+        const fileId = String(ref.fileId || "");
+        if (!fileId) continue;
+        try {
+          const resolved = await fp.resolve(cfg, provider.httpFor(cfg), {
+            workitemId: String(ref.workitemId || id),
+            fileId,
+          });
+          const upstream = await fetch(resolved.url, { redirect: "follow" });
+          if (!upstream.ok) continue;
+          const buf = Buffer.from(await upstream.arrayBuffer());
+          n += 1;
+          const ext = ref.kind === "image" ? ".png"
+            : (String(ref.name || resolved.name || "").match(/\.[A-Za-z0-9]{1,8}$/)?.[0] || "");
+          const base = ref.kind === "image" ? `image-${n}` : safeFile(ref.name || resolved.name || `file-${n}`);
+          const fname = ref.kind === "image" ? `image-${n}${ext}` : `${n}-${base}`;
+          writeFileSync(join(filesDir, fname), buf);
+          const rel = `files/${fname}`;
+          if (ref.kind === "image") imageLines.push(`![${ref.name || `image ${n}`}](${rel})`);
+          else attachLines.push(`- [${ref.name || fname}](${rel})`);
+        } catch { /* skip a failed download; the note still carries the text */ }
+      }
+
+      let md = text;
+      if (imageLines.length) md += `\n\n${imageLines.join("\n")}`;
+      if (attachLines.length) md += `\n\n## Attachments\n${attachLines.join("\n")}`;
+      const fname = `${title}.md`;
+      writeFileSync(join(dir, fname), md, { mode: 0o644 });
+      return json({ ok: true, relPath: [".codehub", alias, id, fname].join("/"), saved: n });
     }
 
     /* ───────── authenticated file proxy (Yunxiao images / attachments) ───────── */

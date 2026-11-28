@@ -5,11 +5,11 @@ import { useEffect, useState, t } from "./host-shim";
 import { closePanel, openFloat, useGate } from "../../../_shared/ext-float-dock-lite";
 import { getComments, getWorkItem, markUsage, type Scope, type WorkItem } from "./api";
 import { aliasOf, loadConfig, platformLabelOf } from "./store";
-import { apiUrl, currentCwd, extSvc, openSession, sendChat, setComposer } from "./host-shim";
+import { apiUrl, currentCwd, extSvc, sendChat, setComposer, stageNewSession } from "./host-shim";
 import { submitPick, usePickMode } from "./workitem-picker";
 import { formatBranchName, formatWorkItemText } from "../../server/format.ts";
 import { Btn, clip, ErrBox, FloatShell, friendlyError, fmtTime, Ic, ICONS, S, Spinner, StateBadge, Tag, toast, useLocaleTick } from "./ui";
-import { fileProxyUrl, RichBody } from "./rich";
+import { fileIdentifierOf, fileProxyUrl, RichBody } from "./rich";
 import { DETAIL_KEY, SETTINGS_KEY } from "./keys";
 
 export interface DetailTarget {
@@ -164,26 +164,73 @@ export function DetailBody(p: { target: DetailTarget; onBack?: () => void }) {
     await clip(text);
   }
 
+  /** Stage the content into the fresh new-session composer (no session is created): the
+   * host remounts the composer on setCwd, so the write lands one tick later. */
+  function fillStagedComposer(text: string): void {
+    setTimeout(() => { if (!setComposer(text)) void clip(text); }, 120);
+  }
+
   async function sendNew(): Promise<void> {
     if (!item) return;
     const cwd = currentCwd();
     if (!cwd) { toast(t("ch.detail.needWorkspace")); return; }
     const tpl = await templates();
-    const text = formatWorkItemText(item, platformLabelOf(provider), tpl.ai, aliasOf(provider));
-    const url = apiUrl("/api/agent/new");
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd, type: "prompt", message: text, enableExtTools: ["aiti-codehub"] }),
-    });
-    const d = await r.json().catch(() => null);
-    if (!r.ok || !d?.sessionId) {
-      toast(d?.error || t("ch.detail.newSessionFail"));
+    let text = formatWorkItemText(item, platformLabelOf(provider), tpl.ai, aliasOf(provider));
+    /* Trailing platform URL — the same link the Open button opens. */
+    const url = item?.webUrl || stub.webUrl;
+    if (url) text += `\n\n${url}`;
+
+    if (!stageNewSession(cwd)) {
+      /* Old host without pi-web.newSession: still never auto-creates a session —
+       * fill whatever composer is present and let the user pick the target. */
+      setComposer(text);
+      toast(t("ch.detail.newPrepared"));
       return;
     }
-    const u = await markUsage(provider, item.id, "ai").catch(() => null);
-    if (u?.usage) setUsage(u.usage);
-    openSession(String(d.sessionId));
+
+    /* File mode when the body is long or carries images/attachments: persist into
+     * the workspace (attachments downloaded alongside) and reference it via @path. */
+    const imgFileIds = (item.images || [])
+      .map((src) => fileIdentifierOf(src))
+      .filter((v): v is string => !!v);
+    const attFiles = (item.attachments || []).map((a) => ({ fileId: a.id, name: a.name, kind: "attachment" }));
+    const files = [
+      ...imgFileIds.map((fileId, i) => ({ fileId, name: `image-${i + 1}.png`, kind: "image" })),
+      ...attFiles,
+    ];
+    const heavy = files.length > 0 || text.length > 1500;
+    try {
+      if (heavy) {
+        setBusy("note");
+        const r = await fetch(apiUrl("/workspace/note"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            provider,
+            cwd,
+            id: item.id,
+            title: item.title || `${item.type} ${item.key}`,
+            text,
+            files,
+          }),
+        });
+        const d = await r.json().catch(() => null);
+        if (!r.ok || !d?.ok) {
+          toast(d?.error || t("ch.detail.noteFail", { err: String(d?.error || r.status) }));
+          fillStagedComposer(text);
+          return;
+        }
+        fillStagedComposer(`@${String(d.relPath)}`);
+        toast(t("ch.detail.noteSaved", { path: String(d.relPath) }));
+      } else {
+        fillStagedComposer(text);
+        toast(t("ch.detail.newPrepared"));
+      }
+      const u = await markUsage(provider, item.id, "ai").catch(() => null);
+      if (u?.usage) setUsage(u.usage);
+    } finally {
+      setBusy(null);
+    }
   }
 
   function openWeb(): void {
@@ -203,8 +250,8 @@ export function DetailBody(p: { target: DetailTarget; onBack?: () => void }) {
         <Btn small onClick={() => void writeCommit()}><Ic paths={ICONS.commit} /> {t("ch.detail.writeCommit")}</Btn>
         <Btn small onClick={() => void createBranch()} disabled={busy === "branch"}><Ic paths={ICONS.branch} /> {busy === "branch" ? t("ch.detail.branchCreating") : t("ch.detail.branchCreate")}</Btn>
         <span style={{ width: 1, height: 18, background: "var(--border, #3a3a3a)", margin: "0 2px" }} />
-        <Btn small onClick={() => void sendCurrent()}><Ic paths={ICONS.send} /> {t("ch.detail.sendCurrent")}</Btn>
-        <Btn small onClick={() => void sendNew()}><Ic paths={ICONS.robot} /> {t("ch.detail.sendNew")}</Btn>
+        <Btn small onClick={() => void sendCurrent()} disabled={busy === "note"}><Ic paths={ICONS.send} /> {t("ch.detail.sendCurrent")}</Btn>
+        <Btn small onClick={() => void sendNew()} disabled={busy === "note"}><Ic paths={ICONS.robot} /> {busy === "note" ? t("ch.detail.preparing") : t("ch.detail.sendNew")}</Btn>
         <span style={{ flex: 1 }} />
         {usage?.sentToAIAt ? <Tag title={t("ch.wi.tagSentAI")}>{t("ch.detail.tagSentAI")}</Tag> : null}
         {usage?.pastedAt ? <Tag title={t("ch.wi.tagPasted")}>{t("ch.detail.tagWritten")}</Tag> : null}
