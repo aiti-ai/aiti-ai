@@ -32,6 +32,12 @@ export function extEnsureMaterialized(id: string): Promise<boolean> | undefined 
   return r instanceof Promise ? r : undefined;
 }
 
+/** Subscribe to cross-extension client service up/down (ctx.onExtServiceChange shim; old hosts → null). */
+export function extOnSvcChange(cb: (key: string, phase: "up" | "down") => void): (() => void) | null {
+  const fn = (_ctx as any)?.onExtServiceChange as ((cb: (key: string, phase: "up" | "down") => void) => (() => void)) | undefined;
+  return typeof fn === "function" ? fn(cb) : null;
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;

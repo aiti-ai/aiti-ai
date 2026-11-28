@@ -5,7 +5,7 @@
  * （薄壳）动态 import 本模块——开页不再代价（服务端批量包外置本 chunk）。
  * 依赖方向：panels → common（严禁 common/shell 反向静态 import 本文件）。
  */
-import { useState, useEffect, useRef, apiUrl, t, extSvc, extEnsureMaterialized, appendText, openFile } from "./host-shim";
+import { useState, useEffect, useRef, apiUrl, t, extSvc, extEnsureMaterialized, onSvcChange, appendText, openFile } from "./host-shim";
 import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
 import { buildVersionMention, resolveDiffLineInfo } from "./version-mention.ts";
 import {
@@ -617,12 +617,34 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
   // (user-reported 2026-11-28; same fix as aiti-folder openGitReview 2026-11-24).
   async function openInGitReview(payload: Record<string, unknown>): Promise<void> {
     const takeOpener = () => extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen;
+    const takeWork = () => extSvc<() => void>("aiti-git-review.work") || (window as any).__aitiGitReviewWork;
     let opener = takeOpener();
     if (typeof opener !== "function") {
       try { await extEnsureMaterialized("aiti-git-review"); } catch { /* old host without the channel — keep deep-link fallback */ }
       opener = takeOpener();
     }
-    if (typeof opener === "function") { try { opener(payload); return; } catch { /* materialized but call failed — deep-link fallback */ } }
+    if (typeof opener === "function") {
+      try {
+        opener(payload);
+        // Present the UI: ".open" may still be the early stub (records G.open only — the real
+        // presenter registers in the review UI's first-mount effect, possibly a frame after
+        // materialize resolves). Nudge via ".work" (applyOpen(G.open), idempotent); if it has
+        // not registered yet, subscribe once (event-driven, no polling) and present on "up".
+        const work = takeWork();
+        if (typeof work === "function") { try { work(); } catch { /* state already recorded */ } return; }
+        const off = onSvcChange((key, phase) => {
+          if (key !== "aiti-git-review.work" || phase !== "up") return;
+          try { off && off(); } catch { /* ignore */ }
+          const w = takeWork();
+          try { typeof w === "function" && w(); } catch { /* ignore */ }
+        });
+        if (!off) return; // old host without the subscription channel — opener call already recorded state
+        // Re-check after subscribing (race: "up" fired between takeWork and subscribe)
+        const wNow = takeWork();
+        if (typeof wNow === "function") { try { off(); } catch { /* ignore */ } try { wNow(); } catch { /* ignore */ } }
+        return;
+      } catch { /* materialized but call failed — deep-link fallback */ }
+    }
     // URL deep link (its client consumes params via applyOpen on mount; arrays serialize as JSON)
     const q = new URLSearchParams(location.search);
     for (const [k, v] of Object.entries(payload)) q.set(k, Array.isArray(v) ? JSON.stringify(v) : String(v));

@@ -82,6 +82,15 @@ export interface BranchPanelProps {
   onChanged?: () => void;
   /** Client-side service resolution (getExtService wrapper): needed by Git Review direct-open / @ to a new session; hides the corresponding buttons when absent */
   extSvc?: <T>(key: string) => T | undefined;
+  /** Lazy-load v2: deterministically materialize a lazy extension's client before consuming its
+   *  ext services. aiti-git-review is lazy (ui.clientImmediately:false) — ".open" registers at
+   *  materialize, ".work" only after its review UI's first mount; without this the Review
+   *  button is silent-dead while the extension never loaded (same root cause as the trace
+   *  Diff buttons, fixed 2026-11-28). */
+  ensureMaterialized?: (id: string) => Promise<boolean> | undefined;
+  /** Subscribe to client service up/down (used to present the review UI once ".work"
+   *  registers after materialize; event-driven, no polling; absent → best-effort). */
+  onExtServiceChange?: (cb: (key: string, phase: "up" | "down") => void) => (() => void) | null | undefined;
   /** Open a workspace file (folder injects; hides the "Open" button when absent — a commit-time blob ≠ the workspace version, the button copy says so) */
   openFile?: (absPath: string) => void;
   /** aiti-float persistence key (the panel portals to body with no data-ext-item ancestor, so it must be explicit; each consumer passes its own) */
@@ -357,11 +366,17 @@ export function BranchPanel(p: BranchPanelProps) {
   const commitRef = () => String(commitInfo?.sha || commitSha || "");
   const repoDir = () => String(refsData?.repo || p.cwd || "");
 
-  const openInReview = (opts?: { files?: string[] }) => {
-    const openSvc = p.extSvc?.("aiti-git-review.open") as ((o: any) => void) | undefined;
-    const workSvc = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined;
-    if (!openSvc || !workSvc) return false;
+  const openInReview = async (opts?: { files?: string[] }): Promise<boolean> => {
+    let openSvc = p.extSvc?.("aiti-git-review.open") as ((o: any) => void) | undefined;
+    let workSvc = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined;
+    if (!openSvc && p.ensureMaterialized) {
+      // aiti-git-review is lazy: materialize deterministically (idempotent), then re-read
+      try { await p.ensureMaterialized("aiti-git-review"); } catch { /* old host / provider disabled — degrade below */ }
+      openSvc = p.extSvc?.("aiti-git-review.open") as ((o: any) => void) | undefined;
+      workSvc = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined;
+    }
     const full = commitRef();
+    if (!openSvc) return false;
     if (!full || commitInfo?.parents?.length === 0) return false; // root commit has no base; the picker decides manually
     openSvc({
       path: repoDir(),
@@ -369,7 +384,22 @@ export function BranchPanel(p: BranchPanelProps) {
       ref2: full,
       ...(opts?.files?.length ? { files: opts.files } : {}),
     });
-    try { workSvc(); } catch { /* when work is absent, open already set the state; takes effect once the host opens the workspace */ }
+    // Present the UI: ".open" may still be the early stub (records G.open only — the real
+    // presenter registers in the review UI's first-mount effect). ".work" = applyOpen(G.open),
+    // idempotent; if not registered yet, subscribe once (no polling) and present on "up".
+    const presentWork = () => { const w = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined; try { typeof w === "function" && w(); } catch { /* ignore */ } };
+    if (typeof workSvc === "function") { try { workSvc(); } catch { /* open already set the state */ } return true; }
+    if (p.onExtServiceChange) {
+      let off: (() => void) | null | undefined = null;
+      off = p.onExtServiceChange((key, phase) => {
+        if (key !== "aiti-git-review.work" || phase !== "up") return;
+        try { off && off(); } catch { /* ignore */ }
+        presentWork();
+      });
+      // Re-check after subscribing (race: "up" fired between the read and the subscribe)
+      const wNow = p.extSvc?.("aiti-git-review.work") as (() => void) | undefined;
+      if (typeof wNow === "function") { try { off && off(); } catch { /* ignore */ } try { wNow(); } catch { /* ignore */ } }
+    }
     return true;
   };
 

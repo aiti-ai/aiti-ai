@@ -12,7 +12,7 @@
  *   (the endpoint is the engine, so folder adds no server route).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiUrl, extSvc, openFile } from "./host-shim";
+import { apiUrl, extSvc, extEnsureMaterialized, extOnSvcChange, openFile } from "./host-shim";
 import { ct, currentLocale } from "./comp-i18n";
 import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
 // ⚠ Create the api instance inside the hook only (never at module level: under the
@@ -233,6 +233,8 @@ export function GitBar(p: {
         onClose={() => setPanelOpen(false)}
         anchor={anchor}
         extSvc={extSvc}
+        ensureMaterialized={extEnsureMaterialized}
+        onExtServiceChange={extOnSvcChange}
         openFile={(fp) => openFile(fp, fp.split("/").pop())}
         onChanged={() => { git.refresh(); p.onChanged?.(); }}
       />

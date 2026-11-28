@@ -6,7 +6,7 @@
  * 开放点：window.__aitiFolder.registerAction（其他扩展注册目录级工具条按钮）。
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff, openFile } from "./host-shim";
+import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, extOnSvcChange, openFileDiff, openFile } from "./host-shim";
 import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
 import type { DockMenuItem } from "@aiti-ai/ext-shared/ext-float-dock";
 import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, invalidateEntries, groupContentMatches, type SearchTreeNode } from "./lib";
@@ -30,14 +30,29 @@ import { ct } from "./comp-i18n";
 // DI 方案 P2：git-review 打开/聚焦（services 通道优先，旧全局兜底）
 const grOpen = () => extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen;
 const grWork = () => extSvc<() => void>("aiti-git-review.work") || (window as any).__aitiGitReviewWork;
-/** 打开 Git Review（统一入口）：aiti-git-review 是懒加载扩展（immediately:false）——
- *  服务在其 client 加载后才注册；先经宿主 ensureMaterialized 物化（幂等），否则
- *  grOpen() 为 undefined 且 try/catch 静默 = 「点了没反应」（2026-11-24 用户实测修复）。 */
+/** Unified Git Review opener. aiti-git-review is a lazy extension (ui.clientImmediately:false):
+ *  its services register only after the client loads — materialize deterministically via the
+ *  host first (idempotent), otherwise grOpen() is undefined and the try/catch swallows it
+ *  = "click does nothing" (user-reported fix 2026-11-24).
+ *  Presentation fallback: materialize can resolve a frame before the review UI's first-mount
+ *  effect re-registers the applyOpen-based service — when the work service is absent,
+ *  subscribe once for its "up" (event-driven, no polling; aligned with the trace fix
+ *  of 2026-11-28). */
 async function openGitReview(scope?: { kind: string; path: string }): Promise<void> {
-  try { await extEnsureMaterialized("aiti-git-review"); } catch { /* 旧宿主无通道——继续旧全局兜底 */ }
+  try { await extEnsureMaterialized("aiti-git-review"); } catch { /* old host without the channel — keep legacy-global fallback */ }
   const open = grOpen();
   if (open) open(scope ? { scope } : undefined);
-  try { grWork() && grWork(); } catch { /* noop */ }
+  const work = grWork();
+  if (typeof work === "function") { try { work(); } catch { /* noop */ } return; }
+  const off = extOnSvcChange((key, phase) => {
+    if (key !== "aiti-git-review.work" || phase !== "up") return;
+    try { off && off(); } catch { /* noop */ }
+    try { grWork() && grWork(); } catch { /* noop */ }
+  });
+  if (!off) return; // old host without the subscription channel — open already recorded state, best effort
+  // Re-check after subscribing (race: "up" fired between the read and the subscribe)
+  const wNow = grWork();
+  if (typeof wNow === "function") { try { off(); } catch { /* noop */ } try { wNow(); } catch { /* noop */ } }
 }
 
 // ── 存活缓存：切走再切回不丢状态（宿主切 tab 会卸载 viewer，这里快照 + TTL 恢复）──
@@ -1128,6 +1143,7 @@ function NestedGitBar(p: {
       {panelOpen ? (
         <BranchPanel apiUrl={apiUrl} cwd={dir} floatKey="folder-nested-branch-panel" locale={typeof navigator !== "undefined" ? navigator.language : "en"}
           open={panelOpen} onClose={() => setPanelOpen(false)} anchor={panelAnchor} extSvc={extSvc}
+          ensureMaterialized={extEnsureMaterialized} onExtServiceChange={extOnSvcChange}
           openFile={(fp) => openFile(fp, fp.split("/").pop())}
           onChanged={() => { git.refresh(); p.onChanged(); }} />
       ) : null}
