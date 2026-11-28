@@ -7,8 +7,9 @@
 import * as linux from "./linux.ts";
 import * as darwin from "./darwin.ts";
 import * as win32 from "./win32.ts";
-
-const core = require("../../core.cjs");
+// ESM import (not require): bare require() hits Node's process-level CJS cache
+// and would keep serving the pre-reload core after POST /reload.
+import * as core from "../../core.ts";
 
 const os = require("node:os");
 
@@ -19,6 +20,30 @@ let rawCache: { ts: number; map: Map<number, any> } = { ts: 0, map: new Map() };
 let ticks = new Map<string, { utime: number; stime: number; ts: number }>();
 let firstTick = true;
 let lastScanTs = 0;
+
+// TCP LISTEN table (linux: Map<inode, "addr:port">; darwin/win32: Map<pid, string[]>).
+// Ports change rarely — a short TTL cache keeps the per-tick cost at zero and
+// bounds the lsof/netstat spawn to one call per 5s on non-Linux platforms.
+let listenCache: { ts: number; map: Map<any, any> } | null = null;
+const LISTEN_TTL_MS = 5000;
+
+async function listenData(): Promise<Map<any, any>> {
+  const now = Date.now();
+  if (listenCache && now - listenCache.ts < LISTEN_TTL_MS) return listenCache.map;
+  let map: Map<any, any>;
+  try {
+    map = platform === "linux" ? await linux.readListenTable() : await impl.listenByPid();
+  } catch {
+    map = new Map();
+  }
+  listenCache = { ts: now, map };
+  return map;
+}
+
+/** Cached listen table for one-off lookups (node detail endpoint). */
+export function currentListenData(): Map<any, any> {
+  return listenCache && listenCache.map.size ? listenCache.map : new Map();
+}
 
 /** Clock ticks per second (Linux 100; other platforms unused). */
 const HZ = 100;
@@ -50,6 +75,7 @@ export async function sample(opts: {
   approxCpu: boolean;
 }> {
   const now = Date.now();
+  const listen = await listenData();
 
   if (platform === "linux") {
     let raw: Map<number, any>;
@@ -68,7 +94,7 @@ export async function sample(opts: {
     const readResults = await Promise.all(
       readIds.map(async (pid) => {
         const p = raw.get(pid)!;
-        const d: any = await linux.readDetail(pid, { withEnv: preview.seeds.has(pid) });
+        const d: any = await linux.readDetail(pid, { withEnv: preview.seeds.has(pid), listenMap: listen });
         const key = pid + ":" + p.starttime;
         const prev = ticks.get(key);
         const dt = lastScanTs ? now - lastScanTs : 0;
@@ -96,7 +122,10 @@ export async function sample(opts: {
     const details = new Map<number, any>();
     for (const pid of preview.visible) {
       const d = scanned.details.get(pid);
-      if (d) details.set(pid, d);
+      if (!d) continue;
+      const ports = listen.get(pid);
+      if (Array.isArray(ports) && ports.length) d.ports = ports;
+      details.set(pid, d);
     }
     const wasFirst = firstTick;
     firstTick = false;
@@ -115,6 +144,8 @@ export async function sample(opts: {
     const p = scanned.raw.get(pid);
     const d: any = scanned.details.get(pid);
     if (!p || !d) continue;
+    const ports = listen.get(pid);
+    if (Array.isArray(ports) && ports.length) d.ports = ports;
     const key = pid + ":" + p.starttime;
     const prev = ticks.get(key);
     d.cpu = prev && dtW > 0 && dtW <= 60_000 ? core.cpuPercent(prev, p, dtW, WIN_HZ) : null;
@@ -134,6 +165,7 @@ export function reset(): void {
   ticks = new Map();
   firstTick = true;
   lastScanTs = 0;
+  listenCache = null;
 }
 
 const TICKS_FILE = "sampler-ticks.json";

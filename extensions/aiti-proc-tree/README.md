@@ -24,11 +24,14 @@ only for the visible set. Toggle `showUnknown` for a read-only stat-level list.
 
 ## Controls
 
-- Five sortable columns (name / PID / CPU / memory / age; click a header to
-  sort, click again to flip). Click any row for the detail drawer: full
-  command line, cwd, whitelisted env vars, parent/children, plus End process
-  / End subtree actions for killable nodes and Open terminal (terminals) /
-  Open session (external agents).
+- Six sortable columns (name / PID / CPU / memory / age / TCP listen port;
+  click a header to sort, click again to flip). Listen ports come from
+  `/proc/net/tcp{,6}` + fd socket-inode matching on Linux, `lsof` on macOS and
+  `netstat -ano` on Windows (cached 5s, spawn-free on Linux). Search matches
+  ports too. Click any row for the detail drawer: full command line, cwd,
+  whitelisted env vars, parent/children, plus End process / End subtree
+  actions for killable nodes and Open terminal (terminals) / Open session
+  (external agents).
 - `✕` ends the process; `⋯` opens details. Terminal rows can open the matching
   aiti-cmd terminal (double-click), tunnel rows open the services panel.
 - Kill is guarded: same uid, protected pids (init, the extension host, the
@@ -55,4 +58,6 @@ node tools/deploy.mjs   # copies to ~/.pi/web[-dev]/extensions + reloads
 ```
 
 Zero runtime dependencies. Server code lives in `index.ts` + `server/`; shared
-pure logic is `core.cjs` (also bundled into the client for formatters).
+pure logic is `core.ts` (jiti-transpiled on the server so extension reloads pick it
+up — a shared .cjs would be pinned by Node's process-level require/import caches; the
+client bundles the same module for formatters).

@@ -9,6 +9,10 @@
  */
 import { readdir, readFile, readlink } from "node:fs/promises";
 import os from "node:os";
+// ESM import (not require): the transpiled form goes through jitiImport, which
+// respects the loader's moduleCache:false — a bare require() would hit Node's
+// process-level CJS cache and keep serving the pre-reload core forever.
+import * as core from "../../core.ts";
 
 export interface RawProc {
   pid: number;
@@ -30,6 +34,7 @@ export interface ProcDetail {
   envText?: string;
   etimeMs?: number | null;
   fdCount?: number | null;
+  ports?: string[];
 }
 
 const CLK_TCK = 100;
@@ -81,13 +86,32 @@ export async function scanRaw(): Promise<Map<number, RawProc>> {
   return out;
 }
 
+/**
+ * Global TCP LISTEN table from /proc/net/tcp + tcp6: Map<socket inode, "addr:port">.
+ * Two small kernel files; parsing is pure (core.ts) and stays well under a
+ * millisecond even with thousands of sockets.
+ */
+export async function readListenTable(): Promise<Map<string, string>> {
+  const texts = await Promise.all([
+    readFile("/proc/net/tcp", "utf8").catch(() => ""),
+    readFile("/proc/net/tcp6", "utf8").catch(() => ""),
+  ]);
+  return core.parseProcNetListen(texts);
+}
+
+/** Port number of an "addr:port" entry (NaN when unparsable). */
+const portNum = (s: string): number => core.portOf(s);
+
 /** Effective start time (epoch ms) derived from starttime + boot time. */
 export async function startMs(p: RawProc): Promise<number> {
   return ((await bootTime()) + p.starttime / CLK_TCK) * 1000;
 }
 
 /** Phase B: one process detail. `withEnv` is opt-in (ownership markers only). */
-export async function readDetail(pid: number, opts: { withEnv?: boolean } = {}): Promise<ProcDetail> {
+export async function readDetail(
+  pid: number,
+  opts: { withEnv?: boolean; listenMap?: Map<string, string> } = {},
+): Promise<ProcDetail> {
   const d: ProcDetail = {};
   try {
     const status = await readFile("/proc/" + pid + "/status", "utf8");
@@ -140,7 +164,27 @@ export async function readDetail(pid: number, opts: { withEnv?: boolean } = {}):
     }
   } catch { /* ignore */ }
   try {
-    d.fdCount = (await readdir("/proc/" + pid + "/fd")).length;
+    const fds = await readdir("/proc/" + pid + "/fd");
+    d.fdCount = fds.length;
+    // Same readdir pass doubles as the LISTEN lookup: readlink each fd, keep
+    // socket inodes, intersect with the global listen table. Other-user pids
+    // fail at readdir above and simply carry no ports (same visibility as ps).
+    if (opts.listenMap && opts.listenMap.size) {
+      const links = await Promise.all(
+        fds.map((f) => readlink("/proc/" + pid + "/fd/" + f).catch(() => "")),
+      );
+      const inodes = new Set<string>();
+      for (const l of links) {
+        const m = /^socket:\[(\d+)\]$/.exec(l);
+        if (m) inodes.add(m[1]);
+      }
+      const ports: string[] = [];
+      for (const ino of inodes) {
+        const entry = opts.listenMap.get(ino);
+        if (entry && !ports.includes(entry)) ports.push(entry);
+      }
+      if (ports.length) d.ports = ports.sort((a, b) => portNum(a) - portNum(b));
+    }
   } catch {
     d.fdCount = null;
   }

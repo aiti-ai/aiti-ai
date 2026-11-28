@@ -28,7 +28,7 @@ try {
 
 for (const extDir of targets) {
   mkdirSync(extDir, { recursive: true });
-  for (const f of ["package.json", "index.ts", "core.cjs", "icon.svg", "LICENSE"]) {
+  for (const f of ["package.json", "index.ts", "core.ts", "icon.svg", "LICENSE"]) {
     copyFileSync(resolve(root, f), resolve(extDir, f));
     console.log("[deploy] file → " + resolve(extDir, f));
   }

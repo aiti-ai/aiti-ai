@@ -22,7 +22,10 @@ import { executeKill } from "./server/kill.ts";
 import * as sampler from "./server/sampler/index.ts";
 import * as linuxSampler from "./server/sampler/linux.ts";
 
-const core = require("./core.cjs");
+// ESM import (not require): bare require() hits Node's process-level CJS cache
+// and would keep serving the pre-reload core after POST /reload — new core
+// functions (e.g. listen-port parsing) would silently stay missing.
+import * as core from "./core.ts";
 
 const ID = "aiti-proc-tree";
 
@@ -116,7 +119,7 @@ export default {
 
   ai: {
     manage: true,
-    intro: "AI 能帮我查看 pi-web 生态的子进程树（终端/隧道/子代理/外部 Agent/宿主后代），显示 PID、CPU、内存、运行时长与命令行，并可结束单个进程或整棵子树（aiti-proc-tree）",
+    intro: "AI 能帮我查看 pi-web 生态的子进程树（终端/隧道/子代理/外部 Agent/宿主后代），显示 PID、CPU、内存、运行时长、TCP 监听端口与命令行，并可结束单个进程或整棵子树（aiti-proc-tree）",
   },
 
   ui: {
@@ -177,6 +180,8 @@ export default {
         "用户": "用户",
         "来源": "来源",
         "套接字 / Unit": "套接字 / Unit",
+        "监听端口": "监听端口",
+        "端口": "端口",
         "关闭": "关闭",
         "不可结束": "不可结束",
         "宿主进程默认禁止结束": "宿主进程默认禁止结束",
@@ -239,6 +244,8 @@ export default {
         "用户": "User",
         "来源": "Source",
         "套接字 / Unit": "Socket / Unit",
+        "监听端口": "Listening",
+        "端口": "Port",
         "关闭": "Close",
         "不可结束": "Not killable",
         "宿主进程默认禁止结束": "Host process is protected by default",
@@ -341,6 +348,7 @@ export default {
               cpu: n.cpu,
               mem: n.mem,
               etimeMs: n.etimeMs,
+              ports: Array.isArray(n.ports) ? n.ports : undefined,
               canKill: n.canKill,
               protectedReason: n.protectedReason,
               instance: n.instance,
@@ -509,7 +517,7 @@ export default {
           let detail: any = snap.sampled.details.get(pid) || {};
           if (process.platform === "linux") {
             try {
-              const fresh = linuxSampler.readDetail(pid, { withEnv: true });
+              const fresh = linuxSampler.readDetail(pid, { withEnv: true, listenMap: sampler.currentListenData() });
               detail = { ...detail, ...fresh, envText: fresh.envText };
             } catch { /* keep sampled detail */ }
           }
@@ -531,6 +539,7 @@ export default {
               state: detail.state || node.state || "",
               etimeMs: detail.etimeMs == null ? node.etimeMs : detail.etimeMs,
               fdCount: detail.fdCount == null ? null : detail.fdCount,
+              ports: Array.isArray(detail.ports) ? detail.ports : Array.isArray(node.ports) ? node.ports : [],
               env: envWhitelist(detail.envText),
             },
             parent: parent ? { pid: parent.pid, label: parent.label } : null,

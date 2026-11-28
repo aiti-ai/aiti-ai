@@ -1,12 +1,20 @@
 /**
  * aiti-proc-tree · pure-logic tests (node --test).
  * Run: node --test test/
+ *
+ * The shared logic lives in core.ts (jiti-transpiled at runtime; the host's
+ * moduleCache:false reloads it on every extension reload, unlike a shared .cjs
+ * which gets pinned by Node's process-level require/import caches). Tests load
+ * it through jiti the same way the host does.
  */
 "use strict";
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import core from "../core.cjs";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(new URL("../core.ts", import.meta.url).href);
+const core = await jiti.import("../core.ts");
 
 test("parseLinuxStat extracts pid/ppid/ticks/starttime", () => {
   const line = "1234 (node (worker)) S 1 1234 1234 0 -1 4194560 100 0 0 0 5 6 0 0 20 0 1 0 999 123456 789 0";
@@ -100,6 +108,67 @@ test("buildTree keeps only the ecosystem closure and links detached roots", () =
   const agent = tree.nodes.find((n) => n.pid === 201);
   assert.equal(agent.kind, "agent");
   assert.equal(agent.parentPid, 200);
+});
+
+test("parseProcNetListen keeps LISTEN rows and decodes v4/v6", () => {
+  const tcp = [
+    "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt  uid  timeout inode",
+    "   0: 00000000:75BE 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 ffff800000000000 100 0 0 10 0",
+    "   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 67890 1 ffff900000000000 100 0 0 10 0",
+    "   2: 0100007F:1F90 0170007F:C352 01 00000000:00000000 00:00000000 00000000  1000        0 99999 1 ffffa00000000000 20 4 30 10 -1",
+  ].join("\n");
+  const tcp6 = [
+    "  sl  local_address                          remote_address                        st tx_queue rx_queue tr tm->when retrnsmt  uid  timeout inode",
+    "   0: 00000000000000000000000000000000:75BE 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 24680 1 ffffb00000000000 100 0 0 10 0",
+    "   1: 0000000000000000FFFF00000100007F:226B 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 24681 1 ffffc00000000000 100 0 0 10 0",
+    "   2: 00000000000000000000000001000000:226C 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 24682 1 ffffd00000000000 100 0 0 10 0",
+  ].join("\n");
+  const m = core.parseProcNetListen([tcp, tcp6]);
+  assert.equal(m.get("12345"), "0.0.0.0:30142");
+  assert.equal(m.get("67890"), "127.0.0.1:8080");
+  assert.equal(m.get("24680"), "[::]:30142");
+  assert.equal(m.get("24681"), "127.0.0.1:8811");
+  assert.equal(m.get("24682"), "[::1]:8812");
+  assert.equal(m.get("99999"), undefined); // ESTABLISHED skipped
+  assert.equal(core.parseProcNetListen(null).size, 0);
+});
+
+test("parseLsofListen groups LISTEN names by pid", () => {
+  const lsof = [
+    "COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME",
+    "node      927  wind   21u  IPv4  0x9b1e7d0e1a10      0t0  TCP *:30142 (LISTEN)",
+    "node      927  wind   22u  IPv6  0x9b1e7d0e1a20      0t0  TCP *:30142 (LISTEN)",
+    "sshd      500  root    4u  IPv4  0x9b1e7d0e1a30      0t0  TCP *:22 (LISTEN)",
+    "node      927  wind   25u  IPv4  0x9b1e7d0e1a40      0t0  TCP 127.0.0.1:30142->127.0.0.1:5555 (ESTABLISHED)",
+  ].join("\n");
+  const m = core.parseLsofListen(lsof);
+  assert.deepEqual(m.get(927), ["*:30142"]);
+  assert.deepEqual(m.get(500), ["*:22"]);
+  assert.equal(m.get(928), undefined);
+  assert.equal(core.parseLsofListen("garbage").size, 0);
+});
+
+test("parseNetstatAno keeps LISTENING rows with pids", () => {
+  const ns = [
+    "", // localized header line must be ignored
+    "  TCP    0.0.0.0:20341          0.0.0.0:0              LISTENING       1234",
+    "  TCP    [::]:20341             [::]:0                 LISTENING       1234",
+    "  TCP    10.203.10.48:50000     140.82.121.6:443       ESTABLISHED     1234",
+  ].join("\n");
+  const m = core.parseNetstatAno(ns);
+  assert.deepEqual(m.get(1234), ["0.0.0.0:20341", "[::]:20341"]);
+  assert.equal(core.parseNetstatAno(null).size, 0);
+});
+
+test("fmtPortsCell compacts unique sorted ports", () => {
+  assert.equal(core.fmtPortsCell(undefined, 1), "");
+  assert.equal(core.fmtPortsCell([], 1), "");
+  assert.equal(core.fmtPortsCell(["[::]:30142", "0.0.0.0:30142", "127.0.0.1:8777"], 1), "8777 +1");
+  assert.equal(core.fmtPortsCell(["0.0.0.0:8777"], 2), "8777");
+  assert.equal(core.fmtPortsCell(["0.0.0.0:20341", "[::]:20341"], 2), "20341");
+  assert.equal(core.portOf("[::]:30142"), 30142);
+  assert.equal(core.portOf("0.0.0.0:20341"), 20341);
+  assert.ok(Number.isNaN(core.portOf("weird")));
 });
 
 test("killPlan enforces uid/protected/owned rules and expands subtrees", () => {
