@@ -7,6 +7,9 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+// ESM import (not require): bare require() would hit Node's process-level CJS
+// cache and keep serving the pre-reload core after POST /reload.
+import * as core from "../../core.ts";
 
 export interface RawProc {
   pid: number;
@@ -95,6 +98,22 @@ export function uidOf(pid: number): number | null {
 export function procStart(pid: number): number | null {
   void pid;
   return null;
+}
+
+/**
+ * TCP LISTEN sockets by pid: one async `lsof` call (spawn, no event-loop
+ * blocking). Fails soft: permission/availability problems yield an empty map.
+ */
+export async function listenByPid(): Promise<Map<number, string[]>> {
+  try {
+    const { stdout } = await exec("lsof", ["-nP", "-a", "-iTCP", "-sTCP:LISTEN"], {
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 8000,
+    });
+    return core.parseLsofListen(String(stdout || ""));
+  } catch {
+    return new Map();
+  }
 }
 
 export const CLK_TCK = 100;

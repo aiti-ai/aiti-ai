@@ -21,8 +21,10 @@
 
 ## 操作
 
-- 五列均可点击排序（名称 / PID / CPU / 内存 / 时长，再点翻转升降序）；点击行打开
-  详情抽屉：完整命令行、cwd、白名单环境变量、父/子进程，以及「结束进程」「结束子树」
+- 六列均可点击排序（名称 / PID / CPU / 内存 / 时长 / TCP 监听端口，再点翻转升降序）；
+  监听端口采集：Linux 读 `/proc/net/tcp{,6}` + fd socket inode 反查（纯 /proc 无 spawn），
+  macOS 用 `lsof`、Windows 用 `netstat -ano`（异步 spawn，缓存 5s）；搜索框可按端口过滤。
+  点击行打开详情抽屉：完整命令行、cwd、白名单环境变量、父/子进程，以及「结束进程」「结束子树」
   操作；终端行可「打开终端」（双击行同效），外部 Agent 行可「打开会话」。
 - kill 护栏：同 uid、保护名单（init / 扩展宿主 / pi-web CLI / 其它实例）、仅已识别
   归属、二次确认、`kill-audit.jsonl` 审计。
@@ -37,4 +39,5 @@ node --test test/core.test.mjs
 node tools/deploy.mjs
 ```
 
-零运行时依赖；纯逻辑在 `core.cjs`（客户端也打包同一份格式化函数）。
+零运行时依赖；纯逻辑在 `core.ts`（服务端经 jiti 转译加载，扩展热重载即生效——共享 .cjs 会被
+Node 进程级 require/import 缓存钉死；客户端打包同一份模块）。

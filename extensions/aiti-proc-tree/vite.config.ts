@@ -35,7 +35,7 @@ export default defineConfig({
     minify: false,
     sourcemap: false,
     rollupOptions: {
-      external: [], // npm packages (incl. core.cjs helpers) inline into the single .mjs
+      external: [], // npm packages (incl. core.ts helpers) inline into the single .mjs
     },
   },
 });

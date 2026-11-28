@@ -1,5 +1,5 @@
 /**
- * aiti-proc-tree · core.cjs — pure logic shared by the server and the client bundle.
+ * aiti-proc-tree · core.ts — pure logic shared by the server and the client bundle.
  *
  * Zero dependencies and zero I/O so `node --test` can cover the tricky parts:
  * - Linux /proc stat parsing + CPU delta math
@@ -12,8 +12,6 @@
  * All comments are English (public-surface language rule).
  */
 
-"use strict";
-
 // ---------------------------------------------------------------- linux proc
 
 /**
@@ -22,7 +20,7 @@
  * minflt cminflt majflt cmajflt utime stime cutime cstime ... starttime.
  * Returns null when the line is malformed.
  */
-function parseLinuxStat(line) {
+export function parseLinuxStat(line) {
   if (typeof line !== "string" || !line) return null;
   const close = line.lastIndexOf(")");
   if (close < 0) return null;
@@ -45,7 +43,7 @@ function parseLinuxStat(line) {
  * window. First tick (no prev) or non-positive window returns null.
  * 100 = one full core; multi-threaded processes can exceed 100.
  */
-function cpuPercent(prev, cur, dtMs, clkTck) {
+export function cpuPercent(prev, cur, dtMs, clkTck) {
   if (!prev || !cur) return null;
   const hz = Number(clkTck) > 0 ? Number(clkTck) : 100;
   const dt = Number(dtMs);
@@ -56,7 +54,7 @@ function cpuPercent(prev, cur, dtMs, clkTck) {
 }
 
 /** Parse a NUL-separated /proc/<pid>/environ buffer into a plain object. */
-function parseEnviron(text) {
+export function parseEnviron(text) {
   const out = {};
   if (typeof text !== "string" || !text) return out;
   for (const part of text.split("\0")) {
@@ -73,7 +71,7 @@ function parseEnviron(text) {
  * a registry entry is missing (detached/reparented processes keep their env).
  * Returns null when no marker is present.
  */
-function parseEnvMarkers(envText) {
+export function parseEnvMarkers(envText) {
   const env = typeof envText === "string" ? parseEnviron(envText) : (envText || {});
   const owner = env.AITI_PROC_TREE_OWNER || "";
   const kind = env.AITI_PROC_TREE_KIND || "";
@@ -108,10 +106,147 @@ function parseEnvMarkers(envText) {
   };
 }
 
+// ---------------------------------------------------------------- listen ports
+
+/**
+ * Parse a /proc/net hex address (8 hex chars for IPv4, 32 for IPv6; each
+ * 32-bit word is printed little-endian) into address bytes.
+ */
+export function addrBytes(hex) {
+  const out = [];
+  for (let d = 0; d < hex.length; d += 8) {
+    const word = hex.substr(d, 8);
+    for (let i = 6; i >= 0; i -= 2) out.push(parseInt(word.substr(i, 2), 16));
+  }
+  return out;
+}
+
+/**
+ * Format address bytes for display: dotted IPv4 (also for ::ffff: mapped
+ * v6), bracketed compressed IPv6 otherwise.
+ */
+export function fmtListenAddr(bytes) {
+  if (bytes.length === 4) return bytes.join(".");
+  const v4mapped = bytes.length === 16
+    && bytes.slice(0, 10).every((b) => b === 0)
+    && bytes[10] === 0xff && bytes[11] === 0xff;
+  if (v4mapped) return bytes.slice(12).join(".");
+  const groups = [];
+  for (let i = 0; i < 16; i += 2) groups.push(((bytes[i] << 8) | bytes[i + 1]).toString(16));
+  // Compress the longest run of zero groups (RFC 5952, one run, >= 2 groups).
+  let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i] === "0") {
+      if (curStart < 0) curStart = i;
+      curLen++;
+      if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
+    } else { curStart = -1; curLen = 0; }
+  }
+  if (bestLen >= 2) {
+    const head = groups.slice(0, bestStart).join(":");
+    const tail = groups.slice(bestStart + bestLen).join(":");
+    return "[" + head + "::" + tail + "]";
+  }
+  return "[" + groups.join(":") + "]";
+}
+
+/**
+ * Parse /proc/net/tcp + /proc/net/tcp6 tables, keeping LISTEN entries only
+ * (state column "0A"). Returns Map<inode, "addr:port">.
+ */
+export function parseProcNetListen(texts) {
+  const out = new Map();
+  for (const text of Array.isArray(texts) ? texts : [texts]) {
+    if (typeof text !== "string") continue;
+    for (const line of text.split("\n")) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 10 || !/^\d+:$/.test(cols[0] || "")) continue;
+      if ((cols[3] || "").toUpperCase() !== "0A") continue; // TCP_LISTEN
+      const local = cols[1] || "";
+      const colon = local.lastIndexOf(":");
+      if (colon < 0) continue;
+      const addrHex = local.slice(0, colon);
+      const port = parseInt(local.slice(colon + 1), 16);
+      const inode = cols[9];
+      if (!/^[0-9A-Fa-f]+$/.test(addrHex) || !Number.isFinite(port) || !/^\d+$/.test(inode)) continue;
+      out.set(inode, fmtListenAddr(addrBytes(addrHex)) + ":" + port);
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse `lsof -nP -iTCP -sTCP:LISTEN` output into Map<pid, ["addr:port"-ish]>
+ * (macOS). NAME keeps lsof's own spelling (*:30142, [::]:30142).
+ */
+export function parseLsofListen(text) {
+  const out = new Map();
+  if (typeof text !== "string") return out;
+  for (const line of text.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 9 || (cols[7] || "") !== "TCP") continue;
+    const pid = Number(cols[1]);
+    if (!Number.isFinite(pid) || pid <= 0) continue;
+    const rest = cols.slice(8).join(" ");
+    if (!rest) continue;
+    // Keep LISTEN entries only: lsof appends "(STATE)" — with -sTCP:LISTEN that
+    // is always (LISTEN), but stay robust against wider scans.
+    const suffix = /\(([^)]+)\)\s*$/.exec(rest);
+    if (suffix && !/^LISTEN$/i.test(suffix[1])) continue;
+    const name = rest.replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (!name || name === "NAME") continue;
+    if (!out.has(pid)) out.set(pid, []);
+    const list = out.get(pid);
+    if (!list.includes(name)) list.push(name);
+  }
+  return out;
+}
+
+/**
+ * Parse Windows `netstat -ano -p tcp` output into Map<pid, ["addr:port"]>
+ * (LISTENING lines only; local column keeps netstat spelling incl. [::]).
+ */
+export function parseNetstatAno(text) {
+  const out = new Map();
+  if (typeof text !== "string") return out;
+  for (const line of text.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || (cols[0] || "").toUpperCase() !== "TCP") continue;
+    if ((cols[3] || "").toUpperCase() !== "LISTENING") continue;
+    const pid = Number(cols[4]);
+    const local = cols[1] || "";
+    if (!Number.isFinite(pid) || pid <= 0 || !local || local === "Local-Address") continue;
+    if (!out.has(pid)) out.set(pid, []);
+    const list = out.get(pid);
+    if (!list.includes(local)) list.push(local);
+  }
+  return out;
+}
+
+/** Port number of a "addr:port" string (NaN when unparsable). */
+export function portOf(entry) {
+  const m = /:(\d+)$/.exec(String(entry || ""));
+  return m ? Number(m[1]) : NaN;
+}
+
+/**
+ * Compact cell text for the port column: unique port numbers sorted ascending,
+ * first `max` shown, remainder as "+n". Empty string when no ports.
+ */
+export function fmtPortsCell(ports, max) {
+  const list = Array.isArray(ports) ? ports : [];
+  if (!list.length) return "";
+  const nums = list.map((p) => portOf(p)).filter((n) => Number.isFinite(n) && n > 0);
+  const uniq = Array.from(new Set(nums)).sort((a, b) => a - b).map(String);
+  const cap = Math.max(1, Number(max) || 2);
+  const head = uniq.slice(0, cap).join(", ");
+  return uniq.length > cap ? head + " +" + (uniq.length - cap) : head;
+}
+
 // ---------------------------------------------------------------- registries
 
 /** Normalize every registry source into one row shape (all fields optional but pid/source). */
-function normalizeRegistryRows(input) {
+export function normalizeRegistryRows(input) {
   const byKey = new Map();
   const push = (row) => {
     if (!row) return;
@@ -246,7 +381,7 @@ function normalizeRegistryRows(input) {
 
 // ---------------------------------------------------------------- tree merge
 
-function toRawMap(list) {
+export function toRawMap(list) {
   const map = new Map();
   for (const p of list || []) {
     if (p && Number.isFinite(Number(p.pid))) map.set(Number(p.pid), p);
@@ -255,7 +390,7 @@ function toRawMap(list) {
 }
 
 /** Self pid up to the pi-web CLI (inclusive). Stops before init/systemd. */
-function ancestorChain(raw, selfPid, cliPid) {
+export function ancestorChain(raw, selfPid, cliPid) {
   const chain = [];
   const seen = new Set();
   let cur = Number(selfPid) || 0;
@@ -271,7 +406,7 @@ function ancestorChain(raw, selfPid, cliPid) {
 }
 
 /** All descendants of `roots` (BFS along the ppid graph), roots included. */
-function descendantsOf(raw, roots) {
+export function descendantsOf(raw, roots) {
   const children = new Map();
   for (const p of raw.values()) {
     if (!children.has(p.ppid)) children.set(p.ppid, []);
@@ -296,7 +431,7 @@ function descendantsOf(raw, roots) {
  * The server uses it to decide which processes need detailed reads before
  * buildTree runs; buildTree computes the same set internally.
  */
-function visibleSet(raw, rows, selfPid, cliPid) {
+export function visibleSet(raw, rows, selfPid, cliPid) {
   const ancestors = ancestorChain(raw, selfPid, cliPid);
   const seeds = new Set(ancestors.filter((pid) => raw.has(pid)));
   for (const row of rows || []) {
@@ -307,7 +442,7 @@ function visibleSet(raw, rows, selfPid, cliPid) {
   return { ancestors, seeds, visible: descendantsOf(raw, seeds) };
 }
 
-function pickRowFor(pid, rows, byPid, byWrapper) {
+export function pickRowFor(pid, rows, byPid, byWrapper) {
   if (byPid.has(pid)) return { row: byPid.get(pid), viaWrapper: false };
   if (byWrapper.has(pid)) return { row: byWrapper.get(pid), viaWrapper: true };
   return null;
@@ -318,7 +453,7 @@ function pickRowFor(pid, rows, byPid, byWrapper) {
  * Only the seed set (self + CLI ancestors + every registry pid) and its
  * descendant closure is returned: unrelated processes are never materialized.
  */
-function buildTree(opts) {
+export function buildTree(opts) {
   const options = opts || {};
   const raw = options.raw instanceof Map ? options.raw : toRawMap(options.raw);
   const details = options.details instanceof Map ? options.details : new Map(Object.entries(options.details || {}));
@@ -444,6 +579,7 @@ function buildTree(opts) {
       cpu,
       mem: d.mem == null ? null : d.mem,
       etimeMs: d.etimeMs == null ? null : d.etimeMs,
+      ports: Array.isArray(d.ports) && d.ports.length ? d.ports.slice(0, 8) : undefined,
       cmd: d.cmd || undefined,
       canKill: !protectedReason,
       protectedReason,
@@ -543,7 +679,7 @@ function buildTree(opts) {
  * - owned: Set<pid> of pids the tree recognizes (registry/marker/host subtree)
  * - allowHost: explicit host-kill opt-in (double confirmation in the UI)
  */
-function killPlan(opts) {
+export function killPlan(opts) {
   const options = opts || {};
   const raw = options.raw instanceof Map ? options.raw : toRawMap(options.raw);
   const targets = Array.isArray(options.targets) ? options.targets.map(Number).filter((n) => n > 0) : [];
@@ -608,7 +744,7 @@ function killPlan(opts) {
 
 // ---------------------------------------------------------------- formatters
 
-function fmtBytes(n, digits) {
+export function fmtBytes(n, digits) {
   if (n == null || !isFinite(Number(n)) || Number(n) < 0) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
@@ -618,13 +754,13 @@ function fmtBytes(n, digits) {
   return (i === 0 ? String(Math.round(v)) : v.toFixed(d)) + " " + units[i];
 }
 
-function fmtCpu(v) {
+export function fmtCpu(v) {
   const n = Number(v);
   if (v == null || !isFinite(n) || n < 0) return "—";
   return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + "%";
 }
 
-function fmtDuration(ms) {
+export function fmtDuration(ms) {
   const n = Number(ms);
   if (ms == null || !isFinite(n) || n < 0) return "—";
   const s = Math.floor(n / 1000);
@@ -637,24 +773,7 @@ function fmtDuration(ms) {
   return s + "s";
 }
 
-function fmtCount(n) {
+export function fmtCount(n) {
   const v = Number(n);
   return isFinite(v) && v > 0 ? String(Math.round(v)) : "0";
 }
-
-module.exports = {
-  ancestorChain,
-  visibleSet,
-  parseLinuxStat,
-  cpuPercent,
-  parseEnviron,
-  parseEnvMarkers,
-  normalizeRegistryRows,
-  buildTree,
-  descendantPids: descendantsOf,
-  killPlan,
-  fmtBytes,
-  fmtCpu,
-  fmtDuration,
-  fmtCount,
-};

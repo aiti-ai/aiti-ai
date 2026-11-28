@@ -7,6 +7,9 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+// ESM import (not require): bare require() would hit Node's process-level CJS
+// cache and keep serving the pre-reload core after POST /reload.
+import * as core from "../../core.ts";
 
 export interface RawProc {
   pid: number;
@@ -140,6 +143,24 @@ export function uidOf(pid: number): number | null {
 export function procStart(pid: number): number | null {
   void pid;
   return null;
+}
+
+/**
+ * TCP LISTEN sockets by pid: one async `netstat -ano` call (spawn, no
+ * event-loop blocking; the state column stays English even on localized
+ * Windows). Fails soft: an empty map just means no port badges.
+ */
+export async function listenByPid(): Promise<Map<number, string[]>> {
+  try {
+    const { stdout } = await exec("netstat", ["-ano", "-p", "tcp"], {
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 10000,
+      windowsHide: true,
+    });
+    return core.parseNetstatAno(String(stdout || ""));
+  } catch {
+    return new Map();
+  }
 }
 
 export const CLK_TCK = 100;
