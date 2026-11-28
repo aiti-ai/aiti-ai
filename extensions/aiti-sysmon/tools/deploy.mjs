@@ -19,7 +19,7 @@ import { copyFileSync, cpSync, mkdirSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, "..");
 const targets = [
@@ -65,7 +65,7 @@ deployCommit({ repo: extRepo, name: "aiti-sysmon", paths: ["aiti-sysmon"], log: 
 // Shared-deps reconcile notice: extman installs declared runtime deps
 // (systeminformation) into each instance's shared <webRoot>/node_modules.
 try {
-  const { notifyReconcile } = await import("../../_shared/reconcile-deps.mjs");
+  const { notifyReconcile } = await import("@aiti-ai/ext-shared/reconcile-deps");
   await notifyReconcile();
 } catch (e) {
   console.log("[deploy] reconcile notice skipped (" + String((e && e.message) || e) + ")");
@@ -73,7 +73,7 @@ try {
 
 // ── dual-instance hot reload (basePath env per machine) — allowed to fail ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] auto reload skipped (" + String((e && e.message) || e) + ") — POST /api/extensions/reload manually");

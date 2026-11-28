@@ -9,7 +9,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { apiUrl, t, extFeatures, onFeatureChange } from "./host-shim";
-import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 import { fmtBytes, fmtRate, fmtUptime, histPush } from "../../core.cjs";
 
 export const SY_KEY = "aiti-sysmon:panel";

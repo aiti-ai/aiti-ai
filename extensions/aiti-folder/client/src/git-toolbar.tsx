@@ -14,11 +14,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, extSvc, openFile } from "./host-shim";
 import { ct, currentLocale } from "./comp-i18n";
-import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
+import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
 // ⚠ Create the api instance inside the hook only (never at module level: under the
 // folder-browser → git-toolbar cycle a module-level const hits the TDZ "Cannot access before
 // initialization", measured 2026-11-24).
-import { BranchPanel, BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
+import { BranchPanel, BranchChipBadge } from "@aiti-ai/ext-shared/git-ops-client/branch-panel";
 import { CommitPlanDialog } from "./git-plan";
 import { setupCommitActions, useCommitActions, type CommitActionCtx } from "./commit-actions";
 

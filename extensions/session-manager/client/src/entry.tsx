@@ -47,7 +47,7 @@
 })();
 
 import { __setCtx, t, apiUrl, useState, useEffect, useRef, getExtService } from "./host-shim";
-import { buildAtText, openNewSession } from "../../../_shared/new-session-cwd";
+import { buildAtText, openNewSession } from "@aiti-ai/ext-shared/new-session-cwd";
 import {
   refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget,
   onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
@@ -74,9 +74,9 @@ import { SidebarContentDock } from "./sidebar-content";
 import { NewSessionPicker, newSessionPrepare } from "./new-session-picker";
 import { NewSessionWorkspacePicker } from "./new-session-workspace-picker";
 import { TopbarNewSession } from "./topbar-new-session";
-import { useGate, usePresent, seedDockDefault } from "../../../_shared/ext-float-dock-lite";
-import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
-import { MenuActionRow } from "../../../_shared/menu-row";
+import { useGate, usePresent, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock-lite";
+import { lazyExtView, createLazyModule } from "@aiti-ai/ext-shared/ext-lazy";
+import { MenuActionRow } from "@aiti-ai/ext-shared/menu-row";
 import type { WorkspaceManageProps } from "./workspace-manage";
 
 // ---- 懒 chunk 引用（面板/看板/标签树/菜单三件套/工作区管理）----

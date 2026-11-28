@@ -11,10 +11,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -55,14 +55,14 @@ deployCommit({ repo: extRepo, name: "aiti-agent-badge", paths: ["aiti-agent-badg
 console.log("[deploy] done. Effective after POST /api/extensions/reload");
 
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (error) {
   console.log("[deploy] automatic reload skipped (" + String((error && error.message) || error) + ") - POST /api/extensions/reload manually");
 }
 
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (error) {
   console.log("[deploy] dev-pack skipped (" + String((error && error.message) || error) + ")");

@@ -35,8 +35,8 @@ function pickI(hp: any, field: string): string {
   const base = hp[field];
   return base == null ? "" : String(base);
 }
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
-import { extDisplayName } from "../../../_shared/ext-display-names";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
+import { extDisplayName } from "@aiti-ai/ext-shared/ext-display-names";
 
 declare global {
   interface Window {

@@ -7,7 +7,7 @@
  *        → ContentProvider.write（本扩展 save-blob route，409 冲突沿用 aiti-editor 范式）
  * 引擎（superdoc + npm 全家）走 vite 动态 chunk，打开文件才拉取。
  */
-import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+import { uiConfirm, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 /**
  * 引擎（superdoc + npm 全家）一律**动态** import——静态 import 会把它并进入口图，

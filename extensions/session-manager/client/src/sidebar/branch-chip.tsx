@@ -11,8 +11,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiUrl, getExtService, onExtServiceChange, getLocale, createPortal } from "../host-shim";
-import { BranchPanel } from "../../../../_shared/git-ops-client/branch-panel";
-import { createGitOpsApi } from "../../../../_shared/git-ops-client/api.mjs";
+import { BranchPanel } from "@aiti-ai/ext-shared/git-ops-client/branch-panel";
+import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
 import type { WorktreeRuntime } from "./use-worktree";
 
 /** refs 快照缓存（模块级，页面生命周期内）：切回已探测过的 cwd 立即显示、零请求。 */

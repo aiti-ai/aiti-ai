@@ -6,7 +6,7 @@
  * save as a favorite, or run it. Cross-app: save → favorites app, run → terminal app.
  */
 import { btnStyle, rowStyle, inputStyle, smallStyle } from "../kit.js";
-import { uiConfirm } from "../../../../_shared/ui-dialogs";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 
 export function createCommandDetail(kit, store, deps) {
   const { h, t, api, useState, useEffect } = kit;

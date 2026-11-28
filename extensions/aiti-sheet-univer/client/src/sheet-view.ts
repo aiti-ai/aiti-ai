@@ -9,8 +9,8 @@
  */
 import { toUniverSnapshot, fromUniverSnapshot } from "./bridge";
 import { loadExcelJS, loadXlsx, createSheetEditor, type SheetEditorInstance } from "./sheet-vendor";
-import { buildSofficeMissingPanel } from "../../../_shared/soffice-panel";
-import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+import { buildSofficeMissingPanel } from "@aiti-ai/ext-shared/soffice-panel";
+import { uiConfirm, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 /** 活动实例表：filePath → 当前视图的快照/时间戳（ContentProvider.write 持久化时查） */
 const activeInstances = new Map<string, { getSnapshot: () => any; mtimeRef: { current: number } }>();

@@ -35,9 +35,10 @@ const EXT_FLOAT_STUB = [
   "export function closePanel() { /* test stub */ }",
 ].join("\n");
 
-/** 隔离目录镜像 store.ts 的相对 import 结构（sm/client/src/ + _shared/ + sm/server/）。
- *  必须镜像 session-manager 层级：store.ts 的 "../../../_shared/ext-float-dock"
- *  从 client/src 出发三层 —— 少一层则解析不到 stub（实测构建报 Could not resolve）。 */
+/** The isolation dir mirrors store.ts's import structure (sm/client/src/ + the shared
+ *  package stub). The session-manager hierarchy matters: store.ts's
+ *  "@aiti-ai/ext-shared/ext-float-dock" resolves three levels up from client/src —
+ *  one level short and the stub is not found (build fails with Could not resolve). */
 function setupIsolation() {
   const dir = mkdtempSync(join(tmpdir(), "sm-store-test-"));
   const sm = join(dir, "sm");
@@ -47,13 +48,14 @@ function setupIsolation() {
   writeFileSync(join(clientSrc, "float-yield.pure.ts"), readFileSync(join(srcRoot, "float-yield.pure.ts"), "utf8"));
   writeFileSync(join(clientSrc, "host-shim.ts"), HOST_SHIM_STUB);
   writeFileSync(join(clientSrc, "sidebar", "pure.ts"), readFileSync(join(srcRoot, "sidebar", "pure.ts"), "utf8"));
-  mkdirSync(join(dir, "_shared"), { recursive: true });
+  mkdirSync(join(dir, "node_modules", "@aiti-ai", "ext-shared"), { recursive: true });
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "package.json"), JSON.stringify({ name: "@aiti-ai/ext-shared", type: "module" }));
   // store.ts 2026-09 起 import ext-float-dock-lite（present/openFloat/closePanel 门面）；
   // 旧名一并镜像（防其它 transitively 引用）。
-  writeFileSync(join(dir, "_shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
-  writeFileSync(join(dir, "_shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
   // dedupe-fetch 无外部依赖，直接镜像真实实现（store.ts 2026-09 起引用，重复请求分析 §3.1）
-  writeFileSync(join(dir, "_shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
   mkdirSync(join(sm, "server"), { recursive: true });
   writeFileSync(join(sm, "server", "payload.ts"), readFileSync(join(serverRoot, "payload.ts"), "utf8"));
   return dir;

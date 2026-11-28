@@ -15,7 +15,8 @@
     "deploy": "node tools/deploy.mjs"
   },
   "dependencies": {
-    "smol-toml": "^1.8.0"
+    "smol-toml": "^1.8.0",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "devDependencies": {
     "vite": "^6.4.3"

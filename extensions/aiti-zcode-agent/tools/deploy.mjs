@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
+import { notifyReconcile } from "@aiti-ai/ext-shared/reconcile-deps";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // Targets: both web + web-dev by default; --prod prod-only, --dev dev-only (legacy one-sided usage kept working)
@@ -48,7 +48,7 @@ await notifyReconcile();
 
 // ── dual-instance hot reload (basePath dual env, set per machine) — failure-tolerant: service down / missing shared module only logs, deploy exit code unaffected ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -56,7 +56,7 @@ try {
 
 // ── dev-pack (plan §3.2: sources + build tools + AGENTS.md delivered to the deploy dir so the AI can edit on-site) — failure-tolerant, deploy exit code unaffected ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

@@ -8,10 +8,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiUrl, extSvc, t } from "./host-shim";
 // dock v3（P3 批）：显隐收口展示状态机（P3 保守：无 default，左栏可选）
-import { useGate, usePresent, DockBody, openFloat, closePanel, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { useGate, usePresent, DockBody, openFloat, closePanel, isSidebarDockState, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 // dock 头工具条 v3：face 声明按钮（探测/刷新），内容实现命令 + 状态上报
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, writeBlockCollapsed } from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand, writeBlockCollapsed } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 
 export const MC_KEY = "aiti-model-check:panel";
 import { fmtUnitPrice } from "./money";

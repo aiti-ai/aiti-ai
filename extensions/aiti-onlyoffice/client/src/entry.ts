@@ -5,7 +5,7 @@
  * → 注册 word/sheet/slide 三 provider（分开注册让用户能分别设默认）。失败 → 不注册（菜单自然无此项）。
  * 保存不经 ContentProvider（DS 内部经 callback 直写服务端），仅本次注册 editor provider。
  */
-import { whenAitiEditorReady } from "../../../_shared/aiti-editor-inject.mjs";
+import { whenAitiEditorReady } from "@aiti-ai/ext-shared/aiti-editor-inject";
 import { renderOnlyofficeView } from "./oo-view";
 
 interface ProviderSpec {

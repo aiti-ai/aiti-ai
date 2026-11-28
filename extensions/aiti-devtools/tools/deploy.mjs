@@ -19,9 +19,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
-import { deployCommit } from '../../_shared/deploy-commit.mjs';
-import { copyIcons } from '../../_shared/ext-icons-deploy.mjs';
-import { notifyReconcile } from '../../_shared/reconcile-deps.mjs';
+import { deployCommit } from '@aiti-ai/ext-shared/deploy-commit';
+import { notifyReconcile } from '@aiti-ai/ext-shared/reconcile-deps';
 
 // 容忍拷贝：发布仓（aiti-ai）的 packages/aiti-devtools-core 镜像不含 pair 三件
 // (pair.ts / pair-client.js) — skipped when missing in npm/docker form (pair.html retired: phone entry = workbench deep link ?pair=1),
@@ -72,7 +71,7 @@ const only = wantProd ? 'prod' : wantDev ? 'dev' : 'both';
 
 // client TS 残留检查（.mjs 里是合法 JS 语法检查不报、运行时必炸；FAIL 即部署失败）
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -108,7 +107,6 @@ for (const t of TARGETS) {
   const jitiCacheProd = resolve(process.env.PI_WEB_WEBROOT || resolve(homedir(), '.pi', 'web'), '.cache', 'jiti');
   try { rmSync(jitiCacheProd, { recursive: true, force: true }); console.log('[deploy] jiti 缓存已清（' + jitiCacheProd + '）'); } catch {}
   // 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
-  copyIcons(resolve(extDir, 'icons'), ["wrench"], { log: (m) => console.log('[deploy] ' + m) });
 
   // 3) 拷贝 assets（注入产物 + host-protocol）+ client（AI 窗）
   // 产物统一 dist/（零构建手写源在 client/src/，git 跟踪）
@@ -143,7 +141,7 @@ commitDeploy();
 
 // ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -154,7 +152,7 @@ await notifyReconcile();
 
 // ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

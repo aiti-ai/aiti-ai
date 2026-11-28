@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { join, basename as pathBasename } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const { listCursorCliChats, readCursorCliChat } = await import("../../../_shared/cursor-cli-store.ts");
+const { listCursorCliChats, readCursorCliChat } = await import("@aiti-ai/ext-shared/cursor-cli-store");
 const { createCursorCliAdapter } = await import("./cursor-cli.ts");
 
 // ── 最小 protobuf wire writer ───────────────────────────────────────────────

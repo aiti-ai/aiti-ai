@@ -32,5 +32,8 @@
   "devDependencies": {
     "esbuild": "^0.24.2"
   },
-  "contentHash": "bb451f4fd595b42c"
+  "contentHash": "bb451f4fd595b42c",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
+  }
 }

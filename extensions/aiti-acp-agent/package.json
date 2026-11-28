@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-acp-agent",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "type": "module",
   "description": "A universal ACP driver — one adapter connects all Agent Client Protocol agents (25 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)",
   "displayNameI18n": {
@@ -30,7 +30,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "04ca698bfe63a158",
+  "contentHash": "49c5537397557d05",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

@@ -7,7 +7,7 @@
  */
 import { useState, useEffect } from "react";
 import { regSvc } from "./host-shim";
-import { useGate, DockBody, present } from "../../../_shared/ext-float-dock";
+import { useGate, DockBody, present } from "@aiti-ai/ext-shared/ext-float-dock";
 import { api, jsonBody, G, lastSeg } from "./shared";
 import { TaskPicker } from "./task-picker";
 import { ReviewApp } from "./review-app";

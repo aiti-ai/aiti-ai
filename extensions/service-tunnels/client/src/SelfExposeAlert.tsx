@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, apiUrl, extSvc } from "./host-shim";
-import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 
 interface SelfAlertState {
   exposing: boolean;

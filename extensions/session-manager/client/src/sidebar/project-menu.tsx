@@ -17,7 +17,7 @@ import { t } from "../host-shim";
 import { displayCwd, type RecentProject } from "./pure";
 import { PathLabel, showProjectActivity, isSmallScreen } from "./parts";
 import { SIc } from "../helpers";
-import { MENU_GROUP_STYLE, MenuActionRow } from "../../../../_shared/menu-row";
+import { MENU_GROUP_STYLE, MenuActionRow } from "@aiti-ai/ext-shared/menu-row";
 
 export interface ProjectMenuFilter {
   value: string;

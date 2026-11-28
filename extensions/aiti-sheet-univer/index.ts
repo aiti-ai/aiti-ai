@@ -5,9 +5,9 @@
  * exceljs / Univer / @e965/xlsx 全部是 client vendor 依赖——服务端零数据面依赖。
  * 读文件复用核心 /api/files（经 aiti-editor 票据端点）与 aiti-editor /t/<ticket>/file。
  */
-import { createBlobSaveRoute } from "./blob-save-route";
-import { createConvertSaveAsRoute } from "./convert-saveas";
-import { locateSoffice, locateSofficeAsync, setSofficeDataDir, invalidateSofficeCache, SOFFICE_INSTALL_HINTS } from "./soffice-locate";
+import { createBlobSaveRoute } from "@aiti-ai/ext-shared/blob-save-route";
+import { createConvertSaveAsRoute } from "@aiti-ai/ext-shared/convert-saveas";
+import { locateSoffice, locateSofficeAsync, setSofficeDataDir, invalidateSofficeCache, SOFFICE_INSTALL_HINTS } from "@aiti-ai/ext-shared/soffice-locate";
 
 // 老格式 → 可编辑 xlsx（另存派生，不覆盖：-fromxls / -fromods / (n) 递增）
 const convertSaveAsRoute = createConvertSaveAsRoute({

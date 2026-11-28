@@ -6,7 +6,7 @@
  *     编辑诉求由能力联动自动路由到 aiti-word-superdoc / aiti-onlyoffice）。
  * 重复注册幂等：先 dispose 上一轮（disposables 挂 window 单例，跨 bundle 重载存活）。
  */
-import { whenAitiEditorReady } from "../../../_shared/aiti-editor-inject.mjs";
+import { whenAitiEditorReady } from "@aiti-ai/ext-shared/aiti-editor-inject";
 import { renderDocxPreviewView } from "./word-view";
 
 function register(ctx: Record<string, any>): void {

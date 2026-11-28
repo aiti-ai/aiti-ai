@@ -13,12 +13,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 // client TS residue check (.mjs hides bad TS syntax from syntax checks; it explodes at runtime)
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -49,14 +48,13 @@ for (const extDir of targets) {
   console.log("[deploy] client → " + resolve(clientDir, "aiti-feedback-client.mjs"));
 }
 
-for (const t of targets) copyIcons(resolve(t, "icons"), ["discussion", "message-square-text", "message-circle"], { log: (m) => console.log(m) });
 
 deployCommit({ repo: extRepo, name: "aiti-feedback", paths: ["aiti-feedback"], ident: true, log: (m) => console.log("[deploy] " + m) });
 
 console.log("[deploy] done. Reload via POST /api/extensions/reload; client refreshes on page reload");
 
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] auto reload skipped (" + String((e && e.message) || e) + ")");

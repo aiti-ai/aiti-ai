@@ -10,7 +10,7 @@
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
 import { __setCtx } from "./host-shim";
-import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { seedDockDefault, declareDockZones, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
 import { PANEL_KEY, PROMPT_DOCK_ICON } from "./prompts-app";
 import { openFromToolbar, PromptsPanelSlot, PromptsDockLeft, PromptsDockRight, PromptsSaveSlot, PromptsMessageAction, __bindSendChat, __openExternal, setAppCtx } from "./prompts-app";
 import { exportPromptsOnClick, ExportPromptsDialog } from "./export-dialog";

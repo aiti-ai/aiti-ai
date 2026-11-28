@@ -32,7 +32,7 @@ import {
 import { FILE_ACTION_ORDER, sortFileActions } from "./file-actions.js";
 import { ACTION_ICON_NODES, resolveActionIcon, actionIconReactAttrs } from "./action-icons.js";
 import { elToDom as miniToDom } from "./el-to-dom.js";
-import { openNewSession } from "../../../_shared/new-session-cwd";
+import { openNewSession } from "@aiti-ai/ext-shared/new-session-cwd";
 
 const state = { opening: null };
 

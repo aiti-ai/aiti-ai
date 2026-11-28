@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync } from "fs";
-import { rmRf } from "../../_shared/test-rm-rf.mjs";
+import { rmRf } from "@aiti-ai/ext-shared/test-rm-rf";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 

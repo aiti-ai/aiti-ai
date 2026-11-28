@@ -46,12 +46,13 @@ function setupIsolation() {
   writeFileSync(join(clientSrc, "float-yield.pure.ts"), readFileSync(join(srcRoot, "float-yield.pure.ts"), "utf8"));
   writeFileSync(join(clientSrc, "host-shim.ts"), HOST_SHIM_STUB);
   writeFileSync(join(clientSrc, "sidebar", "pure.ts"), readFileSync(join(srcRoot, "sidebar", "pure.ts"), "utf8"));
-  mkdirSync(join(dir, "_shared"), { recursive: true });
+  mkdirSync(join(dir, "node_modules", "@aiti-ai", "ext-shared"), { recursive: true });
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "package.json"), JSON.stringify({ name: "@aiti-ai/ext-shared", type: "module" }));
   // store.ts 2026-09 起 import ext-float-dock-lite（present/openFloat/closePanel 门面）；
   // 旧名一并镜像（防其它 transitively 引用）。
-  writeFileSync(join(dir, "_shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
-  writeFileSync(join(dir, "_shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
-  writeFileSync(join(dir, "_shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(dir, "node_modules", "@aiti-ai", "ext-shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
   mkdirSync(join(sm, "server"), { recursive: true });
   writeFileSync(join(sm, "server", "payload.ts"), readFileSync(join(serverRoot, "payload.ts"), "utf8"));
   return dir;

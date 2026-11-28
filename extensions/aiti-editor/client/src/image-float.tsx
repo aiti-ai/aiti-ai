@@ -22,7 +22,7 @@ import { useEffect, useState } from "react";
 import { t, getTopicItems } from "./host-shim.ts";
 import {
   DockBody, present, presentState, useGate, clearDockPref, declareDockZones,
-} from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
 import { ImageViewer } from "./image-viewer";
 import { estimateDataUrlBytes, guessImageExt } from "./lib";
 

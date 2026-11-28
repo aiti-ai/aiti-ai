@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { parseCbcHelpModels } = await import("../_shared/cbc-model-catalog.ts");
+const { parseCbcHelpModels } = await import("@aiti-ai/ext-shared/cbc-model-catalog");
 
 /** 真实 `npx -y @tencent-ai/codebuddy-code --help` 的 --model 行（逐字节截取，勿手改）。 */
 const HELP_SAMPLE = `  --model <model>                                  Model for the current session. Please provide the model ID. Currently supported: (hy4-preview, hy3, hy3-x, deepseek-v4.1-flash, glm-5.3, glm-5.3-flash, glm-5.2, glm-5.1, glm-5v-turbo, minimax-m3, minimax-m2.7, kimi-k3-1, kimi-k2.8-preview, kimi-k2.7, kimi-k2.6, deepseek-v4-pro)

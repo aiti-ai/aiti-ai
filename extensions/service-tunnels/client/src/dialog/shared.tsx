@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useIsMobile, apiUrl, extSvc } from "../host-shim";
-import { dismissOnBack } from "../../../../_shared/overlay-back-client";
+import { dismissOnBack } from "@aiti-ai/ext-shared/overlay-back-client";
 import { qrDataUrl } from "../qr";
 import type { ParamSpec } from "../types-shim";
 

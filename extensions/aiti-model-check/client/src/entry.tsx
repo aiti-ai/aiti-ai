@@ -10,8 +10,8 @@
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
 import { __setCtx } from "./host-shim";
-import { declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
+import { declareDockZones, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
 import { App, ModelDialog, ModelCheckDockFace, ModelCheckDockRight, setMcCtx, syncToolbar, initRecoverWatcher, MC_KEY } from "./model-check-app";
 
 export default function register(ctx: Record<string, any>) {

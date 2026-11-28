@@ -10,14 +10,14 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiUrl, extSvc, regSvc, getCtx, t as ti, srvFix } from "./host-shim";
-import { uiConfirm } from "../../../_shared/ui-dialogs";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 import { api, jsonBody, Ic, ICONS, LINK, genName, fetchNewModelsOnce, fetchNewModelsWithToast, invalidateNewModels } from "./wizard-lib";
 import { ProviderAvatar } from "./provider-icons";
 import { MultiKeyStatusSummary, MultiKeyStatusDialog, MultiKeyStatusRows } from "./multi-key-status";
 import { EnabledScopeBlock, resyncEnabledModels } from "./enabled-scope";
 import { ensureStyles } from "./amw-styles";
 // aiti-float dock v3（P1 批）：显隐收口展示状态机 + 右栏停靠容器
-import { useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { useGate, DockBody, openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
 
 /** 面板 itemKey（浮窗壳 data-ext-float-key 既有值；rightFileDock 注册 raw itemId "shell-v2" 拼后一致） */
 export const WIZARD_KEY = "aiti-model-wizard:shell-v2";

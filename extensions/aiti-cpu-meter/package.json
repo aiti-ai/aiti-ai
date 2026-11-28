@@ -31,5 +31,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.24.2"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

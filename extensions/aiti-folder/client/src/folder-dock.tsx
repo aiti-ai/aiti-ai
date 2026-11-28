@@ -26,11 +26,11 @@ import {
   declareDockWindowOpener, dockIconEl,
   SIDEBAR_COLLAPSE_PREFIX, clearDockPref,
   useDockHeaderStateOf, requestDockCommand,
-} from "../../../_shared/ext-float-dock";
-import { openViewerWindow } from "../../../_shared/open-viewer-window";
-import { dockIconDecl } from "../../../_shared/dock-icons";
-import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
-import type { DockZone, DockHeaderAction } from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
+import { openViewerWindow } from "@aiti-ai/ext-shared/open-viewer-window";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
+import { isDirectoryPickerTarget } from "@aiti-ai/ext-shared/directory-picker-dom";
+import type { DockZone, DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 
 /* ── multi-instance manifest (v2 entries carry pin flag; legacy string[] read-compat) ──
  * Key is scoped per deployment sub-path (basePath): localStorage is origin-shared,

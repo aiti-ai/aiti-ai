@@ -16,15 +16,15 @@ import { useState, useEffect } from "react";
 import { apiUrl, t } from "./host-shim.ts";
 import { EditorApp } from "./editor-app";
 import { MiAt } from "./file-toolbar";
-import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
+import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
 import {
   DockBody, present, useGate, useGateSidebar, useDockHeaderMenuItems,
   sidebarZoneOf, seedBlockCollapsedDefault, seedDockDefault, declareDockZones,
   declareDockWindowOpener, clearDockPref,
-} from "../../../_shared/ext-float-dock";
-import { openViewerWindow } from "../../../_shared/open-viewer-window";
-import { dockIconDecl } from "../../../_shared/dock-icons";
-import type { DockZone } from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
+import { openViewerWindow } from "@aiti-ai/ext-shared/open-viewer-window";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
+import type { DockZone } from "@aiti-ai/ext-shared/ext-float-dock";
 
 /* ── 多实例清单（正在以 face 形态存续的文件；路径不带尾斜杠）── */
 const INSTANCES_KEY = "pi:sidebar-dock:files";

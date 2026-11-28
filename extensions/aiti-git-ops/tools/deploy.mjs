@@ -7,7 +7,7 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, "..");
 const files = ["package.json", "index.ts", "git-engine.ts"];
@@ -19,10 +19,6 @@ const targets = [
 for (const dir of targets) {
   mkdirSync(dir, { recursive: true });
   for (const f of files) copyFileSync(resolve(root, f), resolve(dir, f));
-  {
-    const { copyIcons } = await import("../../_shared/ext-icons-deploy.mjs");
-    copyIcons(resolve(dir, "icons"), ["git-branch"], { log: (m) => console.log("[deploy] " + m) });
-  }
   console.log(`[deploy] → ${dir}`);
 }
 
@@ -33,7 +29,7 @@ console.log("[deploy] 完成。生效：POST /api/extensions/reload");
 
 // ── 共享依赖 reconcile（package.json dependencies → <webRoot>/node_modules）——允许失败，下次安装自动对齐 ──
 try {
-  const { notifyReconcile } = await import("../../_shared/reconcile-deps.mjs");
+  const { notifyReconcile } = await import("@aiti-ai/ext-shared/reconcile-deps");
   await notifyReconcile();
 } catch (e) {
   console.log("[deploy] reconcile 通知未执行（" + String((e && e.message) || e) + "）");
@@ -41,7 +37,7 @@ try {
 
 // ── 双实例热重载——允许失败，不影响退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -49,7 +45,7 @@ try {
 
 // ── dev-pack——允许失败 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: root, log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

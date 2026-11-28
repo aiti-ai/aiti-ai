@@ -5,7 +5,7 @@
  * API 小工具、open 事件/浮动键、样式。**不得 import 重面板模块**（panels.tsx 反向依赖本文件）。
  */
 import { useState, useEffect, apiUrl } from "./host-shim";
-import { usePresent, openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { usePresent, openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
 
 export const TIMELINE_KEY = "aiti-git-trace:timeline";
 export const WATCH_KEY = "aiti-git-trace:watch";

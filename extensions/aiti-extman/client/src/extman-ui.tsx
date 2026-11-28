@@ -22,8 +22,8 @@ import { AITI_DOCS_BASE } from "./extman-core";
 import { MdDesc, extDescVars } from "./md-desc";
 // aiti-float dock v3（P1 批）：渲染门控 useGate + 停靠容器 DockBody（extman-core 的 setState
 // 已把 patch.open 路由到 openFloat/closePanel，本文件所有 setState({open:…}) 调用点零改动）
-import { useGate, DockBody } from "../../../_shared/ext-float-dock";
-import { uiConfirm } from "../../../_shared/ui-dialogs";
+import { useGate, DockBody } from "@aiti-ai/ext-shared/ext-float-dock";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 
 // ---------- 扩展协议徽标 / AI 升级（docs/pi-web-ext-protocol.md） ----------
 

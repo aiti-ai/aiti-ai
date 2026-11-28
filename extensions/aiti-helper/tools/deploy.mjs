@@ -16,12 +16,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 // client TS 残留检查（.mjs 里是合法 JS 语法检查不报、运行时必炸；FAIL 即部署失败）
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -80,14 +79,13 @@ for (const extDir of targets) {
 // manifest icon（index.ts）与 client 内所有 AI 星星（SparkIcon / 弹窗注入 🤖）都指向它——
 // 2026-09-09 修「两种 AI 图标」；2026-09-10 消灭手抆 path 漂移（ICONS.sparkles 漏 2 条 path 缺左下小星），
 // 根 icon.svg 退役，全扩展只存这一个 svg 文件。
-for (const t of targets) copyIcons(resolve(t, "icons"), ["sparkles"], { log: (m2) => console.log(m2) });
 deployCommit({ repo: extRepo, name: "aiti-helper", paths: ["aiti-helper"], ident: true, log: (m) => console.log("[deploy] " + m) });
 
 console.log("[deploy] 完成。生效：POST /api/extensions/reload（或重启 pi-web）；client 刷新页面即新");
 
 // ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -95,7 +93,7 @@ try {
 
 // ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

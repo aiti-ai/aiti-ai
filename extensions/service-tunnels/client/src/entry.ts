@@ -18,7 +18,7 @@ import { SelfExposeAlert } from "./SelfExposeAlert";
 import { MobileAccessCard } from "./MobileAccessCard";
 import { MOBILE_KEY, type MobileLaunch } from "./mobile-logic";
 // dock v3（P3 批）：面板显隐收口展示状态机 + 右栏停靠 face
-import { usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
+import { usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 
 // 对话框开关 + 初始页签（工具栏按钮 / 告警条幅共用）；显隐收口展示状态机
 let initialTab: "ports" | "self" | "users" = "ports";

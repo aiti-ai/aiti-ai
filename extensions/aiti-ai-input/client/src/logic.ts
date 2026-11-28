@@ -29,7 +29,7 @@
 
 // ---------- 模块级状态（跨组件共享；listener 模式） ----------
 import { extSvc, getCtx, t } from "./host-shim";
-import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
+import { uiAlert, uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 
 let voicePending = false;
 // 语音段边界 {prefix, suffix}：语音输入作用前输入框中已存在的内容（语音插入位置之前/之后）

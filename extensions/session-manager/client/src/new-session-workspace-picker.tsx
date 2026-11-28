@@ -25,8 +25,8 @@ import {
   type RecentProject,
 } from "./sidebar/pure";
 import { ProjectMenuBody } from "./sidebar/project-menu";
-import { clampToViewport } from "../../../_shared/popup-anchor";
-import { createLazyModule, lazyExtView } from "../../../_shared/ext-lazy";
+import { clampToViewport } from "@aiti-ai/ext-shared/popup-anchor";
+import { createLazyModule, lazyExtView } from "@aiti-ai/ext-shared/ext-lazy";
 import { fetchHomeDir } from "./home-dir";
 import { showToast } from "./toast";
 

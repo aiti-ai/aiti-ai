@@ -17,7 +17,7 @@
  */
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
-import { extDisplayName } from "../../../_shared/ext-display-names";
+import { extDisplayName } from "@aiti-ai/ext-shared/ext-display-names";
 import { apiUrl, extSvc, hostCtx, t } from "./host-shim";
 
 // AI 星星图标（单源 icons/sparkles.svg，_shared/icons 库经 deploy copyIcons 拷入）——

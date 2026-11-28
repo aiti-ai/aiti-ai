@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-provider-usage",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "type": "module",
   "description": "Provider balance/quota lookup — 16 adapter ids (DeepSeek/OpenRouter/Z.AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven zero polling",
   "displayNameI18n": {
@@ -27,7 +27,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "986df595440b671b",
+  "contentHash": "9345a023f2b5a302",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
@@ -36,5 +36,8 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

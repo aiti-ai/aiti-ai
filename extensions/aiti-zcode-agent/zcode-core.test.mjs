@@ -1199,7 +1199,7 @@ test("handle wire: 新建会话未指定模型 → 继承该 agent 上次使用�
   mkdirSync(stubDir, { recursive: true });
   const stub = makeStub(stubDir, "ok.cjs", { session: "sess_lastused-1" });
   // write a "last used" state file directly (avoids the persistModelState fire-and-forget race)
-  const { writeExtModelState } = await import("../_shared/ext-model-state.ts");
+  const { writeExtModelState } = await import("@aiti-ai/ext-shared/ext-model-state");
   await writeExtModelState({
     agentKey: "zcode", sessionId: "zcode:prev-session",
     selected: { provider: "zcode", id: "zai/GLM-5.3-Flash" }, models: [], updatedAt: "",

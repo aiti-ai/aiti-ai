@@ -12,13 +12,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, "..");
 
 // client TS 残留检查
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -38,10 +38,6 @@ for (const dest of targets) {
   copyFileSync(resolve(root, "index.ts"), resolve(dest, "index.ts"));
   copyFileSync(resolve(root, "package.json"), resolve(dest, "package.json"));
   copyFileSync(resolve(root, "icon.svg"), resolve(dest, "icon.svg"));
-  // 共享 save-blob 工厂（副本模式：_shared 权威源 → 部署目录）
-  copyFileSync(resolve(root, "..", "_shared", "blob-save-route.ts"), resolve(dest, "blob-save-route.ts"));
-  copyFileSync(resolve(root, "..", "_shared", "convert-saveas.ts"), resolve(dest, "convert-saveas.ts"));
-  copyFileSync(resolve(root, "..", "_shared", "soffice-locate.ts"), resolve(dest, "soffice-locate.ts"));
   // dist 目录全量拷贝（产物统一 dist/：entry + 懒加载 chunks + css，宿主按 index.ts 声明 /assets/dist/… 服务）
   {
     const { readdirSync, statSync } = await import("node:fs");
@@ -73,7 +69,7 @@ console.log("[deploy] 完成。client 刷新页面即新");
 
 // ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -81,7 +77,7 @@ try {
 
 // ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

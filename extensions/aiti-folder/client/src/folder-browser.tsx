@@ -7,8 +7,8 @@
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff, openFile } from "./host-shim";
-import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "../../../_shared/ext-float-dock";
-import type { DockMenuItem } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockMenuItem } from "@aiti-ai/ext-shared/ext-float-dock";
 import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, invalidateEntries, groupContentMatches, type SearchTreeNode } from "./lib";
 import { watchDir } from "./folder-watch";
 import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, MiFolderOpen, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
@@ -16,14 +16,14 @@ import { EXT_LANG, LANG_COLOR } from "./lib";
 import { FolderSwitcher } from "./folder-switcher";
 import { isFolderPinned, toggleFolderPin, folderItemKey, removeFolderInstance } from "./folder-dock";
 import { DirectoryPicker } from "./directory-picker";
-import { openViewerWindow } from "../../../_shared/open-viewer-window";
-import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
-import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
+import { openViewerWindow } from "@aiti-ai/ext-shared/open-viewer-window";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "@aiti-ai/ext-shared/popup-anchor";
+import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
 import { useFolderGit, GitBar, CommitDialog } from "./git-toolbar";
 import type { FolderGit } from "./git-toolbar";
 import { CommitPlanDialog } from "./git-plan";
-import { BranchChipBadge, BranchPanel } from "../../../_shared/git-ops-client/branch-panel";
-import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
+import { BranchChipBadge, BranchPanel } from "@aiti-ai/ext-shared/git-ops-client/branch-panel";
+import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
 import { fetchNestedRepos, invalidateNestedRepos, nestedStatusRows, peekNestedRepos } from "./nested-git";
 import { ct } from "./comp-i18n";
 

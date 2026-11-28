@@ -7,7 +7,7 @@
  *  - dialogs: UsageReport（总览/模型/Keys/会话 四标签）
  */
 import { __setCtx } from "./host-shim";
-import { seedDockDefault } from "../../../_shared/ext-float-dock";
+import { seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 import { UsageReport, ToolbarEntry, SessionStatsEntry, ReportDockFace, REPORT_KEY, panel } from "./report";
 
 export default function register(ctx: Record<string, unknown>) {

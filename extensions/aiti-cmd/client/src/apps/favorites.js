@@ -6,7 +6,7 @@
  * dialogs (command, group) live here — they belong to this app's domain.
  */
 import { btnStyle, rowStyle, inputStyle, smallStyle, SANDBOX_ORDER } from "../kit.js";
-import { uiConfirm, uiAlert, uiPrompt } from "../../../../_shared/ui-dialogs";
+import { uiConfirm, uiAlert, uiPrompt } from "@aiti-ai/ext-shared/ui-dialogs";
 
 export function createFavoritesApp(kit, store, deps) {
   const { h, t, api, apiUrl, Ic, ICONS, useState, useEffect } = kit;

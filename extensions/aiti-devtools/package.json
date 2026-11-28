@@ -17,7 +17,8 @@
   },
   "aitiExtProtocol": "1.0",
   "dependencies": {
-    "@aiti-ai/aiti-bridge": "^0.2.4"
+    "@aiti-ai/aiti-bridge": "^0.2.4",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "scripts": {
     "build:client": "node tools/build-client.mjs"

@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { editorBase, ensureEditorTicket, t } from "./host-shim";
 import { formatSize } from "./lib";
 import { TEXT_WINDOW_CHUNK_BYTES, WINDOW_PAGE_LINES } from "../../shared/limits";
-import { uiConfirm } from "../../../_shared/ui-dialogs";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 
 const mono = "var(--font-mono, ui-monospace, monospace)";
 

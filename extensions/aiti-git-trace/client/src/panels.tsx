@@ -6,13 +6,13 @@
  * 依赖方向：panels → common（严禁 common/shell 反向静态 import 本文件）。
  */
 import { useState, useEffect, useRef, apiUrl, t, extSvc, appendText, openFile } from "./host-shim";
-import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd.ts";
+import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
 import { buildVersionMention, resolveDiffLineInfo } from "./version-mention.ts";
 import {
   DockBody, isSidebarDockState, sidebarZoneOf,
   useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand,
-} from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 import {
   apiGet, apiPost, bindSession, getSessionId, getCwd, useOpenKind, openPanel,
   TIMELINE_KEY, WATCH_KEY,

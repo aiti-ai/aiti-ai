@@ -187,7 +187,7 @@ docker/           →  core/full images; install the main package + pi plugins
 ```
 
 Extension dependency publishing is governed by
-`extensions/_shared/sync-gate.test.mjs` + `tools/release-audit.mjs` (15-item audit:
+`extensions/_shared/shared-copy-sync.test.mjs` + `tools/release-audit.mjs` (15-item audit:
 redaction, lock rewrite, LICENSE, dist presence, dependency resolution, install smoke).
 The decision matrix in `tools/publish-all.mjs` compares a **content hash** (written into
 each published `package.json` as `contentHash`) against the registry — the registry is

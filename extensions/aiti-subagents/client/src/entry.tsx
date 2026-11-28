@@ -47,11 +47,11 @@ type BackendDef = { key: string; label?: string };
 
 // ---- 模块级面板开关（多处入口共享）----
 // dock v3（P2 批）：Fleet 面板显隐收口展示状态机（openFloat/closePanel）；渲染门控 useGate
-import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault, declareDockZones, presentState, useGateSidebar, sidebarZoneOf } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
+import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault, declareDockZones, presentState, useGateSidebar, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
 // dock 头工具条 v3（方案 pi-web-dock-header-toolbar-plan）：face 声明按钮、内容实现命令+状态
-import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "../../../_shared/ext-float-dock";
-import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "@aiti-ai/ext-shared/ext-float-dock";
+import type { DockHeaderAction } from "@aiti-ai/ext-shared/ext-float-dock";
 import { buildTopology, topologyLayers } from "./fleet-topology.mjs";
 
 const FLEET_KEY = "aiti-subagents:fleet";

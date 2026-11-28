@@ -4,7 +4,7 @@
 import { cpSync, existsSync, mkdirSync, rmSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
+import { notifyReconcile } from "@aiti-ai/ext-shared/reconcile-deps";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const prod = process.argv.includes("--prod");
@@ -40,7 +40,7 @@ await notifyReconcile();
 
 // ── 双实例热重载——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");

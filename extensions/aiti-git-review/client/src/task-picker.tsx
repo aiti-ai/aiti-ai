@@ -6,12 +6,12 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { t, apiUrl } from "./host-shim";
-import { uiConfirm } from "../../../_shared/ui-dialogs";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
+import { uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
+import { dedupeFetch } from "@aiti-ai/ext-shared/dedupe-fetch";
 import { api, jsonBody, G, lastSeg, statusIcon, statusColor, overlay, pickerCard, segBtn, segOn, btnPrimary } from "./shared";
 // aiti-folder 工作区切换器（与 session-manager 同法：构建期内联复用同一组件）
 import { WorkspaceDropdown } from "../../../aiti-folder/client/src/folder-switcher";
-import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
+import { isDirectoryPickerTarget } from "@aiti-ai/ext-shared/directory-picker-dom";
 import { displayCwd } from "../../../aiti-folder/client/src/lib";
 
 /** 版本选项（分支/tag/远程） */

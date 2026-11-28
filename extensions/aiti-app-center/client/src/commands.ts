@@ -24,7 +24,7 @@ import {
   buildApps, matchApp, categoryLabel, readPinned, readHidden, setBooleanFeature, currentUiLocale,
   type AppDescriptor,
 } from "./app-registry.ts";
-import { present, presentState, dockPref } from "../../../_shared/ext-float-dock-core.ts";
+import { present, presentState, dockPref } from "@aiti-ai/ext-shared/ext-float-dock-core";
 
 /** manifest 扩展条目子集（buildApps 输入面）。 */
 interface ManifestExt {

@@ -9,8 +9,7 @@
 import { copyFileSync, cpSync, mkdirSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, ".."); // pi-web-ext/aiti-append-system
 const targets = [
@@ -42,12 +41,11 @@ console.log("[deploy] 完成。生效：POST /api/extensions/reload（server 侧
 // 提交部署状态到扩展 git 仓库（生产目录是 git 仓库）
 
 // 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
-for (const t of targets) copyIcons(resolve(t, "icons"), ["pen-line"], { log: (m2) => console.log(m2) });
 deployCommit({ repo: extRepo, name: "aiti-append-system", paths: ["aiti-append-system"], log: (m) => console.log("[deploy] " + m) });
 
 // ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：服务未启动/共享模块缺失仅提示，不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -55,7 +53,7 @@ try {
 
 // ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

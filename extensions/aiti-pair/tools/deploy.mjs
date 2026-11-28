@@ -7,10 +7,10 @@ import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -49,7 +49,7 @@ deployCommit({ repo: extRepo, name: "aiti-pair", paths: ["aiti-pair"], ident: tr
 console.log("[deploy] 完成（软依赖 aiti-devtools 资产 pair-client.js；aiti-devtools 未部署时面板给引导）");
 
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");

@@ -29,5 +29,9 @@
   },
   "devDependencies": {
     "vite": "^6.4.3"
+  },
+  "contentHash": "93b0d9619a2084ae",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

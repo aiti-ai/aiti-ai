@@ -14,8 +14,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, ".."); // pi-web-ext/aiti-ctx-meter
 const targets = [
@@ -40,13 +39,12 @@ for (const extDir of targets) {
 }
 
 // 图标（icon: "icons/meter-vertical.svg" → 宿主 loader 内嵌；库在 _shared/icons/，缺文件 throw）
-for (const t of targets) copyIcons(resolve(t, "icons"), ["meter-vertical"], { log: (m) => console.log(m) });
 
 deployCommit({ repo: extRepo, name: "aiti-ctx-meter", paths: ["aiti-ctx-meter"], log: (m) => console.log("[deploy] " + m) });
 
 // ── 双实例热重载（basePath 双 env 按机器设值）——允许失败：不影响 deploy 退出码 ──
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -54,7 +52,7 @@ try {
 
 // ── dev-pack（源码+工具直达部署目录）——允许失败 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: root, log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

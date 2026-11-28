@@ -13,7 +13,7 @@ import { __setCtx, apiUrl } from "./host-shim";
 // carry their own host-shim copy — hand it the same ctx so their apiUrl (basePath) and i18n
 // resolve against this extension's runtime instead of falling back to defaults.
 import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/host-shim";
-import { seedDockDefault } from "../../../_shared/ext-float-dock";
+import { seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 import { api, G, setGRCtx } from "./shared";
 import { openFromToolbar, ReviewWork, DockReviewWork, GrEyeIcon } from "./git-review-app";
 

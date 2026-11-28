@@ -32,5 +32,8 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "f95301e7f9827dd9"
+  "contentHash": "f95301e7f9827dd9",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
+  }
 }

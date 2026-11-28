@@ -5,7 +5,7 @@
  * buildAtText（@ token 格式：空格加引号、目录尾斜杠）复用 _shared/new-session-cwd
  * （与 aiti-doc-center / 宿主 buildAtMentionText 同源）。
  */
-import { buildAtText } from "../../../_shared/new-session-cwd.ts";
+import { buildAtText } from "@aiti-ai/ext-shared/new-session-cwd";
 
 export interface VersionMentionInput {
   /** 相对 root 的路径（@ token 用；buildAtText 决定引号格式） */

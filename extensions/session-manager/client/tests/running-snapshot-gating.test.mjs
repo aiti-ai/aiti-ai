@@ -49,10 +49,11 @@ const isoDir = mkdtempSync(join(tmpdir(), "sm-runsnap-test-"));
   writeFileSync(join(clientSrc, "float-yield.pure.ts"), readFileSync(join(srcRoot, "float-yield.pure.ts"), "utf8"));
   writeFileSync(join(clientSrc, "host-shim.ts"), HOST_SHIM_STUB);
   writeFileSync(join(clientSrc, "sidebar", "pure.ts"), readFileSync(join(srcRoot, "sidebar", "pure.ts"), "utf8"));
-  mkdirSync(join(isoDir, "_shared"), { recursive: true });
-  writeFileSync(join(isoDir, "_shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
-  writeFileSync(join(isoDir, "_shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
-  writeFileSync(join(isoDir, "_shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
+  mkdirSync(join(isoDir, "node_modules", "@aiti-ai", "ext-shared"), { recursive: true });
+  writeFileSync(join(isoDir, "node_modules", "@aiti-ai", "ext-shared", "package.json"), JSON.stringify({ name: "@aiti-ai/ext-shared", type: "module" }));
+  writeFileSync(join(isoDir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock-lite.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(isoDir, "node_modules", "@aiti-ai", "ext-shared", "ext-float-dock.ts"), EXT_FLOAT_STUB);
+  writeFileSync(join(isoDir, "node_modules", "@aiti-ai", "ext-shared", "dedupe-fetch.ts"), readFileSync(join(here, "..", "..", "..", "_shared", "dedupe-fetch.ts"), "utf8"));
   mkdirSync(join(sm, "server"), { recursive: true });
   writeFileSync(join(sm, "server", "payload.ts"), readFileSync(join(serverRoot, "payload.ts"), "utf8"));
 }

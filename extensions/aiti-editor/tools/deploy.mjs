@@ -18,12 +18,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
+import { notifyReconcile } from "@aiti-ai/ext-shared/reconcile-deps";
 
 // client TS 残留检查（.mjs 里是合法 JS 语法检查不报、运行时必炸；FAIL 即部署失败）
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -110,8 +110,6 @@ for (const extDir of targets) {
   // shared/: size policy (server + client single source) · server/: chunked text reader for large files
   cpSync(resolve(root, "shared"), resolve(extDir, "shared"), { recursive: true, force: true });
   cpSync(resolve(root, "server"), resolve(extDir, "server"), { recursive: true, force: true });
-  copyFileSync(resolve(root, "..", "_shared", "convert-saveas.ts"), resolve(extDir, "convert-saveas.ts"));
-  copyFileSync(resolve(root, "..", "_shared", "soffice-locate.ts"), resolve(extDir, "soffice-locate.ts"));
   // exec-async 已迁 @aiti-ai/ext-shared 包（package.json 声明 + extman 共享根 reconcile），
   // 旧「拷 exec-async.ts」行随迁移退役——勿再恢复文件拷贝（曾误改 copyFileSync(root) 炸 EISDIR）
   // aiti-helper skills（install-soffice 等）+ soffice 一键安装脚本（递归拷，漏拷聚合不到）
@@ -140,7 +138,7 @@ await notifyReconcile();
 
 // 双实例热重载：实现收敛到 _shared/reload-instances.mjs（env basePath 双变量按机器设值）——允许失败，不影响 deploy 退出码
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");
@@ -152,7 +150,7 @@ console.log("[deploy] 完成。生效：POST /api/extensions/reload（已自动 
 deployCommit({ repo: extRepo, name: "aiti-editor", paths: ["aiti-editor"], log: (m) => console.log("[deploy] " + m) });
 // ── dev-pack（方案 §3.2：源码+构建工具+AGENTS.md 直达部署目录，AI 可现场直改）——允许失败，不影响 deploy 退出码 ──
 try {
-  const { packDevPack } = await import("../../_shared/dev-pack.mjs");
+  const { packDevPack } = await import("@aiti-ai/ext-shared/dev-pack");
   packDevPack({ extRoot: resolve(import.meta.dirname, ".."), log: (m) => console.log("[deploy] " + m) });
 } catch (e) {
   console.log("[deploy] dev-pack 未执行（" + String((e && e.message) || e) + "）");

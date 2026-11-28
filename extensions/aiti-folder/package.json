@@ -15,7 +15,8 @@
     "deploy": "node tools/deploy.mjs"
   },
   "dependencies": {
-    "trash": "^10.1.1"
+    "trash": "^10.1.1",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "devDependencies": {
     "vite": "^6.4.3"
@@ -26,7 +27,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "b55ec08171b844e3",
+  "contentHash": "5d66a34a937638d8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

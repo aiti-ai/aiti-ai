@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-extman",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Extension manager — search / enable-disable / install / online registry",
   "displayNameI18n": {
     "en": "Extension Manager"
@@ -11,7 +11,8 @@
   "homepage": "https://aiti.pw/extensions/aiti-extman.html",
   "dependencies": {
     "pinyin-pro": "^3.29.5",
-    "yauzl": "^2.10.0"
+    "yauzl": "^2.10.0",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
@@ -26,7 +27,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "15c6ac81e100498b",
+  "contentHash": "6987e675ab4df0a5",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

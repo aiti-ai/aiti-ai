@@ -10,7 +10,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { t, apiUrl, extSvc } from "./host-shim";
-import { uiAlert } from "../../../_shared/ui-dialogs";
+import { uiAlert } from "@aiti-ai/ext-shared/ui-dialogs";
 import {
   api, jsonBody, G, getCtx, lastSeg, MONO, SMALL_MQ,
   statusIcon, statusColor, sevColor, sevLabel,

@@ -28,8 +28,8 @@ test("one body, two places: the sidebar picker and the new-session selector rend
     assert.match(source, /labels\.browse/);
     assert.match(source, /props\.actions/);
   }
-  // The old per-surface row markup is gone (one row shape from _shared/menu-row).
-  assert.match(projectMenu, /from "\.\.\/\.\.\/\.\.\/\.\.\/_shared\/menu-row"/);
+  // The old per-surface row markup is gone (one row shape from @aiti-ai/ext-shared/menu-row).
+  assert.match(projectMenu, /from "@aiti-ai\/ext-shared\/menu-row"/);
   assert.doesNotMatch(picker, /padding: "8px 10px"/);
 });
 
@@ -72,7 +72,7 @@ test("directory picker address bar is the shared breadcrumb (no always-on input)
   assert.match(shared, /!pathEditing/);
   // The binding keeps the export name the lazy picks rely on and passes the host facilities.
   assert.match(directoryPicker, /export function DirectoryPicker/);
-  assert.match(directoryPicker, /_shared\/directory-picker/);
+  assert.match(directoryPicker, /@aiti-ai\/ext-shared\/directory-picker/);
   assert.match(directoryPicker, /host=\{HOST\}/);
 });
 

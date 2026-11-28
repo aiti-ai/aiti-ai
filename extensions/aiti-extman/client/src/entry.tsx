@@ -9,7 +9,7 @@
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
 import { __setCtx, t, apiUrl } from "./host-shim";
-import { primeExtRegistry } from "../../../_shared/ext-display-names";
+import { primeExtRegistry } from "@aiti-ai/ext-shared/ext-display-names";
 import { state, setState, setHostCaps, EXTMAN_KEY } from "./extman-core";
 import { ExtManPanel, ExtManDockFace, SidebarFooterButton, openExtmanPanel, openExtmanTo } from "./extman-ui";
 

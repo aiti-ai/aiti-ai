@@ -10,9 +10,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, appendText, openFile, extSvc, t } from "./host-shim";
-import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
-import { usePresent, useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
-import { zoomFactorOf } from "../../../_shared/popup-anchor";
+import { buildAtText, openNewSessionWithExtSvc } from "@aiti-ai/ext-shared/new-session-cwd";
+import { usePresent, useGate, DockBody, openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
+import { zoomFactorOf } from "@aiti-ai/ext-shared/popup-anchor";
 
 const API = (p: string) => apiUrl("/api/extensions/aiti-doc-center" + p);
 

@@ -35,9 +35,9 @@ import { openExportDialog } from "./export-dialog";
 // Module-level host for the move-session dialog (opened via showMoveDialog; Esc guard uses useMoveDialogOpen)
 import { showMoveDialog, useMoveDialogOpen } from "./move-dialog";
 // dock v3 (P3 batch): show/hide state machine + right-panel dock face
-import { useGate, usePresent, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { useGate, usePresent, DockBody, openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
 import { ViewerMessages } from "./viewer-messages";
-import { isDirectoryPickerTarget } from "../../../_shared/directory-picker-dom";
+import { isDirectoryPickerTarget } from "@aiti-ai/ext-shared/directory-picker-dom";
 // Cross-extension reuse (inlined at build time; see entry.tsx): aiti-folder's workspace switcher dialog
 // (known-workspace priority list + filter + custom-path fallback to the shared DirectoryPicker).
 import { WorkspaceDropdown } from "../../../aiti-folder/client/src/folder-switcher";

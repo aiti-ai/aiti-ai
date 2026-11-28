@@ -13,5 +13,8 @@
   "aitiExtProtocol": "1.0",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/crash-fatal-client.mjs','dist/crash-fatal-client.mjs')\""
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

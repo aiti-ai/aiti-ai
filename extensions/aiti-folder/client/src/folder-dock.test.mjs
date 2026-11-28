@@ -14,7 +14,7 @@
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
-import { runEsbuild } from "../../../_shared/esbuild-bin.ts";
+import { runEsbuild } from "@aiti-ai/ext-shared/esbuild-bin";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -175,7 +175,7 @@ test("Windows 路径变体归一：同目录多拼写只留一个实例（首拼
   // ① itemKey folding: win paths fold case/separators/trailing seps; posix only strips trailing seps
   assert.equal(mod.folderItemKey("D:\\workspace\\pi-web\\"), "aiti-folder:folder:d:/workspace/pi-web");
   assert.equal(mod.folderItemKey("d:/workspace/pi-web"), "aiti-folder:folder:d:/workspace/pi-web");
-  assert.equal(mod.folderItemKey("/home/wind/pi-web/"), "aiti-folder:folder:/home/wind/pi-web", "posix 不折叠大小写");
+  assert.equal(mod.folderItemKey("/home/pi/pi-web/"), "aiti-folder:folder:/home/pi/pi-web", "posix 不折叠大小写");
 
   // ② add dedupe: several spellings of one folder enter the manifest once, first spelling kept
   mod.addFolderInstance("D:/workspace/pi-web");

@@ -6,8 +6,8 @@
  * The server holds no timers; the client cadence is the only sampling driver.
  */
 import { useEffect, useMemo, useState, useRef, apiUrl, t, extFeatures, onFeatureChange, getExtService, ensureMaterialized } from "./host-shim";
-import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present } from "../../../_shared/ext-float-dock";
-import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
+import { usePresent, useBlockCollapsed, DockBody, isSidebarDockState, sidebarZoneOf, declareDockZones, seedDockDefault, seedBlockCollapsedDefault, present } from "@aiti-ai/ext-shared/ext-float-dock";
+import { uiAlert, uiConfirm } from "@aiti-ai/ext-shared/ui-dialogs";
 import { fmtBytes, fmtCpu, fmtDuration } from "../../core.cjs";
 
 export const PT_KEY = "aiti-proc-tree:panel";

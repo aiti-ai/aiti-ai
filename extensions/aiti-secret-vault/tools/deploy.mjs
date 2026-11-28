@@ -10,11 +10,10 @@ import { copyFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { resolve, join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
-import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 {
-  const { checkClientDir } = await import("../../_shared/check-client.mjs");
+  const { checkClientDir } = await import("@aiti-ai/ext-shared/check-client");
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
@@ -41,12 +40,11 @@ for (const extDir of targets) {
   copyDir(resolve(root, "client", "src"), resolve(extDir, "dist"));
   console.log("[deploy] source → " + extDir);
 }
-for (const t of targets) copyIcons(resolve(t, "icons"), ["key-round"], { log: (m) => console.log(m) });
 
 deployCommit({ repo: extRepo, name: "aiti-secret-vault", paths: ["aiti-secret-vault"], log: (m) => console.log("[deploy] " + m) });
 
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] auto reload skipped (" + String((e && e.message) || e) + ") — POST /api/extensions/reload manually");

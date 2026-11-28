@@ -34,5 +34,8 @@
   },
   "displayNameI18n": {
     "en": "Plan First"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.22"
   }
 }

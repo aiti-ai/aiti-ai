@@ -16,7 +16,7 @@ import { __setCtx } from "./host-shim";
 import {
   declareDockZones, sidebarZoneOf, seedDockDefault, seedBlockCollapsedDefault,
   present, readBlockDismissed, FLOAT_INSTALLED_EVENT,
-} from "../../../_shared/ext-float-dock";
+} from "@aiti-ai/ext-shared/ext-float-dock";
 import { SysmonDockFace, SY_KEY, gaugeIconUrl } from "./sysmon-app";
 import { TopChips, sysmonTooltipLine } from "./topchips";
 

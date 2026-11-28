@@ -15,7 +15,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveAllowedWriteRoot } from "./blob-save-route";
+import { resolveAllowedWriteRoot } from "@aiti-ai/ext-shared/blob-save-route";
 import { hmacToken, verifyToken, documentTypeOf } from "./token";
 
 // ── feature 读取（服务端 ctx.features.get：boolean feature → boolean；string feature → string）──

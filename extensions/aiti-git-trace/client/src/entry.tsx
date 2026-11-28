@@ -10,8 +10,8 @@
  * 跨扩展对接点（window）：__aitiGitTraceForkDialog（forkGate 未来调用）、__aitiGitTraceBanner（core fork 后调用）
  */
 import { __setCtx } from "./host-shim";
-import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
-import { dockIconDecl } from "../../../_shared/dock-icons";
+import { seedDockDefault, declareDockZones, sidebarZoneOf } from "@aiti-ai/ext-shared/ext-float-dock";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
 // 薄壳版：面板组件名保持不变（内部是懒加载包装），新增 requestForkDialog（用到才拉重 chunk）
 import { WatchToolbarButton, TimelineToolbarButton, TimelineComposerButton, WatchPanelSlot, WatchDockLeft, WatchDockRight, TimelineSlot, TimelineDockRight, TimelineDockLeft, ForkDialogSlot, BannerSlot, MessageBadge, installSessionService, requestForkDialog } from "./trace-app";
 import { TraceFilesRow } from "./trace-files-row";

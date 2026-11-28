@@ -26,9 +26,9 @@ import {
   resetAppSvcAttempt, nlRefresh,
 } from "./logic";
 import { VoiceTagBar, MarksBar, AutocompleteHost, SuggestHost, AuxAiUsageRows, VoiceAffixButton } from "./components";
-import { openFloat, closePanel, usePresent, declareDockZones } from "../../../_shared/ext-float-dock-lite";
-import { dockIconDecl } from "../../../_shared/dock-icons";
-import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
+import { openFloat, closePanel, usePresent, declareDockZones } from "@aiti-ai/ext-shared/ext-float-dock-lite";
+import { dockIconDecl } from "@aiti-ai/ext-shared/dock-icons";
+import { lazyExtView, createLazyModule } from "@aiti-ai/ext-shared/ext-lazy";
 
 
 /* ── 懒模块引用（薄壳拆分 §5.2）：面板/报表首屏不加载，交互时 import ── */

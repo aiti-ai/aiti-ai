@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiUrl } from "./host-shim";
 import { ct } from "./comp-i18n";
-import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
+import { createGitOpsApi } from "@aiti-ai/ext-shared/git-ops-client/api";
 import type { FolderGit } from "./git-toolbar";
 import { pickWorkItemHeader, prependHeader } from "./wi-pick";
 

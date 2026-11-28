@@ -22,7 +22,8 @@
     "en": "Addresses, tokens, signup pages — keys scattered far and wide, strung into one chain."
   },
   "dependencies": {
-    "@lobehub/icons": "^5.16.0"
+    "@lobehub/icons": "^5.16.0",
+    "@aiti-ai/ext-shared": "^0.1.22"
   },
   "aitiConfigs": {
     "configFiles": [

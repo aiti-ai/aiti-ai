@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { __setCtx, apiUrl, t } from "./host-shim";
 // dock v3（P3 批）：面板显隐收口展示状态机（gate 唯一渲染开关）+ 右栏停靠 face
-import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
+import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "@aiti-ai/ext-shared/ext-float-dock";
 
 /** 面板 itemKey（= rightFileDock 注册复合 id "aiti-testagent:panel"） */
 const TA_KEY = "aiti-testagent:panel";

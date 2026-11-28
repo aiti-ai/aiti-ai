@@ -5,9 +5,9 @@
  * 宿主能力（t/apiUrl）经 host-shim 委托；reloadExtensions/extLoaderState 由 entry.tsx 注入。
  */
 import { t, apiUrl } from "./host-shim";
-import { typoMatch } from "../../../_shared/typo-search.mjs";
-import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
-import { extDescriptionFor, extSoulFor, onExtRegistryReady, extDisplayName as sharedDisplayName, extItemText as sharedExtItemText, manifestEntry, ui18nExact } from "../../../_shared/ext-display-names";
+import { typoMatch } from "@aiti-ai/ext-shared/typo-search";
+import { openFloat, closePanel } from "@aiti-ai/ext-shared/ext-float-dock";
+import { extDescriptionFor, extSoulFor, onExtRegistryReady, extDisplayName as sharedDisplayName, extItemText as sharedExtItemText, manifestEntry, ui18nExact } from "@aiti-ai/ext-shared/ext-display-names";
 
 /* ── Cross-extension item-text resolution ("i18n:<key>" prefix → the declaring
  * extension's manifest ui.i18n table) ──

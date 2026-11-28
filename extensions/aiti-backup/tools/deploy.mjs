@@ -10,7 +10,7 @@ import { copyFileSync, mkdirSync, cpSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { deployCommit } from "../../_shared/deploy-commit.mjs";
+import { deployCommit } from "@aiti-ai/ext-shared/deploy-commit";
 
 const root = resolve(import.meta.dirname, ".."); // pi-web-ext/aiti-backup
 const targets = [
@@ -37,7 +37,7 @@ deployCommit({ repo: extRepo, name: "aiti-backup", paths: ["aiti-backup"], log: 
 
 // 双实例热重载（允许失败，不影响退出码）
 try {
-  const { reloadInstances } = await import("../../_shared/reload-instances.mjs");
+  const { reloadInstances } = await import("@aiti-ai/ext-shared/reload-instances");
   await reloadInstances();
 } catch (e) {
   console.log("[deploy] 自动 reload 未执行（" + String((e && e.message) || e) + "）— 需手动 POST /api/extensions/reload");

@@ -51,7 +51,7 @@ import { useBranchChip } from "./sidebar/branch-chip";
 // Thin-shell split (§5.1): directory-picker lazy chunk — gated by customPathOpen
 // (LazyMount renders null without importing). Exported so sidebar-content's "Add folder"
 // reuses the same ref: one singleton/chunk, an identical dialog in both places.
-import { createLazyModule, LazyMount } from "../../../_shared/ext-lazy";
+import { createLazyModule, LazyMount } from "@aiti-ai/ext-shared/ext-lazy";
 export const dirPickerRef = createLazyModule(() => import("./sidebar/directory-picker"));
 
 export interface SidebarDockProps {
