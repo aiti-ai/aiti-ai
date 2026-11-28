@@ -53,7 +53,7 @@ import {
 } from "./publisher.js";
 import { rmSync, readFileSync, existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "fs";
 import { join, resolve, dirname } from "path";
-import { EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, extProtocolInfo } from "./ext-protocol.mjs";
+import { EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, extProtocolInfo } from "@aiti-ai/ext-shared/ext-protocol";
 import { screenAndMigrateOnInstall } from "./protocol-screen.mjs";
 import { extPinyin } from "./pinyin-index.mjs"; // 独立文件名即版本：.mjs 经宿主走原生 ESM（缓存不可清），改内容不换名不会重新加载
 import { semverGt, isSemver, mergeUpdateSources, type UpdateEntry, type UpdateState } from "./updates-merge.js";
