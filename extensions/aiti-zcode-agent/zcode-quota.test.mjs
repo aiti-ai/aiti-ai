@@ -13,6 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  backendUsageFromQuotaView,
   fetchCodingPlanQuotaLimit,
   QUOTA_LIMIT_URL,
   quotaLimitToQuotaView,
@@ -50,10 +51,12 @@ test("quotaLimitToQuotaView parses the real payload shape", () => {
   // binding window = weekly (50% > 5%)
   assert.equal(v.usedPercent, 50);
   assert.equal(v.expiresAt, 1796081416984);
-  // monthly credits surface as remaining/total/unit for the numeric fallback
+  // monthly credits surface as remaining/used/total/unit for the numeric fallback
   assert.equal(v.remaining, 3927);
+  assert.equal(v.used, 73);
   assert.equal(v.total, 4000);
   assert.equal(v.unit, "次");
+  assert.equal(v.plan, "max");
   assert.match(String(v.note), /max/);
   const pkg = v.packages;
   assert.equal(pkg.length, 3);
@@ -132,4 +135,35 @@ test("readProviderConfigApiKey reads writeProviderConfigFile-shaped documents", 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("backendUsageFromQuotaView maps the view into the get_usage snapshot shape", () => {
+  const view = quotaLimitToQuotaView(REAL_PAYLOAD, 1_000);
+  const snap = backendUsageFromQuotaView(view, { inputTokens: 11, outputTokens: 7 });
+  assert.equal(snap.provider, "zcode");
+  assert.equal(snap.plan, "max");
+  assert.equal(snap.inputTokens, 11); // per-turn tokens ride along
+  assert.equal(snap.outputTokens, 7);
+  // credits = the countable monthly bucket + binding-window pressure for the chip color
+  assert.deepEqual(snap.credits, { remaining: 3927, used: 73, usedPercent: 50, unit: "次", expiresAt: 1796081416984 });
+  assert.equal(snap.quotaExceeded, undefined);
+  // token windows become share buckets (x/100) so consumers can render a bar; package order preserved
+  assert.deepEqual(snap.buckets, [
+    { name: "5小时窗口", remaining: 95, total: 100, used: 5, usedPercent: 5, nextResetTime: 1795853416090 },
+    { name: "周窗口", remaining: 50, total: 100, used: 50, usedPercent: 50, nextResetTime: 1796081416984 },
+    { name: "月度额度", remaining: 3927, total: 4000, used: 73, usedPercent: 1, nextResetTime: 1798187711998 },
+  ]);
+});
+
+test("backendUsageFromQuotaView flags exhaustion and rejects non-numeric views", () => {
+  const exhausted = backendUsageFromQuotaView(quotaLimitToQuotaView({
+    data: { level: "max", limits: [{ type: "TOKENS_LIMIT", unit: 6, percentage: 100 }] },
+  }, 1_000), null);
+  assert.equal(exhausted.quotaExceeded, true);
+  assert.equal(exhausted.credits.usedPercent, 100);
+
+  // status-only fallback view (no numeric fields) → null (caller keeps tokens-only)
+  assert.equal(backendUsageFromQuotaView({ available: true, display: "套餐：x 可用", unit: "plan", packages: [] }, null), null);
+  assert.equal(backendUsageFromQuotaView(null, { inputTokens: 1 }), null);
+  assert.equal(backendUsageFromQuotaView({ available: false }, null), null);
 });
