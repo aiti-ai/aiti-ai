@@ -65,6 +65,8 @@ export type SocketChildOptions = {
    * the budget travels with the bytes themselves.
    */
   replayBytes?: number;
+  /** Writers already attached at handshake (hello.writers; absent/1 = just us). */
+  writers?: number;
 };
 
 /**
