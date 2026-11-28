@@ -9,6 +9,7 @@ import { formatActiveDuration, formatCompactCount, formatCostShort } from "@/lib
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
 import { DeleteConfirm } from "./SessionTree.tsx";
 import { TrashIcon } from "./SidebarIcons.tsx";
+import { errorMessage } from "@/lib/errors";
 
 interface Props {
   rootSession: SessionInfo;
@@ -459,7 +460,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
     try {
       setNewSideChatError(await onNewSideChat());
     } catch (error) {
-      setNewSideChatError(error instanceof Error ? error.message : String(error));
+      setNewSideChatError(errorMessage(error));
     } finally {
       setNewSideChatPending(false);
     }
@@ -472,7 +473,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
     try {
       error = await onDeleteSideChat(sessionId);
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : String(caught);
+      error = errorMessage(caught);
     }
     if (error) setDeleteSideChatError(t("sidebar.deleteFailed", { error }));
   };

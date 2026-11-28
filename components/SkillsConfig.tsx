@@ -49,11 +49,11 @@ import {
 } from "./SettingsUi.tsx";
 import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers.ts";
 import { MarkdownBody } from "./MarkdownBody.tsx";
+import type { Translate } from "@/lib/i18n/types";
 import { readJsonOrThrow } from "@/lib/fetch-json";
+import { errorMessage } from "@/lib/errors";
 
 type SkillScope = "global" | "project" | "path";
-type Translate = ReturnType<typeof useI18n>["t"];
-
 function sourceLabel(skill: Skill): SkillScope {
   const src = skill.sourceInfo?.source;
   const scope = skill.sourceInfo?.scope;
@@ -210,7 +210,7 @@ function SkillDetail({
         setInstructions(skillInstructionsBody(data.content, documentPath === rootDocument ? skill.name : undefined));
       } catch (error) {
         if (controller.signal.aborted) return;
-        setInstructionsError(error instanceof Error ? error.message : String(error));
+        setInstructionsError(errorMessage(error));
       }
     };
 
@@ -746,7 +746,7 @@ export function SkillsConfig({
         return next;
       });
     } catch (e) {
-      setUpdateError(e instanceof Error ? e.message : String(e));
+      setUpdateError(errorMessage(e));
     } finally {
       setCheckingUpdates((current) => {
         const next = new Set(current);
@@ -793,7 +793,7 @@ export function SkillsConfig({
         },
       }));
     } catch (e) {
-      setUpdateError(e instanceof Error ? e.message : String(e));
+      setUpdateError(errorMessage(e));
     } finally {
       setUpdatingSkill(null);
     }
@@ -870,7 +870,7 @@ export function SkillsConfig({
         });
       }
     } catch (e) {
-      setGroupStatus({ group, error: e instanceof Error ? e.message : String(e) });
+      setGroupStatus({ group, error: errorMessage(e) });
     } finally {
       setBulkGroup(null);
       setToggling((current) => {

@@ -75,6 +75,7 @@ import { ProviderIcon } from "./ProviderIcon.tsx";
 import { ProviderUsageSummary } from "./ProviderUsageSummary.tsx";
 import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
 import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow.tsx";
+import { errorMessage } from "@/lib/errors";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,8 @@ interface ApiKeyProvider {
   displayName: string;
   configured: boolean;
   source?: string;
+  /** auth.json holds a key for it that does not resolve (a failing `!command`). */
+  unresolved?: true;
   modelCount: number;
   /** Provider also supports OAuth, so it appears in both picker sections. */
   supportsOAuth?: boolean;
@@ -224,10 +227,6 @@ const PROVIDER_ENTRY_MESSAGES: Record<ProviderEntryProblem, string> = {
 };
 
 // ── Form field helpers ────────────────────────────────────────────────────────
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <ConfigField label={label}>{children}</ConfigField>;
-}
 
 const inputStyle = {
   padding: "6px 9px",
@@ -401,7 +400,7 @@ function ProviderDetail({ name, editingName, fallbackLabel, provider, onChange, 
       setDiscoveryState({ phase: "success", models: data.models, endpoint: data.endpoint ?? provider.baseUrl ?? "" });
     } catch (error) {
       if (requestId !== discoveryRequestIdRef.current) return;
-      setDiscoveryState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+      setDiscoveryState({ phase: "error", message: errorMessage(error) });
     }
   }, [discoveryState.phase, name, provider]);
 
@@ -462,7 +461,7 @@ function ProviderDetail({ name, editingName, fallbackLabel, provider, onChange, 
         <EnabledModelsProviderSwitchNote providerId={name} controller={enabledModels} id={switchNoteId} />
       </div>
 
-       <Field label={t("i18n.providerId")}>
+       <ConfigField label={t("i18n.providerId")}>
         <TextInput value={editingName} onChange={onEditingNameChange} placeholder="provider-id" mono />
         {editingName !== name && editingName.trim() && (
           <button onClick={() => onRename(editingName.trim())}
@@ -470,34 +469,34 @@ function ProviderDetail({ name, editingName, fallbackLabel, provider, onChange, 
              {t("i18n.rename")}
           </button>
         )}
-      </Field>
+      </ConfigField>
 
       {/* models.json `name`: the label the sidebar and the selector show (#1567). */}
-      <Field label={t("models.providerDisplayName")}>
+      <ConfigField label={t("models.providerDisplayName")}>
         <TextInput value={provider.name ?? ""} onChange={(v) => onChange(setProviderDisplayName(provider, v))}
           placeholder={fallbackLabel} />
-      </Field>
+      </ConfigField>
 
-      <Field label="Base URL">
+      <ConfigField label="Base URL">
         <TextInput value={provider.baseUrl ?? ""} onChange={(v) => set("baseUrl", v || undefined)}
           placeholder="https://api.example.com/v1" inputMode="url" mono />
-      </Field>
+      </ConfigField>
 
-      <Field label="API Key">
+      <ConfigField label="API Key">
         <SecretTextInput value={provider.apiKey ?? ""} onChange={(v) => set("apiKey", v || undefined)}
           placeholder={t("models.apiKeyPlaceholder")} mono />
-      </Field>
+      </ConfigField>
 
-      <Field label="API">
+      <ConfigField label="API">
         <Select value={provider.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
-      </Field>
+      </ConfigField>
 
-      <Field label="Headers">
+      <ConfigField label="Headers">
         <HeaderListEditor
           headers={provider.headers}
           onChange={(headers) => set("headers", headers)}
         />
-      </Field>
+      </ConfigField>
 
       <ProviderUsageSummary providerId={name} enabled />
 
@@ -1008,7 +1007,7 @@ function ModelDetail({
       });
     } catch (e) {
       if (requestId !== testRequestIdRef.current) return;
-      setTestState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+      setTestState({ phase: "error", message: errorMessage(e) });
     }
   }, [model, provider, providerName, testState.phase]);
 
@@ -1040,7 +1039,7 @@ function ModelDetail({
       });
     } catch (error) {
       if (requestId !== catalogRequestIdRef.current) return;
-      setCatalogState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+      setCatalogState({ phase: "error", message: errorMessage(error) });
     }
   }, [catalogState.phase, model, onChange, effectiveBaseUrl, providerName]);
 
@@ -1176,8 +1175,8 @@ function ModelDetail({
       </ConfigDetailHeader>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="ID *"><TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono /></Field>
-        <Field label="Name"><TextInput value={model.name ?? ""} onChange={(v) => set("name", v || undefined)} placeholder={t("models.displayNamePlaceholder")} /></Field>
+        <ConfigField label="ID *"><TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono /></ConfigField>
+        <ConfigField label="Name"><TextInput value={model.name ?? ""} onChange={(v) => set("name", v || undefined)} placeholder={t("models.displayNamePlaceholder")} /></ConfigField>
       </div>
 
       <div style={{ padding: "2px 0" }}>
@@ -1254,14 +1253,14 @@ function ModelDetail({
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
-          <Field label={t("models.contextWindow")}>
+          <ConfigField label={t("models.contextWindow")}>
             <NumInput value={model.contextWindow !== undefined ? String(model.contextWindow) : ""}
               onChange={(v) => set("contextWindow", v ? parseInt(v) : undefined)} placeholder="128000" />
-          </Field>
-          <Field label={t("models.maxOutputTokens")}>
+          </ConfigField>
+          <ConfigField label={t("models.maxOutputTokens")}>
             <NumInput value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
               onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)} placeholder="16384" />
-          </Field>
+          </ConfigField>
           {probeStatus?.phase === "probing" && (
             <div style={{ fontSize: 10, color: "#f59e0b", gridColumn: "1 / -1" }}>{t("models.probeInProgress")}</div>
           )}
@@ -1287,9 +1286,9 @@ function ModelDetail({
           {costEditing ? (
             <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
               {costFields.map(({ key, label }) => (
-                <Field key={key} label={label}>
+                <ConfigField key={key} label={label}>
                   <NumInput value={costDraft[key]} onChange={(v) => setCost(key, v)} placeholder="0" />
-                </Field>
+                </ConfigField>
               ))}
               {hasModelCostDraftValue(costDraft) && !parseCompleteModelCost(costDraft) && (
                 <div aria-live="polite" style={{ gridColumn: "1 / -1", color: "#d97706", fontSize: 10 }}>
@@ -1351,16 +1350,16 @@ function ModelDetail({
 
         {advancedOpen && (
           <div id="model-advanced-settings" style={{ display: "flex", flexDirection: "column", gap: 14, padding: "4px 0 16px" }}>
-            <Field label={t("models.baseUrlOverride")}>
+            <ConfigField label={t("models.baseUrlOverride")}>
               <TextInput value={model.baseUrl ?? ""} onChange={(v) => set("baseUrl", v.trim() || undefined)}
                 placeholder={provider.baseUrl ?? t("models.providerDefaults")} inputMode="url" mono />
-            </Field>
+            </ConfigField>
 
-            <Field label={t("models.apiOverride")}>
+            <ConfigField label={t("models.apiOverride")}>
               <Select value={model.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
-            </Field>
+            </ConfigField>
 
-            <Field label={t("models.headers")}>
+            <ConfigField label={t("models.headers")}>
               <HeaderListEditor
                 headers={model.headers}
                 onChange={(headers) => set("headers", headers)}
@@ -1368,10 +1367,10 @@ function ModelDetail({
               <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
                 {t("models.headersHelp")}
               </span>
-            </Field>
+            </ConfigField>
 
             {(model.input?.includes("image") || imageLimit !== undefined) && (
-              <Field label={t("models.imageMaxBytes")}>
+              <ConfigField label={t("models.imageMaxBytes")}>
                 <NumInput
                   value={imageLimit === undefined ? "" : String(imageLimit)}
                   onChange={(v) => onChange(withImageMaxBytes(model, v.trim() || undefined))}
@@ -1385,7 +1384,7 @@ function ModelDetail({
                 <code style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
                   inputLimits.images.resize.maxBytes
                 </code>
-              </Field>
+              </ConfigField>
             )}
 
             {model.reasoning && (
@@ -1714,6 +1713,8 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
   const [savedOk, setSavedOk] = useState(false);
   const { t } = useI18n();
   const canSave = Boolean(llama ? serverUrl.trim() : apiKey.trim());
+  const hasStoredKey = provider.configured || Boolean(provider.unresolved);
+  const statusColor = provider.configured ? "#4ade80" : provider.unresolved ? "#f87171" : undefined;
 
   async function handleSave() {
     if (!canSave || saving) return;
@@ -1770,12 +1771,12 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
         </ConfigDetailHeaderInfo>
         <ConfigDetailActions>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-            <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-               {provider.configured ? t("i18n.configured") : t("i18n.notConfigured")}
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor ?? "var(--border)", display: "inline-block" }} />
+            <span style={{ fontSize: 11, color: statusColor ?? "var(--text-dim)" }}>
+               {provider.configured ? t("i18n.configured") : provider.unresolved ? t("models.storedKeyUnresolved") : t("i18n.notConfigured")}
             </span>
           </div>
-          {provider.configured && (
+          {hasStoredKey && (
             <ConfigButton
               variant="danger"
               size="small"
@@ -1795,7 +1796,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
             onChange={(event) => setServerUrl(event.target.value)} spellCheck={false} />
         </label>
       )}
-      {!llama && !provider.configured && (
+      {!llama && !hasStoredKey && (
         <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
           {provider.modelCount === 1
             ? t("models.apiKeyEnableOne", { provider: provider.displayName })
@@ -1812,7 +1813,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
             if (e.key === "Enter") handleSave();
           }}
           enterKeyHint="done"
-          placeholder={llama ? t("models.optionalApiKey") : provider.configured ? t("models.replaceApiKey") : "sk-…"}
+          placeholder={llama ? t("models.optionalApiKey") : hasStoredKey ? t("models.replaceApiKey") : "sk-…"}
           style={{ flex: 1 }}
           autoComplete="off"
           spellCheck={false}
@@ -1884,7 +1885,7 @@ function AddProviderPicker({
   const q = search.trim().toLowerCase();
 
   const availableOAuth = oauthProviders.filter((p) => !p.loggedIn && providerMatchesSearch(q, p.id, p.name));
-  const availableApiKey = apiKeyProviders.filter((p) => !p.configured && providerMatchesSearch(q, p.id, p.displayName));
+  const availableApiKey = apiKeyProviders.filter((p) => !p.configured && !p.unresolved && providerMatchesSearch(q, p.id, p.displayName));
   const showCustom = !q || "custom".includes(q) || "openai-compatible".includes(q) || "anthropic-compatible".includes(q);
 
   const totalCount = availableOAuth.length + availableApiKey.length + (showCustom ? 1 : 0);
@@ -2113,7 +2114,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
             ? { type: "provider", name: keys[0] }
             : null);
       })
-      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setLoadError(errorMessage(e)))
       .finally(() => setLoading(false));
     refreshAuthProviders();
   }, [refreshAuthProviders]);
@@ -2533,7 +2534,8 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     return label ? <span className="models-sidebar-badge">{label}</span> : null;
   };
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
-  const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+  // An unresolved stored key still owns its provider, so it is listed with the configured ones.
+  const activeApiKey = apiKeyProviders.filter((p) => p.configured || p.unresolved);
 
   // Resolve current detail
   const detailContent = (() => {
@@ -2622,6 +2624,10 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
                   >
                     <ProviderIcon id={p.id} size={16} />
                     <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
+                    {p.unresolved && (
+                      <span role="img" aria-label={t("models.storedKeyUnresolved")} title={t("models.storedKeyUnresolved")}
+                        style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", flexShrink: 0 }} />
+                    )}
                     {scopeBadge(p.id)}
                   </ConfigSidebarItem>
                 );

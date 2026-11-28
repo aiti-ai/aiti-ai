@@ -1,5 +1,9 @@
 import type { McpConfigFieldRef } from "./api-types.ts";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // Which values of an `mcp.json` entry pi resolves before it connects, and the
 // PI_WEB_PASSWORD rule over them. Client-safe, with no runtime imports: the
 // add pane (`components/mcp-add-helpers.ts`) previews and pre-blocks with the
@@ -17,10 +21,6 @@ export interface McpResolvedConfigValue extends McpConfigFieldRef {
 export interface McpConfigValueParsers {
   isCommandConfigValue(value: string): boolean;
   getConfigValueEnvVarNames(value: string): string[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringEntries(value: unknown): [string, string][] {

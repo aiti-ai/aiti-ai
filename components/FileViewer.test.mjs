@@ -5,6 +5,21 @@ import React from "react";
 import ts from "typescript";
 
 const source = await readFile(new URL("./FileViewer.tsx", import.meta.url), "utf8");
+const sourceFile = ts.createSourceFile("FileViewer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+/** The module's own top-level functions and constants of these names, as source text. */
+function declarations(...names) {
+  return names.map((name) => {
+    const node = sourceFile.statements.find((statement) =>
+      (ts.isFunctionDeclaration(statement) && statement.name?.text === name)
+      || (ts.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) =>
+        ts.isIdentifier(declaration.name) && declaration.name.text === name,
+      )),
+    );
+    assert.ok(node, `${name} is declared in the module`);
+    return node.getText(sourceFile);
+  }).join("\n");
+}
 
 test("large source previews bypass the per-line syntax highlighter", () => {
   assert.match(source, /const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;/);
@@ -15,13 +30,13 @@ test("large source previews bypass the per-line syntax highlighter", () => {
   assert.match(source, /const highlightedSource = useMemo\(/);
 
   const lightweightStart = source.indexOf("const lightweightSourceLines = useMemo(");
-  const lightweightEnd = source.indexOf("[sourceLines, useLightweightSource, wrapLines]", lightweightStart);
+  const lightweightEnd = source.indexOf("[sourceLines, targetLines, useLightweightSource, wrapLines]", lightweightStart);
   assert.notEqual(lightweightStart, -1);
   assert.notEqual(lightweightEnd, -1);
 
   const lightweightSource = source.slice(lightweightStart, lightweightEnd);
   assert.match(lightweightSource, /useLightweightSource \? sourceLines\.map\(\(line, lineIndex\) =>/);
-  assert.match(lightweightSource, /className="file-source-line"/);
+  assert.match(lightweightSource, /sourceLineClassName\(|className="file-source-line"/);
   assert.match(lightweightSource, /className="file-source-line-content"/);
   assert.match(lightweightSource, /style=\{FILE_LINE_NUMBER_STYLE\}/);
 
@@ -54,7 +69,8 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
     ),
   ).map((node) => node.getText(file)).join("\n");
   const { outputText } = ts.transpileModule(`
-    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt") => {
+    ${declarations("sourceLineClassName")}
+    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt", targetLines = undefined) => {
       const isDelimitedTablePath = (path) => /\\.(csv|tsv)$/i.test(path);
       const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
       const FILE_LINE_NUMBER_STYLE = {};
@@ -84,6 +100,12 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
     assert.equal(rows[0].props.children[1].props.children, "line");
   }
   assert.equal(render(large, "source", false, false, true)[0].props.children[1].props.style.whiteSpace, "pre-wrap");
+
+  // A link's lines are marked, and only those.
+  const marked = render({ ...large, content: "line\n".repeat(1_200) }, "source", false, false, false, "/tmp/file.txt", { start: 10, end: 12 })
+    .filter((row) => row.props.className.includes("is-link-target"))
+    .map((row) => row.props["data-line-number"]);
+  assert.deepEqual(marked, [10, 11, 12]);
 });
 
 test("markdown preview keeps app links and opens web and app links in a new tab (#1108)", () => {
@@ -97,8 +119,8 @@ test("markdown preview keeps app links and opens web and app links in a new tab 
 });
 
 test("markdown preview links carry PDF page fragments", () => {
-  assert.match(source, /parsePdfPageFragment/);
-  assert.match(source, /(?:onOpenFileRef\.current\?\.|onOpenFile)\(linkedFile, parsePdfPageFragment\(href\) \?\? undefined\)/);
+  assert.match(source, /resolveLocalFileLink/);
+  assert.match(source, /onOpenFileRef\.current\?\.\(linkedFile\.path, linkedFile\.target\)/);
 });
 
 test("the diff view wraps when the viewer wraps, and the key reaches the diff", () => {
@@ -118,11 +140,11 @@ test("the diff view wraps when the viewer wraps, and the key reaches the diff", 
   // line and a memoized whole view, fed from the source view's readiness.
   assert.match(source, /const DiffLineCode = memo\(function DiffLineCode/);
   assert.match(source, /const MemoizedDiffView = memo\(DiffView\);/);
-  assert.match(source, /<MemoizedDiffView patch=\{gitDiff\.patch!\} wrapLines=\{wrapLines\} language=\{language\} prismReady=\{prismReady\} isDark=\{isDark\} \/>/);
+  assert.match(source, /<MemoizedDiffView[\s\S]{0,80}?patch=\{gitDiff\.patch!\}[\s\S]{0,200}?\/>/);
 
   // The wrap control is offered for the diff as well as the source, never for a
   // rendered preview (markdown, HTML, table), where there are no lines to wrap.
-  assert.match(source, /\(effectiveDisplayMode === "source" \|\| effectiveDisplayMode === "diff"\) && !isBinary/);
+  assert.match(source, /\(effectiveDisplayMode === "source" \|\| \(effectiveDisplayMode === "diff" && diffLayout === "stacked"\)\) && !isBinary/);
 });
 
 test("partly loaded HTML previews up to the HTML cap; partly loaded markdown does not", () => {
@@ -168,7 +190,8 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
     ),
   ).map((node) => node.getText(file)).join("\n");
   const { outputText } = ts.transpileModule(`
-    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt") => {
+    ${declarations("sourceLineClassName")}
+    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt", targetLines = undefined) => {
       const isDelimitedTablePath = (path) => /\.(csv|tsv)$/i.test(path);
       const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
       const HTML_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
@@ -193,7 +216,7 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
   const numberStyle = rows[0].props.children[0].props.style;
   // The Diff view's first row number, with every row an added line.
   const diffView = file.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "DiffView");
-  const { outputText: diffOutput } = ts.transpileModule(`return ${diffView.getText(file)}`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } });
+  const { outputText: diffOutput } = ts.transpileModule(`${declarations("DIFF_CONTEXT", "collapseDiff", "DIFF_ADDED_BACKGROUND", "DIFF_REMOVED_BACKGROUND", "diffChangeBackground", "diffChangeBorder")}\nreturn ${diffView.getText(file)}`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } });
   const diffNumberStyle = (rowCount) => {
     const added = Array.from({ length: rowCount }, (_, index) => ({ type: "added", text: "line", oldLineNo: null, newLineNo: index + 1 }));
     // [fork-merge] DiffLineCode is the memoized per-line highlighter; the gutter
@@ -223,4 +246,62 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
   // The gutter repeats the code line's height in px, so a code-font change
   // without it puts the numbers off the line boxes they belong to.
   assert.equal(parseFloat(numberStyle.lineHeight), Number((codeStyle.fontSize * codeStyle.lineHeight).toFixed(1)));
+});
+
+test("the split diff sets each old line beside the line that replaced it", async () => {
+  const { parseUnifiedPatch } = await import("../lib/patch.ts");
+  const { outputText } = ts.transpileModule(`
+    ${declarations("diffRows", "DIFF_CONTEXT", "collapseDiff", "DIFF_ADDED_BACKGROUND", "DIFF_REMOVED_BACKGROUND", "diffChangeBackground", "diffChangeBorder", "SplitDiffView")}
+    return SplitDiffView;
+  `, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } });
+  const SplitDiffView = new Function("React", "useI18n", "parseUnifiedPatch", "DiffGapMarker", "DiffLineCode", "SOURCE_HIGHLIGHT_MAX_LINES", "FILE_CODE_STYLE", "FILE_LINE_NUMBER_STYLE", outputText)(
+    React, () => ({ t: (key) => key }), parseUnifiedPatch, "gap", "code", 1_000, {}, {},
+  );
+  const patch = [
+    "--- a/app.ts",
+    "+++ b/app.ts",
+    "@@ -1,3 +1,4 @@",
+    " keep",
+    "-old one",
+    "-old two",
+    "+new one",
+    "+new two",
+    "+added",
+    " end",
+  ].join("\n");
+  const view = SplitDiffView({ patch, language: "text", prismReady: false, isDark: false });
+  const cells = view.props.children;
+  const text = (cell) => cell.props.children[2].props.children;
+  const number = (cell) => cell.props.children[0].props.children;
+  // Two cells a row: left the old file, right the new one.
+  assert.deepEqual(cells.map(text), ["keep", "keep", "old one", "new one", "old two", "new two", " ", "added", "end", "end"]);
+  assert.deepEqual(cells.map(number), [1, 1, 2, 2, 3, 3, "", 4, 4, 5]);
+
+  // Two equal halves of the box, lines wrapping inside them: an unwrapped
+  // column as wide as the longest line pushed the new side off a narrow panel.
+  assert.equal(view.props.style.gridTemplateColumns, "minmax(0, 1fr) minmax(0, 1fr)");
+  assert.equal(view.props.style.width, undefined);
+  assert.equal(cells[0].props.children[2].props.style.whiteSpace, "pre-wrap");
+});
+
+test("the diff takes two columns only where the viewer's own box has room for them", () => {
+  // The box's width decides, never the window's: a desktop window holds a file
+  // panel as narrow as a phone.
+  assert.match(source, /setLayout\(box\.clientWidth >= SPLIT_DIFF_MIN_WIDTH \? "split" : "stacked"\)/);
+  assert.match(source, /const diffLayout = useDiffLayout\(contentBox\);/);
+  assert.match(source, /ref=\{attachContentBox\}\s+className="file-viewer-content"/);
+  assert.match(source, /<MemoizedDiffView[\s\S]{0,400}layout=\{diffLayout\}[\s\S]{0,40}\/>/);
+  // The panel's default width on a desktop (at least 360px, 42% of the window:
+  // 538px at 1280) splits; a phone's 390px panel does not.
+  const [minWidth] = new Function(`${ts.transpileModule(declarations("SPLIT_DIFF_MIN_WIDTH"), {}).outputText}\nreturn [SPLIT_DIFF_MIN_WIDTH];`)();
+  assert.ok(minWidth <= 0.42 * 1280 && minWidth > 390);
+});
+
+test("a link's chunks stop loading by themselves once one fails", () => {
+  // Each failed chunk ends `loadingMore`, which re-runs the effect at the same
+  // offset: without the error guard it asked hundreds of times a second.
+  const effect = source.match(/\/\/ Load more by itself[\s\S]*?\}, \[[^\]]*\]\);/)?.[0];
+  assert.ok(effect, "the auto-load effect is found");
+  assert.match(effect, /if \([^)]*\berror\b[^)]*\) return;/);
+  assert.match(effect, /\}, \[[^\]]*\berror\b[^\]]*\]\);$/);
 });

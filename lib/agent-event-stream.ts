@@ -4,9 +4,10 @@ import {
   toClientAgentEvent,
   type AgentEventLike,
 } from "./agent-event-wire.ts";
+import type { DebugEventStream } from "./debug-types.ts";
+import { errorMessage } from "./errors.ts";
 import { acquireSessionLivenessLease } from "./session-liveness.ts";
 import { withoutMessageSignatures } from "./message-signatures.ts";
-import type { DebugEventStream } from "./debug-types.ts";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
@@ -162,10 +163,6 @@ export function listAgentEventStreams(): (DebugEventStream & { sessionId: string
 /** Every live agent event stream, those opened before a hot reload of this file included. */
 export function countAgentEventStreams(): number {
   return activeStreamClosers.size;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

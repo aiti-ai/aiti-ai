@@ -11,6 +11,7 @@ import {
   type SessionUiState,
   type SessionUiStateRequest,
 } from "@/lib/session-ui-state-shared";
+import { errorMessage } from "@/lib/errors";
 
 const SESSION_UI_STATE_URL = apiUrl("/api/sessions/ui-state");
 
@@ -52,10 +53,6 @@ async function responseError(response: Response): Promise<string> {
     // Not JSON: fall back to the status.
   }
   return `HTTP ${response.status}`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function readState(response: Response): Promise<SessionUiState> {

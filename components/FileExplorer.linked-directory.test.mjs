@@ -63,7 +63,7 @@ test("ordinary directories render no link notice", () => {
 test("a folder that fails to load reports why instead of staying blank", () => {
   // Before #748 the failure was swallowed and the folder opened onto nothing.
   assert.doesNotMatch(source, /catch \{\s*\/\/ ignore\s*\}/);
-  assert.match(source, /setLoadError\(error instanceof Error \? error\.message : String\(error\)\)/);
+  assert.match(source, /setLoadError\((?:error instanceof Error \? error\.message : String\(error\)|errorMessage\(error\))\)/);
   assert.match(source, /\{loadError && \(\s*<div role="alert"/);
 });
 

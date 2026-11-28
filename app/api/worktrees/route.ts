@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
 import { addWorktree, removeWorktree, WorktreeBranchInUseError, worktreeRemovalRequiresForce } from "@/lib/worktree";
+import { errorMessage } from "@/lib/errors";
 import { checkCwdAllowed, queryWorktrees } from "@/lib/worktree-query";
 
 // GET /api/worktrees?cwd= — kept in query-string form for existing callers; new code must use POST /api/worktrees/query (cwd goes in the JSON body, never in the URL/access logs).
@@ -41,7 +42,7 @@ export async function POST(req: Request) {
     const result = await addWorktree(body.cwd, body.branch);
     return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     if (error instanceof WorktreeBranchInUseError) {
       return NextResponse.json(
         {
@@ -73,7 +74,7 @@ export async function DELETE(req: Request) {
     await removeWorktree(body.cwd, body.path, body.force === true);
     return NextResponse.json({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     // Git refuses some worktree removals without --force, including worktrees
     // with submodule state. Surface that so the UI can offer confirmation.
     const dirty = worktreeRemovalRequiresForce(message);

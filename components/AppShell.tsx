@@ -229,6 +229,7 @@ import { ExportDialog } from "./ExportDialog.tsx";
 import { SessionNameDialog } from "./SessionNameDialog.tsx";
 import type { FileExplorerHandle } from "./FileExplorer.tsx";
 import type { FileViewerState } from "@/lib/file-viewer-state";
+import type { FileLinkTarget } from "@/lib/file-links";
 import type { RevisionRef } from "@/lib/file-revision";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
@@ -240,6 +241,7 @@ import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSe
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { claimDoneChime } from "@/lib/done-chime";
 import { readJsonOrThrow } from "@/lib/fetch-json";
+import { errorMessage } from "@/lib/errors";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -1523,6 +1525,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
   }, [isMobile]);
 
+
   const handleAtMentions = useCallback((relativePaths: string[]) => {
     const mentions = buildFileAtMentionsText(relativePaths);
     if (mentions) chatInputRef.current?.insertText(mentions);
@@ -1738,7 +1741,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setInitialCwdError(error instanceof Error ? error.message : String(error));
+        setInitialCwdError(errorMessage(error));
         setInitialCwdStatus("error");
       });
 
@@ -2567,7 +2570,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
     } catch (error) {
       if (activeSessionIdRef.current !== sessionId) return;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setAutoNameStatus({ kind: "error", message });
       autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
     }
@@ -2700,12 +2703,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const openHostFileTab = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef; target?: FileLinkTarget },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const select = options?.select !== false; // default true
-    const page = options?.page;
+    const page = options?.page ?? options?.target?.page;
+    const lines = options?.target?.lines;
     const atRevision = options?.atRevision;
     // Revision views are their own tab identity (same path, different blob); the
     // ref suffix keeps a revision tab from colliding with the working-tree tab.
@@ -2716,6 +2720,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       filePath,
       modeHint,
       page,
+      lines,
       sourceSessionId,
       atRevision,
       tabId,
@@ -2733,7 +2738,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const handleOpenFile = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef; target?: FileLinkTarget },
   ) => {
     // Revision views are host tabs only: the file-editor dock face guards below match by
     // path alone and would hijack a historical blob into a working-tree editor face.
@@ -2778,8 +2783,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     openHostFileTab(filePath, fileName, options);
   }, [isMobile, revealFileTabOnOpen, openHostFileTab]);
 
-  const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
-    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
+  const handleOpenLinkedFile = useCallback((filePath: string, target?: FileLinkTarget) => {
+    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, target });
   }, [handleOpenFile, selectedSession?.id]);
 
   // "Open in file panel" for message images: the image tab mechanism was removed
@@ -3461,7 +3466,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       setModelsRefreshKey((key) => key + 1);
       setSessionKey((key) => key + 1);
     } catch (error) {
-      setProjectTrustError({ error: error instanceof Error ? error.message : String(error) });
+      setProjectTrustError({ error: errorMessage(error) });
     } finally {
       setProjectTrustBusy(false);
     }

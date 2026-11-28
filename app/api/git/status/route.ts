@@ -2,6 +2,7 @@ import fs from "fs";
 import { NextRequest, NextResponse } from "next/server";
 import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed, isWindowsAbsolutePath } from "@/lib/file-access";
 import { getGitStatus } from "@/lib/git-changes";
+import { errorMessage } from "@/lib/errors";
 
 // POST /api/git/status { cwd }: cwd goes in the body, not the URL — keeps local paths out of tunnel/proxy access logs.
 export async function POST(request: NextRequest) {
@@ -33,6 +34,6 @@ export async function POST(request: NextRequest) {
     // A closed request (a newer refresh replaced it) stops its scan.
     return NextResponse.json(await getGitStatus(cwd, request.signal));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import type { FileLineRange } from "@/lib/file-links";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { RevisionRef } from "@/lib/file-revision";
 import type { Tab } from "./TabBar.tsx";
@@ -36,6 +37,7 @@ interface OpenFileTabInput {
   filePath: string;
   modeHint?: "diff";
   page?: number;
+  lines?: FileLineRange;
   sourceSessionId?: string | null;
   /** Revision view identity (tab id already carries the ref suffix — see AppShell openHostFileTab). */
   atRevision?: RevisionRef;
@@ -46,6 +48,17 @@ interface OpenFolderTabInput {
   folderName: string;
   folderPath: string;
   tabId: string;
+}
+
+// A link to lines shows them in the source, whatever mode the tab was in.
+function lineLinkViewerState(previous?: FileViewerState): FileViewerState {
+  return {
+    displayMode: "source",
+    // An explicit wrap choice carries over; an unmade one stays unmade.
+    wrapLines: previous?.wrapLines,
+    scrollTop: 0,
+    scrollLeft: 0,
+  };
 }
 
 export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
@@ -59,7 +72,8 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
       atRevision: input.atRevision,
       initialDisplayMode: input.modeHint,
       page: input.page,
-      viewerState: input.modeHint ? {
+      lines: input.lines,
+      viewerState: input.lines ? lineLinkViewerState() : input.modeHint ? {
         displayMode: input.modeHint,
         scrollTop: 0,
         scrollLeft: 0,
@@ -73,7 +87,8 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
   );
   const sourceUnchanged = !sourceChanged;
   const pageChanged = existing.page !== input.page;
-  if (sourceUnchanged && !input.modeHint && !pageChanged) return tabs;
+  // Every click on a line link goes to its lines again, even the same ones.
+  if (sourceUnchanged && !input.modeHint && !pageChanged && !input.lines) return tabs;
 
   return tabs.map((tab) => {
     if (tab.id !== input.tabId) return tab;
@@ -97,6 +112,11 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
         scrollTop: 0,
         scrollLeft: 0,
       };
+      bumpRevision = true;
+    }
+    if (input.lines) {
+      next.lines = input.lines;
+      next.viewerState = lineLinkViewerState(tab.viewerState);
       bumpRevision = true;
     }
     if (bumpRevision) next.viewerRevision = (tab.viewerRevision ?? 0) + 1;
@@ -128,7 +148,11 @@ export function saveFileViewerState(
   if (index === -1 || (tabs[index].viewerRevision ?? 0) !== viewerRevision) return tabs;
 
   const next = [...tabs];
-  next[index] = { ...next[index], viewerState };
+  // The viewer went to the link's lines on mount; from here on its own scroll
+  // is the place to come back to.
+  const tab: Tab = { ...next[index], viewerState };
+  delete tab.lines;
+  next[index] = tab;
   return next;
 }
 

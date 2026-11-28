@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { formatSkillsForPrompt, type DefaultResourceLoader, type InlineExtension, type Skill } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { subagentNameList } from "./subagents.ts";
+import { errorMessage } from "./errors.ts";
 
 /** One discovery binding and one prompt projection, shared by spawn and reopen. */
 export function createSubagentSkillsBinding(options: {
@@ -30,7 +31,7 @@ export function createSubagentSkillsBinding(options: {
         const { rest } = parseFrontmatter(readFileSync(skill.filePath, "utf8"));
         return `## Skill: ${name}\nLocation: ${skill.filePath}\nBase directory for relative references: ${skill.baseDir}\n\n${rest.trim()}`;
       } catch (error) {
-        return `Skill ${JSON.stringify(name)} unreadable at ${skill.filePath}: ${error instanceof Error ? error.message : String(error)}`;
+        return `Skill ${JSON.stringify(name)} unreadable at ${skill.filePath}: ${errorMessage(error)}`;
       }
     }).join("\n\n");
   };

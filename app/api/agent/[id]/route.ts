@@ -7,6 +7,7 @@ import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, at
 import { HandleSessionAdapter } from "@/lib/session";
 import { sendWithAcceptWindow, PROMPT_FAMILY_TYPES } from "@/lib/agent-command-accept";
 import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
+import { errorMessage } from "@/lib/errors";
 
 /**
  * Accept-style sending for prompt-family commands: settles within the window → original-semantics
@@ -241,7 +242,7 @@ export async function POST(
       }, { status: 409 });
     }
     return NextResponse.json({
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
       ...(missingCwd ? cwdMissingBody(missingCwd) : {}),
       ...((error as { code?: unknown } | null)?.code === EXTENSION_REPORTED_CODE ? { code: EXTENSION_REPORTED_CODE } : {}),
       ...(commandType === "prompt" && !promptAccepted

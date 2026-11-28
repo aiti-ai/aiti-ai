@@ -7,9 +7,12 @@ import type { SkillToggleResult } from "@/lib/api-types";
 import { loadSkillsWithInstallInfo } from "@/lib/skills-service";
 import { setDisableModelInvocation } from "@/lib/skill-frontmatter";
 import { cwdAccessRefusal, getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
+import { errorMessage } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
+// Uses DefaultResourceLoader (same logic as AgentSession startup) so settings.json
+// skill paths, package skills, and .agents/skills directories are all included.
 async function handleSkills(cwd: string | null): Promise<Response> {
   if (!cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
   try {
@@ -99,7 +102,7 @@ export async function PATCH(req: Request) {
           const refused = toggleSkillFile(target, disableModelInvocation, allowedRoots);
           results.push(refused ? { filePath: target, error: refused.error } : { filePath: target });
         } catch (e) {
-          results.push({ filePath: target, error: e instanceof Error ? e.message : String(e) });
+          results.push({ filePath: target, error: errorMessage(e) });
         }
       }
       return NextResponse.json({ results });
