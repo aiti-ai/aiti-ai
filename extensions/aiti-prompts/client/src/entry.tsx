@@ -27,6 +27,10 @@ export default function register(ctx: Record<string, any>) {
   // Lazy-load v2 two-stage entry: the registered label must resolve to the same text as
   // the static ui.toolbar declaration (pp.app.label), otherwise the app-center card's label
   // flips once the client materializes (and the toolbar/dock cards stop deduping).
+  // One registerItems call for the whole slot: a second call would register the slot's items
+  // incrementally, and the host re-reads (useSyncExternalStore is synchronous) between the two
+  // calls — the not-yet-registered static entry would look unmatched (transient mismatch warning
+  // and a one-frame double button). Export entry included here for the same reason.
   ctx.registerItems("toolbar", [{
     id: "aiti-prompts-open",
     meta: {
@@ -35,6 +39,11 @@ export default function register(ctx: Record<string, any>) {
       icon: "icons/bookmark.svg",
       onClick: () => openFromToolbar(),
     },
+  }, {
+    // defork B2: the old core "more menu → export" entry. Declarative (no render); the host
+    // renders the standard icon button, onClick opens the dialogs item.
+    id: "aiti-prompts-export",
+    meta: { label: "i18n:it.export.label.2", title: t2("exportPrompts.title"), icon: "icons/import.svg", onClick: exportPromptsOnClick },
   }]);
 
   // share-sink（aiti-msg-share 拥有契约）：把 Prompt 片段做成分享中心里固定的「收藏」目标。
@@ -81,12 +90,6 @@ export default function register(ctx: Record<string, any>) {
     { id: "aiti-prompts-save", render: PromptsSaveSlot },
     { id: "aiti-prompts-export", render: ExportPromptsDialog, meta: { label: "i18n:it.export.label" } },
   ]);
-  // defork B2：「导出 Prompts」入口（原 core 更多菜单 export 项外迁）。
-  // toolbar 声明式（无 render）：宿主画标准图标按钮，onClick 开 dialogs 弹窗。
-  ctx.registerItems("toolbar", [{
-    id: "aiti-prompts-export",
-    meta: { label: "i18n:it.export.label.2", title: t2("exportPrompts.title"), icon: "icons/import.svg", onClick: exportPromptsOnClick },
-  }]);
   // aiti-float dock v3（P2 批）：收藏库默认左栏（单列收藏流「随手查随手插」）；不接右栏
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(PANEL_KEY, sidebarZoneOf(PANEL_KEY));
