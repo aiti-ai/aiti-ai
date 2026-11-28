@@ -40,6 +40,12 @@ only for the visible set. Toggle `showUnknown` for a read-only stat-level list.
 - Kill is guarded: same uid, protected pids (init, the extension host, the
   pi-web CLI, other instances), owned pids only, danger confirmation, and a
   `kill-audit.jsonl` trail under the extension state dir.
+- Sidebar dock block: the same tree in a compact read-only form (groups with
+  counts, depth indentation, CPU column, stats line on top). The block header
+  carries a process-count badge and an "open full panel" button; clicking a
+  row opens the floating panel (detail/kill live there). Closing a float that
+  was opened from the dock restores the docked block; closing the block via
+  its header menu stays fully closed.
 
 ## Features
 
