@@ -7,7 +7,7 @@
  * 不会被拷贝，运行时 import() 404（静默，只有 console 可见）。
  *
  * 用法（deploy.mjs 内替换单文件 copyFileSync）：
- *   import { copyClientBuild } from "../../_shared/copy-client-bundle.mjs";
+ *   import { copyClientBuild } from "@aiti-ai/ext-shared/copy-client-bundle";
  *   copyClientBuild(root, extDir, "aiti-xxx-client.mjs");
  *
  * 行为：

@@ -1,26 +1,27 @@
 /**
- * convert-saveas —— 老格式「转可编辑格式另存并打开」route 工厂（共享权威源，部署拷进扩展目录）。
+ * convert-saveas — route factory for old-format "convert to an editable format, save-as and open" (shared authoritative source, deployed by copy into extension dirs).
  *
- * 场景（方案 §八 追加）：.xls/.ods → .xlsx（Excel 编辑）、.doc → .docx（Word 编辑）。
- * 规则：
- *   - soffice 无头转换；tmp 目录放在目标同目录（同文件系统，rename 不跨设备）
- *   - 新文件与源同目录，命名 `<stem>-from<ext>.<toExt>`（如 报告-fromxls.xlsx）；
- *     已存在则 `<stem>-from<ext>(1).<toExt>` 递增——绝不覆盖任何既有文件
- *   - 源文件不动；单 soffice 实例互斥（globalThis 级，跨扩展模块共享进程内互斥）
+ * Scenario (plan §8 addendum): .xls/.ods → .xlsx (Excel editing), .doc → .docx (Word editing).
+ * Rules:
+ *   - soffice headless conversion; tmp dir sits in the target's dir (same filesystem, rename never crosses devices)
+ *   - the new file lives next to the source, named `<stem>-from<ext>.<toExt>` (e.g. report-fromxls.xlsx);
+ *     if taken, `<stem>-from<ext>(1).<toExt>` increments — never overwrites any existing file
+ *   - the source file is untouched; single soffice instance mutex (globalThis-level, in-process mutex shared across extension modules)
  *
- * 端点语义（POST，body JSON）：{ filePath: string, cwd?: string }
+ * Endpoint semantics (POST, JSON body): { filePath: string, cwd?: string }
  *   → 200 { ok: true, newPath, size }
- *   → 400 路径不在白名单 / 源扩展不支持
- *   → 409 目标并发竞争（罕见，客户端重试即可）
- *   → 500 soffice 转换失败
+ *   → 400 path outside the whitelist / source extension unsupported
+ *   → 409 concurrent race on the target (rare; the client just retries)
+ *   → 500 soffice conversion failed
  */
 import { mkdirSync, renameSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, sep } from "node:path";
 
-/** 异步 execFile（Promise 化）。性能红线（2026-09-13）：原 execFileSync 同步跑 soffice
- *  转换（timeout 90s）会把 pi-web 主线程冻结至秒/分钟级；改异步后语义不变、主线程不占用。 */
+/** Async execFile (Promise-wrapped). Perf red line (2026-09-13): the old execFileSync running the soffice
+ *  conversion synchronously (timeout 90s) froze the pi-web main thread for seconds/minutes; the async
+ *  version keeps the semantics without occupying the main thread. */
 function execFileP(bin: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "ignore", "pipe"] }, (err) => (err ? reject(err) : resolve()));
@@ -34,7 +35,7 @@ function expandTildePath(p: string): string {
   return p;
 }
 
-/** 写白名单（对标 aiti-editor/blob-save-route M1 宽松版：workspace + 用户根） */
+/** Write whitelist (mirrors the aiti-editor/blob-save-route M1 loose variant: workspace + user home) */
 export function resolveAllowedWriteRoot(filePath: string, cwd?: string): string | null {
   if (!filePath) return null;
   const expanded = expandTildePath(filePath);
@@ -49,25 +50,25 @@ export function resolveAllowedWriteRoot(filePath: string, cwd?: string): string 
 }
 
 export interface ConvertTarget {
-  /** 目标扩展名（不含点，如 "xlsx"） */
+  /** Target extension (no dot, e.g. "xlsx") */
   toExt: string;
-  /** soffice --convert-to 过滤器（如 `xlsx:Calc MS Excel 2007 XML`；缺省用 toExt） */
+  /** soffice --convert-to filter (e.g. `xlsx:Calc MS Excel 2007 XML`; defaults to toExt) */
   filter?: string;
 }
 
 export interface ConvertSaveAsOptions {
   extId: string;
-  /** fromExt（不含点）→ 转换目标 */
+  /** fromExt (no dot) → conversion target */
   conversions: Record<string, ConvertTarget>;
-  /** 源文件大小上限（默认 50MB） */
+  /** Source file size cap (default 50MB) */
   maxBytes?: number;
-  /** soffice 定位器（_shared/soffice-locate 的 makeSofficeLocator）；缺失 → 503 soffice-missing */
+  /** soffice locator (_shared/soffice-locate's makeSofficeLocator); missing → 503 soffice-missing */
   sofficePath: () => string | null;
 }
 
 /**
- * 候选路径生成（纯函数，可测）：<stem>-from<ext>.<toExt>，冲突递增 (n)。
- * @param exists 路径存在性探测（注入以便测试）
+ * Candidate path generation (pure function, testable): <stem>-from<ext>.<toExt>, increments (n) on conflict.
+ * @param exists path existence probe (injected for testability)
  */
 export function nextSaveAsPath(dir: string, sourceName: string, fromExt: string, toExt: string, exists: (p: string) => boolean): string {
   const stem = sourceName.replace(/\.[^.]+$/, "");
@@ -82,7 +83,7 @@ export function nextSaveAsPath(dir: string, sourceName: string, fromExt: string,
 }
 
 /**
- * 生成 route handler：`if (p[p.length-1] === "convert-saveas") return await handle(req);`
+ * Generate the route handler: `if (p[p.length-1] === "convert-saveas") return await handle(req);`
  */
 export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
   const maxBytes = opts.maxBytes ?? 50 * 1024 * 1024;
@@ -98,29 +99,29 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
     try {
       body = await req.json();
     } catch {
-      return json({ ok: false, error: "body 需为 JSON" }, 400);
+      return json({ ok: false, error: "body must be JSON" }, 400);
     }
     const filePath = typeof body.filePath === "string" ? body.filePath : "";
     const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
-    if (!filePath) return json({ ok: false, error: "需要 filePath" }, 400);
+    if (!filePath) return json({ ok: false, error: "filePath required" }, 400);
 
     const ext = (filePath.match(/\.([a-z0-9]+)$/i)?.[1] || "").toLowerCase();
     const conv = opts.conversions[ext];
     if (!conv) {
-      return json({ ok: false, error: "源扩展不支持（支持: " + Object.keys(opts.conversions).map((k) => "." + k).join(" ") + "）" }, 400);
+      return json({ ok: false, error: "source extension unsupported (supported: " + Object.keys(opts.conversions).map((k) => "." + k).join(" ") + ")" }, 400);
     }
     const target = resolveAllowedWriteRoot(filePath, cwd);
-    if (!target) return json({ ok: false, error: "路径不在可写白名单内" }, 400);
+    if (!target) return json({ ok: false, error: "path outside the writable whitelist" }, 400);
     let st;
     try {
       st = statSync(target);
     } catch {
-      return json({ ok: false, error: "源文件不存在" }, 400);
+      return json({ ok: false, error: "source file not found" }, 400);
     }
-    if (!st.isFile()) return json({ ok: false, error: "目标不是文件" }, 400);
-    if (st.size > maxBytes) return json({ ok: false, error: "文件超过 " + Math.round(maxBytes / 1024 / 1024) + "MB 上限" }, 413);
+    if (!st.isFile()) return json({ ok: false, error: "target is not a file" }, 400);
+    if (st.size > maxBytes) return json({ ok: false, error: "file exceeds the " + Math.round(maxBytes / 1024 / 1024) + "MB cap" }, 413);
 
-    // 候选名（转换前定一次；rename 前再校验一次防并发竞争）
+    // Candidate name (fixed once before conversion; revalidated right before rename against concurrent races)
     const dir = dirname(target);
     const sourceName = basename(target);
     let finalPath = nextSaveAsPath(dir, sourceName, ext, conv.toExt, (p) => { try { statSync(p); return true; } catch { return false; } });
@@ -130,10 +131,10 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
       return json({
         ok: false,
         code: "soffice-missing",
-        error: "未找到 LibreOffice (soffice)：老格式转换需要它。可安装 LibreOffice，或在 aiti-editor 功能配置 soffice.path",
+        error: "LibreOffice (soffice) not found: old-format conversion needs it. Install LibreOffice, or set soffice.path in the aiti-editor feature config",
       }, 503);
     }
-    if (mutex()) return json({ ok: false, error: "上一个转换还在进行，请稍后重试" }, 409);
+    if (mutex()) return json({ ok: false, error: "previous conversion still running, retry shortly" }, 409);
     const g = globalThis as any;
     g.__aitiConvertBusy = 1;
     const tmpOut = join(dir, "." + opts.extId + "-conv-" + process.pid + "-" + Date.now());
@@ -143,9 +144,9 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
       await execFileP(soffice, ["--headless", "--convert-to", filter, "--outdir", tmpOut, target], 90_000);
       const producedName = sourceName.replace(/\.[^.]+$/, "") + "." + conv.toExt;
       const produced = join(tmpOut, producedName);
-      const ps = statSync(produced); // 不存在会 throw → 落入 catch
-      if (ps.size === 0) throw new Error("转换产物为空");
-      // rename 前最终防覆盖（转换期间目标可能被并发创建）
+      const ps = statSync(produced); // missing throws → falls into catch
+      if (ps.size === 0) throw new Error("conversion output is empty");
+      // Final no-overwrite check before rename (the target may be created concurrently during conversion)
       finalPath = nextSaveAsPath(dir, sourceName, ext, conv.toExt, (p) => { try { statSync(p); return true; } catch { return false; } });
       renameSync(produced, finalPath);
       const size = statSync(finalPath).size;
@@ -154,12 +155,12 @@ export function createConvertSaveAsRoute(opts: ConvertSaveAsOptions) {
     } catch (e) {
       const msg = String((e as Error).message || e);
       if (msg.includes("ENOENT") && msg.includes(producedNameHint(sourceName, conv.toExt))) {
-        return json({ ok: false, error: "soffice 未产出转换结果（源文件可能损坏或格式不支持）" }, 500);
+        return json({ ok: false, error: "soffice produced no conversion result (source file may be corrupt or the format unsupported)" }, 500);
       }
-      log("转换失败: " + msg.slice(0, 200));
-      return json({ ok: false, error: "转换失败: " + msg.slice(0, 200) }, 500);
+      log("convert failed: " + msg.slice(0, 200));
+      return json({ ok: false, error: "convert failed: " + msg.slice(0, 200) }, 500);
     } finally {
-      try { require("node:fs").rmSync(tmpOut, { recursive: true, force: true }); } catch { /* 忽略 */ }
+      try { require("node:fs").rmSync(tmpOut, { recursive: true, force: true }); } catch { /* ignored */ }
       g.__aitiConvertBusy = 0;
     }
   };

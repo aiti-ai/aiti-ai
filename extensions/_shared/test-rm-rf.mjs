@@ -7,7 +7,7 @@
  * 「清理失败」变成「用例间脏状态」。
  *
  * 用法：
- *   import { rmRf } from "../../_shared/test-rm-rf.mjs";
+ *   import { rmRf } from "@aiti-ai/ext-shared/test-rm-rf";
  *   finally { await rmRf(dir); }        // 一般场景
  *   finally { await rmRf(dir, true); }  // 该目录若含 session-manager runtime 索引
  */

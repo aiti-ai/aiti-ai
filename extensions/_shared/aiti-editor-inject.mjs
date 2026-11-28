@@ -8,7 +8,7 @@
  *     挂载后 flush，并广播 `aiti-editor:registry-ready` 事件。
  *
  * 用法（实现扩展 client 入口）：
- *   import { whenAitiEditorReady } from "../_shared/aiti-editor-inject.mjs";
+ *   import { whenAitiEditorReady } from "@aiti-ai/ext-shared/aiti-editor-inject";
  *   whenAitiEditorReady(() => {
  *     window.__aitiEditor.registerEditorProvider({ id: "…", displayName: "…", selector: { extensions: [".xlsx"] },
  *       capabilities: ["preview", "edit"], render(host, ctx) { … return { el, dispose() {} }; } });

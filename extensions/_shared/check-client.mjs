@@ -1,47 +1,50 @@
 /**
- * check-client —— 扩展 client .mjs/.js 的 TS 残留 tripwire（零依赖，纯 node）。
+ * check-client — TS-leftover tripwire for extension client .mjs/.js (zero deps, pure node).
  *
- * 背景：aiti-plan-review 事故（docs/aiti-ext-client-hardening-plan.md §1）——
- * `useState<any>(null)` 解析为合法 JS 比较表达式 `useState < any > (null)`，
- * node --check / TS 解析器 / babel 全不报错，只有运行时才炸。纯语法检查
- * 原理性无效，只能启发式规则 + 渲染期错误边界兜底。
+ * Background: the aiti-plan-review incident (docs/aiti-ext-client-hardening-plan.md §1) —
+ * `useState<any>(null)` parses as the legal JS comparison expression `useState < any > (null)`;
+ * node --check, the TS parser and babel all stay silent, only runtime blows up. Pure syntax
+ * checking cannot work in principle; only heuristic rules + render-time error boundaries cover it.
  *
- * 用法：
- *   CLI    node check-client.mjs <file|dir>...        FAIL → exit 1
- *   自测   node check-client.mjs --selftest           fixtures 全过 → exit 0
- *   API    lintClientSource(src) → violations[]       { line, level, rule, text }
- *          lintPath(path)        → { files, violations }（文件或目录，递归）
- *          checkClientDir(dir,{log})                 FAIL → throw（deploy 脚本用）
+ * Usage:
+ *   CLI      node check-client.mjs <file|dir>...      FAIL → exit 1
+ *   selftest node check-client.mjs --selftest         all fixtures pass → exit 0
+ *   API      lintClientSource(src) → violations[]     { line, level, rule, text }
+ *            lintPath(path)        → { files, violations } (file or dir, recursive)
+ *            checkClientDir(dir,{log})                FAIL → throw (used by deploy scripts)
  *
- * 词法：规则匹配前先剥离注释/字符串/模板字面量（${} 插值内代码保留检查）——
- * aiti-editor 的 Monaco TS stub 模板串、JSDoc @return 都是合法内容，不剥全误报。
- * 已知极限：regex 字面量含引号等 lexer 歧义允许漏报（tripwire 定位非编译器）。
+ * Lexing: comments/strings/template literals are stripped before rule matching (code inside ${}
+ * interpolation stays checked) — aiti-editor's Monaco TS stub template strings and JSDoc @return
+ * are legal content; without stripping, everything false-positives.
+ * Known limit: lexer ambiguities such as regex literals containing quotes may under-report
+ * (the tripwire locates, it is not a compiler).
  *
- * 豁免：目标行或其上一行含 `check-client:allow` 即跳过该行。
- * 权威源：本文件；aiti-extman 部署副本由其 tools/deploy.mjs 拷贝（改动两处同步）。
+ * Exemption: a line is skipped when it or the line above contains `check-client:allow`.
+ * Authoritative source: this file; the aiti-extman deployed copy is copied by its tools/deploy.mjs
+ * (keep both in sync when changing).
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-// ── 规则（分级）──────────────────────────────────────────────────────────────
+// ── Rules (leveled) ──────────────────────────────────────────────────────────────
 
 const RULES = [
-  // FAIL：合法 JS 但运行时必炸 / 纯 TS 语法
-  { level: "FAIL", re: /\b(useState|useRef|useMemo|useCallback|useReducer|useImperativeHandle)\s*</, why: "React hook 泛型（运行时必炸）" },
-  // 注：含「any/unknown/string」字样的规则用字符串构 RegExp——本文件自身也
-  // 会被扫，正则字面量里的 (?:any 会被自己命中（词法器不处理 regex 字面量），
-  // 字符串字面量则会被词法遮蔽。
-  { level: "FAIL", re: new RegExp("\\bas\\s+(?:" + "any|unknown|const)\\b"), why: "as 断言" },
-  { level: "FAIL", re: new RegExp(":\\s*(?:" + "any|unknown)\\b"), why: ": any/: unknown 注解" },
+  // FAIL: legal JS but guaranteed to blow up at runtime / pure TS syntax
+  { level: "FAIL", re: /\b(useState|useRef|useMemo|useCallback|useReducer|useImperativeHandle)\s*</, why: "React hook generics (blows up at runtime)" },
+  // Note: rules mentioning any/unknown/string build their RegExp from strings — this file itself
+  // gets scanned; a regex literal like (?:any would match itself (the lexer does not handle regex
+  // literals), while string literals are lexically masked.
+  { level: "FAIL", re: new RegExp("\\bas\\s+(?:" + "any|unknown|const)\\b"), why: "as assertion" },
+  { level: "FAIL", re: new RegExp(":\\s*(?:" + "any|unknown)\\b"), why: ": any/: unknown annotation" },
   { level: "FAIL", re: /\b(?:import|export)\s+type\s/, why: "import/export type" },
-  { level: "FAIL", re: /\b(?:interface|enum)\s+[A-Za-z_$]/, why: "interface/enum 声明" },
-  // warn：疑似残留，人工确认，不阻断
-  { level: "warn", re: new RegExp(":\\s*(?:" + "string|number|boolean|void)\\b(?!\\s*[._\\w])"), why: "疑似类型注解" },
+  { level: "FAIL", re: /\b(?:interface|enum)\s+[A-Za-z_$]/, why: "interface/enum declaration" },
+  // warn: suspected leftover, confirm manually, non-blocking
+  { level: "warn", re: new RegExp(":\\s*(?:" + "string|number|boolean|void)\\b(?!\\s*[._\\w])"), why: "suspected type annotation" },
   { level: "warn", re: /\bsatisfies\s/, why: "satisfies" },
-  { level: "warn", re: /\b(?:Record|Partial|Readonly|Omit|Pick)\s*</, why: "TS 工具类型" },
+  { level: "warn", re: /\b(?:Record|Partial|Readonly|Omit|Pick)\s*</, why: "TS utility type" },
 ];
 
-// ── 词法剥离：注释/字符串/模板字面量 → 空格（保留换行，行号不漂移）─────────
+// ── Lexical strip: comments/strings/template literals → spaces (newlines kept, line numbers stable) ─────────
 export function stripLiterals(src) {
   const out = src.split("");
   const n = src.length;
@@ -50,7 +53,7 @@ export function stripLiterals(src) {
   };
   let mode = "code";
   let depth = 0;
-  const stack = []; // 模板 ${ 插值进入时的 brace 深度（支持嵌套模板）
+  const stack = []; // brace depth when entering a template ${ interpolation (nested templates supported)
   let i = 0;
   while (i < n) {
     const c = src[i];
@@ -73,7 +76,7 @@ export function stripLiterals(src) {
           mask(i, j + 1);
           i = j + 1;
         } else {
-          // 未闭合到行尾 → 可能是 regex 字面量歧义，只遮开引号，按代码继续
+          // unclosed at end of line → possible regex-literal ambiguity; mask only the quote, keep going as code
           out[i] = " ";
           i++;
         }
@@ -87,7 +90,7 @@ export function stripLiterals(src) {
       } else if (c === "}") {
         if (stack.length && depth === stack[stack.length - 1]) {
           stack.pop();
-          mode = "tpl"; // 插值结束回模板
+          mode = "tpl"; // interpolation ends, back to template
           out[i] = " ";
         } else {
           depth = Math.max(0, depth - 1);
@@ -112,14 +115,14 @@ export function stripLiterals(src) {
         i++;
       }
     } else {
-      // 不可达：line/block/字符串均在 code 分支内联处理
+      // unreachable: line/block/strings are all handled inline in the code branch
       i++;
     }
   }
   return out.join("");
 }
 
-// ── 单源检查 ────────────────────────────────────────────────────────────────
+// ── Single-source check  ────────────────────────────────────────────────────────────────
 export function lintClientSource(src) {
   const masked = stripLiterals(src);
   const origLines = src.split("\n");
@@ -137,9 +140,9 @@ export function lintClientSource(src) {
   return violations;
 }
 
-// ── 文件/目录检查 ───────────────────────────────────────────────────────────
+// ── File/dir check  ───────────────────────────────────────────────────────────
 const SKIP_DIR = new Set(["node_modules", ".git"]);
-/** 超过此体积视为 vendored bundle（如 Monaco ts.worker，合法含 interface 字样），不查。 */
+/** Above this size a file is treated as a vendored bundle (e.g. Monaco ts.worker, legally contains the word interface) and skipped. */
 const MAX_BYTES = 512 * 1024;
 const isClientFile = (name) => /\.(mjs|js|cjs)$/.test(name) && !/\.min\./.test(name) && !/\.test\./.test(name);
 
@@ -154,7 +157,7 @@ export function lintPath(p, out = { files: 0, violations: [] }) {
   }
   const base = p.split("/").pop();
   if (!isClientFile(base)) return out;
-  if (st.size > MAX_BYTES) return out; // vendored bundle 豁免
+  if (st.size > MAX_BYTES) return out; // vendored bundle exemption
   out.files++;
   for (const v of lintClientSource(readFileSync(p, "utf8"))) out.violations.push({ file: p, ...v });
   return out;
@@ -166,27 +169,27 @@ export function formatViolations(violations) {
     .join("\n");
 }
 
-/** deploy 脚本用：检查目录，FAIL 抛错（消息含违规清单），warn 只打日志不阻断。 */
+/** Used by deploy scripts: check a dir, throw on FAIL (message lists the violations); warn only logs, non-blocking. */
 export function checkClientDir(dir, { log = console.log } = {}) {
   const { files, violations } = lintPath(resolve(dir));
   const fails = violations.filter((v) => v.level === "FAIL");
   const warns = violations.filter((v) => v.level === "warn");
-  if (warns.length) log(`[check-client] ${warns.length} 处疑似 TS 残留（不阻断，建议人工确认）：\n${formatViolations(warns)}`);
+  if (warns.length) log(`[check-client] ${warns.length} suspected TS leftovers (non-blocking, confirm manually):\n${formatViolations(warns)}`);
   if (fails.length) {
     throw new Error(
-      `client 检查未通过：${files} 个文件中 ${fails.length} 处 TS 残留（.mjs 里是合法 JS，语法检查不报，运行时必炸）。\n` +
+      `client check failed: ${fails.length} TS leftovers across ${files} files (legal JS in .mjs, syntax checks stay silent, blows up at runtime).\n` +
         formatViolations(fails) +
-        `\n修复或在该行加注释 // check-client:allow 豁免。详见 docs/aiti-ext-client-hardening-plan.md`,
+        `\nFix them, or add a // check-client:allow comment on the line to exempt. See docs/aiti-ext-client-hardening-plan.md`,
     );
   }
-  if (files) log(`[check-client] ${files} 个 client 文件检查通过`);
+  if (files) log(`[check-client] ${files} client files passed`);
   return { files, fails: fails.length, warns: warns.length };
 }
 
 /**
- * extman 安装用：扫整个扩展目录（含第三方，不遵循 client/ 约定）。
- * 在 SKIP_DIR 之上额外跳过构建产物/vendored 目录（Monaco ts.worker、语言包等
- * 合法包含 TS 字样，词法器对 minified 代码不提供保证）；体积上限同上。
+ * Used by extman install: scan the whole extension dir (third parties included, no client/ convention).
+ * On top of SKIP_DIR, also skip build-output/vendored dirs (Monaco ts.worker, language packs etc.
+ * legally contain TS wording; the lexer makes no promises for minified code); same size cap as above.
  */
 export function lintExtensionDir(dir) {
   const out = { files: 0, violations: [] };
@@ -233,7 +236,7 @@ function selftest() {
     "useState<any>(null); // check-client:allow",
     "// check-client:allow\nuseState<never>(0);",
     "const cmp = a < b && c > (d);",
-    "if (a // 注释里 as any 不算\n  ) run();",
+    "if (a // as any inside a comment does not count\n  ) run();",
   ];
   let bad = 0;
   const check = (src, expect, desc) => {
@@ -242,17 +245,17 @@ function selftest() {
     const ok = expect === "FAIL" ? fails.length > 0 : expect === "PASS" ? v.length === 0 : v.length > 0 && fails.length === 0;
     if (!ok) {
       bad++;
-      console.log(`SELFTEST FAIL [${desc}] 期望 ${expect}，实际 ${JSON.stringify(v)}`);
+      console.log(`SELFTEST FAIL [${desc}] expected ${expect}, got ${JSON.stringify(v)}`);
     }
   };
   MUST_FAIL.forEach((s) => check(s, "FAIL", s.slice(0, 40)));
   MUST_WARN.forEach((s) => check(s, "WARN", s.slice(0, 40)));
   MUST_PASS.forEach((s) => check(s, "PASS", s.replace(/\n/g, "⏎").slice(0, 40)));
   if (bad) {
-    console.log(`selftest: ${bad} 处未过`);
+    console.log(`selftest: ${bad} failed`);
     process.exit(1);
   }
-  console.log("selftest: 全部通过（8 FAIL / 3 WARN / 7 PASS）");
+  console.log("selftest: all passed (8 FAIL / 3 WARN / 7 PASS)");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
@@ -264,10 +267,10 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
     const fails = all.violations.filter((v) => v.level === "FAIL");
     const warns = all.violations.filter((v) => v.level === "warn");
     if (all.violations.length) console.log(formatViolations(all.violations));
-    console.log(`\n${all.files} 个文件：FAIL=${fails.length} warn=${warns.length}`);
+    console.log(`\n${all.files} files: FAIL=${fails.length} warn=${warns.length}`);
     process.exit(fails.length ? 1 : 0);
   } else {
-    console.log("用法：node check-client.mjs <file|dir>... ｜ --selftest");
+    console.log("usage: node check-client.mjs <file|dir>... | --selftest");
     process.exit(2);
   }
 }

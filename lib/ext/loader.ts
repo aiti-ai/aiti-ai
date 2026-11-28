@@ -244,14 +244,46 @@ function embedUiSvgIcons(dir: string, ext: Partial<PiWebExtension>): void {
       const icon = (item as { icon?: unknown }).icon;
       if (typeof icon !== "string" || !icon.endsWith(".svg")) continue;
       if (icon.startsWith("/") || icon.includes("..") || icon.includes("://")) continue;
-      try {
-        const raw = readFileSync(join(dir, icon), "utf8");
-        const inner = /<svg[^>]*>([\s\S]*?)<\/svg\s*>/.exec(raw)?.[1]?.trim();
-        if (inner) (item as { icon: unknown }).icon = { svg: inner };
-      } catch {
-        // missing file: keep the string; the frontend's renderExtItemIcon falls
-        // back to the assets mask
+      const raw = readExtIconFile(dir, icon);
+      if (raw == null) {
+        // missing everywhere: keep the string; the frontend's renderExtItemIcon
+        // falls back to the assets mask
+        continue;
       }
+      const inner = /<svg[^>]*>([\s\S]*?)<\/svg\s*>/.exec(raw)?.[1]?.trim();
+      if (inner) (item as { icon: unknown }).icon = { svg: inner };
     }
+  }
+}
+
+/**
+ * Read an inline ui icon source for an extension. Resolution order:
+ * 1. the extension's own file (`<dir>/<icon>`, e.g. its own icons/ copies);
+ * 2. the @aiti-ai/ext-shared icon library, resolved by walking up node_modules
+ *    from the extension dir — the same way any extension dependency resolves.
+ *    Deploy-time icon copies were removed: ui entries like "icons/mic.svg"
+ *    whose file only exists in the shared library resolve at load time here,
+ *    so extensions no longer carry per-copy icon files.
+ * Returns null when neither source has the file (caller keeps the string and
+ * the frontend falls back to the assets mask).
+ */
+export function readExtIconFile(dir: string, icon: string): string | null {
+  const base = icon.split("/").pop() ?? "";
+  if (!base.endsWith(".svg")) return null;
+  try {
+    return readFileSync(join(dir, icon), "utf8");
+  } catch {
+    // not in the extension dir — fall through to the shared icon library
+  }
+  let cur = resolve(dir);
+  for (;;) {
+    try {
+      return readFileSync(join(cur, "node_modules", "@aiti-ai", "ext-shared", "icons", base), "utf8");
+    } catch {
+      // keep walking up
+    }
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
   }
 }

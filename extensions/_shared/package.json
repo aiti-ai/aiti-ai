@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/ext-shared",
-  "version": "0.1.21",
+  "version": "0.1.23",
   "type": "module",
   "description": "pi-web 扩展共享层（_shared 原地 package 化）——exports 子路径逐文件暴露",
   "exports": {
@@ -30,7 +30,6 @@
     "./ext-float-dock": "./ext-float-dock.ts",
     "./ext-float-dock-core": "./ext-float-dock-core.ts",
     "./ext-float-dock-lite": "./ext-float-dock-lite.ts",
-    "./ext-icons-deploy": "./ext-icons-deploy.mjs",
     "./ext-lazy": "./ext-lazy.tsx",
     "./ext-model-state": "./ext-model-state.ts",
     "./ext-protocol": "./ext-protocol.mjs",
@@ -52,11 +51,18 @@
     "./soffice-panel": "./soffice-panel.ts",
     "./sync-dir": "./sync-dir.mjs",
     "./task-list": "./task-list.ts",
-    "./ui-dialogs": "./ui-dialogs.ts"
+    "./ui-dialogs": "./ui-dialogs.ts",
+    "./icons/*": "./icons/*",
+    "./menu-row": "./menu-row.tsx",
+    "./test-rm-rf": "./test-rm-rf.mjs",
+    "./typo-search": "./typo-search.mjs",
+    "./git-ops-client/api": "./git-ops-client/api.mjs",
+    "./git-ops-client/branch-panel": "./git-ops-client/branch-panel.tsx",
+    "./git-ops-client/i18n": "./git-ops-client/i18n.mjs"
   },
   "license": "MIT",
   "aitiExtProtocol": "1.0",
-  "contentHash": "accf40dc12cfc81a",
+  "contentHash": "c8ce8220a25145bc",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
