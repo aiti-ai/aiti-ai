@@ -1,16 +1,18 @@
 /**
- * _shared/reconcile-deps.mjs · 通知 pi-web 双实例对齐扩展共享依赖（各扩展 deploy.mjs 共用）
+ * _shared/reconcile-deps.mjs · notifies the pi-web dual instances to reconcile shared extension deps (shared by every extension deploy.mjs)
  *
- * 背景：扩展运行时依赖统一装进共享根 <webRoot>/node_modules（jiti 从扩展目录向上解析
- * 自动命中；机制仿 pi 本体 npm: 包安装）。共享根的唯一写入方是 aiti-extman 的
- * shared-deps reconcile——deploy.mjs 拷完文件后 POST 本通知即可，不在部署脚本里跑 npm。
+ * Background: extension runtime deps are installed into the shared root <webRoot>/node_modules
+ * (jiti resolves upward from the extension dir and hits it automatically; mechanism modeled on
+ * pi's own npm: package installs). The only writer of the shared root is aiti-extman's
+ * shared-deps reconcile — deploy.mjs just POSTs this notification after copying files; npm never
+ * runs inside deploy scripts.
  *
- * 用法（与 reload-instances 同款：允许失败，永不 throw、不影响 deploy 退出码）：
+ * Usage (same as reload-instances: failure-tolerant, never throws, deploy exit code unaffected):
  *   import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
- *   await notifyReconcile();               // 默认 "[deploy] " 前缀；建议在 reloadInstances() 之前调
+ *   await notifyReconcile();               // default "[deploy] " prefix; call before reloadInstances()
  *
- * 失败无害：extman 在下一次 install/remove/reconcile-deps 时会自愈对齐；双实例各自
- * reconcile 各自的 webRoot（~/.pi/web 与 ~/.pi/web-dev），互不相干。
+ * Harmless on failure: extman self-heals on the next install/remove/reconcile-deps; each instance
+ * reconciles its own webRoot (~/.pi/web vs ~/.pi/web-dev), fully independent.
  */
 import { buildInstances } from "./reload-instances.mjs";
 
