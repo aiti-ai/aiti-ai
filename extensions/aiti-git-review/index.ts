@@ -828,7 +828,7 @@ export default {
       "zh-CN": {
         "ext.displayName": "Git 代码审核",        "gr.app.label": "审核",
         "gr.app.title": "aiti-git-review：审核变更（未提交 / 指定基线 / 两版本对比）",
-        "gr.workspace.label": "审查",
+        "gr.workspace.label": "审核",
         "gr.title": "Git 代码审核",
         "gr.picker.new": "新建审查",
         "gr.picker.selectFiles": "选文件",

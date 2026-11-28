@@ -1016,7 +1016,18 @@ async function staticClickForwarder(extId: string, itemId: string, slot: ExtSlot
     const open = (reg.meta as { open?: unknown } | undefined)?.open;
     if (typeof onClick === "function") onClick(ev);
     else if (typeof open === "function") (open as (e?: unknown) => void)(ev);
-    else console.warn(`[ext] ${extId} registered item ${slot}/${itemId} lacks onClick/open; static click forward dropped`);
+    else {
+      // Silent dead click otherwise: a lazy extension whose registered item is render-only
+      // (or declares neither onClick nor open) cannot be forwarded. Surface it in the
+      // bottom-left error indicator — the two-stage entry (manifest declaration + client
+      // meta.onClick) is the extension-side contract.
+      registerExtSlotError({
+        id: errId, extId, slot, itemId, kind: "load",
+        message: `Static entry click: registered item ${slot}/${itemId} declares neither meta.onClick nor meta.open — the two-stage entry is incomplete, so this click had no effect`,
+        reset: () => {},
+      });
+      console.warn(`[ext] ${extId} registered item ${slot}/${itemId} lacks onClick/open; static click forward dropped`);
+    }
   } catch (e) {
     registerExtSlotError({
       id: errId, extId, slot, itemId, kind: "load",

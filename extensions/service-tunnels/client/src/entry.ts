@@ -125,7 +125,12 @@ export default function register(ctx: {
         embedded: true,
         onClose: () => setDialog(false),
         onOpenFile: (filePath: string, fileName?: string) => openFileInHost(filePath, fileName),
-        initialTab: "ports",
+        // Deep-link intent from openDialog(): the mount-time prop is the only channel that
+        // works on a first open — the piwe-st-switch-tab event is dispatched before this face
+        // mounts, so a hardcoded "ports" here landed the first click on the wrong tab (the
+        // second click then worked because the already-mounted dialog received the event).
+        initialTab,
+        initialPort,
         openContainer: openContainerPanel,
         containerByPort: containerPortMap(),
       }));

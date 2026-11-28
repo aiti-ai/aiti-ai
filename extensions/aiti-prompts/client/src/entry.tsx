@@ -24,10 +24,13 @@ export default function register(ctx: Record<string, any>) {
   __bindSendChat((text: string, mode: any) => { ctx.sendChatMessage(text, mode); });
 
   // 懒加载 v2 M3批②：声明式条目（无 render）。userMessageActions 📌 物化前不显示——hover 低频，已记录可接受
+  // Lazy-load v2 two-stage entry: the registered label must resolve to the same text as
+  // the static ui.toolbar declaration (pp.app.label), otherwise the app-center card's label
+  // flips once the client materializes (and the toolbar/dock cards stop deduping).
   ctx.registerItems("toolbar", [{
     id: "aiti-prompts-open",
     meta: {
-      label: "i18n:it.open.label",
+      label: "i18n:pp.app.label",
       title: "i18n:it.open.title",
       icon: "icons/bookmark.svg",
       onClick: () => openFromToolbar(),
@@ -88,7 +91,9 @@ export default function register(ctx: Record<string, any>) {
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(PANEL_KEY, sidebarZoneOf(PANEL_KEY));
   declareDockZones(PANEL_KEY, [sidebarZoneOf(PANEL_KEY), "right-panel"], sidebarZoneOf(PANEL_KEY));
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "i18n:it.panel.title", icon: PROMPT_DOCK_ICON } }]);
+  // Dock tab label mirrors the toolbar label (same item surfaced in two slots): app-center
+  // dedupes cards by (extId,label), so both phases and both slots must agree.
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "i18n:pp.app.label", icon: PROMPT_DOCK_ICON } }]);
   ctx.registerItems("sidebarExplorerDock", [{ id: "panel", render: PromptsDockLeft, meta: { title: "i18n:it.panel.title.2", priority: 3 } }]);
   ctx.registerItems("userMessageActions", [{
     id: "aiti-prompts-save-message",

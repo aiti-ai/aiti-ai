@@ -826,7 +826,7 @@ export default {
     toolbar: [{ id: "aiti-subagents", label: "i18n:sub.open.label", title: "i18n:sub.open.title", icon: "icons/users.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     sidebarExplorerDock: [{ id: "fleet", label: "i18n:sub.fleetFull.label", icon: "bot" }],
-    rightFileDock: [{ id: "fleet", label: "i18n:sub.fleet.label" }],
+    rightFileDock: [{ id: "fleet", label: "i18n:sub.open.label" }],
     // Settings-tab slots (lazy-load v2: INTERACTIVE_SLOTS materialize only extensions
     // that DECLARE the slot — without these entries opening Settings › Sub-agents never
     // pulls this lazy extension up, so the settingsAgents full-page takeover silently

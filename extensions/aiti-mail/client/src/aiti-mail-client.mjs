@@ -264,7 +264,11 @@ function register(ctx) {
   }]);
   ctx.registerItems("dialogs", [{ id: "aiti-mail-panel", render: MailPanel }]);
   // aiti-float dock v3（P3 批）：右栏「邮件」tab（id 拼后 = MAIL_KEY）
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "i18n:it.panel.title" } }]);
+  // Dock tab label must match the toolbar/static label ("Mail" / its zh translation); the long
+  // "Mail: SMTP config / send test / send history" text stays as the dialog/title copy
+  // elsewhere — using it here made the app-center card split into a second, long-labelled
+  // panel card as soon as the lazy client materialized.
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "i18n:it.panel.label" } }]);
   try { console.log("[aiti-mail] 管理弹窗已挂载（toolbar ✉ 入口 → dialogs 弹窗）"); } catch (e) { /* noop */ }
 }
 

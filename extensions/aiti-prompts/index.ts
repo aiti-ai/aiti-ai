@@ -96,7 +96,7 @@ export default {
     ],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     sidebarExplorerDock: [{ id: "panel", label: "i18n:pp.title", icon: "icons/bookmark.svg" }],
-    rightFileDock: [{ id: "panel", label: "i18n:pp.library.label" }],
+    rightFileDock: [{ id: "panel", label: "i18n:pp.app.label" }],
     dialogs: [
       { id: "aiti-prompts-panel", label: "i18n:it.aiti-prompts-panel.label" },
       { id: "aiti-prompts-save", label: "i18n:it.aiti-prompts-save.label" },

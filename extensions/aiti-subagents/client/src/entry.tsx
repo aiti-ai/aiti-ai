@@ -1275,8 +1275,10 @@ export default function register(ctx: Record<string, unknown>) {
   reg?.("toolbar", [{
     id: "aiti-subagents",
     meta: {
-      label: t("子代理舰队"),
-      title: t("子代理舰队"),
+      // Same text as the static ui.toolbar declaration (sub.open.label): app-center cards are
+      // deduped by (extId,label) and their label must not change when the lazy client loads.
+      label: "i18n:sub.open.label",
+      title: "i18n:sub.open.title",
       icon: "icons/users.svg",
       onClick: () => {
         // v3.1 修正：原 `!fleetOpen` 引用未定义标识符（点击 ReferenceError，工具条按钮失效）；
@@ -1299,7 +1301,8 @@ export default function register(ctx: Record<string, unknown>) {
   // zones 进注册表：TabBar ⇱ 菜单（后台 tab）也能看到 left⇄right 全集（v3.1）
   declareDockZones(FLEET_KEY, [sidebarZoneOf(FLEET_KEY), "right-panel"], sidebarZoneOf(FLEET_KEY));
   reg?.("sidebarExplorerDock", [{ id: "fleet", render: FleetDockLeft, meta: { title: t("子代理舰队"), priority: 1, maxHeightPct: 30 } }]); // task block (default order 1 + 30% secondary height cap: projects→tasks→files→docks)
-  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: t("舰队"), icon: dockIconDecl("bot") } }]);
+  // Dock tab label mirrors the toolbar label (same entry in two slots: dedupe + stable card).
+  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: "i18n:sub.open.label", icon: dockIconDecl("bot") } }]);
   // 设置 Agents 页顶部 feature 区块接管（pi-subagents 引擎横幅 + 打开舰队；未注册时宿主原版开关区兑底）
   reg?.("settingsAgentsFeature", [{ id: "engine-banner", render: AgentsFeatureBanner }]);
   reg?.("settingsAgents", [{ id: "agents-manager", render: AgentsSettingsPanel }]);
