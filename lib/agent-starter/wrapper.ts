@@ -13,8 +13,14 @@
  *   kill()   stop the agent through the wrapper's control channel, then drop
  *            the registry entry.
  *
- * Single writer is structural: a wrapper listens on one socket and supersedes
- * older clients, so two pi-web instances can never drive one agent at once.
+ * Multi-writer is structural since the 2026-11-28 cross-instance incident: a
+ * wrapper serves N concurrent clients (multi-attach, dtach/tmux style) —
+ * stdout/stderr broadcast to every client, each client's stdin forwards to the
+ * agent and mirrors to the others (ch4) — so two pi-web instances can share
+ * one agent at the same time instead of silently superseding each other.
+ * Turn-level serialization between writers lives in the session backend (the
+ * handle queues its own prompts while a peer's turn is in flight), not here:
+ * the wrapper stays protocol-agnostic bytes.
  */
 
 import type { ChildProcess } from "node:child_process";
@@ -41,6 +47,7 @@ import {
   isSocketAlive,
   launchConfigPath,
   probeEndpoint,
+  queryWriters,
   listEntries,
   logPath,
   rebindEntry,
@@ -312,6 +319,7 @@ function childFrom(handshake: Handshake, options: FacadeOptions): SocketChild {
       replayBytes: typeof (hello as { journalBytes?: unknown }).journalBytes === "number"
         ? (hello as { journalBytes: number }).journalBytes
         : 0,
+      writers: typeof (hello as { writers?: unknown }).writers === "number" ? (hello as { writers: number }).writers : 1,
     },
     prelude,
   );
@@ -542,6 +550,13 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     return findEntryBySession(sessionId);
   }
 
+  /** Read-only writer count of the detached wrapper hosting this session (undefined = dead / no answer / legacy). */
+  async writers(sessionId: string): Promise<number | undefined> {
+    const entry = findEntryBySession(sessionId);
+    if (!entry || isLaunching(entry)) return undefined;
+    return queryWriters(entry.socket);
+  }
+
   /** Attach to a wrapper-hosted session (journal replay included). */
   async attach(sessionId: string): Promise<ChildProcess> {
     let entry = findEntryBySession(sessionId);
@@ -572,8 +587,14 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       agentKey: entry.agentKey,
       cwd: entry.cwd,
     });
-    await new Promise((resolve) => setImmediate(resolve));
-    if (child.exitCode !== null || child.signalCode !== null) {
+    // The facade holds the journal replay until its consumer attaches readers
+    // (ordered cross-stream delivery), so the prelude cannot have been dispatched
+    // behind our back here. Death-at-handshake is visible in the prelude itself.
+    const sawTerminal = handshake.prelude.frames.some(
+      (frame) => frame.channel === CH_CTRL && decodeControl(frame.payload)?.t === "exit",
+    );
+    if (sawTerminal) {
+      child.release();
       throw new Error(`agent-starter: agent of session ${sessionId} already exited`);
     }
     return child.asChildProcess();

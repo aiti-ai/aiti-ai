@@ -140,6 +140,8 @@ export class HandleSessionAdapter implements WrappedSessionLike {
   private listeners = new Set<Listener>();
   private unsubscribe: () => void;
   private _isStreaming = false;
+  /** Last session_backend_dead reason (D4): surfaced via get_state.backendDeadReason. */
+  private backendDeadReason: string | null = null;
   private partialText = "";
   private partialActive = false;
   private lastModel: { id: string; provider: string } | undefined;
@@ -183,6 +185,12 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     }
     if (type === "agent_settled") runStartedAtByHandle.delete(this.handle);
     if (type === "agent_settled" || type === "agent_end") this._isStreaming = false;
+    if (type === "session_backend_dead") {
+      // D4: remember why the backend died so get_state can tell the page (and
+      // the user) what happened instead of a bare "not running".
+      const reason = String((event as { reason?: unknown }).reason ?? "").trim();
+      if (reason) this.backendDeadReason = reason;
+    }
 
     // Rebuild a partial assistant message from deltas (snapshot source).
     if (type === "message_start" && (event.role ?? "assistant") === "assistant") {
@@ -493,6 +501,9 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           sessionId: h.id,
           sessionFile: undefined,
           isStreaming: this.isStreaming,
+          // D4: why the backend died (handle disposed / process exited / …);
+          // absent while alive. The frontend treats it as advisory text.
+          ...(this.backendDeadReason ? { backendDeadReason: this.backendDeadReason } : {}),
           // Authoritative busy field (aligned with the handle view of
           // /api/agent/running): the handle's own busy flag, plus the adapter
           // having observed agent_start from the event stream (tolerates the

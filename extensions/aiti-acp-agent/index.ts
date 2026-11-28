@@ -476,7 +476,19 @@ export class AcpHandle {
   /** 宿主宣告的权限模式（session/new modes；2026-09-06 claude-code-acp 0.16.1 实测五档与 UI 同名） */
   private availableModes: Array<{ id: string; name?: string }> = [];
   private currentModeId: string | undefined;
-  private rpcSeq = 0;
+  // Random salt start: multiple instances can drive the SAME agent process now
+  // (wrapper multi-writer), and the wrapper broadcasts every response to all
+  // writers — per-handle ids must never collide across hosts or a host would
+  // resolve its pending entry with the other host's response.
+  private rpcSeq = Math.floor(Math.random() * 0x3fffffff) + 1;
+  /** In-flight turn started by ANOTHER writer (peer session/prompt mirrored over ch4). */
+  private remoteTurnId: string | number | null = null;
+  /** Remote-turn cancel fallback timer (same rationale as abortFallbackTimer). */
+  private remoteFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last known writer count (peers frames): a card is emitted only on increase ≥ 2. */
+  private lastPeers = 1;
+  /** peerStdin line reader disposer (mirrored peer prompts / peer answers). */
+  private detachPeerReader?: () => void;
   /** D16：最近一次 usage_update（used/size = 上下文占用/窗口）。 */
   private lastUsage: { contextTokens: number; contextWindow: number } | undefined;
   /** D16：available_commands_update 收到的 slash 命令目录。 */
@@ -488,7 +500,7 @@ export class AcpHandle {
    * （liveHistory/running/finishTurn/scheduleDrain）。
    */
   private q = createBackendQueueSupport({
-    isRunning: () => this.running || !this.aliveFlag,
+    isRunning: () => this.running || this.remoteTurnId !== null || !this.aliveFlag,
     alive: () => this.aliveFlag,
     dispatch: (text, images) => this.prompt(text, { images }),
     onEvent: (ev) => this.emit(ev),
@@ -607,9 +619,29 @@ export class AcpHandle {
   /** Wire one live ACP process to this handle (fresh spawn or adopted facade). */
   private wireChild(child: ChildProcess): void {
     this.detachReader?.();
+    this.detachPeerReader?.();
+    // Multi-writer sharing (wrapper ch4/ch0 → facade.peerStdin): mirrors of OTHER
+    // writers' stdin plus journaled stdin history (every past user prompt). Parsed
+    // read-only — display/state sync; never re-written to the agent.
+    // The peer reader attaches BEFORE the stdout reader: the facade holds the
+    // journal replay until the stdout reader lands, so both streams are flowing
+    // when the replay writes happen and the replayed interleaving stays in wire
+    // order (user prompt before its assistant reply).
+    const facade = child as unknown as {
+      peerStdin?: NodeJS.ReadableStream | null;
+      writers?: number;
+      on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+    };
+    if (typeof facade.writers === "number" && facade.writers > 0) this.lastPeers = facade.writers;
+    this.detachPeerReader = lineReader(facade.peerStdin ?? null, (l) => this.onPeerLine(l), {
+      onOverflow: (size) => console.log(`[acp:${this.agentName}] peer line overflow (${size} bytes)`),
+    });
     this.detachReader = lineReader(child.stdout, (l) => this.onLine(l), {
       onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
     });
+    if (typeof facade.on === "function") {
+      facade.on("peers", (count) => this.onPeersChanged(Number(count)));
+    }
     // 三个流必须挂 error 监听（加固 A2）：ECONNRESET/EPIPE 无监听器会崩宿主进程。
     child.stdout?.on("error", (err) => this.markDead(`stdout error: ${err.message}`));
     child.stderr?.on("error", (err) => console.log(`[acp:${this.agentName}] stderr error: ${err.message}`));
@@ -624,6 +656,137 @@ export class AcpHandle {
       this.markDead(`process exited (${code ?? "signal"})`);
     });
     child.once("error", (err) => this.markDead(`spawn error: ${err.message}`));
+  }
+
+  /** Writer count changed on the wrapper (multi-attach): announce a peer joining. */
+  private onPeersChanged(count: number): void {
+    if (!Number.isFinite(count) || count <= 0) return;
+    const grew = count > this.lastPeers;
+    this.lastPeers = count;
+    if (!grew || count < 2) return;
+    this.pushOrEmitCustom({
+      customType: "连接",
+      content: `会话已在另一实例/窗口同时打开（当前 ${count} 个连接）：各连接均可发消息，用户消息与回复互相同步`,
+      details: { peers: count },
+    });
+  }
+
+  /**
+   * Peer traffic from the shared wrapper (mirrored stdin + stdin journal replay).
+   * Read-only mirroring: these lines were already written to the agent by their
+   * origin writer — here they only materialize state (user bubbles, remote turns,
+   * permission answers, mode changes) in this handle.
+   */
+  private onPeerLine(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    const method = typeof msg.method === "string" ? msg.method : undefined;
+    const hasId = msg.id !== undefined && msg.id !== null;
+
+    if (method === "session/prompt" && hasId) {
+      const params = (msg.params ?? {}) as { sessionId?: string; prompt?: unknown };
+      if (this.sessionId && params.sessionId && params.sessionId !== this.sessionId) return;
+      this.onPeerPrompt(msg.id, params.prompt);
+      return;
+    }
+
+    if (!method && hasId) {
+      const key = String(msg.id);
+      // A peer answered a reverse permission request (its response line was
+      // mirrored here): settle the local card so it does not hang until timeout.
+      const entry = this.permissionRequests.get(key);
+      if (entry) {
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.autoResolved = true;
+        this.permissionRequests.delete(key);
+        const result = (msg.result ?? {}) as { outcome?: { outcome?: string; optionId?: string } };
+        const chosen = entry.rawOptions?.find((o) => String(o.optionId ?? "") === String(result.outcome?.optionId ?? ""));
+        const behavior = chosen && String(chosen.kind ?? "").startsWith("allow") ? "allow" : "deny";
+        this.emit({ type: "permission_expired", requestId: key });
+        this.recordPermissionCustom(entry.toolName ?? "tool", entry.input, behavior, false, key);
+        return;
+      }
+      if (this.remoteTurnId !== null && key === String(this.remoteTurnId)) {
+        if (msg.error) {
+          this.finishRemoteTurn("error");
+          return;
+        }
+        const result = (msg.result ?? null) as { stopReason?: string } | null;
+        this.finishRemoteTurn(result?.stopReason ?? "end_turn");
+      }
+      return;
+    }
+
+    if (method === "session/set_mode") {
+      // Peer switched the permission mode: keep the local mirror aligned.
+      const params = (msg.params ?? {}) as { sessionId?: string; modeId?: string };
+      const modeId = String(params.modeId ?? "");
+      if (modeId && this.sessionId && params.sessionId === this.sessionId && modeId !== this.currentModeId) {
+        this.currentModeId = modeId;
+        this.emit({ type: "permission_mode_changed", mode: modeId });
+      }
+    }
+    // Other peer methods (set_model / set_config_option / session/new …): the
+    // shared process serves one ACP session per handle today, so they carry no
+    // additional per-handle state worth mirroring yet.
+  }
+
+  /** A peer started a turn: materialize its user message and mark the remote turn. */
+  private onPeerPrompt(id: unknown, prompt: unknown): void {
+    const content = AcpHandle.peerPromptUserContent(prompt);
+    if (this.loading) {
+      // Journal replay: the peer prompt is history (its response follows in the
+      // same journal); never a live remote turn.
+      this.flushReplayAssistant();
+      this.liveHistory.push({ role: "user", content });
+      return;
+    }
+    this.remoteTurnId = id as string | number;
+    this.liveHistory.push({ role: "user", content });
+    this.emit({ type: "message_end", message: { role: "user", content } });
+  }
+
+  /** ACP wire prompt blocks (text/image) → the history user-entry shape. */
+  private static peerPromptUserContent(prompt: unknown): string | Array<Record<string, unknown>> {
+    const blocks = Array.isArray(prompt) ? (prompt as Array<Record<string, unknown>>) : [];
+    const texts: string[] = [];
+    const images: Array<Record<string, unknown>> = [];
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") continue;
+      if (typeof block.text === "string" && block.text) texts.push(block.text);
+      if (block.type === "image" && typeof block.data === "string") {
+        images.push({ type: "image", source: { type: "base64", media_type: String(block.mimeType ?? "image/png"), data: block.data } });
+      }
+    }
+    const text = texts.join("");
+    if (!images.length) return text;
+    return [...(text ? [{ type: "text", text }] : []), ...images];
+  }
+
+  /**
+   * Peer-side turn settle: flush streamed remote text (same shape as finishTurn)
+   * without touching local turn bookkeeping, then drain the local queue — a
+   * prompt queued while the peer ran now starts its turn.
+   */
+  private finishRemoteTurn(stopReason: string): boolean {
+    if (this.remoteTurnId === null) return false;
+    this.remoteTurnId = null;
+    this.clearRemoteFallback();
+    this.flushPartialAssistant();
+    this.emit({ type: "agent_settled", stopReason });
+    setImmediate(() => this.q.scheduleDrain());
+    return true;
+  }
+
+  /** Remote-turn cancel fallback timer cleanup. */
+  private clearRemoteFallback(): void {
+    if (this.remoteFallbackTimer) clearTimeout(this.remoteFallbackTimer);
+    this.remoteFallbackTimer = null;
   }
 
   /**
@@ -823,12 +986,22 @@ export class AcpHandle {
     for (const waiter of this.readyWaiters.splice(0)) waiter();
     this.detachReader?.();
     this.detachReader = null;
+    this.detachPeerReader?.();
+    this.detachPeerReader = null;
     this.child = null;
     // 进程退出/被杀/dispose 时在途轮次必须收口（含 running 失步状态）：
     // finishTurn 幂等；即便已收口过也强制复位 running。
     if (this.running) {
       this.finishTurn(this.turnSeq, this.abortRequested ? "aborted" : "error", new Error(`[acp] dead: ${reason}`));
       this.running = false;
+    }
+    if (this.remoteTurnId !== null) {
+      // A peer turn was streaming through us: settle it too, or the UI keeps a
+      // streaming state against a dead process (same contract as finishTurn).
+      this.remoteTurnId = null;
+      this.clearRemoteFallback();
+      this.flushPartialAssistant();
+      this.emit({ type: "agent_settled", stopReason: "error", errorMessage: `[acp] dead: ${reason}` });
     }
     for (const entry of this.permissionRequests.values()) if (entry.timer) clearTimeout(entry.timer);
     this.permissionRequests.clear();
@@ -972,7 +1145,22 @@ export class AcpHandle {
 
     // RPC 响应
     const pending = this.pending.get(msg.id as string | number);
-    if (!pending) return;
+    if (!pending) {
+      // Multi-writer: the shared process broadcasts every response to all
+      // writers, so a response to a PEER's session/prompt arrives here too (ids
+      // are salted per handle, no collision). Settle this handle's remote turn
+      // with it — otherwise the remote-turn flag would never clear and local
+      // prompts would queue forever.
+      if (this.remoteTurnId !== null && String(msg.id) === String(this.remoteTurnId)) {
+        if (msg.error) {
+          this.finishRemoteTurn("error");
+          return;
+        }
+        const result = (msg.result ?? null) as { stopReason?: string } | null;
+        this.finishRemoteTurn(result?.stopReason ?? "end_turn");
+      }
+      return;
+    }
     this.pending.delete(msg.id as string | number);
     if (msg.error) pending.reject(new Error(String((msg.error as Record<string, unknown>).message ?? "rpc error")));
     else pending.resolve(msg.result);
@@ -1159,10 +1347,12 @@ export class AcpHandle {
     if (!this.aliveFlag) throw new Error("[acp] not running");
     // The host attaches its listener after createSession; announce here too.
     this.flushAnnounce();
-    if (this.running) {
+    if (this.running || this.remoteTurnId !== null) {
 
       // D3：分流归共享层——运行中输入入本地 followUp 队列（可撤回，settle 后自动续轮）。
       // running 中 routePrompt 不会 dispatch（dispatch 回本方法，空闲时走下方执行路径）。
+      // A remote turn (another instance/connection is running) queues the same way:
+      // cross-writer turn serialization; the peer's settle triggers scheduleDrain.
       await this.q.routePrompt(text, {
         images: options?.images,
         streamingBehavior: options?.streamingBehavior,
@@ -1242,6 +1432,23 @@ export class AcpHandle {
     if (!this.aliveFlag || !this.sessionId) return;
     // ACP 规范 MUST：cancel 时对所有待决授权请求回 cancelled
     this.cancelPendingPermissions("turn cancelled");
+    if (!this.running && this.remoteTurnId !== null) {
+      // Peer turn in flight: any writer may cancel. The agent answers the peer's
+      // session/prompt with stopReason cancelled — the mirrored response settles
+      // the remote turn here; the fallback covers a swallowed result frame.
+      this.child?.stdin?.write(
+        JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: this.sessionId } }) + "\n",
+      );
+      this.clearRemoteFallback();
+      this.remoteFallbackTimer = setTimeout(() => {
+        this.remoteFallbackTimer = null;
+        if (this.remoteTurnId !== null) {
+          console.warn(`[acp:${this.agentName}] session/cancel 无应答，远端回合强制收口（aborted）`);
+          this.finishRemoteTurn("aborted");
+        }
+      }, ACP_CANCEL_SETTLE_FALLBACK_MS);
+      return;
+    }
     if (!this.running) {
       // 失步兜底（aiti-codebuddy-agent stream 同款）：无在途轮次（result 丢失/已超时
       // 收口）仍按停止处理——幂等补发终态让前端「停止中」复位（真空闲多一帧无害）。
@@ -1286,19 +1493,24 @@ export class AcpHandle {
     this.running = false;
     this.abortRequested = false;
     this.lastStopReason = stopReason;
-    if (this.partialText) {
-      this.liveHistory.push({
-        role: "assistant",
-        content: [{ type: "text", text: this.partialText }],
-        // 同 flushReplayAssistant：始终尝试带 model 戳（缺省会触发前端元信息行崩溃）
-        ...(this.model?.id ? { model: this.model.id } : {}),
-        provider: this.source,
-      });
-      this.partialText = "";
-    }
+    this.flushPartialAssistant();
     const errorMessage = error instanceof Error ? error.message : error !== undefined ? String(error) : undefined;
     this.emit({ type: "agent_settled", stopReason, ...(errorMessage ? { errorMessage } : {}) });
     return true;
+  }
+
+  /** Flush the streaming assistant buffer into the history (shared by local and remote turn settles). */
+  private flushPartialAssistant(): void {
+    if (!this.partialText) return;
+    this.liveHistory.push({
+      role: "assistant",
+      content: [{ type: "text", text: this.partialText }],
+      // Same as flushReplayAssistant: always attach the model stamp when present
+      // (a missing model crashed the frontend meta line before).
+      ...(this.model?.id ? { model: this.model.id } : {}),
+      provider: this.source,
+    });
+    this.partialText = "";
   }
 
   /** 取消所有待决授权（回 cancelled + 清表 + 会话消息流记录）。 */
@@ -1358,7 +1570,7 @@ export class AcpHandle {
   }
 
   isRunning(): boolean {
-    return this.running;
+    return this.running || this.remoteTurnId !== null;
   }
 
   getModel(): { id: string; provider: string } | undefined {

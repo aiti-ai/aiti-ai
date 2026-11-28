@@ -1,13 +1,18 @@
 /**
  * Framing protocol between pi-web and a detachable agent wrapper.
  *
- * One connection carries four logical channels over a single byte stream:
+ * One connection carries five logical channels over a single byte stream:
  *
  *   ch0  stdin   client → agent   (raw bytes, protocol untouched)
  *   ch1  stdout  agent  → client
  *   ch2  stderr  agent  → client
  *   ch3  control wrapper ⇄ client (JSON frames: hello / exit / spawn_error /
- *                                 kill / superseded)
+ *                                 kill / superseded / peers)
+ *   ch4  peer stdin  wrapper → client (stdin frames written by ANOTHER client;
+ *                                 the explicit replacement for terminal echo —
+ *                                 conversational protocols do not guarantee an
+ *                                 echo of user prompts, so the wrapper mirrors
+ *                                 every writer's stdin to the other writers)
  *
  * Frame layout: [1 byte channel][4 byte BE length][payload]
  *
@@ -21,6 +26,7 @@ export const CH_STDIN = 0;
 export const CH_STDOUT = 1;
 export const CH_STDERR = 2;
 export const CH_CTRL = 3;
+export const CH_PEER_STDIN = 4;
 
 /** Upper bound for one frame payload. A larger frame means a corrupt stream. */
 export const MAX_FRAME_BYTES = 32 * 1024 * 1024;
@@ -100,10 +106,12 @@ export type HelloFrame = {
   agentKey?: string;
   /** Which runner hosted the wrapper ("systemd-run" | "plain"). */
   runner?: string;
-  /** Bytes of replayed journal that follow this frame. */
+  /** Bytes of replayed journal that follow this frame (stdout+stderr payload bytes only; stdin history frames are extra). */
   journalBytes?: number;
   /** Number of journal frames that follow this frame. */
   journalFrames?: number;
+  /** Number of currently attached writer clients (multi-writer wrappers). */
+  writers?: number;
 };
 
 /** wrapper → client: spawning the agent command failed (ENOENT etc.). */
@@ -112,8 +120,15 @@ export type SpawnErrorFrame = { t: "spawn_error"; message: string };
 /** wrapper → client: the agent process is gone. */
 export type ExitFrame = { t: "exit"; code: number | null; signal: string | null };
 
-/** wrapper → client: a newer client took over this session (single writer). */
+/**
+ * wrapper → client: a newer client took over this session (single writer).
+ * Legacy frame: multi-writer wrappers (clients set, no supersede) never send it,
+ * but the type stays so hosts keep decoding older wrappers unchanged.
+ */
 export type SupersededFrame = { t: "superseded" };
+
+/** wrapper → client: the attached-writer count changed (join or leave). */
+export type PeersFrame = { t: "peers"; count: number };
 
 /** client → wrapper: terminate the agent (SIGTERM by default, SIGKILL after grace). */
 export type KillFrame = { t: "kill"; signal?: string };
@@ -130,7 +145,10 @@ export type HelloAckFrame = { t: "hello_ack" };
 /** client → wrapper: liveness probe — never a client, never a supersede. */
 export type ProbeFrame = { t: "probe" };
 
-export type ControlFrame = HelloFrame | SpawnErrorFrame | ExitFrame | SupersededFrame | KillFrame | HelloAckFrame | ProbeFrame;
+/** client → wrapper: read-only writer-count query — answered with a peers frame, never a client. */
+export type QueryPeersFrame = { t: "query_peers" };
+
+export type ControlFrame = HelloFrame | SpawnErrorFrame | ExitFrame | SupersededFrame | KillFrame | HelloAckFrame | ProbeFrame | PeersFrame | QueryPeersFrame;
 
 export function encodeControl(frame: ControlFrame): Buffer {
   return encodeFrame(CH_CTRL, Buffer.from(JSON.stringify(frame), "utf8"));
@@ -143,7 +161,7 @@ export function decodeControl(payload: Buffer): ControlFrame | undefined {
     const t = (value as { t?: unknown }).t;
     if (
       t !== "hello" && t !== "spawn_error" && t !== "exit" && t !== "kill" && t !== "superseded"
-      && t !== "hello_ack" && t !== "probe"
+      && t !== "hello_ack" && t !== "probe" && t !== "peers" && t !== "query_peers"
     ) return undefined;
     return value as ControlFrame;
   } catch {

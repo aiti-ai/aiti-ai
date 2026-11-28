@@ -22,6 +22,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { CH_CTRL, FrameParser, decodeControl, encodeControl, type Frame } from "./wire.ts";
 
 export type RunnerKind = "systemd-run" | "plain" | "windows-cim";
 
@@ -293,6 +294,55 @@ export function probeEndpoint(path: string, timeoutMs = 500): Promise<EndpointSt
       done(err?.code === "ENOENT" || err?.code === "ECONNREFUSED" ? "dead" : "unknown");
     });
     socket.once("timeout", () => done("unknown"));
+  });
+}
+
+/**
+ * Read-only writer-count query (hosting panel): connect, send query_peers, wait
+ * for the wrapper's peers reply, hang up. Never a client, never a promote — the
+ * wrapper answers and drops this socket itself. Undefined = wrapper dead or did
+ * not answer (older wrappers without the query frame time out silently).
+ *
+ * The timeout MUST stay below the wrapper's 1s identify grace: a legacy wrapper
+ * promotes any socket that stays silent past it, and this connection must be
+ * gone before that (a promoted query socket would supersede the live writer on
+ * a single-writer wrapper — the 2026-11-23 bug class).
+ */
+export function queryWriters(path: string, timeoutMs = 800): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const parser = new FrameParser();
+    let settled = false;
+    const done = (count: number | undefined) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch { /* already gone */ }
+      resolve(count);
+    };
+    const socket = connect({ path });
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => {
+      try { socket.write(encodeControl({ t: "query_peers" })); } catch { done(undefined); }
+    });
+    socket.on("data", (chunk: Buffer) => {
+      let frames: Frame[];
+      try {
+        frames = parser.push(chunk);
+      } catch {
+        done(undefined);
+        return;
+      }
+      for (const frame of frames) {
+        if (frame.channel !== CH_CTRL) continue;
+        const control = decodeControl(frame.payload);
+        if (control?.t === "peers") {
+          done(typeof control.count === "number" ? control.count : undefined);
+          return;
+        }
+      }
+    });
+    socket.once("error", () => done(undefined));
+    socket.once("timeout", () => done(undefined));
+    socket.once("close", () => done(undefined));
   });
 }
 

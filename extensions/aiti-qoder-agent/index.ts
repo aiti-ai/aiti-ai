@@ -691,6 +691,20 @@ function historyUserContent(
   return content;
 }
 
+/** Peer session/prompt blocks → the liveHistory user-entry shape historyUserContent builds. */
+function qoderPeerPromptContent(prompt: unknown): string | Array<Record<string, unknown>> {
+  const blocks = Array.isArray(prompt) ? (prompt as Array<Record<string, unknown>>) : [];
+  const text = blocks
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("");
+  const images = blocks
+    .filter((b) => b && b.type === "image" && typeof b.data === "string")
+    .map((b) => ({ type: "image", source: { type: "base64", media_type: String(b.mimeType ?? "image/png"), data: b.data } }));
+  if (!images.length) return text;
+  return [...(text ? [{ type: "text", text }] : []), ...images];
+}
+
 /** Replayed user image chunk → pi image block (ACP carries {type:"image", data, mimeType}). */
 function replayImageBlock(content: Record<string, unknown>): Record<string, unknown> | null {
   if (content.type !== "image" || typeof content.data !== "string" || !content.data) return null;
@@ -992,6 +1006,16 @@ export class QoderHandle {
         (m) => console.warn(m),
       ),
     });
+    // Multi-writer sync (wrapper ch4/ch0 → facade.peerStdin): peer user prompts.
+    // The CLI queues concurrent session/prompt natively (promptQueueing), so no
+    // remote-turn gating here — just materialize the peer user message (history
+    // entry, live bubble when not in the replay window). Attached BEFORE the ACP
+    // transport opens its stdout reader: the facade holds the journal replay
+    // until the stdout reader lands, so replay order stays wire order.
+    const facade = child as unknown as { peerStdin?: NodeJS.ReadableStream | null };
+    this.detachPeerReader = lineReader(facade.peerStdin ?? null, (line) => this.onPeerLine(line), {
+      onOverflow: (size) => console.log(`[aiti-qoder-agent] peer line overflow (${size} bytes)`),
+    });
     // ACP JSON-RPC 传输层：session/update → 事件映射（onAcpNotification）；
     // agent 反向请求（session/request_permission 等）→ onAcpRequest。
     this.acp = new AcpRpc(child, {
@@ -1019,6 +1043,8 @@ export class QoderHandle {
   private markDead(reason: string): void {
     if (!this.aliveFlag) return;
     this.aliveFlag = false;
+    this.detachPeerReader?.();
+    this.detachPeerReader = undefined;
     this.acp?.close();
     this.promptsInFlight = 0; // 传输已关：在途请求永远不会再响应
     for (const w of this.readyWaiters.splice(0)) w(); // 挂起的 prompt 放行 → 后半段 aliveFlag 检查抛错
@@ -1295,6 +1321,33 @@ export class QoderHandle {
       ...(kind === "text" ? { delta: text } : {}),
       assistantMessageEvent: { type: kind === "thinking" ? "thinking_delta" : "text_delta", contentIndex: acc.contentIndex, delta: text },
     });
+  }
+
+  /** PeerStdin reader disposer (mirrored peer prompts / journal stdin history). */
+  private detachPeerReader?: () => void;
+
+  /**
+   * Peer traffic from the shared wrapper (mirrored stdin + stdin journal
+   * replay). Read-only: the origin already wrote these lines to the agent, and
+   * the CLI queues concurrent prompts natively, so this only materializes the
+   * peer user message (history entry; live bubble outside the replay window).
+   */
+  private onPeerLine(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    if (msg.method !== "session/prompt") return;
+    const params = (msg.params ?? {}) as { sessionId?: string; prompt?: unknown };
+    const nativeId = this.id.includes(":") ? this.id.slice(this.id.indexOf(":") + 1) : this.id;
+    if (nativeId && params.sessionId && params.sessionId !== nativeId) return;
+    this.flushReplayAssistant();
+    const content = qoderPeerPromptContent(params.prompt);
+    this.liveHistory.push({ role: "user", content });
+    if (!this.loading) this.emit({ type: "message_end", message: { role: "user", content } });
   }
 
   /** session/load replay tail: accumulated assistant text lands as one liveHistory entry. */

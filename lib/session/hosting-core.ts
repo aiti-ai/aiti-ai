@@ -63,6 +63,8 @@ export type WrapperProbe = {
   describe(sessionId: string): WrapperEntry | undefined;
   holds(sessionId: string): Promise<boolean>;
   kill(sessionId: string, signal?: string): Promise<boolean>;
+  /** Read-only writer count of the detached wrapper (undefined = wrapper dead / no answer / legacy). */
+  writers?(sessionId: string): Promise<number | undefined>;
 };
 
 export type HostingProvider = {
@@ -145,6 +147,8 @@ export type HostingInfo = {
   running: boolean;
   mode: HostingModeState;
   detached: boolean;
+  /** Multi-writer sharing: attached instance/writer count of the detached wrapper. */
+  writers?: number;
   detachedPreference: boolean;
   nextStartMode: HostingMode;
   runner?: string;
@@ -276,6 +280,10 @@ export async function describeHostingWith(deps: HostingDeps, id: string): Promis
   const wrapper = await deps.getWrapperStarter().catch(() => undefined);
   const wrapperEntry = wrapper ? wrapper.describe(nativeId) : undefined;
   const detachedAlive = !!wrapperEntry && !!wrapper && await wrapper.holds(nativeId).catch(() => false);
+  // Multi-writer hosting: how many instances share this detached agent right now.
+  const detachedWriters = detachedAlive && wrapper?.writers
+    ? await wrapper.writers(nativeId).catch(() => undefined)
+    : undefined;
 
   const support = await detachProbe(deps);
   const preference = deps.getDetachedPreference(nativeId);
@@ -368,6 +376,7 @@ export async function describeHostingWith(deps: HostingDeps, id: string): Promis
     running,
     mode,
     detached: detachedAlive,
+    ...(detachedAlive && detachedWriters !== undefined ? { writers: detachedWriters } : {}),
     detachedPreference,
     nextStartMode,
     ...(support.runner ? { runner: support.runner } : {}),

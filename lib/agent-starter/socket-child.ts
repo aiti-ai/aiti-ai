@@ -21,6 +21,7 @@ import type { Socket } from "node:net";
 import { PassThrough, Writable } from "node:stream";
 import {
   CH_CTRL,
+  CH_PEER_STDIN,
   CH_STDERR,
   CH_STDOUT,
   CH_STDIN,
@@ -38,6 +39,13 @@ import {
  * history instead of new input.
  */
 export const REPLAY_END_EVENT = "replay_end";
+
+/**
+ * How long the facade waits for the consumers to attach their stdout+peerStdin
+ * readers before dispatching the journal replay anyway (legacy handles never
+ * read peerStdin; the replay then rides the grace like it rode setImmediate).
+ */
+const PRELUDE_GRACE_MS = 3_000;
 
 export type SocketChildOptions = {
   /** Agent process pid reported by the wrapper's hello frame. */
@@ -78,10 +86,20 @@ export class SocketChild extends EventEmitter {
   readonly spawnargs: string[];
   /** Journal bytes that were replayed at handshake (0 = fresh spawn / no wrapper). */
   readonly replayBytes: number;
+  /** Writers already attached at handshake (hello.writers; 1 = just us). */
+  readonly writers: number;
 
   readonly stdin: Writable;
   readonly stdout: PassThrough;
   readonly stderr: PassThrough;
+  /**
+   * Stdin traffic this handle did not originate in this incarnation: live ch4
+   * frames (another writer's stdin, mirrored by the wrapper) and replayed ch0
+   * frames (the journal's stdin history — every past user prompt). Session
+   * backends that parse it can materialize peer prompts into their history;
+   * consumers that ignore it are unaffected (the wrapper only forwards there).
+   */
+  readonly peerStdin: PassThrough;
   /** In upstream Node, `stdout`/`stderr` may be null for non-pipe stdio — wrapper children always have pipes. */
   readonly stdio: Array<Writable | PassThrough | null>;
 
@@ -90,15 +108,21 @@ export class SocketChild extends EventEmitter {
   killed = false;
 
   private readonly socket: Socket;
-  private readonly parser = new FrameParser();
+  private readonly parser = new FrameParser;
   private closed = false;
   private released = false;
   /**
-   * Journal replay is dispatched on a macrotask (setImmediate) so the handle that
-   * owns this child can attach its listeners in its constructor first; live bytes
-   * that arrive in between are buffered to keep the wire order.
+   * Journal replay is dispatched only once the consumers attached their readers:
+   * replayed stdout lines and replayed peer-stdin lines must interleave in wire
+   * order, and cross-stream ordering holds only when BOTH PassThroughs are in
+   * flowing mode before the first prelude write. Consumers attach their readers
+   * right after construction (wireChild), possibly across several microtasks —
+   * so dispatch waits for the second reader and a grace bounds the wait for
+   * consumers that never read peerStdin (legacy handles).
    */
   private preludePending = true;
+  private preludeDispatched = false;
+  private preludeGrace: ReturnType<typeof setTimeout> | undefined;
   private pendingLive: Buffer[] = [];
 
   constructor(socket: Socket, options: SocketChildOptions, prelude?: SocketChildPrelude) {
@@ -111,9 +135,11 @@ export class SocketChild extends EventEmitter {
     this.spawnfile = options.spawnfile ?? "";
     this.spawnargs = options.spawnargs ?? [];
     this.replayBytes = options.replayBytes ?? 0;
+    this.writers = options.writers ?? 1;
 
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
+    this.peerStdin = new PassThrough();
     this.stdin = new Writable({
       write: (chunk, _encoding, callback) => this.writeStdin(chunk as Buffer, callback),
       final: (callback) => {
@@ -127,23 +153,63 @@ export class SocketChild extends EventEmitter {
     socket.on("error", (err: Error) => this.onSocketError(err));
     socket.on("close", () => this.onSocketClose());
 
-    setImmediate(() => {
-      if (this.closed) return;
-      const frames = prelude?.frames ?? [];
-      if (prelude?.bytes && prelude.bytes.length > 0) this.#dispatchReplayBytes(prelude.bytes);
-      for (const frame of frames) {
-        if (this.closed) break;
-        this.dispatchFrame(frame);
-      }
-      this.preludePending = false;
-      const buffered = this.pendingLive;
-      this.pendingLive = [];
-      for (const chunk of buffered) {
-        if (this.closed) break;
-        this.onData(chunk);
-      }
-      if (!this.closed) this.emit(REPLAY_END_EVENT, frames.length);
+    this.armPrelude(prelude);
+  }
+
+  /**
+   * Hold the journal replay until the consumer attached its stdout reader:
+   * replayed stdout lines and replayed peer-stdin lines must interleave in wire
+   * order, and cross-stream ordering holds only when BOTH PassThroughs are in
+   * flowing mode before the first prelude write. Handles that also read
+   * peerStdin attach that reader BEFORE the stdout reader (wireChild), so the
+   * dispatch triggered by the stdout listener sees both streams flowing. A
+   * consumer that never reads peerStdin (legacy) is not penalized: the gate is
+   * stdout-only, and a grace bounds the wait for consumers that attach nothing.
+   */
+  private armPrelude(prelude?: SocketChildPrelude): void {
+    const hasPrelude = (prelude?.frames?.length ?? 0) > 0 || (prelude?.bytes?.length ?? 0) > 0;
+    if (!hasPrelude) {
+      // Nothing to replay: deliver the (possibly empty) boundary immediately.
+      setImmediate(() => this.runDispatch(prelude));
+      return;
+    }
+    this.preludeGrace = setTimeout(() => {
+      this.preludeGrace = undefined;
+      this.runDispatch(prelude);
+    }, PRELUDE_GRACE_MS);
+    this.preludeGrace.unref?.();
+    this.stdout.once("newListener", (event: string) => {
+      if (event !== "data") return;
+      // The listener is being added right now; the microtask runs once it is in
+      // place (wireChild attaches the peerStdin reader synchronously before it,
+      // so both streams are flowing when the prelude writes happen).
+      queueMicrotask(() => this.runDispatch(prelude));
     });
+  }
+
+  private runDispatch(prelude?: SocketChildPrelude): void {
+    if (this.preludeDispatched || this.closed) return;
+    this.preludeDispatched = true;
+    if (this.preludeGrace) {
+      clearTimeout(this.preludeGrace);
+      this.preludeGrace = undefined;
+    }
+    this.stdout.removeAllListeners("newListener");
+    const frames = prelude?.frames ?? [];
+    if (prelude?.bytes && prelude.bytes.length > 0) this.#dispatchReplayBytes(prelude.bytes);
+    for (const frame of frames) {
+      if (this.closed) break;
+      this.dispatchFrame(frame);
+    }
+    this.preludePending = false;
+    if (this.closed) return;
+    const buffered = this.pendingLive;
+    this.pendingLive = [];
+    for (const chunk of buffered) {
+      if (this.closed) break;
+      this.onData(chunk);
+    }
+    if (!this.closed) this.emit(REPLAY_END_EVENT, frames.length);
   }
 
   /** Convenience cast for code typed against node's ChildProcess. */
@@ -255,14 +321,28 @@ export class SocketChild extends EventEmitter {
       this.stderr.write(frame.payload);
       return;
     }
+    if (frame.channel === CH_PEER_STDIN) {
+      // Another writer's stdin, mirrored live by the wrapper.
+      this.peerStdin.write(frame.payload);
+      return;
+    }
+    if (frame.channel === CH_STDIN) {
+      // Stdin frames arriving FROM the wrapper are journal history (the
+      // wrapper never echoes live stdin): every past user prompt, including
+      // this handle's own past-life writes after a host restart.
+      this.peerStdin.write(frame.payload);
+      return;
+    }
     if (frame.channel !== CH_CTRL) return;
     const control = decodeControl(frame.payload);
     if (!control) return;
     if (control.t === "exit") {
       this.finalize(control.code, control.signal);
     } else if (control.t === "superseded") {
-      // Another pi-web instance took this session over (single writer).
+      // Legacy single-writer wrapper: another host took the session over.
       this.finalize(this.exitCode, this.signalCode, "superseded");
+    } else if (control.t === "peers") {
+      this.emit("peers", control.count);
     }
   }
 
@@ -281,6 +361,8 @@ export class SocketChild extends EventEmitter {
   }
 
   private finalize(code: number | null, signal: string | null, reason?: string): void {
+    // Reentrancy-safe: runDispatch may deliver a terminal exit frame (from the
+    // replay or buffered live bytes) that calls back into finalize.
     if (this.closed) return;
     this.closed = true;
     this.exitCode = typeof code === "number" ? code : null;
@@ -297,7 +379,7 @@ export class SocketChild extends EventEmitter {
   }
 
   private destroyStreams(): void {
-    for (const stream of [this.stdout, this.stderr, this.stdin]) {
+    for (const stream of [this.stdout, this.stderr, this.peerStdin, this.stdin]) {
       try {
         stream.end();
       } catch {

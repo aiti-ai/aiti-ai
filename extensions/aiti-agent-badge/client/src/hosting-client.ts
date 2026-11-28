@@ -36,6 +36,8 @@ export type HostingInfo = {
   alive: boolean;
   running: boolean;
   mode: HostingModeState;
+  /** Multi-writer sharing: attached instance/writer count of the detached wrapper. */
+  writers?: number;
   detached: boolean;
   detachedPreference: boolean;
   nextStartMode: HostingMode;

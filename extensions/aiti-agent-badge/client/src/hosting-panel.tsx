@@ -470,6 +470,7 @@ export function HostingPanel(props: {
               <Row label={t("badge.mode.title")} value={modeText} />
               {info.runner ? <Row label={t("badge.field.detachRunner")} value={info.runner} /> : null}
               {info.alive ? <Row label={t("badge.field.detached")} value={detached ? t("badge.yes") : t("badge.no")} /> : null}
+              {info.writers !== undefined ? <Row label={t("badge.field.writers")} value={tOr("badge.writers.count", "{count} connections").replace("{count}", String(info.writers))} /> : null}
               <Row label={t("badge.field.session")} value={info.nativeSessionId} mono />
               {info.cwd ? <Row label={t("badge.field.cwd")} value={info.cwd} mono /> : null}
               {/* Quota row: rendered unconditionally — the fetch returns null for

@@ -322,6 +322,17 @@ export class ClaudeCodeHandle {
     this.stateAgentKey = stateAgentKey;
     if (capabilities) (this as { capabilities: SessionCapabilitiesLike }).capabilities = capabilities;
 
+    // Multi-writer sync (wrapper ch4/ch0 → facade.peerStdin): mirrors of OTHER
+    // writers' stdin plus journaled stdin history. Parsed read-only — the peer
+    // user line materializes here as a history entry + live bubble, and the
+    // mirrored prompt marks a remote turn (queued local prompts resume on the
+    // broadcast result frame). The peer reader attaches BEFORE the stdout
+    // reader: the facade holds the journal replay until the stdout reader
+    // lands, so both streams are flowing and replay order stays wire order.
+    const facade = child as unknown as { peerStdin?: NodeJS.ReadableStream | null };
+    this.detachPeerReader = lineReader(facade.peerStdin ?? null, (line) => this.onPeerLine(line), {
+      onOverflow: (size) => console.log(`[aiti-claude-code-agent] peer line overflow (${size} bytes)`),
+    });
     this.detachReader = lineReader(child.stdout, (line) => this.onLine(line), {
       onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
     });
@@ -346,6 +357,9 @@ export class ClaudeCodeHandle {
     this.aliveFlag = false;
     this.detachReader?.();
     this.detachReader = null;
+    this.detachPeerReader?.();
+    this.detachPeerReader = null;
+    this.remoteTurn = false;
     for (const w of this.interruptWaiters) w(false);
     this.interruptWaiters = [];
     // 未决 control 往返一并落定（waiter 自带 clearTimeout），权限表清空
@@ -553,6 +567,10 @@ export class ClaudeCodeHandle {
     }
 
     if (type === "result") {
+      // The result frame broadcasts to every writer: it settles a remote turn
+      // (peer's prompt) exactly like a local one, then drains the queue — a
+      // prompt queued during the peer turn dispatches now.
+      this.remoteTurn = false;
       this.running = false;
       const usage = (msg.usage ?? {}) as Record<string, number>;
       const modelUsage = (msg.modelUsage ?? {}) as Record<string, Record<string, number>>;
@@ -583,6 +601,7 @@ export class ClaudeCodeHandle {
         result: typeof msg.result === "string" ? msg.result : undefined,
       });
       // settle（result 帧）后自动续轮（共享层幂等；微任务让 agent_settled 先到达前端）
+      // A remote turn settles here too: prompts queued during it dispatch now.
       this.q.scheduleDrain();
       return;
     }
@@ -751,8 +770,10 @@ export class ClaudeCodeHandle {
     },
   ): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-claude-code-agent] stdin closed");
-    if (this.running) {
+    if (this.running || this.remoteTurn) {
       // 分流归共享层：运行中输入入本地 followUp 队列（可撤回，result 后自动续轮）。
+      // A remote turn (another writer is running) queues the same way: the
+      // result frame broadcasts to every writer and drains the queue on settle.
       // running 中 routePrompt 不会 dispatch（dispatch 回本方法，空闲时走下方执行路径）。
       await this.q.routePrompt(text, {
         images: options?.images as never,
@@ -786,7 +807,9 @@ export class ClaudeCodeHandle {
   }
 
   async abort(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running && !this.remoteTurn) return;
+    // A remote turn is interruptible too: interrupt rides the shared stdin and
+    // the resulting broadcast result settles both sides.
     const requestId = `int-${++this.seq}`;
     // 15s 超时（加固：对齐 set_model/set_permission_mode；CLI 忙时不让宿主 abort 永挂）
     const interrupted = await new Promise<boolean>((resolve) => {
@@ -843,8 +866,58 @@ export class ClaudeCodeHandle {
     return this.aliveFlag && this.child.exitCode === null;
   }
 
+  /** In-flight turn started by ANOTHER writer (peer user line mirrored over ch4). */
+  private remoteTurn = false;
+  private detachPeerReader?: () => void;
+  private lastPeers = 1;
+
+  /**
+   * Peer traffic from the shared wrapper (mirrored stdin + stdin journal replay).
+   * Read-only mirroring: the origin already wrote these lines to the agent.
+   * Journal-replayed peer prompts (this handle's own past-life writes included)
+   * materialize as history entries — the journal replay IS this handle's adopt
+   * history source, so replayed prompts belong in it.
+   */
+  private onPeerLine(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "user") {
+      const message = (msg.message ?? {}) as { content?: unknown };
+      const content = this.peerUserContent(message.content);
+      if (content === undefined) return;
+      this.remoteTurn = true;
+      this.liveHistory.push({ role: "user", content });
+      this.emit({ type: "message_end", message: { role: "user", content } });
+      return;
+    }
+    if (msg.type === "control_request") {
+      // A peer's interrupt lands here: the shared agent's turn is being cancelled;
+      // the broadcast result frame settles the remote turn.
+      return;
+    }
+  }
+
+  /** Peer user-line content → the history entry shape this handle pushes for its own prompts. */
+  private peerUserContent(content: unknown): string | Array<Record<string, unknown>> | undefined {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return undefined;
+    const blocks = content as Array<Record<string, unknown>>;
+    const text = blocks
+      .filter((b) => b && b.type === "text" && typeof b.text === "string")
+      .map((b) => b.text as string)
+      .join("");
+    const rich = blocks.filter((b) => b && b.type !== "text");
+    if (rich.length === 0) return text;
+    return [...(text ? [{ type: "text", text }] : []), ...rich];
+  }
+
   isRunning(): boolean {
-    return this.running;
+    return this.running || this.remoteTurn;
   }
 
   getModel(): { id: string; provider: string } | undefined {

@@ -417,7 +417,49 @@ export abstract class CodebuddyHandleBase {
   }
 
   isRunning(): boolean {
-    return this.running;
+    return this.running || this.remoteTurn;
+  }
+
+  /** In-flight turn started by ANOTHER writer (peer user line mirrored over ch4). */
+  private remoteTurn = false;
+  private detachPeerReader: (() => void) | null = null;
+
+  /**
+   * Peer traffic from the shared wrapper (mirrored stdin + stdin journal
+   * replay). Read-only: the origin already wrote these lines to the agent.
+   * Replayed peer prompts materialize as history entries — the journal replay
+   * is this handle's adopt history source.
+   */
+  private onPeerLine(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "user") {
+      const message = (msg.message ?? {}) as { content?: unknown };
+      const content = CodebuddyStreamHandle.peerUserContent(message.content);
+      if (content === undefined) return;
+      this.remoteTurn = true;
+      this.liveHistory.push({ role: "user", content });
+      this.emit({ type: "message_end", message: { role: "user", content } });
+    }
+  }
+
+  /** Peer user-line content → the history entry shape writeTurn's prompts push. */
+  private static peerUserContent(content: unknown): string | Array<Record<string, unknown>> | undefined {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return undefined;
+    const blocks = content as Array<Record<string, unknown>>;
+    const text = blocks
+      .filter((b) => b && b.type === "text" && typeof b.text === "string")
+      .map((b) => b.text as string)
+      .join("");
+    const rich = blocks.filter((b) => b && b.type !== "text");
+    if (rich.length === 0) return text;
+    return [...(text ? [{ type: "text", text }] : []), ...rich];
   }
 
   getModel(): { id: string; provider: string } | undefined {
@@ -644,6 +686,17 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
   private bindChild(child: ChildProcess): void {
     this.child = child;
     this.detachReader?.();
+    this.detachPeerReader?.();
+    // Multi-writer sync (wrapper ch4/ch0 → facade.peerStdin): mirrors of OTHER
+    // writers' stdin plus journaled stdin history. Parsed read-only — the peer
+    // user line materializes as a history entry + live bubble and marks a
+    // remote turn (the broadcast result frame settles it). Attached BEFORE the
+    // stdout reader: the facade holds the journal replay until the stdout
+    // reader lands, so both streams flow and replay order stays wire order.
+    const facade = child as unknown as { peerStdin?: NodeJS.ReadableStream | null };
+    this.detachPeerReader = lineReader(facade.peerStdin ?? null, (line) => this.onPeerLine(line), {
+      onOverflow: (size) => console.log(`[aiti-codebuddy-agent] peer line overflow (${size} bytes)`),
+    });
     this.detachReader = lineReader(child.stdout, (line) => this.onLine(line), {
       onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
     });
@@ -665,6 +718,9 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
   protected cleanupOnDead(): void {
     this.detachReader?.();
     this.detachReader = null;
+    this.detachPeerReader?.();
+    this.detachPeerReader = null;
+    this.remoteTurn = false;
     if (this.turn?.watchdog) clearTimeout(this.turn.watchdog);
     this.turn = null;
     for (const w of this.controlWaiters.values()) w(false);
@@ -860,6 +916,8 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
     }
 
     if (type === "result") {
+      // Broadcast to every writer: settles a peer turn exactly like a local one.
+      this.remoteTurn = false;
       const resultText = typeof frame.result === "string" ? frame.result : "";
       const t = this.turn;
       // turn-ack：无活动且（复读上轮文本 / 距写入极短）→ CLI 吞了输入，重写而非收口
@@ -917,7 +975,9 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
     if (options?.images?.length || options?.files?.length) {
       console.warn("[aiti-codebuddy-agent] 图片/文件附件暂不支持（stdin 文本通道）——已忽略附件");
     }
-    if (this.running) {
+    if (this.running || this.remoteTurn) {
+      // Remote turn (another writer is running) queues the same way: the
+      // broadcast result frame settles it and drains the queue.
       await this.q.routePrompt(text, {
         streamingBehavior: options?.streamingBehavior,
         ...(options?.images ? { images: options.images } : {}),

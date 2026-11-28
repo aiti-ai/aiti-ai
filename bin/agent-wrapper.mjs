@@ -6,20 +6,24 @@
  *
  * Responsibilities (each one is a facade detail — callers only see stdio):
  *   1. own the agent process lifecycle (spawn with the recorded options),
- *   2. serve a unix socket so a pi-web instance can attach/detach freely,
- *   3. journal output (4 MB ring) so an attach replays the agent's history,
- *   4. enforce single writer (a newer client supersedes the old one),
+ *   2. serve a unix socket so pi-web instances can attach/detach freely,
+ *   3. journal output (4 MB ring; stdin included) so an attach replays the
+ *      agent's history AND every user prompt,
+ *   4. serve N concurrent writers (multi-attach, dtach/tmux style): stdout and
+ *      stderr broadcast to every client, each client's stdin forwards to the
+ *      agent and mirrors to the other clients (ch4) — the explicit replacement
+ *      for terminal echo, since conversational protocols do not echo prompts,
  *   5. clean up (socket, ready marker, registry entry) when the agent is gone,
  *   6. idle reap: with no client attached, an agent that produces no output
  *      for cfg.idleTimeoutMs is stopped (SIGTERM, then SIGKILL after the kill
- *      grace). A client (pi-web) attached disables the reaper — the host owns
- *      the lifecycle then. Output resets the timer, so a streaming turn keeps
- *      the process alive; a silent stretch longer than the timeout ends in a
- *      SIGTERM, which the agent treats as an orderly shutdown (pending work
- *      finishes first).
+ *      grace). Any client attached disables the reaper. Output resets the
+ *      timer, so a streaming turn keeps the process alive; a silent stretch
+ *      longer than the timeout ends in a SIGTERM, which the agent treats as an
+ *      orderly shutdown (pending work finishes first).
  *
  * Framing: [1 byte channel][4 byte BE length][payload]
- *   ch0 stdin (client -> agent), ch1 stdout, ch2 stderr, ch3 control JSON.
+ *   ch0 stdin (client -> agent, mirrored as ch4), ch1 stdout, ch2 stderr,
+ *   ch3 control JSON, ch4 peer stdin (another writer's stdin).
  */
 import fs from "node:fs";
 import net from "node:net";
@@ -30,6 +34,7 @@ const CH_STDIN = 0;
 const CH_STDOUT = 1;
 const CH_STDERR = 2;
 const CH_CTRL = 3;
+const CH_PEER_STDIN = 4;
 const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const JOURNAL_LIMIT = 4 * 1024 * 1024;
 const LOG_LIMIT = 4 * 1024 * 1024;
@@ -112,21 +117,31 @@ function main() {
   // ---- journal ring -------------------------------------------------------
   const journal = [];
   let journalBytes = 0;
+  // stdout+stderr payload bytes currently in the ring. hello.journalBytes keeps
+  // the stdio-only budget (protocol-bridging backends gate live processing on
+  // it by counting delivered stdout/stderr bytes); stdin history frames ride
+  // in the replay without extending that budget.
+  let stdioBytesInRing = 0;
   function appendJournal(channel, buf) {
     if (buf.length === 0) return;
+    const isStdio = channel === CH_STDOUT || channel === CH_STDERR;
     if (buf.length > JOURNAL_LIMIT) {
       journal.length = 0;
       journalBytes = 0;
+      stdioBytesInRing = 0;
       const tail = buf.subarray(buf.length - JOURNAL_LIMIT);
       journal.push({ channel, buf: tail });
       journalBytes = tail.length;
+      if (isStdio) stdioBytesInRing = tail.length;
       return;
     }
     journal.push({ channel, buf });
     journalBytes += buf.length;
+    if (isStdio) stdioBytesInRing += buf.length;
     while (journalBytes > JOURNAL_LIMIT && journal.length > 1) {
       const dropped = journal.shift();
       journalBytes -= dropped.buf.length;
+      if (dropped.channel !== CH_STDIN) stdioBytesInRing -= dropped.buf.length;
     }
   }
 
@@ -138,7 +153,8 @@ function main() {
     const items = journal.slice();
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i];
-      if (item.channel !== CH_STDOUT && item.channel !== CH_STDERR) break;
+      const textual = item.channel === CH_STDOUT || item.channel === CH_STDERR || item.channel === CH_STDIN;
+      if (!textual) break;
       const idx = item.buf.lastIndexOf(0x0a);
       if (idx >= 0) {
         if (idx + 1 < item.buf.length) items[i] = { channel: item.channel, buf: item.buf.subarray(0, idx + 1) };
@@ -149,8 +165,6 @@ function main() {
     return items;
   }
 
-  let client = null;
-  let handshakeSent = false;
   let child = null;
   let hello = null;
   let spawnError = null;
@@ -161,6 +175,9 @@ function main() {
   let lingerTimer = null;
   let killGraceTimer = null;
   let idleTimer = null;
+  // Promoted writer clients (multi-attach): records { sock, promoted,
+  // handshakeSent, terminalSent }. A liveness probe never joins this set.
+  const clients = new Set();
 
   // ---- idle reap (no client attached, no output) ---------------------------
   // Same lifecycle contract as pi-web's in-process session GC: while a client
@@ -178,7 +195,7 @@ function main() {
     idleTimer.unref();
   }
   function reapIdle() {
-    if (client || shuttingDown || !child || exitInfo) return;
+    if (clients.size > 0 || shuttingDown || !child || exitInfo) return;
     appendLog(Buffer.from(IDLE_LOG_MARK, "utf8"));
     try { child.kill("SIGTERM"); } catch (e) { /* already gone */ }
     killGraceTimer = setTimeout(function () {
@@ -187,16 +204,27 @@ function main() {
     killGraceTimer.unref();
   }
 
-  function writeClient(buf) {
-    if (!client) return;
-    if (client.writableLength > CLIENT_BUFFER_LIMIT) {
-      // Slow consumer: drop the connection, keep journaling for the next attach.
-      try { client.destroy(); } catch (e) { /* ignore */ }
-      client = null;
-      handshakeSent = false;
-      return;
+  /** Broadcast to every handshaked client; a slow consumer drops only itself. */
+  function writeAllClients(buf) {
+    for (const record of clients) {
+      if (!record.handshakeSent) continue;
+      const sock = record.sock;
+      if (sock.writableLength > CLIENT_BUFFER_LIMIT) {
+        // Slow consumer: drop the connection, keep journaling for the next attach.
+        try { sock.destroy(); } catch (e) { /* ignore */ }
+        continue;
+      }
+      try { sock.write(buf); } catch (e) { /* close handler cleans up */ }
     }
-    try { client.write(buf); } catch (e) { /* close handler cleans up */ }
+  }
+
+  /** Tell everyone the writer count changed (join or leave). */
+  function broadcastPeers() {
+    const buf = control({ t: "peers", count: clients.size });
+    for (const record of clients) {
+      if (!record.handshakeSent) continue;
+      try { record.sock.write(buf); } catch (e) { /* ignore */ }
+    }
   }
 
   function cleanupFiles() {
@@ -220,22 +248,22 @@ function main() {
     process.exit(code === undefined ? 0 : code);
   }
 
-  /** Send the terminal outcome (exit/spawn_error) to the current client, then shut down. */
+  /** Send the terminal outcome (exit/spawn_error) to every client, then shut down. */
   function finish(terminalQueued) {
-    if (client) {
+    if (clients.size > 0) {
       if (!terminalQueued) {
         const buf = spawnError
           ? control({ t: "spawn_error", message: spawnError })
           : control({ t: "exit", code: exitInfo ? exitInfo.code : null, signal: exitInfo ? exitInfo.signal : null });
-        try { client.write(buf); } catch (e) { /* ignore */ }
+        for (const record of clients) {
+          if (!record.handshakeSent || record.terminalSent) continue;
+          try { record.sock.write(buf); } catch (e) { /* ignore */ }
+        }
       }
-      const sock = client;
-      client = null;
-      handshakeSent = false;
-      try {
-        sock.end(function () { shutdown(0); });
-      } catch (e) {
-        shutdown(0);
+      const sockets = [...clients].map((record) => record.sock);
+      clients.clear();
+      for (const sock of sockets) {
+        try { sock.end(function () { shutdown(0); }); } catch (e) { shutdown(0); }
       }
       // Safety net: never hang on a half-closed socket.
       setTimeout(function () { shutdown(0); }, 2000).unref();
@@ -249,15 +277,20 @@ function main() {
     lingerTimer.unref();
   }
 
-  function sendHandshake(sock) {
-    if (!sock) return;
+  function sendHandshake(record) {
+    const sock = record.sock;
+    if (!sock || record.handshakeSent) return;
     const parts = [];
     if (spawnError) {
       parts.push(control({ t: "spawn_error", message: spawnError }));
     } else if (hello) {
       // Journal size travels with the handshake so a client can tell how much
       // replay to expect (diagnostics; the framing itself needs no metadata).
-      parts.push(control(Object.assign({}, hello, { journalBytes: journalBytes, journalFrames: journal.length })));
+      parts.push(control(Object.assign({}, hello, {
+        journalBytes: stdioBytesInRing,
+        journalFrames: journal.length,
+        writers: clients.size,
+      })));
     }
     for (const item of trimmedJournalForReplay()) parts.push(encodeFrame(item.channel, item.buf));
     if (exitInfo) parts.push(control({ t: "exit", code: exitInfo.code, signal: exitInfo.signal }));
@@ -265,32 +298,39 @@ function main() {
       if (parts.length === 1) sock.write(parts[0]);
       else if (parts.length > 1) sock.write(Buffer.concat(parts));
     } catch (e) { /* close handler cleans up */ }
-    handshakeSent = true;
-    if (exitInfo || spawnError) finish(true);
+    record.handshakeSent = true;
+    if (exitInfo || spawnError) record.terminalSent = true;
   }
 
   /**
    * A liveness probe (registry.probeEndpoint: connect + destroy) and the
-   * stale-socket check must NOT take the single client slot: superseding the
-   * live connection on every probe killed the page's event stream (2026-11-23:
-   * a hosting badge probe disconnected the chat, queue_update frames never
-   * arrived, and the queue panel stayed empty until a reload).
-   *
-   * So a socket becomes the client only when it identifies itself — the host
-   * sends a control hello_ack right after connect; a {t:"probe"} frame closes
-   * the socket without touching the current client; and a socket that stays
-   * connected without a word past IDENTIFY_GRACE_MS is promoted anyway (older
-   * hosts never send hello_ack; their attach waits for our hello).
+   * stale-socket check must NOT take a writer slot: they never join the
+   * client set (2026-11-23: a probe superseding the live connection killed
+   * the page's event stream). An identified socket (hello_ack) JOINS the
+   * writer set — multi-attach, no supersede: stdout/stderr broadcast to all,
+   * each writer's stdin forwards to the agent and mirrors to the others
+   * (ch4, the explicit terminal-echo replacement). A socket that stays
+   * connected without a word past IDENTIFY_GRACE_MS joins too (older hosts
+   * never send hello_ack; their attach waits for our hello).
    */
   const IDENTIFY_GRACE_MS = 1000;
   function attachClient(sock) {
+    const record = { sock, promoted: false, handshakeSent: false, terminalSent: false };
     let promoted = false;
     let identifyTimer = null;
     let pending = Buffer.alloc(0);
     const buffered = [];
     function applyFrame(channel, payload) {
       if (channel === CH_STDIN) {
+        // Journal the stdin direction too: user prompts are history (a replayed
+        // adopt used to lose them entirely), forward to the agent, and mirror
+        // to the other writers so their histories stay in sync.
+        appendJournal(CH_STDIN, payload);
         if (child && child.stdin && child.stdin.writable) child.stdin.write(payload);
+        for (const peer of clients) {
+          if (peer === record || !peer.handshakeSent) continue;
+          try { peer.sock.write(encodeFrame(CH_PEER_STDIN, payload)); } catch (e) { /* close handler cleans up */ }
+        }
       } else if (channel === CH_CTRL) {
         onControl(payload);
       }
@@ -298,22 +338,19 @@ function main() {
     function promote() {
       if (promoted || sock.destroyed) return;
       promoted = true;
+      record.promoted = true;
       if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
       everConnected = true;
       disarmIdle();
       if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
-      if (client && client !== sock) {
-        const previous = client;
-        client = null;
-        try { previous.write(control({ t: "superseded" })); } catch (e) { /* ignore */ }
-        try { previous.end(); } catch (e) { /* ignore */ }
-        try { setTimeout(function () { previous.destroy(); }, 500).unref(); } catch (e) { /* ignore */ }
-      }
-      client = sock;
-      handshakeSent = false;
-      // Handshake at promotion time: the journal replay is current (frames
-      // emitted while this socket was pending are in it, not lost to a gap).
-      if (hello || spawnError) sendHandshake(sock);
+      // Multi-writer: join the set; nobody is superseded (the legacy
+      // single-writer promote used to end the previous client here).
+      clients.add(record);
+      broadcastPeers();
+      // Handshake at join time: the journal replay is current (frames emitted
+      // while this socket was pending are in it, not lost to a gap).
+      if (hello || spawnError) sendHandshake(record);
+      if (exitInfo || spawnError) { finish(true); return; }
       // Commands that arrived before identification (a real client's first
       // request) run after the handshake, in order.
       for (const frame of buffered) applyFrame(frame.channel, frame.payload);
@@ -328,6 +365,14 @@ function main() {
         if (ctrl && ctrl.t === "probe") {
           // A liveness probe: never a client. No handshake, no supersede.
           try { sock.destroy(); } catch (e) { /* ignore */ }
+          return;
+        }
+        if (ctrl && ctrl.t === "query_peers") {
+          // Read-only writer-count query (hosting panel): answer and leave,
+          // never a client, never a promote.
+          try { sock.write(control({ t: "peers", count: clients.size })); } catch (e) { /* ignore */ }
+          try { sock.end(); } catch (e) { /* ignore */ }
+          try { setTimeout(function () { sock.destroy(); }, 500).unref(); } catch (e) { /* ignore */ }
           return;
         }
         if (!(ctrl && ctrl.t === "hello_ack")) buffered.push({ channel, payload });
@@ -354,11 +399,13 @@ function main() {
     });
     sock.on("error", function () {
       if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
-      if (client === sock) { client = null; handshakeSent = false; armIdle(); }
+      if (clients.delete(record)) broadcastPeers();
+      if (clients.size === 0) armIdle();
     });
     sock.on("close", function () {
       if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
-      if (client === sock) { client = null; handshakeSent = false; armIdle(); }
+      if (clients.delete(record)) broadcastPeers();
+      if (clients.size === 0) armIdle();
     });
     // Compatibility: an older host attaches and only reads (never identifies).
     // Promote it after the grace so its handshake still arrives.
@@ -447,8 +494,12 @@ function main() {
       child = childProcess.spawn(String(cfg.command), Array.isArray(cfg.args) ? cfg.args.map(String) : [], opts);
     } catch (err) {
       spawnError = err && err.message ? err.message : String(err);
-      if (client) sendHandshake(client);
-      else finish();
+      if (clients.size > 0) {
+        for (const record of [...clients]) if (record.promoted && !record.handshakeSent) sendHandshake(record);
+        finish(true);
+      } else {
+        finish();
+      }
       return;
     }
     child.on("spawn", function () {
@@ -461,19 +512,25 @@ function main() {
         agentKey: cfg.agentKey,
         runner: cfg.runner,
       };
-      if (client && !handshakeSent) sendHandshake(client);
+      for (const record of [...clients]) {
+        if (record.promoted && !record.handshakeSent) sendHandshake(record);
+      }
     });
     child.on("error", function (err) {
       if (exitInfo) return;
       spawnError = err && err.message ? err.message : String(err);
-      if (client) sendHandshake(client);
-      else finish();
+      if (clients.size > 0) {
+        for (const record of [...clients]) if (record.promoted && !record.handshakeSent) sendHandshake(record);
+        finish(true);
+      } else {
+        finish();
+      }
     });
     if (child.stdout) {
       child.stdout.on("data", function (buf) {
         appendJournal(CH_STDOUT, buf);
-        if (!client) armIdle();
-        if (client && handshakeSent) writeClient(encodeFrame(CH_STDOUT, buf));
+        if (clients.size === 0) armIdle();
+        if (clients.size > 0) writeAllClients(encodeFrame(CH_STDOUT, buf));
       });
       child.stdout.on("error", function () { /* child died mid-read */ });
     }
@@ -481,8 +538,8 @@ function main() {
       child.stderr.on("data", function (buf) {
         appendLog(buf);
         appendJournal(CH_STDERR, buf);
-        if (!client) armIdle();
-        if (client && handshakeSent) writeClient(encodeFrame(CH_STDERR, buf));
+        if (clients.size === 0) armIdle();
+        if (clients.size > 0) writeAllClients(encodeFrame(CH_STDERR, buf));
       });
       child.stderr.on("error", function () { /* child died mid-read */ });
     }
@@ -493,13 +550,13 @@ function main() {
       exitInfo = { code: typeof code === "number" ? code : null, signal: signal || null };
       disarmIdle();
       if (killGraceTimer) { clearTimeout(killGraceTimer); killGraceTimer = null; }
-      if (client && handshakeSent) {
-        finish();
-      } else if (client) {
-        sendHandshake(client);
-      } else {
-        finish();
+      // Serve pending handshakes first: a client promoted mid-exit gets the
+      // replay plus the terminal exit frame in one flush (and is then skipped
+      // by finish via terminalSent).
+      for (const record of [...clients]) {
+        if (record.promoted && !record.handshakeSent && (hello || spawnError)) sendHandshake(record);
       }
+      finish();
     });
   }
 
