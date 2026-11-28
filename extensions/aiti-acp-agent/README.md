@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-acp-agent
 
-> A universal ACP driver — one adapter connects all Agent Client Protocol agents (25 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)
+> A universal ACP driver — one adapter connects all Agent Client Protocol agents (26 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)
 
 English · [简体中文](./README.zh-CN.md)
 

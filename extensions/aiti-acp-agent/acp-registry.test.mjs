@@ -57,6 +57,14 @@ test("pi 不 claim 原生 pi 的 agentKey（ACP 无 steer，接管会丢 steer/f
   assert.equal(pi.agentKey, "pi-acp");
 });
 
+test("注册表含 devin 条目（2026-11-28 接入，对齐 cc-connect agent/devin）", () => {
+  const devin = ACP_AGENTS.find((a) => a.name === "devin");
+  assert.ok(devin, "devin 后端存在");
+  assert.equal(devin.bin, "devin");
+  assert.deepEqual(devin.args, ["acp"]);
+  assert.equal(devin.agentKey, "devin");
+});
+
 test("注册表卫生：name 唯一，每条有 resolve 或 bin", () => {
   const names = ACP_AGENTS.map((a) => a.name);
   assert.equal(new Set(names).size, names.length, "name 不重复");
@@ -127,6 +135,16 @@ test("直播握手：codex-acp initialize 应答 protocolVersion=1（环境依�
   const msg = await liveInitialize(binPath, []);
   assert.equal(msg.result?.protocolVersion, 1);
   assert.ok(msg.result?.agentCapabilities, "应宣告 agentCapabilities");
+});
+
+test("直播握手：devin acp initialize 应答 protocolVersion=1（环境依赖）", async (t) => {
+  const binPath = findBin("devin");
+  if (!binPath) return t.skip("devin 未安装（装机才接）");
+  const msg = await liveInitialize(binPath, ["acp"]);
+  assert.equal(msg.result?.protocolVersion, 1);
+  assert.equal(msg.result?.agentCapabilities?.loadSession, true, "devin 宣告 loadSession");
+  // image is capability-negotiated (devin only advertises it to clients that declare matching
+  // caps), so do not pin it here — bare-handshake measurement recorded 2026-11-28: image:true.
 });
 
 test("直播握手：cursor-agent acp initialize 应答 protocolVersion=1（环境依赖）", async (t) => {

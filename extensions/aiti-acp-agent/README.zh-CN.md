@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-acp-agent
 
-> 泛用 ACP 驱动 —— 一个适配器接所有 Agent Client Protocol agent（25 家内置自动探测 + 自定义后端面板 + 授权卡/队列/模型目录）
+> 泛用 ACP 驱动 —— 一个适配器接所有 Agent Client Protocol agent（26 家内置自动探测 + 自定义后端面板 + 授权卡/队列/模型目录）
 
 [English](./README.md) · 简体中文
 

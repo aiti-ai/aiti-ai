@@ -4,7 +4,7 @@
  * ACP 是 Zed 主导的 agent↔编辑器 JSON-RPC stdio 标准。一个驱动覆盖所有
  * ACP 兼容 agent，无需逐个适配：
  *
- *   已知后端（启动时探测 PATH，装了才注册——装机才接原则，25 家，
+ *   已知后端（启动时探测 PATH，装了才注册——装机才接原则，26 家，cjk-ok
  *   对齐 xenodium/agent-shell 全量清单 + 自有接入）：
  *     claude-code  claude-agent-acp          agentKey "claude"（0.16 旧包名 claude-code-acp 兜底）
  *     gemini       gemini --experimental-acp agentKey "gemini"
@@ -12,7 +12,8 @@
  *     codex        codex-acp                 agentKey "codex"（官方 npm 桥 @agentclientprotocol/codex-acp）
  *     cursor       cursor-agent acp          agentKey "cursor"
  *     antigravity/grok/auggie/deepseek/droid/hermes/junie/kiro/mistral/
- *     omp/openclaw/pi/qoder — 命令详见下方 ACP_AGENTS 注释（agent-shell 同款）
+ *     omp/openclaw/pi/qoder — 命令详见下方 ACP_AGENTS 注释（agent-shell 同款）cjk-ok
+ *     devin        devin acp                 agentKey "devin" (Devin CLI, cli.devin.ai; cc-connect parity)
  *     pi is keyed "pi-acp" (not "pi"): the native aiti-pi-agent backend owns the
  *     "pi" agent key — ACP has no steering channel and must not claim its sessions.
  *
@@ -238,6 +239,13 @@ export const ACP_AGENTS: Array<{
   // Qoder CLI（国际版）：`qoder --acp`（native aiti-qoder-agent 双区域并存；CN 版可经
   // 自定义后端面板自行加 qoder-cn 条目）。
   { name: "qoder", bin: "qoder", args: ["--acp"], agentKey: "qoder", installHint: "Qoder standalone CLI (qodercli)" },
+  // Devin CLI (Cognition, cli.devin.ai): `devin acp` native ACP server — parity with cc-connect
+  // agent/devin. Measured 2026-11-28 (v3000.15.14): initialize protocolVersion:1,
+  // loadSession:true, image:true; session/new REQUIRES the mcpServers field (our newSession
+  // always sends mcpServers:[]), and returns 5 modes (accept-edits=Code/smart/ask/plan/bypass)
+  // plus a configOptions model catalog. Auth is fully delegated to the local CLI: one-time
+  // `devin auth login` stores credentials on disk; Windsurf Enterprise may inject WINDSURF_API_KEY.
+  { name: "devin", bin: "devin", args: ["acp"], agentKey: "devin", installHint: "Devin CLI (cli.devin.ai)" },
 ];
 
 /** npm 的 npx-cli.js：nvm/unix 布局 <node目录>/../lib/node_modules/npm/bin/npx-cli.js；
@@ -1879,7 +1887,7 @@ async function catalogRefreshModels(agentName: string, agentKey?: string): Promi
  * startup no longer runs refreshAll — the model catalog is probed on demand only when the
  * new-session page consumes listModels (triggered in the background inside catalogListModels,
  * never blocking the return); probe failures enter the negative cache (no automatic retry within
- * 1h; a manual "refresh model list" force is exempt). Previously startup spawned all 25 built-in
+ * 1h; a manual "refresh model list" force is exempt). Previously startup spawned all 26 built-in
  * backends in turn (unauthenticated CLIs always fail and there was no negative cache → rerun every
  * startup; the qoder probe even pulled Electron) — tens of seconds of pure waste.
  */

@@ -1,13 +1,13 @@
 {
   "name": "@aiti-ai/aiti-acp-agent",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "type": "module",
-  "description": "A universal ACP driver — one adapter connects all Agent Client Protocol agents (25 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)",
+  "description": "A universal ACP driver — one adapter connects all Agent Client Protocol agents (26 built-in with auto-detection + custom backend panel + permission cards/queue/model catalog)",
   "displayNameI18n": {
     "en": "ACP Session Backend"
   },
   "descriptionI18n": {
-    "zh-CN": "泛用 ACP 驱动 —— 一个适配器接所有 Agent Client Protocol agent（25 家内置自动探测，对齐 agent-shell 全量清单 + 自定义后端面板 + 授权卡/队列/模型目录）"
+    "zh-CN": "泛用 ACP 驱动 —— 一个适配器接所有 Agent Client Protocol agent（26 家内置自动探测，对齐 agent-shell 全量清单 + 自定义后端面板 + 授权卡/队列/模型目录）"
   },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
