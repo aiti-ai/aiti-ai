@@ -202,6 +202,7 @@ import { prefetchModels } from "@/hooks/useAgentSession";
 import {
   piWebSessionService,
   publishSessionState,
+  setBackendUsageRefresher,
   setSessionOpener,
   type PiWebSessionSource,
 } from "@/lib/pi-web-session-store";
@@ -1021,6 +1022,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       return;
     }
     setSessionStatsRefresh(() => refresher);
+  }, []);
+
+  // Backend-usage refresher (§4-A7): forwarded into the pi-web-session-store slot
+  // (the pi-web.session service's refreshBackendUsage reads it; no React state —
+  // the slot is plain module scope, immune to stale closures).
+  const handleBackendUsageRefresherRegister = useCallback((fn: (() => void) | null) => {
+    setBackendUsageRefresher(fn);
   }, []);
 
   // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
@@ -6243,6 +6251,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onOpenSettings={openSettingsSection}
               onSessionStatsRefresherRegister={handleSessionStatsRefresherRegister}
+              onBackendUsageRefresherRegister={handleBackendUsageRefresherRegister}
               onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
               onBackendUsageChange={handleBackendUsageChange}

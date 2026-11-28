@@ -1,7 +1,8 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./adapters/index.ts";
 import { queryUsageTargets, resolveUsageTargets } from "./key-pool.ts";
-import { getUsageAdapter, listUsageAdapters } from "./registry.ts";
+import { listUsageAdapters } from "./registry.ts";
+import { listThirdPartyUsageAdapters, resolveUsageAdapter } from "./host-registry.ts";
 import type { ProviderUsageResult, UsageReport } from "./types.ts";
 
 // Overview aggregation: enumerate configured + adaptable providers, query each
@@ -44,8 +45,13 @@ async function aggregate(): Promise<UsageOverview> {
   for (const adapter of listUsageAdapters()) {
     candidates.set(adapter.id, { displayName: adapter.displayName });
   }
+  // Third-party dynamic adapters from the host slot (§4-B3b; our own entries
+  // and built-ins are already covered above) join the catalog.
+  for (const adapter of listThirdPartyUsageAdapters()) {
+    if (!candidates.has(adapter.id)) candidates.set(adapter.id, { displayName: adapter.displayName });
+  }
   for (const provider of runtime.getProviders()) {
-    const adapter = getUsageAdapter(provider.id, provider.baseUrl);
+    const adapter = resolveUsageAdapter(provider.id, provider.baseUrl);
     if (!adapter) continue;
     candidates.set(provider.id, { displayName: adapter.displayName, baseUrl: provider.baseUrl });
   }
@@ -66,7 +72,8 @@ async function aggregate(): Promise<UsageOverview> {
 }
 
 async function queryOne(runtime: ModelRuntime, providerId: string, meta: { displayName: string; baseUrl?: string }): Promise<OverviewEntry> {
-  const adapter = getUsageAdapter(providerId, meta.baseUrl);
+  // Local registry first, then third-party dynamic adapters from the host slot (§4-B3b).
+  const adapter = resolveUsageAdapter(providerId, meta.baseUrl);
   if (!adapter) return { providerId, providerName: meta.displayName, kind: "usage", status: "query-failed", message: "No usage adapter." };
   // Runtime credential, or the models.json rotation pool when the provider sits
   // behind the pi-models-combo proxy (see key-pool.ts).

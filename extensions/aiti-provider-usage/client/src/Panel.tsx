@@ -9,7 +9,7 @@
 //   apiUrl → host-shim apiUrl、数据源 /api/extensions/aiti-provider-usage/overview。）
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiUrl, t } from "./host-shim";
+import { apiUrl, extSvc, t } from "./host-shim";
 import { bucketLabel, fmtLastTurn, type BackendUsage } from "./StatsChip";
 import { TapFullText } from "./full-text-tip";
 import {
@@ -43,6 +43,16 @@ export function ProviderUsagePanel({ currentProviderId, backendUsage, backendSou
 
   const query = useCallback(async (force: boolean) => {
     setQuerying(true);
+    // §4-A7: a MANUAL refresh also re-fetches the active session's backend-usage
+    // snapshot (the account-quota block's data source, host-held) so one click
+    // refreshes both halves of this section. Mount-time fetches (force=false) stay
+    // passive — the host already probes on state arrival. Service absent (old host) → skip.
+    if (force) {
+      try {
+        const sessionSvc = extSvc<{ refreshBackendUsage?: () => void }>("pi-web.session");
+        sessionSvc?.refreshBackendUsage?.();
+      } catch { /* service locator unavailable — overview refresh still runs */ }
+    }
     try {
       const response = await fetch(apiUrl("/api/extensions/aiti-provider-usage/overview"), {
         method: "POST",
@@ -168,7 +178,9 @@ export function AccountQuotaSection({ usage, backendSource, sessionId }: {
             </span>
           ) : <span />}
           <TapFullText
-            text={exhausted ? t("providerUsage.quotaExceeded") : `${credits?.remaining != null ? credits.remaining : "?"}${credits?.unit ? ` ${credits.unit}` : ""}${usedPct != null ? ` · ${usedPct}% ${t("providerUsage.used")}` : ""}`}
+            // usedPercent-first: window-style providers (e.g. Z.AI coding plan) have no
+            // numeric remaining — the "?" placeholder would read as a data bug (§7.1-7).
+            text={exhausted ? t("providerUsage.quotaExceeded") : credits?.remaining != null ? `${credits.remaining}${credits?.unit ? ` ${credits.unit}` : ""}${usedPct != null ? ` · ${usedPct}% ${t("providerUsage.used")}` : ""}` : usedPct != null ? `${usedPct}% ${t("providerUsage.used")}` : "?"}
             style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: totalColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           />
         </div>
@@ -187,7 +199,9 @@ export function AccountQuotaSection({ usage, backendSource, sessionId }: {
               </span>
             ) : <span />}
             <TapFullText
-              text={`${b.remaining ?? 0}/${b.total ?? "?"}${pct != null ? ` · ${pct}%` : ""}`}
+              // Share windows (total===100, e.g. zai 5h/1w) read as the leftover percentage;
+              // real-allowance windows keep the remaining/total pair.
+              text={b.total === 100 ? `${b.remaining ?? 0}%` : `${b.remaining ?? 0}/${b.total ?? "?"}${pct != null ? ` · ${pct}%` : ""}`}
               style={{ fontSize: 12, fontFamily: "var(--font-mono)", color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
             />
           </div>

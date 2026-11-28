@@ -3,19 +3,21 @@ import "./adapters/index.ts";
 import { queryUsageTargets, resolveUsageTargets } from "./key-pool.ts";
 import { assertOfficialOrigin } from "./secure-fetch.ts";
 import { getUsageAdapter, listUsageAdapters } from "./registry.ts";
+import { resolveUsageAdapter } from "./host-registry.ts";
 import type { ProviderUsageResult, UsageReport } from "./types.ts";
 import type { ProviderUsageId } from "./ids.ts";
 
 export { PROVIDER_USAGE_IDS, isProviderUsageId, type ProviderUsageId } from "./ids.ts";
 export { queryUsageOverview, invalidateUsageOverviewCache, type UsageOverview, type OverviewEntry } from "./aggregate.ts";
 export { listUsageAdapters, registerUsageAdapter, getUsageAdapter } from "./registry.ts";
+export { setHostUsageAdapterSource, listThirdPartyUsageAdapters } from "./host-registry.ts";
 export type { UsageBucket, UsageMetric, UsageReport, ProviderUsageResult, ProviderUsageStatus, UsageAdapter } from "./types.ts";
 
 // 单 provider 查询门面（原 pi-web fork lib/provider-usage.ts 的注册表形态）：
 // 优先精确/origin 匹配适配器执行；无适配器 = unsupported（core 上游实现只覆盖
 // 8 家官方直连，本扩展 15+ 家全量，ModelsConfig 上游 Summary 兜底不冲突）。
 
-export async function queryProviderUsage(providerId: ProviderUsageId): Promise<ProviderUsageResult> {
+export async function queryProviderUsage(providerId: string): Promise<ProviderUsageResult> {
   let runtime: ModelRuntime;
   try {
     runtime = await ModelRuntime.create({ refreshOnCreate: false });
@@ -23,7 +25,8 @@ export async function queryProviderUsage(providerId: ProviderUsageId): Promise<P
     return { providerId, status: "query-failed", message: "The provider runtime is unavailable." };
   }
   const provider = runtime.getProvider(providerId);
-  const adapter = getUsageAdapter(providerId, provider?.baseUrl);
+  // Local registry first, then third-party dynamic adapters from the host slot (§4-B3b).
+  const adapter = resolveUsageAdapter(providerId, provider?.baseUrl);
   if (!adapter) return { providerId, status: "unsupported", message: "This provider does not support usage queries." };
 
   // Runtime credential, or the models.json rotation pool for proxied multi-key

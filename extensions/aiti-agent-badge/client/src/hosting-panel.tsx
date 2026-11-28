@@ -112,7 +112,10 @@ function QuotaRow(props: { sessionId: string }) {
     const key = `badge.bucket.${b.name}`;
     const translated = t(key);
     const name = !translated || translated === key ? b.name : translated;
-    if (b.remaining !== undefined && b.total !== undefined) parts.push(`${name} ${fmtNum(b.remaining)}/${fmtNum(b.total)}`);
+    // Share windows (total===100, e.g. zai 5h/1w) read as percentages; real-allowance
+    // windows (monthly credits…) read as remaining/total.
+    if (b.total === 100 && b.remaining !== undefined) parts.push(`${name} ${fmtNum(b.remaining)}%`);
+    else if (b.remaining !== undefined && b.total !== undefined) parts.push(`${name} ${fmtNum(b.remaining)}/${fmtNum(b.total)}`);
   }
   if (parts.length === 0) return null;
   const exceeded = usage.quotaExceeded === true;
@@ -469,7 +472,11 @@ export function HostingPanel(props: {
               {info.alive ? <Row label={t("badge.field.detached")} value={detached ? t("badge.yes") : t("badge.no")} /> : null}
               <Row label={t("badge.field.session")} value={info.nativeSessionId} mono />
               {info.cwd ? <Row label={t("badge.field.cwd")} value={info.cwd} mono /> : null}
-              {info.agentKind === "external" ? <QuotaRow key={info.sessionId} sessionId={info.sessionId} /> : null}
+              {/* Quota row: rendered unconditionally — the fetch returns null for
+                  backends without a get_usage answer (unsupported provider /
+                  capability off) and the row hides itself (fail-honest).
+                  plan: pi-web-pi-session-provider-quota §4-A6. */}
+              <QuotaRow key={info.sessionId} sessionId={info.sessionId} />
             </div>
           ) : null}
 

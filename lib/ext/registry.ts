@@ -26,6 +26,7 @@ import type {
   ManifestExtension,
 } from "./types.ts";
 import { registerImageProvider as registerImageProviderForExt, unregisterImageProviders } from "../image-generation.ts";
+import { registerDynamicUsageAdapter, unregisterDynamicUsageAdapter, unregisterDynamicUsageAdapters, listUsageAdaptersWithOwners } from "../provider-usage/registry.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
 import { healCandidate, syncSharedLayerFromRepo } from "./shared-layer-heal.ts";
@@ -1578,6 +1579,11 @@ export class ExtRegistryImpl {
       try {
         await unregisterImageProviders(extId);
       } catch { /* best effort */ }
+      // Dynamic usage adapters likewise (lib/provider-usage/registry.ts ledger) —
+      // the owning extension re-registers on its next startup cycle.
+      try {
+        unregisterDynamicUsageAdapters(extId);
+      } catch { /* best effort */ }
     }
     // reload cycle cleanup: core.* preset services go offline too (startAll
     // re-provides them); listeners are cleared with the old cycle's closures
@@ -1713,6 +1719,13 @@ export class ExtRegistryImpl {
             return { ok: false, reason: "open_failed" as const, error: e instanceof Error ? e.message : String(e) };
           }
         },
+      },
+      // Usage-adapter slot (plan: pi-web-pi-session-provider-quota §4-B2): ownership per
+      // ext id; the shutdown cycle removes exactly this extension's entries.
+      usageAdapters: {
+        register: (adapter) => registerDynamicUsageAdapter(ext.id, adapter),
+        unregister: (id: string) => unregisterDynamicUsageAdapter(ext.id, id),
+        list: () => listUsageAdaptersWithOwners(),
       },
       // Session annotation slot: data ownership stays with the extension (core
       // doesn't know about bridge registries and other concrete formats)

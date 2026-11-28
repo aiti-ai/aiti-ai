@@ -162,7 +162,10 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   respondPermission: false, // not applicable to local sessions (permissions go through the TUI/extension UI)
   respondInteraction: false, // not applicable to local sessions (interactions go through the TUI/extension UI)
   respondProviderHeaders: false, // not applicable to local sessions
-  getUsage: false,
+  // getUsage: the handle has no backend-owned getUsage; the handle-adapter's
+  // pi-family fallback answers with the session provider's account quota from
+  // the usage-adapter registry (plan: pi-web-pi-session-provider-quota §4-A3/A4).
+  getUsage: true,
   listModels: true,
   fileAttachments: false,
   setPermissionMode: false,

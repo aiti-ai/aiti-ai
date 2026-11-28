@@ -51,7 +51,11 @@ export function usageTooltipLine(): string | null {
     parts.push(`${c.usedPercent}%`);
   }
   for (const b of u.buckets ?? []) {
-    parts.push(`${bucketLabel(b.name)} ${missing(b.remaining)}/${missing(b.total)}`);
+    // Share windows (total===100) read as the leftover percentage; real-allowance
+    // windows keep the remaining/total pair.
+    parts.push(b.total === 100
+      ? `${bucketLabel(b.name)} ${missing(b.remaining)}%`
+      : `${bucketLabel(b.name)} ${missing(b.remaining)}/${missing(b.total)}`);
   }
   return parts.length ? `${t("providerUsage.chip.tooltip")}: ${parts.join(" · ")}` : null;
 }
@@ -83,10 +87,12 @@ export function StatsChip(props: {
       : "var(--text-muted, #9aa0a6)";
   // ONE remaining-capacity value: the merged remaining when known, else the
   // used percentage; exhausted → ⊘ (the tooltip carries the detail).
+  // remaining-first value; a share-unit credits (%-windows) renders with the % sign so
+  // "◈35%" is unambiguous (a bare "◈35" would read as 35 credits).
   const text = exhausted
     ? "⊘"
     : credits?.remaining != null
-      ? `◈${credits.remaining}`
+      ? `◈${credits.remaining}${credits.unit === "%" ? "%" : ""}`
       : pct != null
         ? `◈${pct}%`
         : "◈";

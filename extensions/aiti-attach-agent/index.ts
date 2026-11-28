@@ -95,6 +95,7 @@ export class AttachSessionHandle {
       setActiveTools: false,
       navigateTree: false,
       deleteSession: false,
+      getUsage: false, // the TUI bridge has no get_usage channel (explicit false: the client never asks, the adapter fails loud)
     };
   }
 

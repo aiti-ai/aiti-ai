@@ -149,6 +149,11 @@ function normalizeTasks(raw: unknown): SessionTask[] {
 type AgentStateResponse = {
   model?: { provider: string; id: string };
   sessionId?: string;
+  /** One-bit get_usage probe permission (§4-A4): set by /api/agent/[id] for the local pi
+   *  family (wrapper/handle fallback). Kept separate from `capabilities` on purpose — the
+   *  client reads a non-empty capabilities object as "external backend" (fork-new gating,
+   *  queue-only heuristic), and a local capabilities object would flip those. */
+  usageCapability?: boolean;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   /** Active time over the live wrapper's entries (the snapshot carries the same field). */
   totalActiveMs?: number;
@@ -863,15 +868,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Highest request id whose reply was applied. A reply applies only when it
   // is newer, so a failed newer read never discards an older good one.
   const contextUsageAppliedIdRef = useRef(0);
-  // One-shot backend-usage read per wrapper mount: a page opened after a run never
-  // observes the agent_end get_usage exchange, so the stats-row quota chip and the
-  // session-info account block would stay empty until the next turn. Read once when a
-  // live wrapper reports the getUsage capability (event-driven; no polling).
+  // Backend-usage read for the get_usage capability: fetched once per
+  // (session, provider) pair when a live wrapper reports the capability
+  // (event-driven; no polling) — re-arming on a model switch means the next
+  // state arrival re-queries the NEW provider's account quota
+  // (plan: pi-web-pi-session-provider-quota §4-A5). refreshBackendUsage()
+  // clears the marker for an immediate manual re-fetch (session-info panel's
+  // refresh button, via the pi-web.session client service).
   const backendUsageAskedRef = useRef<string | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
   const [currentModelOverride, setCurrentModelOverride] = useState<{ provider: string; modelId: string } | null>(null);
   const [liveModel, setLiveModel] = useState<{ provider: string; modelId: string } | null>(null);
+  // Ref twin of liveModel for callbacks registered with empty deps (refreshBackendUsage):
+  // the latest provider travels with the get_usage command (plan:
+  // pi-web-pi-session-provider-quota §4-A5) so a server fallback without its own model
+  // state (detached handle attach) can still resolve the provider.
+  const liveModelRef = useRef<{ provider: string; modelId: string } | null>(null);
   const [pendingModel, setPendingModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [modelSwitching, setModelSwitching] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
@@ -1011,6 +1024,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const extensionUiCountRef = useRef(0);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const endedSessionRef = useRef<string | null>(null);
+
+  // Manual backend-usage re-fetch (§4-A7): clears the asked marker so the
+  // next get_usage goes out immediately; failure keeps the last snapshot
+  // (same keep-last semantics as the state-arrival fetch). Consumed by the
+  // pi-web.session client service (session-info panel's refresh button).
+  const refreshBackendUsage = useCallback(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    backendUsageAskedRef.current = null;
+    void sendAgentCommand(sid, { type: "get_usage", provider: liveModelRef.current?.provider })
+      .then((r) => {
+        const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
+        if (d?.usage && sessionIdRef.current === sid) setBackendUsage(d.usage);
+      })
+      .catch(() => {});
+  }, []);
   const sessionPropIdRef = useRef<string | null>(session?.id ?? null);
   // False while the session carries no tool selection of its own, so its loadout
   // follows settings.json defaultTools and the picker must say so rather than
@@ -1326,9 +1355,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const composerDraftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
   const syncLiveModel = useCallback((state?: AgentStateResponse) => {
-    setLiveModel(state?.model
+    liveModelRef.current = state?.model
       ? { provider: state.model.provider, modelId: state.model.id }
-      : null);
+      : null;
+    setLiveModel(liveModelRef.current);
     if (state?.thinkingLevel !== undefined) {
       setLiveThinkingLevel(asConcreteThinkingLevel(state.thinkingLevel));
     }
@@ -1632,14 +1662,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.capabilities !== undefined) setSessionCapabilities(liveState.capabilities);
           if (liveState.backendSource !== undefined) setBackendSource(liveState.backendSource);
           applyLiveUsage(liveState, sid, runId, usageRequestId);
-          if (liveState.capabilities?.getUsage && liveState.backendSource && backendUsageAskedRef.current !== sid) {
-            backendUsageAskedRef.current = sid;
-            void sendAgentCommand(sid, { type: "get_usage" })
-              .then((r) => {
-                const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
-                if (d?.usage && sessionIdRef.current === sid) setBackendUsage(d.usage);
-              })
-              .catch(() => {});
+          // Explicit declaration only: external backends via capabilities.getUsage
+          // (qoder/zcode true; claude-code/attach false/absent → never ask), the local
+          // pi family via the one-bit usageCapability signal (§4-A4). The server-side
+          // capability gate stays the authority and fails loud when unsupported.
+          if (liveState.capabilities?.getUsage === true || liveState.usageCapability === true) {
+            // Keyed by session+provider: a model switch changes the key, so the
+            // next state arrival re-queries the new provider's quota (§4-A5②).
+            const usageKey = liveState.model ? `${sid}:${liveState.model.provider}` : sid;
+            if (backendUsageAskedRef.current !== usageKey) {
+              backendUsageAskedRef.current = usageKey;
+              void sendAgentCommand(sid, { type: "get_usage", provider: liveState.model?.provider })
+                .then((r) => {
+                  const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
+                  if (d?.usage && sessionIdRef.current === sid) setBackendUsage(d.usage);
+                })
+                .catch(() => {});
+            }
           }
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
@@ -6074,7 +6113,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
-    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage, refreshBackendUsage,
     providerHeadersRequest, respondToProviderHeaders,
     interactionRequest, respondToInteraction,
     sessionRequest, respondToSessionRequest,

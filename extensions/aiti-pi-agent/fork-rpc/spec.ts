@@ -98,7 +98,10 @@ export function capabilitiesFor(spec: PiForkSpec): ForkCapabilities {
     respondInteraction: true,
     subagents: spec.commands.hasSubagents,
     respondPermission: false,
-    getUsage: false,
+    // No backend-owned getUsage; the handle-adapter's pi-family fallback
+    // answers with the current provider's account quota (usage-adapter
+    // registry; plan: pi-web-pi-session-provider-quota §4-A3/A4).
+    getUsage: true,
     fileAttachments: false,
     respondProviderHeaders: false, // zcode 专属
     setPermissionMode: false, // cc-connect 专属

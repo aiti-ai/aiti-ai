@@ -21,6 +21,10 @@ export const HOST_UI_SERVICE = { provider: "pi-web", name: "pi-web.ui" } as cons
 /** "pi-web.composer" — ChatInput-side composer capabilities (callback/ref set, no data). */
 export const HOST_COMPOSER_SERVICE = { provider: "pi-web", name: "pi-web.composer" } as const;
 
+/** "pi-web.session" — session-state snapshot service (lib/pi-web-session-store; get/subscribe/open
+ *  + refreshBackendUsage, the §4-A7 backend-usage re-fetch consumed by the provider-usage panel). */
+export const HOST_SESSION_SERVICE = { provider: "pi-web", name: "pi-web.session" } as const;
+
 /** HOST_UI_SERVICE field classification (contract doc; runtime set is hostUiRef). */
 export const HOST_UI_FIELDS = {
   /** Callback: file viewer line-reference insertion (@ file:line; same source as host TabBodyCtx.onLineMention). */

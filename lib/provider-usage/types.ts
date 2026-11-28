@@ -47,9 +47,13 @@ export interface UsageReport {
 
 export type ProviderUsageStatus = "ready" | "unsupported" | "auth-unavailable" | "query-failed";
 
+// providerId is string (not the literal union): the registry accepts dynamic
+// adapters registered by extensions at runtime (plan: pi-web-pi-session-provider-quota
+// §4-B1), so the query facade must accept any id and let the registry decide.
+// The non-ready variant excludes "ready" so the discriminated union narrows properly.
 export type ProviderUsageResult =
-  | { providerId: ProviderUsageId; status: "ready"; report: UsageReport }
-  | { providerId: ProviderUsageId; status: ProviderUsageStatus; message: string };
+  | { providerId: string; status: "ready"; report: UsageReport }
+  | { providerId: string; status: Exclude<ProviderUsageStatus, "ready">; message: string };
 
 /** Resolved credentials for one query (shape of ModelRuntime.getAuth()). */
 export interface UsageAuth {

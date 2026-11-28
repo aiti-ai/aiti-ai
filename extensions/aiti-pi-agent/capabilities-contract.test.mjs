@@ -1,11 +1,18 @@
 /**
- * B5 · capabilities 契约测试（docs/aiti-pi-agent-split-plan.md 阶段 2-B5）
+ * B5 · capabilities contract tests (docs/aiti-pi-agent-split-plan.md phase 2-B5)
  *
- * 钉死 pi / omp 两系的 RPC 能力位与「2026-09-19 真机探针」结论一致（pi 0.84.4 --mode rpc 实测）：
- *   - 探针发 get_usage / navigate_tree / set_active_tools / delete_session → 全部
- *     `Unknown command`（协议不支持）→ 能力位必须保持 false（不硬造、前端降级）；
- *   - 探针发 get_state → success:true（基础面）。
- * 上游若新增这些命令，先更新探针结论再翻能力位——本测试就是那个提醒器。
+ * Pins the pi/omp RPC capability flags to the "2026-09-19 live probe" conclusions
+ * (pi 0.84.4 --mode rpc measured):
+ *   - probing navigate_tree / set_active_tools / delete_session → all `Unknown
+ *     command` (protocol lacks them) → the flags must stay false (no fabrication;
+ *     the frontend degrades);
+ *   - probing get_state → success:true (base surface).
+ * If upstream adds these commands, update the probe conclusions before flipping
+ * the flags — this test is that reminder.
+ * getUsage special case (2026-12, pi-web-pi-session-provider-quota §4-A4): the RPC
+ * protocol still has no get_usage command (probe conclusion unchanged), but the flag's
+ * semantics are now "can the host handle-adapter answer a get_usage query" — the pi
+ * family answers via the provider-quota fallback, hence true.
  * Run: node --test capabilities-contract.test.mjs
  */
 import test from "node:test";
@@ -16,7 +23,6 @@ const { OMP_SPEC } = await import("../aiti-omp-agent/omp-handle.ts");
 
 /** 真机探针（2026-09-19，pi 0.84.4）确认不存在的命令 → 对应能力位必须为 false。 */
 const PROBED_UNSUPPORTED = [
-  "getUsage",        // rpc: get_usage      → Unknown command
   "navigateTree",    // rpc: navigate_tree  → Unknown command
   "deleteSession",   // rpc: delete_session → Unknown command
   "setActiveTools",  // rpc: set_active_tools → Unknown command
@@ -67,5 +73,15 @@ test("B5：两系 steering 条目可管理（pi-web 队列面板 steer 行只读
     assert.equal(caps.steer, true, `${name}.steer`);
     assert.equal(caps.queueManage, true, `${name}.queueManage`);
     assert.equal(caps.steerQueueManage, true, `${name}.steerQueueManage`);
+  }
+});
+
+test("B5 contract (getUsage special case): flag true = host-fallback semantics (the RPC protocol itself still lacks get_usage)", () => {
+  // Flipped 2026-12 (pi-web-pi-session-provider-quota §4-A4): the flag no longer
+  // pins RPC command existence — it pins whether the handle-adapter can answer a
+  // get_usage query (pi family answers via the provider-quota fallback). The probe
+  // "Unknown command" conclusion stands; it just no longer constrains this flag.
+  for (const [name, spec] of [["pi", PI_SPEC], ["omp", OMP_SPEC]]) {
+    assert.equal(capabilitiesFor(spec).getUsage, true, `${name}.getUsage should be true (host fallback semantics)`);
   }
 });

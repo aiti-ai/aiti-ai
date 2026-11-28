@@ -18,10 +18,19 @@
  *
  * 契约：docs/pi-web-defork-batch-2026-09-plan.md §2；插槽 lib/ext/types.ts sessionInfoPanel。
  */
-import { isProviderUsageId, invalidateUsageOverviewCache, queryProviderUsage, queryUsageOverview } from "./lib/server/index.ts";
+import { isProviderUsageId, invalidateUsageOverviewCache, listThirdPartyUsageAdapters, listUsageAdapters, queryProviderUsage, queryUsageOverview, setHostUsageAdapterSource } from "./lib/server/index.ts";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+
+/** Third-party dynamic adapter ids from the host slot (§4-B3b); empty on old hosts. */
+function hostThirdPartyAdapterIds(): string[] {
+  try {
+    return listThirdPartyUsageAdapters().map((adapter) => adapter.id);
+  } catch {
+    return [];
+  }
+}
 
 export default {
   id: "aiti-provider-usage",
@@ -150,12 +159,26 @@ export default {
   },
   server: {
     startup(ctx: any) {
+      // Host-side dynamic registration (§4-B3a): hand our adapters to the host
+      // registry as the same object references (no copies) so pi-session quota
+      // fallbacks can query ids we cover that the host's built-ins lack. The
+      // registry's conflict policy skips its built-in ids; entries are removed
+      // on shutdown/reload and re-registered here (idempotent).
+      try {
+        for (const adapter of listUsageAdapters()) ctx?.usageAdapters?.register?.(adapter);
+      } catch (e) {
+        console.warn(`[aiti-provider-usage] host usage-adapter registration skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      // Cache the host slot for the query/catalog surface (§4-B3b): third-party
+      // dynamic adapters merge into the overview/query catalogs (own entries
+      // filtered by ownership — they are already covered by the local catalog).
+      try { setHostUsageAdapterSource(ctx?.usageAdapters ?? null); } catch { setHostUsageAdapterSource(null); }
       // 服务出口：与 REST /overview 同面（薄包，无独立状态）。缺席 services 总线时静默（REST 仍可用）。
       try {
         ctx?.services?.provide?.("aiti-provider-usage.overview", {
           overview: (force?: boolean) => queryUsageOverview(force === true),
           query: (providerId: string) =>
-            isProviderUsageId(providerId)
+            isProviderUsageId(providerId) || hostThirdPartyAdapterIds().includes(providerId)
               ? queryProviderUsage(providerId)
               : Promise.resolve({ providerId, status: "unsupported", message: "Unsupported provider" }),
           invalidate: () => invalidateUsageOverviewCache(),
@@ -179,7 +202,10 @@ export default {
           .catch(() => ({}))
           .then((body: { providerId?: unknown }) => {
             const providerId = typeof body?.providerId === "string" ? body.providerId : "";
-            if (!isProviderUsageId(providerId)) return json({ error: "Unsupported provider" }, 400);
+            // Catalog = local ids ∪ third-party dynamic adapters from the host slot
+            // (§4-B3b); the query facade itself resolves and fails-honest on misses.
+            const hostIds = hostThirdPartyAdapterIds();
+            if (!isProviderUsageId(providerId) && !hostIds.includes(providerId)) return json({ error: "Unsupported provider" }, 400);
             return queryProviderUsage(providerId).then((result) => json(result));
           });
       }

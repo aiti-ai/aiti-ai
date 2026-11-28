@@ -120,6 +120,9 @@ interface Props {
   /** Register the stats refresher so AppShell can pull fresh stats (incl.
    *  contextUsage for idle sessions) when the session panel opens. */
   onSessionStatsRefresherRegister?: (fn: (() => void) | null) => void;
+  /** Backend-usage refresher registration (AppShell's pi-web.session client service, consumed by
+   *  the provider-usage panel's refresh button — plan: pi-web-pi-session-provider-quota §4-A7). */
+  onBackendUsageRefresherRegister?: (fn: (() => void) | null) => void;
   /** Compaction control registration (AppShell session-info panel's tri-state compact
    *  button): when compact is undefined (no session / sessionCap("compact") fails) the
    *  panel button hides — same rule as ChatInput. */
@@ -434,7 +437,7 @@ export interface CompactControls {
  * inputs collapse their full JSON into the details view.
  */
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, panel = false, onSideSession, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onOpenSettings, onContextUsageChange, onBackendUsageChange, onDisplayModelChange, onOpenFile, onFilesUploaded, onOpenSubagent, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, initialPromptImages, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, panel = false, onSideSession, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onBackendUsageRefresherRegister, onCompactControlsRegister, onOpenSettings, onContextUsageChange, onBackendUsageChange, onDisplayModelChange, onOpenFile, onFilesUploaded, onOpenSubagent, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, initialPromptImages, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -577,7 +580,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     slashCommands, slashCommandsLoading, queuedMessages, sessionTasks,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, dismissNotice,
-    switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    switchPermissionMode, sessionCapabilities, backendSource, backendUsage, refreshBackendUsage,
     sessionRequest, respondToSessionRequest,
     isAutoModelSelection,
     isAutoThinkingSelection,
@@ -669,6 +672,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     onSessionStatsRefresherRegister?.(() => { void refreshSessionStats(); });
     return () => onSessionStatsRefresherRegister?.(null);
   }, [onSessionStatsRefresherRegister, refreshSessionStats]);
+
+  // Register the backend-usage refresher (§4-A7): AppShell exposes it as the
+  // pi-web.session client service; the provider-usage panel's refresh button
+  // fires both the overview refresh and this backend-usage re-fetch.
+  useEffect(() => {
+    onBackendUsageRefresherRegister?.(refreshBackendUsage);
+    return () => onBackendUsageRefresherRegister?.(null);
+  }, [onBackendUsageRefresherRegister, refreshBackendUsage]);
 
   // Compaction control registration: mirrored after the onSessionStatsRefresherRegister
   // precedent, registered back to AppShell (session-info panel button); state tracks

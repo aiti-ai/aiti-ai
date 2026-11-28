@@ -12,6 +12,7 @@
 import type { ReactNode } from "react";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { QueuePanelProps } from "@/lib/composer/queue-api";
+import type { UsageAdapter } from "@/lib/provider-usage/types";
 import type { CtxUrgency } from "@/lib/context-urgency";
 
 /**
@@ -147,6 +148,30 @@ export interface ExtSessionProviderSlot {
     compositeId: string,
     options?: { cwd?: string; /** Display name for the placeholder file (pass the real title when All Sessions takes over) */ name?: string },
   ): Promise<{ ok: true; sessionId: string } | { ok: false; reason: "no_provider" | "open_failed"; error?: string }>;
+}
+
+/** Structural shape of a runtime-registered usage adapter (lib/provider-usage/types.ts UsageAdapter) —
+ *  extensions write plain objects (no host-type import needed; jiti resolves them as-is). */
+export interface ExtUsageAdapterRegistration {
+  ok: boolean;
+  reason?: "invalid-adapter" | "builtin-conflict" | "owned-by-other-extension";
+}
+
+export interface ExtUsageAdapterWithOwner {
+  adapter: UsageAdapter;
+  /** null = built-in static adapter; otherwise the owning extension id. */
+  extId: string | null;
+}
+
+export interface ExtUsageAdapterSlot {
+  /** Register a provider-quota adapter for this extension (id ownership enforced: built-in ids are
+   *  rejected, cross-extension takeovers are rejected, re-registering your own id is idempotent). */
+  register(adapter: UsageAdapter): ExtUsageAdapterRegistration;
+  /** Remove one adapter previously registered by this extension. */
+  unregister(id: string): boolean;
+  /** All adapters (built-in extId=null + dynamic) — consumers (e.g. the provider-usage overview)
+   *  merge these into their catalogs, filtering out their own ownership to avoid double rows. */
+  list(): ExtUsageAdapterWithOwner[];
 }
 
 /**
@@ -319,6 +344,10 @@ export interface ExtServerContext {
   features: ExtFeaturesSlot;
   /** Session backend registration slot (multi-agent frontend): extensions register custom SessionProviders through it. */
   sessionProviders: ExtSessionProviderSlot;
+  /** Usage-adapter registration slot (plan: pi-web-pi-session-provider-quota §4-B2): extensions register
+   *  provider-quota adapters at runtime; built-in static ids are protected, ownership is tracked per
+   *  extension and entries are removed on shutdown/reload (mirror of the image-provider ledger). */
+  usageAdapters: ExtUsageAdapterSlot;
   /** Session annotation slot: extensions attach their own markers to the session list (e.g. TUI-bridge occupancy). */
   sessionAnnotations: ExtSessionAnnotatorSlot;
   /** Generic AI invocation (the core's lowest-level model capability): any system+messages → { text, usage };

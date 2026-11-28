@@ -233,7 +233,9 @@ test("capabilitiesFor（pi）：contextUsage/listTools 无、fail-loud 不变、
   assert.equal(pi.respondInteraction, true);
   // 待实测面（B5）：保守 false
   assert.equal(pi.respondPermission, false);
-  assert.equal(pi.getUsage, false);
+  // getUsage flipped to true (2026-12): host provider-quota fallback semantics (not an
+  // RPC command) — see capabilities-contract.test.mjs and pi-web-pi-session-provider-quota §4-A4
+  assert.equal(pi.getUsage, true);
   assert.equal(pi.fileAttachments, false);
 });
 

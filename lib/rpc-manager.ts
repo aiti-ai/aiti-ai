@@ -38,6 +38,7 @@ import {
   preferUserPowerShellExtension,
 } from "./project-command-env.ts";
 import { disableConflictingExtensions } from "./ext-conflicts.ts";
+import { queryProviderQuotaSnapshot } from "./session/provider-quota.ts";
 import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, invalidateSessionManagerCache, invalidateSessionPathCache, openSessionManager, readLatestSessionEntryId, resolveSessionPath } from "./session-reader.ts";
 import { expandSessionReferences, resolveSessionReferenceForSend } from "./session-reference.ts";
 import { computeSessionStats } from "./session-stats.ts";
@@ -437,6 +438,11 @@ interface ActiveToolEvents {
 }
 
 export class AgentSessionWrapper {
+  /** Capability declaration for the local-session state surface (§4-A4): the state
+   *  route merges it so the client knows this backend answers get_usage (via the
+   *  provider-quota fallback). Only this bit is declared — the rest of the local
+   *  session's UI keeps its historical capabilities-less degradation semantics. */
+  readonly capabilities = { getUsage: true };
   // A Set, not an array: an SSE stream unsubscribes from inside emit() when it
   // closes on session_shutdown, and splicing an array mid-iteration made the
   // next stream miss that same event.
@@ -2633,6 +2639,19 @@ export class AgentSessionWrapper {
           ...this.inner.getSessionStats(),
           sessionName: this.inner.sessionManager.getSessionName(),
         };
+      }
+
+      case "get_usage": {
+        // pi-family fallback (plan: pi-web-pi-session-provider-quota §4-A3): the local
+        // wrapper has no backend-owned get_usage; answer with the current provider's
+        // account quota from the usage-adapter registry. The client echoes its display
+        // model's provider (authoritative live value); the wrapper's own model is the
+        // fallback. Unsupported provider / query failure → null → the UI quota surfaces
+        // hide silently (fail-honest).
+        const model = this.inner.model;
+        const provider = (typeof command.provider === "string" && command.provider ? command.provider : undefined)
+          ?? model?.provider;
+        return { usage: provider ? await queryProviderQuotaSnapshot(provider) : null };
       }
 
       case "get_last_assistant_text": {

@@ -14,7 +14,10 @@ export type { UsageBucket, UsageMetric, UsageReport, ProviderUsageResult, Provid
 // @narumitw/pi-usage (MIT, Copyright (c) 2026 narumiruna), but this module
 // deliberately has no runtime dependency on that extension.
 
-export async function queryProviderUsage(providerId: ProviderUsageId): Promise<ProviderUsageResult> {
+export async function queryProviderUsage(providerId: string): Promise<ProviderUsageResult> {
+  // providerId is string (not the literal union): dynamic adapters registered
+  // by extensions at runtime are equally queryable (plan §4-B1); an unknown id
+  // surfaces as status "unsupported" below (fail-honest).
   let runtime: ModelRuntime;
   try {
     runtime = await ModelRuntime.create({ refreshOnCreate: false });
@@ -43,7 +46,7 @@ export async function queryProviderUsage(providerId: ProviderUsageId): Promise<P
   }
 }
 
-export function isOfficialProviderUsageOrigin(providerId: ProviderUsageId, baseUrl: string | undefined): boolean {
+export function isOfficialProviderUsageOrigin(providerId: string, baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
   let origin: string;
   try {
@@ -55,11 +58,13 @@ export function isOfficialProviderUsageOrigin(providerId: ProviderUsageId, baseU
 }
 
 export function normalizeProviderUsagePayload(
-  providerId: ProviderUsageId,
+  providerId: string,
   payload: Record<string, unknown>,
   _capturedAt = Date.now(),
 ): UsageReport {
   const adapter = getUsageAdapter(providerId);
   if (!adapter?.normalize) throw new Error(`No usage adapter for ${providerId}.`);
-  return adapter.normalize(payload, { providerId, auth: {} });
+  // UsageQueryContext keeps the literal-union providerId (adapter-facing); the
+  // facade accepts any string since dynamic adapters extend the registry at runtime.
+  return adapter.normalize(payload, { providerId: providerId as ProviderUsageId, auth: {} });
 }

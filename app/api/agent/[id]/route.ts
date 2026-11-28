@@ -113,9 +113,15 @@ export async function POST(
         throw e;
       }
       if (bridged?.isAlive()) {
-        const queued = await compactQueueResponse(id, bridged, body);
-        if (queued) return queued;
-        return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; }, viaTag("bridge"));
+        // get_usage bypasses the bridge (plan: pi-web-pi-session-provider-quota §4-A3):
+        // it is a read-only provider-quota probe answered by the local fallback — the
+        // bridge socket has no such channel and would return an empty usage. The
+        // single-writer rule governs writes; a quota probe cannot conflict with it.
+        if (body.type !== "get_usage") {
+          const queued = await compactQueueResponse(id, bridged, body);
+          if (queued) return queued;
+          return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; }, viaTag("bridge"));
+        }
       }
     }
 
@@ -123,6 +129,15 @@ export async function POST(
     const localWrapper = getRpcSession(id);
     let existing = localWrapper?.isAlive() ? localWrapper : resolveAnySession(id);
     if (existing?.isAlive()) viaTag(localWrapper?.isAlive() ? "local-registry" : "handle-store");
+    // get_usage is a read-only probe (§4-A3): it must never start or resume a runtime.
+    // A fast-path miss (cold session / idle-GC'd wrapper / detached process not yet
+    // re-attached) answers with an empty usage — the quota surfaces hide (fail-honest),
+    // and a live session populates them via the state-arrival fetch instead. Intercept
+    // BEFORE the placeholder/detached/provider-resume branches below (the last one
+    // would spawn a resume subprocess just to answer a quota poll).
+    if (body.type === "get_usage" && !existing?.isAlive()) {
+      return NextResponse.json({ success: true, data: { usage: null } });
+    }
     // Placeholder uuid (the persistent pi anchor for external agent sessions): on a registry miss,
     // route to the real backend via the placeholder file — never start a local runtime for a
     // placeholder file (that would run it as an empty-shell pi session).
@@ -308,6 +323,14 @@ export async function GET(
     if (url.searchParams.get("systemPrompt") === "0" || url.searchParams.get("light") === "1") {
       delete state.systemPrompt;
     }
+    // get_usage signal (§4-A4) rides as a BOOLEAN, not a capabilities object: the
+    // client treats a non-empty liveState.capabilities as "external backend" (fork-new
+    // gating, queue-only heuristic, sessionCap fallback semantics) — injecting the local
+    // wrapper's declaration would flip those for local/spawn sessions. Backends that
+    // declare the full object keep their existing path (mergeHandleState in
+    // /api/sessions/[id]/state); here we only add the one-bit probe permission.
+    const capabilities = (session as { capabilities?: { getUsage?: boolean } | undefined }).capabilities;
+    if (capabilities?.getUsage) state.usageCapability = true;
     return NextResponse.json({ running: true, state });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

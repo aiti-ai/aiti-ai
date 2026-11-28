@@ -59,10 +59,27 @@ export interface PiWebSessionService {
    * (extension-service hard rule).
    */
   open?(id: string): void;
+  /**
+   * Re-fetch the active session's backend-usage snapshot (get_usage) immediately
+   * (plan: pi-web-pi-session-provider-quota §4-A7 — the provider-usage panel's
+   * refresh button fires this alongside its own overview refresh). Optional member
+   * (absent when no session wrapper is mounted); consumers must degrade with
+   * `svc?.refreshBackendUsage?.()`.
+   */
+  refreshBackendUsage?(): void;
 }
 
 // open(id) delegate slot: AppShell backfills the latest closure on every render (same pattern as hostUiRef, avoiding stale closures).
 let openDelegate: ((id: string) => void) | null = null;
+
+// backend-usage refresher slot (§4-A7): ChatWindow registers/unregisters via the
+// AppShell seam (onBackendUsageRefresherRegister); the service getter reads it.
+let backendUsageRefresher: (() => void) | null = null;
+
+/** Called from the AppShell seam: install/clear the backend-usage refresher (pass null on unmount/session switch). */
+export function setBackendUsageRefresher(fn: (() => void) | null): void {
+  backendUsageRefresher = fn;
+}
 
 /** Called from the AppShell render body: backfill/clear the open-session delegate (pass null on unmount). */
 export function setSessionOpener(fn: ((id: string) => void) | null): void {
@@ -150,4 +167,5 @@ export const piWebSessionService: PiWebSessionService = {
   get: getSessionSnapshot,
   subscribe: subscribeSessionState,
   open: (id: string) => openSessionById(id),
+  refreshBackendUsage() { backendUsageRefresher?.(); },
 };

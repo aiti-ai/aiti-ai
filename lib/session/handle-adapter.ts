@@ -23,8 +23,9 @@
  */
 
 import type { AgentMessage, SessionEntry } from "../types.ts";
-import type { SessionHandle } from "./types.ts";
+import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { UnsupportedCapabilityError } from "./types.ts";
+import { queryProviderQuotaSnapshot } from "./provider-quota.ts";
 import { normalizeToolCalls } from "../normalize.ts";
 import { parseExternalEntryId } from "../external-session-paging.ts";
 import { entryToUiMessage, cacheSessionPath, invalidateSessionListCache, openSessionManager, resolveSessionPath } from "../session-reader.ts";
@@ -129,6 +130,12 @@ const PENDING_ASK_CAP = 16;
 
 export class HandleSessionAdapter implements WrappedSessionLike {
   readonly handle: SessionHandle;
+
+  /** Capability declaration surfaced for the state routes (the client reads
+   *  liveState.capabilities): mirrors the wrapped handle's own declaration. */
+  get capabilities(): SessionCapabilities {
+    return this.handle.capabilities;
+  }
 
   private listeners = new Set<Listener>();
   private unsubscribe: () => void;
@@ -687,8 +694,18 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       }
 
       case "get_usage": {
-        if (!h.getUsage) this.fail("get_usage", "getUsage");
-        return { usage: (await h.getUsage()) ?? null };
+        if (h.getUsage) return { usage: (await h.getUsage()) ?? null };
+        // pi-family fallback (plan: pi-web-pi-session-provider-quota §4-A3):
+        // capability-declared pi sessions answer with their current provider's
+        // account quota from the usage-adapter registry. The client echoes its
+        // display model's provider (the authoritative live value — a detached
+        // handle's own getModel may not be populated); handle state is the
+        // fallback. Unsupported provider / query failure → null → the UI quota
+        // surfaces hide (fail-honest).
+        if (!h.capabilities.getUsage) this.fail("get_usage", "getUsage");
+        const provider = (typeof command.provider === "string" && command.provider ? command.provider : undefined)
+          ?? h.getModel?.()?.provider;
+        return { usage: provider ? await queryProviderQuotaSnapshot(provider) : null };
       }
 
       case "list_models": {
