@@ -40,8 +40,8 @@ import {
 import { AppServerSession, type TaskEntry, type TurnOutcome, type TurnUsageSnapshot } from "./zcode-appserver.ts";
 import {
   DEFAULT_MODEL_REF, START_PLAN_BASE_URL, ZCODE_CONTEXT_WINDOW, ZCODE_MODES, ZCODE_PLATFORM_BASE_URL,
-  baseUrlFor, buildCliArgs, buildTurnEnv, buildZcodeCatalogRefs, channelFamily, detectPlanProvider, ensureCredential, ensureStartPlanCredential, execZcodeTurn, fetchCaptchaConfig,
-  extractCliError, isChannelDriveable, parseModelRef, parseTurnOutput, resolveNodeBin, resolveRuntime,
+  baseUrlFor, buildCliArgs, buildTurnEnv, buildZcodeCatalogRefs, channelFamily, detectPlanProvider, ensureCredential, ensureStartPlanCredential, execZcodeTurn, fetchCodingPlanQuotaLimit, fetchCaptchaConfig,
+  extractCliError, isChannelDriveable, parseModelRef, parseTurnOutput, QUOTA_LIMIT_URL, quotaLimitToQuotaView, readProviderConfigApiKey, resolveNodeBin, resolveRuntime,
   isStartPlanChannel, planQuotaView, readPlanStatus, usageToReport, wireProviderId, writeProviderConfigFile, zcodeHome, zcodeLoginDriver, humanizeZcodeError,
 } from "./zcode-core.ts";
 // 冷恢复工具行回放共享口径（权威源 pi-web-ext/_shared/seed-tool.ts；D18 四家归一）
@@ -1537,13 +1537,39 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
 let quotaCache: { at: number; ttl: number; value: Record<string, unknown> } | null = null;
 const QUOTA_TTL_MS = 60_000;
 const QUOTA_ERROR_TTL_MS = 10_000;
+/** Extension cache root (captured in setup): read root for provider-config/<channel>.json coding-plan API keys. */
+let quotaCacheDir: string | undefined;
 
-/** GET /login/quota[?force=1] → 统一额度视图（套餐通道状态；数据源 coding-plan-cache.json）。 */
-function quotaView(force: boolean): Response {
+/** GET /login/quota[?force=1] → unified quota view: live coding-plan numbers (quota/limit) first, plan-status fallback. */
+async function quotaView(force: boolean): Promise<Response> {
   if (!force && quotaCache && Date.now() - quotaCache.at < quotaCache.ttl) return Response.json(quotaCache.value);
-  const v = planQuotaView(readPlanStatus());
+  const v = await buildQuotaView();
   quotaCache = { at: Date.now(), ttl: v.available === true ? QUOTA_TTL_MS : QUOTA_ERROR_TTL_MS, value: v };
   return Response.json(v);
+}
+
+/** Numeric quota chain: try each available coding-plan channel (provider-config apiKey); fall back to planQuotaView on failure. */
+async function buildQuotaView(): Promise<Record<string, unknown>> {
+  let lastError = "";
+  const channels = readPlanStatus().filter((s) => s.status === "available" && !isStartPlanChannel(s.channel));
+  for (const ch of channels) {
+    const family = channelFamily(ch.channel);
+    if (!quotaCacheDir || !QUOTA_LIMIT_URL[family]) continue;
+    const apiKey = readProviderConfigApiKey(quotaCacheDir, ch.channel);
+    if (!apiKey) continue;
+    try {
+      const view = quotaLimitToQuotaView(await fetchCodingPlanQuotaLimit(apiKey, family));
+      if (view.available === true) return view;
+      lastError = String((view as { note?: unknown }).note ?? "响应无数据");
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const fallback = planQuotaView(readPlanStatus());
+  if (lastError) {
+    fallback.note = `${typeof fallback.note === "string" && fallback.note ? fallback.note + " · " : ""}数值额度获取失败：${lastError}`;
+  }
+  return fallback;
 }
 
 export default {
@@ -1695,6 +1721,7 @@ export default {
       // lazy migrate（数据分层双保险）：旧根级 runtime//apps/（AppImage 与解压运行时，可再下载）→ cache/
       // 三目录对称：configDir = <extRoot>/config，旧根级/缓存均在 <extRoot> 下 = dirname(configDir)
       const extRoot = dirname(configDir);
+      quotaCacheDir = join(extRoot, "cache");
       for (const rel of ["runtime", "apps"]) {
         const from = join(extRoot, rel), to = join(extRoot, "cache", rel);
         try { if (existsSync(from) && !existsSync(to)) { mkdirSync(join(to, ".."), { recursive: true }); renameSync(from, to); } } catch { /* 下次重试 */ }
@@ -1812,7 +1839,7 @@ export default {
         agent: "zcode",
         label: "ZCode CLI (智谱)",
         modes: ["url"],
-        accountQuota: true, // 套餐通道状态（GET /login/quota；官方无额度数值接口）
+        accountQuota: true, // account quota (GET /login/quota; live coding-plan numbers first, plan-status fallback)
         dependencyHint: "ZCode 桌面端 / zcode.cjs runtime",
         auth: [
           { kind: "file", path: [".zcode", "v2", "credentials.json"], label: "~/.zcode/v2/credentials.json" },
@@ -1836,7 +1863,7 @@ export default {
     async api(req: Request, ctx: { path: string[]; method: string; searchParams: URLSearchParams }) {
       const recycled = await recycleApi(req, ctx);
       if (recycled) return recycled;
-      // 账号额度视图（套餐通道状态；无官方额度数值接口）
+      // Account quota view (live coding-plan numbers first, plan-status fallback)
       // 注意：必须在受控登录层之前——controlled-login 对未知 /login/* 返回 404 Response 会吞路由
       if (ctx.path[0] === "login" && ctx.path[1] === "quota" && ctx.method === "GET") {
         return quotaView(ctx.searchParams?.get("force") === "1");
